@@ -96,12 +96,18 @@ def test_plan_clip_build_result_paths_under_clips_root(tmp_path: Path) -> None:
 
 def test_plan_with_repo_nevada_preset() -> None:
     repo = Path(__file__).resolve().parents[1]
-    nevada = repo / "nevada.yaml"
+    nevada = repo / "projects" / "nevada" / "config.yaml"
+    if not nevada.is_file():
+        nevada = repo / "nevada.yaml"
     if not nevada.is_file():
         return
     preset = load_preset(nevada)
     plc = require_bundle_config(preset)
-    data_dir = repo / "data"
+    data_dir = (
+        (nevada.parent / "data").resolve()
+        if preset.bundle is not None and preset.bundle.inputs_root
+        else repo / "data"
+    )
     clips = resolved_clips_cache_root(repo / ".cache")
     planned = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips)
     mask = aoi_inputs_fingerprint_body(plc, data_dir)

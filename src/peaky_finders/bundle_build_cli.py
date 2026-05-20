@@ -22,8 +22,8 @@ def build_bundle_argument_parser() -> argparse.ArgumentParser:
         "preset_yaml",
         type=Path,
         help=(
-            'Preset YAML with "bundle.aoi" (polygon GDB layers), '
-            '"bundle.include", "bundle.exclude", etc.'
+            'Preset YAML path or project slug (e.g. nevada → projects/nevada/config.yaml) with '
+            '"bundle.aoi" (polygon GDB layers), "bundle.include", "bundle.exclude", etc.'
         ),
     )
     p.add_argument(
@@ -38,7 +38,7 @@ def build_bundle_argument_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help=(
-            "Override bundle cache root (default: <preset cache_path>/bundles, else repo .cache/bundles)"
+            "Override bundle cache root (default: $PEAKY_CACHE/bundles, else $PEAKY_HOME/.cache/bundles)"
         ),
     )
     p.add_argument(
@@ -46,7 +46,7 @@ def build_bundle_argument_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         metavar="PATH",
-        help="Repo data directory for preset GDB paths (default: repo data/)",
+        help="GDB data directory override (default: preset ``bundle.inputs_root`` or $PEAKY_HOME/data)",
     )
     p.add_argument(
         "-v",
@@ -64,7 +64,7 @@ def build_bundle_argument_parser() -> argparse.ArgumentParser:
         metavar="N",
         help=(
             "Parallel S3 workers fetching Skadi `*.hgt.gz` into the DEM mirror "
-            "(default mirror: <preset cache_path>/splat_tiles, else repo .cache/splat_tiles; "
+            "(default mirror: $PEAKY_CACHE/splat_tiles, else $PEAKY_HOME/.cache/splat_tiles; "
             "worker default: 16)"
         ),
     )
@@ -73,13 +73,13 @@ def build_bundle_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Do not prefetch Skadi HGT tiles into the DEM mirror "
-            "(see preset cache_path / .cache/splat_tiles)."
+            "(see $PEAKY_CACHE/splat_tiles)."
         ),
     )
     p.add_argument(
         "--no-plss-fetch",
         action="store_true",
-        help="Skip BLM CadNSDI refresh of site plss/mlrs (loc-keyed cache under preset cache_path)",
+        help="Skip BLM CadNSDI refresh of site plss/mlrs (loc-keyed cache under $PEAKY_CACHE)",
     )
     p.add_argument("--quiet", "-q", action="store_true")
     return p
@@ -124,13 +124,26 @@ def bundle_build_cli_parser(*, prog: str = "bundle_build_cli") -> argparse.Argum
 
 def run_bundle_build(ns: argparse.Namespace, *, log_prefix: str) -> int:
     """Build or reuse bundle via :func:`~peaky_finders.bundle_build.ensure_land_use_bundle`."""
-    repo_data = Path(__file__).resolve().parents[2] / "data"
-
-    data_dir = repo_data if ns.data_dir is None else Path(ns.data_dir).expanduser().resolve()
-    cache_root = Path(ns.cache_dir).expanduser().resolve() if ns.cache_dir is not None else None
-    preset_path = Path(ns.preset_yaml).expanduser().resolve()
-
     from peaky_finders.bundle_build import ensure_land_use_bundle
+    from peaky_finders.sites_job import load_preset, resolve_preset_yaml_arg, resolved_preset_bundle_data_dir
+
+    preset_path = resolve_preset_yaml_arg(ns.preset_yaml)
+    if not preset_path.is_file():
+        print(f"Preset file not found: {preset_path}", file=sys.stderr)
+        return 2
+
+    try:
+        preset = load_preset(preset_path)
+    except Exception as e:
+        print(f"Invalid preset YAML: {e}", file=sys.stderr)
+        return 2
+
+    data_dir = resolved_preset_bundle_data_dir(
+        preset_path=preset_path,
+        preset=preset,
+        cli_override=None if ns.data_dir is None else Path(ns.data_dir).expanduser().resolve(),
+    )
+    cache_root = Path(ns.cache_dir).expanduser().resolve() if ns.cache_dir is not None else None
 
     try:
         gpkg, reused_cache = ensure_land_use_bundle(

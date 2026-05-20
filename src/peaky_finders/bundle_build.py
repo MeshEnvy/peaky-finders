@@ -43,6 +43,7 @@ from peaky_finders.sites_job import (
     canonical_bundle_reference_config_text,
     load_preset,
     ogr_where_for_layer_spec,
+    peaky_home,
     resolved_bundle_cache_root,
     resolved_cache_base,
     resolved_splat_tile_cache_dir,
@@ -243,14 +244,10 @@ def bundle_kml_overlay_inputs_digest(pre: BundleConfig) -> str:
 
 def bundle_cache_digest(*, preset: Preset, data_dir: Path | None = None) -> str:
     """SHA-256 hex: AOI (v1) + land-use (v3) fingerprint bodies."""
-    dd = Path(data_dir).expanduser().resolve() if data_dir is not None else _repo_root() / "data"
+    dd = Path(data_dir).expanduser().resolve() if data_dir is not None else peaky_home() / "data"
     pre = require_bundle_config(preset)
     payload = aoi_inputs_fingerprint_body(pre, dd) + land_use_inputs_fingerprint_body(pre, dd)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
 
 
 def _bundle_log(verbose: bool, msg: str) -> None:
@@ -1034,12 +1031,7 @@ def bundle_directory_for_preset(
     if cache_root is not None:
         cache_root_final = Path(cache_root).expanduser().resolve()
     else:
-        cache_root_final = resolved_bundle_cache_root(
-            repo=_repo_root(),
-            preset_path=preset_path_resolved,
-            preset=preset,
-            cli_bundle_cache_root=None,
-        )
+        cache_root_final = resolved_bundle_cache_root(cli_bundle_cache_root=None)
     bundle_dir, _ = bundle_paths(cache_root_final, preset=preset, data_dir=data_dir)
     return bundle_dir
 
@@ -1767,16 +1759,11 @@ def cached_gpkg_path_from_preset(
     """Return planned eligible GPKG path for ``preset_path`` (``clips/eligible/<sha>/…``)."""
     p = Path(preset_path).expanduser().resolve()
     preset = load_preset(p)
-    dd = Path(data_dir).expanduser().resolve() if data_dir is not None else _repo_root() / "data"
+    dd = Path(data_dir).expanduser().resolve() if data_dir is not None else peaky_home() / "data"
     if cache_root is not None:
         bundles_root = Path(cache_root).expanduser().resolve()
     else:
-        bundles_root = resolved_bundle_cache_root(
-            repo=_repo_root(),
-            preset_path=p,
-            preset=preset,
-            cli_bundle_cache_root=None,
-        )
+        bundles_root = resolved_bundle_cache_root(cli_bundle_cache_root=None)
     bundle_dir, gpkg = bundle_paths(bundles_root, preset=preset, data_dir=dd)
     from peaky_finders.bundle_clips import (
         bundle_resolve_path,
@@ -2030,7 +2017,6 @@ def ensure_land_use_bundle(
     no_plss_fetch: bool = False,
 ) -> tuple[Path, bool]:
     """Build or reuse land-use bundle. Returns ``(eligible_land_use_gpkg_path, reused_cache)``."""
-    repo = _repo_root()
     data_dir = Path(data_dir).expanduser().resolve()
 
     preset_path_resolved = Path(preset_path).expanduser().resolve()
@@ -2040,12 +2026,7 @@ def ensure_land_use_bundle(
     if cache_root is not None:
         cache_root_final = Path(cache_root).expanduser().resolve()
     else:
-        cache_root_final = resolved_bundle_cache_root(
-            repo=repo,
-            preset_path=preset_path_resolved,
-            preset=preset,
-            cli_bundle_cache_root=None,
-        )
+        cache_root_final = resolved_bundle_cache_root(cli_bundle_cache_root=None)
     cache_base = cache_root_final.parent
     from peaky_finders.bundle_clips import (
         ensure_bundle_clip_cache,
@@ -2070,9 +2051,7 @@ def ensure_land_use_bundle(
 
     maybe_refresh_plss_mlrs_for_bundle(
         preset_path=preset_path_resolved,
-        cache_base=resolved_cache_base(
-            repo=repo, preset_path=preset_path_resolved, preset=preset
-        ),
+        cache_base=resolved_cache_base(),
         preset=preset,
         force_all=force,
         skip_network=no_plss_fetch,
@@ -2155,11 +2134,7 @@ def ensure_land_use_bundle(
                 f"eligible WGS84 bounds (minx,miny,maxx,maxy): {eligible_bounds}",
             )
 
-    splat_tile_dir = resolved_splat_tile_cache_dir(
-        repo=repo,
-        preset_path=preset_path_resolved,
-        preset=preset,
-    )
+    splat_tile_dir = resolved_splat_tile_cache_dir()
 
     if prefetch_dem:
         if eligible_bounds is None:

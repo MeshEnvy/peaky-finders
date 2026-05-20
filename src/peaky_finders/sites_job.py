@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
@@ -27,6 +28,114 @@ def require_preset_yaml_path(path: Path) -> None:
         )
     if suf not in _PRESET_EXTENSIONS:
         raise ValueError(f"preset path must end with `.yaml` or `.yml` (got suffix {path.suffix!r}): {path}")
+
+
+def repo_root() -> Path:
+    """Package install / source tree root (parent of ``src/``)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def peaky_home() -> Path:
+    """Runtime home directory (``PEAKY_HOME`` or :func:`repo_root`)."""
+    raw = os.environ.get("PEAKY_HOME", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return repo_root()
+
+
+def peaky_projects_dir() -> Path:
+    """Project presets root (``PEAKY_PROJECTS`` or ``<peaky_home>/projects``)."""
+    raw = os.environ.get("PEAKY_PROJECTS", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return peaky_home() / "projects"
+
+
+def peaky_cache_dir() -> Path:
+    """Shared cache root (``PEAKY_CACHE`` or ``<peaky_home>/.cache``)."""
+    raw = os.environ.get("PEAKY_CACHE", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return peaky_home() / ".cache"
+
+
+def resolve_preset_yaml_arg(
+    raw: str | Path,
+    *,
+    cwd: Path | None = None,
+) -> Path:
+    """Resolve a CLI preset argument to an existing ``.yaml`` / ``.yml`` file.
+
+    Accepts explicit paths, ``<name>.yaml``, and project slugs such as ``nevada`` →
+    ``<PEAKY_PROJECTS>/nevada/config.yaml``.
+    """
+    arg = Path(raw).expanduser()
+    base_cwd = Path.cwd() if cwd is None else Path(cwd)
+    home = peaky_home()
+    projects = peaky_projects_dir()
+
+    candidates: list[Path] = []
+    if arg.is_absolute():
+        candidates.append(arg)
+    else:
+        candidates.append(base_cwd / arg)
+        if arg.suffix.lower() not in _PRESET_EXTENSIONS:
+            candidates.append(base_cwd / f"{arg}.yaml")
+            candidates.append(base_cwd / f"{arg}.yml")
+        if len(arg.parts) == 1:
+            slug = arg.stem if arg.suffix.lower() in _PRESET_EXTENSIONS else str(arg)
+            candidates.append(projects / slug / "config.yaml")
+            candidates.append(projects / slug / "config.yml")
+        candidates.append(home / arg)
+        if arg.suffix.lower() not in _PRESET_EXTENSIONS and len(arg.parts) == 1:
+            candidates.append(home / f"{arg}.yaml")
+            candidates.append(home / f"{arg}.yml")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        path = candidate.expanduser().resolve()
+        if path in seen:
+            continue
+        seen.add(path)
+        if path.is_file():
+            require_preset_yaml_path(path)
+            return path
+
+    return (candidates[0] if candidates else arg).expanduser().resolve()
+
+
+def resolved_preset_slug(preset_path: Path) -> str:
+    """Stable preset id for KMZ naming and document titles."""
+    path = Path(preset_path).expanduser().resolve()
+    if path.stem == "config":
+        return path.parent.name
+    return path.stem
+
+
+def resolved_aggregate_kmz_path(preset_path: Path) -> Path:
+    """Write aggregate KMZ beside the preset (``projects/<slug>/<slug>.kmz`` for project configs)."""
+    path = Path(preset_path).expanduser().resolve()
+    return path.parent / f"{resolved_preset_slug(path)}.kmz"
+
+
+def resolved_preset_bundle_data_dir(
+    *,
+    preset_path: Path,
+    preset: Preset,
+    cli_override: Path | None = None,
+) -> Path:
+    """GDB ``bundle.*`` path root: CLI override, else ``<preset-dir>/<bundle.inputs_root>``, else ``<PEAKY_HOME>/data``."""
+    if cli_override is not None:
+        return Path(cli_override).expanduser().resolve()
+    bundle = preset.bundle
+    if bundle is not None and bundle.inputs_root is not None:
+        raw = str(bundle.inputs_root).strip()
+        if raw:
+            root = Path(raw)
+            if root.is_absolute():
+                return root.resolve()
+            return (Path(preset_path).expanduser().resolve().parent / root).resolve()
+    return (peaky_home() / "data").resolve()
 
 
 def _preset_yaml_typ_rt() -> YAML:
@@ -534,6 +643,13 @@ class BundleConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    inputs_root: str | None = Field(
+        default=None,
+        description=(
+            "Directory for bundle GDB paths; relative to the preset file unless absolute. "
+            "Default: repo ``data/``."
+        ),
+    )
     reference: list[BundleReferenceLayerEntry] = Field(
         default_factory=list,
         description="Optional AOI-clipped context layers (e.g. admin boundaries) for KMZ only; not used in eligibility.",
@@ -715,14 +831,6 @@ class Preset(BaseModel):
     environment: dict[str, Any]
     simulation: SimulationConfig
     display: dict[str, Any]
-    cache_path: str | None = Field(
-        default=None,
-        description=(
-            'Optional directory under which ``bundles/`` and ``splat_tiles/`` are stored (same layout as '
-            'repo ``.cache``). Relative paths are resolved against the preset JSON directory. '
-            "When omitted, uses the repo ``.cache`` directory."
-        ),
-    )
     sites: dict[str, SiteEntry]
     installed_pins: list[str] = Field(
         default_factory=list,
@@ -753,30 +861,16 @@ def resolved_coverage_dispatcher_max_workers(job: Preset) -> int:
     return mw.splat
 
 
-def resolved_cache_base(*, repo: Path, preset_path: Path, preset: Preset) -> Path:
+def resolved_cache_base() -> Path:
     """Directory holding ``clips/``, ``bundles/``, ``splat_tiles/``, ``viewsheds/``, ``mesh_pairwise/``, and ``mesh_depth/``."""
-    if preset.cache_path is None:
-        return (repo / ".cache").resolve()
-    raw = str(preset.cache_path).strip()
-    if not raw:
-        return (repo / ".cache").resolve()
-    p = Path(raw).expanduser()
-    if p.is_absolute():
-        return p.resolve()
-    return (Path(preset_path).expanduser().resolve().parent / p).resolve()
+    return peaky_cache_dir()
 
 
-def resolved_bundle_cache_root(
-    *,
-    repo: Path,
-    preset_path: Path,
-    preset: Preset,
-    cli_bundle_cache_root: Path | None,
-) -> Path:
+def resolved_bundle_cache_root(*, cli_bundle_cache_root: Path | None) -> Path:
     """GeoPackage bundle cache root ``…/bundles`` unless ``cli_bundle_cache_root`` is set."""
     if cli_bundle_cache_root is not None:
         return Path(cli_bundle_cache_root).expanduser().resolve()
-    return resolved_cache_base(repo=repo, preset_path=preset_path, preset=preset) / "bundles"
+    return resolved_cache_base() / "bundles"
 
 
 def resolved_viewshed_cache_root(bundle_cache_root: Path) -> Path:
@@ -803,9 +897,9 @@ def resolved_eligible_union_cache_root(bundle_cache_root: Path) -> Path:
     return root.parent / "eligible_union"
 
 
-def resolved_splat_tile_cache_dir(*, repo: Path, preset_path: Path, preset: Preset) -> Path:
+def resolved_splat_tile_cache_dir() -> Path:
     """Skadi / SPLAT DEM tile mirror ``…/splat_tiles`` under :func:`resolved_cache_base`."""
-    return resolved_cache_base(repo=repo, preset_path=preset_path, preset=preset) / "splat_tiles"
+    return resolved_cache_base() / "splat_tiles"
 
 
 def parse_preset_dict(raw: dict) -> Preset:

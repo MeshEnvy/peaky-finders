@@ -35,11 +35,15 @@ from peaky_finders.sites_job import (
     SiteEntry,
     load_preset,
     mesh_edges_site_to_site_kml_arcname,
+    resolved_aggregate_kmz_path,
     resolved_bundle_cache_root,
     resolved_coverage_dispatcher_max_workers,
     resolved_kmz_document_layers,
     resolved_eligible_union_cache_root,
     resolved_mesh_depth_cache_root,
+    resolved_preset_bundle_data_dir,
+    resolved_preset_slug,
+    resolve_preset_yaml_arg,
     resolved_mesh_pairwise_eligible_kml_style,
     resolved_mesh_pairwise_eligible_peak_pin_kml_style,
     resolved_mesh_pairwise_geometry_cache_root,
@@ -94,28 +98,24 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _bundle_render_data_dir(args: argparse.Namespace, repo: Path) -> Path:
+def _bundle_render_data_dir(args: argparse.Namespace, preset_path: Path, job: Preset) -> Path:
     raw = getattr(args, "data_dir", None)
-    if raw is not None:
-        return Path(raw).expanduser().resolve()
-    return (repo / "data").resolve()
-
-
-def _bundle_render_cache_root(
-    args: argparse.Namespace, repo: Path, preset_path: Path, job: Preset
-) -> Path:
-    raw = getattr(args, "cache_dir", None)
     cli = None if raw is None else Path(raw).expanduser().resolve()
-    return resolved_bundle_cache_root(
-        repo=repo,
+    return resolved_preset_bundle_data_dir(
         preset_path=preset_path,
         preset=job,
-        cli_bundle_cache_root=cli,
+        cli_override=cli,
     )
 
 
-def _ensure_tile_cache_dir(repo: Path, preset_path: Path, job: Preset) -> Path:
-    d = resolved_splat_tile_cache_dir(repo=repo, preset_path=preset_path, preset=job)
+def _bundle_render_cache_root(args: argparse.Namespace) -> Path:
+    raw = getattr(args, "cache_dir", None)
+    cli = None if raw is None else Path(raw).expanduser().resolve()
+    return resolved_bundle_cache_root(cli_bundle_cache_root=cli)
+
+
+def _ensure_tile_cache_dir() -> Path:
+    d = resolved_splat_tile_cache_dir()
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -258,7 +258,7 @@ def _docker_build(repo: Path, *, dockerfile_name: str, image: str, context: str 
 
 
 def _resolve_job_path(sites_arg: Path) -> Path:
-    return sites_arg if sites_arg.is_absolute() else Path.cwd() / sites_arg
+    return resolve_preset_yaml_arg(sites_arg)
 
 
 def _pretty_m(value: float) -> float | int:
@@ -364,7 +364,11 @@ def _add_splat_only_arguments(p: argparse.ArgumentParser) -> None:
 
 
 def _add_splat_arguments(p: argparse.ArgumentParser) -> None:
-    p.add_argument("preset_yaml", metavar="PRESET.yaml", help="YAML preset file with RF params and sites")
+    p.add_argument(
+        "preset_yaml",
+        metavar="PRESET",
+        help="Preset YAML path or project slug (e.g. nevada → projects/nevada/config.yaml)",
+    )
     _add_splat_only_arguments(p)
 
 
@@ -425,7 +429,7 @@ def run_splat(args: argparse.Namespace) -> int:
         print(f"Invalid preset YAML: {e}", file=sys.stderr)
         return 2
 
-    preset_id = job_path.stem
+    preset_id = resolved_preset_slug(job_path)
     try:
         _first = next(iter(job.sites.values()))
         _ = preset_to_request(job, _first.lat, _first.lon)
@@ -474,7 +478,7 @@ def run_splat(args: argparse.Namespace) -> int:
         print(f"Invalid preset or RF parameters: {e}", file=sys.stderr)
         return 2
 
-    tile_cache_host = _ensure_tile_cache_dir(repo, job_path, job)
+    tile_cache_host = _ensure_tile_cache_dir()
 
     image = resolved_coverage_image(job)
     dockerfile_name = resolved_coverage_dockerfile(job)
@@ -488,7 +492,7 @@ def run_splat(args: argparse.Namespace) -> int:
     if job.bundle is None:
         print(
             "SPLAT requires a preset with bundle.* (AOI / land-use); "
-            "propagation workspaces live under <preset-cache>/viewsheds/<digest>/ (sibling to bundles/).",
+            "propagation workspaces live under $PEAKY_CACHE/viewsheds/<digest>/ (sibling to bundles/).",
             file=sys.stderr,
         )
         return 2
@@ -502,9 +506,9 @@ def run_splat(args: argparse.Namespace) -> int:
     )
     from peaky_finders.viewshed_cache import resolved_viewshed_workdir, viewshed_workspace_digest
 
-    bundle_cache_root = _bundle_render_cache_root(args, repo, job_path, job)
+    bundle_cache_root = _bundle_render_cache_root(args)
 
-    bundle_bb_data_dir = _bundle_render_data_dir(args, repo)
+    bundle_bb_data_dir = _bundle_render_data_dir(args, job_path, job)
 
     bundle_dir = bundle_directory_for_preset(
         preset_path=job_path,
@@ -853,7 +857,7 @@ def run_splat(args: argparse.Namespace) -> int:
             layer_visibility=resolved_kmz_document_layers(job.bundle),
         )
 
-        kmz_path = Path.cwd() / f"{preset_id}.kmz"
+        kmz_path = resolved_aggregate_kmz_path(job_path)
         print(f"Aggregate KMZ: writing zip ({kmz_path.name})...", flush=True)
         _write_aggregate_kmz(
             kmz_path=kmz_path,
