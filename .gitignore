@@ -1,5 +1,3 @@
-/.cache/
-/.data/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -14,6 +12,5 @@ dist/
 **/target/
 
 .local
-data
-*.kmz
-*.yaml
+projects
+.cache
