@@ -50,6 +50,7 @@ from peaky_finders.splat_polygonize import (
     GX_DRAW_ORDER_MESH_PAIRWISE_ELIGIBLE,
     MESH_PAIRWISE_ELIGIBLE_KML_STYLE_ID,
     MESH_PAIRWISE_KML_STYLE_ID,
+    PEAKY_KML_EMIT_VERSION,
     inject_peaky_polygon_kml_style,
 )
 
@@ -73,6 +74,7 @@ def _pairwise_flat_kml_plain_inputs_fingerprint(
         "bundle_kml_overlay_digest": bundle_kml_overlay_digest,
         "dem_peak_llz": dem,
         "gx_draw_order": mesh_pairwise_gx_draw_order,
+        "kml_emit_version": PEAKY_KML_EMIT_VERSION,
         "link_polygon_style_digest": _bundle_layer_style_fingerprint(link_polygon_style),
         "pairwise_peak_pin_style_digest": _bundle_layer_style_fingerprint(pairwise_peak_pin_style),
         "polygon_union_stable_digest": polygon_union_stable_digest,
@@ -102,6 +104,7 @@ def _pairwise_flat_kml_eligible_inputs_fingerprint(
         "eligible_peak_pin_style_digest": _bundle_layer_style_fingerprint(eligible_peak_pin_style),
         "eligible_polygon_style_digest": _bundle_layer_style_fingerprint(eligible_polygon_style),
         "gx_draw_order": mesh_eligible_gx_draw_order,
+        "kml_emit_version": PEAKY_KML_EMIT_VERSION,
         "skadi_dem_peak_enabled": skadi_dem_peak_enabled,
         "style_id_mesh_pairwise_eligible": MESH_PAIRWISE_ELIGIBLE_KML_STYLE_ID,
     }
@@ -324,6 +327,9 @@ def _linear_ring_coord_text(ring_coords: object) -> str:
     return " ".join(pts)
 
 
+_GOOGLE_EARTH_PUSHPIN_HREF = "http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png"
+
+
 def _append_dem_peak_placemark(
     doc: ET.Element,
     t,
@@ -340,9 +346,14 @@ def _append_dem_peak_placemark(
     st = ET.SubElement(pm, t("Style"))
     ic = ET.SubElement(st, t("IconStyle"))
     ET.SubElement(ic, t("color")).text = pin_style.line
-    ET.SubElement(ic, t("scale")).text = "0.55"
+    ET.SubElement(ic, t("scale")).text = "1.0"
     href = ET.SubElement(ET.SubElement(ic, t("Icon")), t("href"))
-    href.text = "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
+    href.text = _GOOGLE_EARTH_PUSHPIN_HREF
+    hs = ET.SubElement(ic, t("hotSpot"))
+    hs.set("x", "20")
+    hs.set("y", "2")
+    hs.set("xunits", "pixels")
+    hs.set("yunits", "pixels")
     pt = ET.SubElement(pm, t("Point"))
     ET.SubElement(pt, t("coordinates")).text = f"{lon:.8f},{lat:.8f},0"
 

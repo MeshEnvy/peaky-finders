@@ -45,6 +45,7 @@ from peaky_finders.splat_polygonize import (
     MESH_DEPTH_ELIGIBLE_D2_KML_STYLE_ID,
     MESH_DEPTH_ELIGIBLE_D3_KML_STYLE_ID,
     MESH_DEPTH_ELIGIBLE_D5_KML_STYLE_ID,
+    PEAKY_KML_EMIT_VERSION,
     inject_peaky_polygon_kml_style,
 )
 from peaky_finders.mesh_depth_cache import (
@@ -243,6 +244,7 @@ def _mesh_depth_flat_plain_fingerprint(
         "bundle_kml_overlay_digest": bundle_kml_overlay_digest,
         "doc_title": doc_title,
         "gx_draw_order": gx_draw_order,
+        "kml_emit_version": PEAKY_KML_EMIT_VERSION,
         "mesh_depth_polygon_style_id": mesh_depth_polygon_style_id,
         "polygon_style_digest": polygon_style_digest,
         "site_slug": site_slug,
@@ -270,6 +272,7 @@ def _mesh_depth_flat_eligible_fingerprint(
         "doc_title_eligible": doc_title_eligible,
         "eligible_clip_polygon_union_stable_digest": eligible_clip_union_stable_digest,
         "gx_draw_order": gx_draw_order,
+        "kml_emit_version": PEAKY_KML_EMIT_VERSION,
         "mesh_depth_eligible_polygon_style_id": mesh_depth_eligible_polygon_style_id,
         "polygon_style_digest": polygon_style_digest,
         "site_slug": site_slug,

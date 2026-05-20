@@ -49,6 +49,11 @@ GX_DRAW_ORDER_MESH_DEPTH_ELIGIBLE_D5 = 55
 GX_DRAW_ORDER_MESH_PAIRWISE_ELIGIBLE = 60
 GX_DRAW_ORDER_MESH_SITE_TO_SITE = 70
 
+# Bump when host-side KML emission changes but geometry/DEM inputs are unchanged (icons,
+# inject_peaky_polygon_kml_style, gx:drawOrder constants, placemark templates, etc.).
+# Included in flat KML cache fingerprints — not in overlap.gpkg / dem_peak JSON caches.
+PEAKY_KML_EMIT_VERSION = 2
+
 
 def _local_kml_tag(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]

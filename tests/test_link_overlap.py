@@ -337,6 +337,7 @@ def test_write_pairwise_includes_dem_peak_when_sampler_returns_value(
     raw = path.read_text(encoding="utf-8")
     assert "<Point>" in raw
     assert "1234" in raw
+    assert "pushpin/ylw-pushpin.png" in raw
     assert raw.count("<Placemark>") == 2
 
 

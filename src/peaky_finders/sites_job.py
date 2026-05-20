@@ -660,7 +660,7 @@ def resolved_mesh_pairwise_eligible_kml_style(kml_overlay: BundleKmlOverlayStyle
 
 
 def resolved_mesh_pairwise_peak_pin_kml_style(kml_overlay: BundleKmlOverlayStyles | None) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.mesh.pairwise_peak_pin``, else small red icon."""
+    """Preset ``bundle.kml_overlay.mesh.pairwise_peak_pin``, else red-tinted pushpin."""
     if kml_overlay is None or kml_overlay.mesh is None or kml_overlay.mesh.pairwise_peak_pin is None:
         return DEFAULT_MESH_PAIRWISE_PEAK_PIN_STYLE
     return kml_overlay.mesh.pairwise_peak_pin
@@ -669,7 +669,7 @@ def resolved_mesh_pairwise_peak_pin_kml_style(kml_overlay: BundleKmlOverlayStyle
 def resolved_mesh_pairwise_eligible_peak_pin_kml_style(
     kml_overlay: BundleKmlOverlayStyles | None,
 ) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.mesh.pairwise_eligible_peak_pin``, else small yellow icon."""
+    """Preset ``bundle.kml_overlay.mesh.pairwise_eligible_peak_pin``, else yellow-tinted pushpin."""
     if kml_overlay is None or kml_overlay.mesh is None or kml_overlay.mesh.pairwise_eligible_peak_pin is None:
         return DEFAULT_MESH_PAIRWISE_ELIGIBLE_PEAK_PIN_STYLE
     return kml_overlay.mesh.pairwise_eligible_peak_pin
