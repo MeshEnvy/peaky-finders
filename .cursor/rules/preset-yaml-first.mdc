@@ -1,0 +1,34 @@
+---
+description: Prefer preset YAML (e.g. nevada.yaml) for tunable inputs; avoid hard-coding or CLI-only parameters
+alwaysApply: true
+---
+
+# Preset YAML first
+
+Tunable **run configuration** for Peaky lives in **one preset file per job** — a root-level `<name>.yaml` loaded by `load_preset` / `Preset` in `sites_job.py` (RF blocks, `simulation`, `display`, `bundle` AOI/include/exclude, `sites`, `installed_pins`, etc.). **`nevada.yaml` is the reference shape.** Legacy `.json` job presets are not supported.
+
+Use `write_preset_document` / `dump_preset_yaml_document` when authoring writes; tooling that edits PLSS strings uses ruamel round-trip load/dump via `read_preset_yaml_tree` so `#` comments are preserved where possible.
+
+## Do this
+
+- **Add or change parameters in the preset YAML** (and extend the `Preset` model / parsing if the schema needs new fields).
+- **Treat ``peaky … <PRESET.yaml>`` as the primary interface**: values should make sense when read from the file alone — reproducible, reviewable, diffable (with `#` rationale where helpful).
+- **Use CLI flags** for true one-off workflow controls (e.g. caps, parallelism, “which phase”, local paths), not as the main place to store RF, sites, or bundle definitions.
+
+## Avoid
+
+- **Hard-coding** region-specific constants, default site lists, or bundle layer paths in Python when they belong in preset `bundle` / `sites`.
+- **Growing the CLI** with switches that duplicate preset fields “for convenience” instead of editing the YAML (or adding a well-justified override with a narrow purpose).
+
+## Quick examples
+
+```python
+# ❌ BAD — Nevada-only paths or RF numbers baked into module defaults
+DEFAULT_AOI = "aoi/State_of_Nevada_…"
+POWER_W = 0.1
+
+# ✅ GOOD — read from ``Preset`` / job YAML; code stays generic
+job = load_preset(job_path)
+```
+
+When in doubt, **put the knob in the preset** and keep code generic; reserve CLI for orchestration and rare overrides.

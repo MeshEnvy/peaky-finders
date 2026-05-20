@@ -1,0 +1,75 @@
+# SPLAT binaries (jmcmellen/splat) + Python toolchain — optional legacy image.
+#
+# Build (repo root):
+#   docker build -f Dockerfile.splat -t peaky-finders-splat:latest .
+#
+# Run one site dir that already has request.json:
+#   SITE=/path/to/.cache/viewsheds/<digest>
+#   MIRROR=/path/to/.cache/splat_tiles
+#   docker run --rm \
+#     -v "$SITE:/work" -v "$MIRROR:/splat_cache" \
+#     -e SPLAT_PATH=/opt/splat -e SPLAT_CACHE=/splat_cache \
+#     peaky-finders-splat:latest --work-dir /work
+
+FROM debian:bookworm-slim AS splat-build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    git \
+    libbz2-dev \
+    sed \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/jmcmellen/splat.git /tmp/splat
+
+WORKDIR /tmp/splat
+# Match Meshtastic site-planner Dockerfile (terrain + ITM defaults).
+RUN if [ -f build ]; then sed -i.bak 's/-march=$cpu/-march=native/g' build || true; fi
+RUN chmod +x configure install build 2>/dev/null || true
+RUN printf "8\n4\n" | ./configure && ./install splat
+
+WORKDIR /tmp/splat/utils
+RUN chmod +x build && ./build all
+
+RUN mkdir -p /opt/splat \
+    && cp /tmp/splat/splat /opt/splat/splat \
+    && (test -f /tmp/splat/splat-hd && cp /tmp/splat/splat-hd /opt/splat/splat-hd \
+        || cp /tmp/splat/splat /opt/splat/splat-hd) \
+    && cp srtm2sdf srtm2sdf-hd /opt/splat/ \
+    && chmod +x /opt/splat/*
+
+
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    MPLBACKEND=Agg
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gdal-bin \
+    libgdal-dev \
+  && pip install --no-cache-dir \
+    affine==2.4.0 \
+    boto3==1.35.68 \
+    botocore==1.35.68 \
+    matplotlib==3.9.2 \
+    numpy==2.1.3 \
+    pillow==11.0.0 \
+    pydantic==2.9.2 \
+    pyparsing==3.2.0 \
+    rasterio==1.4.2 \
+  && apt-get purge -y build-essential \
+  && apt-get autoremove -y \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY src/peaky_finders /app/peaky_finders
+
+COPY --from=splat-build /opt/splat /opt/splat
+
+ENTRYPOINT ["python", "-m", "peaky_finders.docker_entry"]
+CMD ["--work-dir", "/work"]

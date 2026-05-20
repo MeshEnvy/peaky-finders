@@ -1,0 +1,26 @@
+---
+description: Greenfield — legacy support is explicitly out of scope
+alwaysApply: true
+---
+
+# Greenfield: legacy support is out of scope
+
+This repo is **greenfield**. **Do not implement legacy support** — no backward compatibility, migrations for old data, dual code paths, deprecations with graceful periods, or “still works with v1” behavior unless the user **explicitly** requests it for a specific case.
+
+Treat continuity with past behavior as **non-requirements**: optimizing for a clean present design beats preserving old callers, caches, or formats.
+
+## Expectations
+
+- Prefer **clean breaks** over compatibility shims (rename/remove APIs freely when it improves the design).
+- **Caches** (e.g. `.cache/`, build artifacts, downloaded tiles): safe to invalidate, relocate, or delete formats when behavior changes — document breaking cache layout in commits or release notes only if the user cares.
+- **CLI / config / file formats**: OK to change in breaking ways; update callers and defaults rather than supporting old shapes.
+- **Dependencies**: OK to bump majors and adopt new APIs without maintaining fallbacks for older versions.
+
+## Avoid
+
+- Proactively offering or implementing legacy fallbacks, adapters, or compatibility modes.
+- “Keep the old path working too” unless the user explicitly asks for that narrow exception.
+- Feature flags or version branching purely for old behavior.
+- Long explanations of what broke for hypothetical old users — this project does not owe continuity to past releases.
+
+When in doubt, choose the **simpler, bolder** change and mention breaking impact briefly only when useful for the user’s next steps — **do not** add compatibility layers preemptively.
