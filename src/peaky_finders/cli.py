@@ -568,7 +568,7 @@ def run_splat(args: argparse.Namespace) -> int:
             digest_site_groups[vd] = []
         digest_site_groups[vd].append((site_slug, site))
 
-    tx_antenna_agl_m = max(1.0, float(job.transmitter["height_m"]))
+    tx_antenna_agl_m = max(1.0, float(job.simulation.transmitter["height_m"]))
 
     overlays: list[kml_bundle.AggregateSiteOverlay] = []
     png_paths: list[Path] = []

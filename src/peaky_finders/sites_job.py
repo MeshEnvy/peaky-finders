@@ -228,7 +228,7 @@ class SimulationMaxWorkers(BaseModel):
 
 
 class SimulationConfig(BaseModel):
-    """Preset ``simulation`` block."""
+    """Preset ``simulation`` block: propagation engine, RF catalogs, and antenna chains."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -255,6 +255,30 @@ class SimulationConfig(BaseModel):
     max_workers: SimulationMaxWorkers = Field(
         default_factory=SimulationMaxWorkers,
         description="Concurrent site jobs on the host; pick the entry matching ``provider`` (see each field).",
+    )
+    modem_presets: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Named LoRa air-interface profiles (frequency, SF, BW, CR, power, sensitivity).",
+    )
+    environment_presets: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Named RF environment profiles (climate, ground, clutter — SPLAT-oriented; clutter used by splatter).",
+    )
+    modem: str | dict[str, Any] | None = Field(
+        default=None,
+        description="Active modem preset name, or mapping with ``preset:`` key plus overrides.",
+    )
+    environment: str | dict[str, Any] | None = Field(
+        default=None,
+        description="Active environment preset name, or mapping with ``preset:`` key plus overrides.",
+    )
+    transmitter: dict[str, Any] = Field(
+        default_factory=dict,
+        description="TX antenna chain (height, gain, loss); power from modem preset unless overridden here.",
+    )
+    receiver: dict[str, Any] = Field(
+        default_factory=dict,
+        description="RX antenna chain (height, gain, loss); sensitivity from modem preset unless overridden here.",
     )
 
     @field_validator("provider", mode="before")
@@ -824,11 +848,8 @@ def resolved_kmz_document_layers(bundle: BundleConfig | None):
 
 
 class Preset(BaseModel):
-    """One JSON file per preset: RF blocks + ``sites``."""
+    """One JSON file per preset: simulation RF + ``sites``."""
 
-    transmitter: dict[str, Any]
-    receiver: dict[str, Any]
-    environment: dict[str, Any]
     simulation: SimulationConfig
     display: dict[str, Any]
     sites: dict[str, SiteEntry]

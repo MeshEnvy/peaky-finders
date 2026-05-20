@@ -16,10 +16,10 @@ from peaky_finders.sites_job import Preset
 def _tiny_preset() -> Preset:
     return Preset.model_validate(
         {
-            "transmitter": {},
-            "receiver": {},
-            "environment": {},
-            "simulation": {},
+            "simulation": {
+                "transmitter": {"height_m": 2.0, "gain_dbi": 0.0, "loss_db": 0.0},
+                "receiver": {"height_m": 2.0, "gain_dbi": 0.0, "loss_db": 0.0},
+            },
             "display": {},
             "sites": {
                 "a": {"name": "A", "loc": [39.0, -117.0]},

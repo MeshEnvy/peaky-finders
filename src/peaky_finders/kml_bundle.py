@@ -195,7 +195,7 @@ def placemark_description_cdata(
 class AggregateSiteOverlay:
     """One site's slice inside bundled ``doc.kml`` (PNG href relative to KMZ root, under ``sites/``).
 
-    ``antenna_height_agl_m`` is transmitter AGL (preset ``transmitter.height_m``), clamped to ≥1 m like
+    ``antenna_height_agl_m`` is transmitter AGL (preset ``simulation.transmitter.height_m``), clamped to ≥1 m like
     :func:`peaky_finders.preset_mapping.preset_to_request` (pins + mutual link segments use ``relativeToGround``).
     """
 

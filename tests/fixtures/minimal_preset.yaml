@@ -1,0 +1,18 @@
+# Minimal preset for YAML loader tests
+simulation:
+  transmitter:
+    height_m: 2.0
+    gain_dbi: 2.0
+    loss_db: 0.0
+  receiver:
+    height_m: 2.0
+    gain_dbi: 2.0
+    loss_db: 0.0
+display:
+  colormap: rainbow
+  min_dbm: -130.0
+  max_dbm: -80.0
+sites:
+  test-site:
+    name: Test Site
+    loc: [39.0, -119.0]
