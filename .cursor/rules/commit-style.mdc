@@ -1,0 +1,41 @@
+---
+description: Conventional Commits; subject line under 50 characters
+alwaysApply: true
+---
+
+# Commit style
+
+Use **Conventional Commits** for every commit. Keep the **subject line under 50 characters** (including type, optional scope, and description).
+
+## Format
+
+```
+<type>(<scope>): <description>
+```
+
+- **type** (required): `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`, `perf`
+- **scope** (optional): short area name — e.g. `preset`, `cli`, `viewshed`
+- **description**: imperative mood, lowercase, no trailing period
+
+## Do
+
+- One logical change per commit; subject states **what** and **why** in few words.
+- Prefer narrow scope over long descriptions.
+
+```text
+feat(preset): add bundle exclude layers
+fix(viewshed): handle empty DEM tiles
+refactor(cli): split render from simulate
+chore: bump poetry lockfile
+```
+
+## Don't
+
+- Subject lines ≥ 50 characters.
+- Vague subjects: `update stuff`, `fix bug`, `wip`.
+- Sentences, periods, or past tense: `Fixed the cache.`
+- Non-conventional prefixes: `Update .gitignore to remove…`
+
+## Length check
+
+Before committing, count characters in the full subject (type through description). If over 50, shorten scope or description — don't drop the conventional prefix.
