@@ -2,7 +2,7 @@
 
 Per-layer clips and composites (aoi, include, exclude, eligible) live under
 ``<cache_base>/clips/``. Each preset job writes ``<cache_base>/bundles/<job_sha>/resolve.json``
-pointing at those artifacts; installed_pins stay in the job dir.
+pointing at those artifacts.
 ``bundle.kml_overlay`` is tracked separately so sidecar KML/PNG can refresh without a full GDB rebuild.
 """
 
@@ -25,7 +25,7 @@ import geopandas as gpd
 import pandas as pd
 import pyogrio
 from shapely import count_coordinates, make_valid
-from shapely.geometry import MultiPolygon, Point, Polygon
+from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
@@ -423,7 +423,6 @@ _BUNDLE_GX_DRAW_ORDER_BY_ROLE: dict[str, int] = {
     "include": 10,
     "exclude": 11,
     "eligible": 15,
-    "installed_pins": 19,
     "default": 12,
 }
 
@@ -505,8 +504,6 @@ def _kml_overlay_role(kml_path: Path, layer_label: str) -> str:
         return "include"
     if SUBDIR_AOI in parts_lower or stem == "aoi" or stem.startswith("aoi_") or lab.startswith("aoi:"):
         return "aoi"
-    if SUBDIR_INSTALLED_PINS in parts_lower or stem == "installed_pins":
-        return "installed_pins"
     if SUBDIR_REFERENCE in parts_lower:
         return "reference"
     return "default"
@@ -925,15 +922,9 @@ SUBDIR_ELIGIBLE_LAND_USE = "eligible_land_use"
 ELIGIBLE_LAND_USE_LAYER = "eligible_land_use"
 ELIGIBLE_MANIFEST_FORMAT = "bundle_eligible_land_use_manifest/v1"
 KML_OVERLAY_DIGEST_BASENAME = "bundle_kml_overlay.sha256"
-SUBDIR_INSTALLED_PINS = "installed_pins"
 SUBDIR_REFERENCE = "reference"
 REFERENCE_DIGEST_BASENAME = "reference_inputs.sha256"
 REFERENCE_GPKG_LAYER = "reference"
-INSTALLED_PINS_GPKG_BASENAME = "installed_pins.gpkg"
-INSTALLED_PINS_KML_BASENAME = "installed_pins.kml"
-INSTALLED_PINS_MANIFEST_BASENAME = "installed_pins_manifest.json"
-INSTALLED_PINS_LAYER = "installed_pins"
-INSTALLED_PINS_MANIFEST_FORMAT = "bundle_installed_pins_manifest/v1"
 
 def bundle_eligible_land_use_gpkg(bundle_dir: Path) -> Path:
     from peaky_finders.bundle_clips import bundle_resolve_path, eligible_gpkg_from_bundle_dir
@@ -1100,9 +1091,6 @@ def _unlink_bundle_outputs_for_rebuild(bundle_dir: Path) -> None:
     from peaky_finders.bundle_clips import bundle_resolve_path
 
     bundle_resolve_path(bundle_dir).unlink(missing_ok=True)
-    ip_dir = bundle_dir / SUBDIR_INSTALLED_PINS
-    if ip_dir.is_dir():
-        shutil.rmtree(ip_dir)
     ref_dir = bundle_dir / SUBDIR_REFERENCE
     if ref_dir.is_dir():
         shutil.rmtree(ref_dir, ignore_errors=True)
@@ -1812,7 +1800,7 @@ def _final_kml_folder_role(folder_name: str) -> str:
     k = folder_name.strip().lower()
     if k == ELIGIBLE_LAND_USE_LAYER or k == "eligible":
         return "eligible"
-    if k in ("aoi", "include", "exclude", INSTALLED_PINS_LAYER):
+    if k in ("aoi", "include", "exclude"):
         return k
     return "default"
 
@@ -1910,99 +1898,6 @@ def _ogr2ogr_to_libkml(
         raise RuntimeError(
             f"ogr2ogr failed writing {human_name}\n" + (proc.stderr or proc.stdout or "").strip()
         )
-
-
-def _installed_pins_manifest_text(preset: Preset) -> str:
-    pins_payload: list[dict[str, Any]] = []
-    for slug in preset.installed_pins:
-        s = preset.sites[slug]
-        pins_payload.append(
-            {
-                "slug": slug,
-                "name": s.name,
-                "loc": [s.lat, s.lon],
-                "elevation_m": s.elevation_m,
-                "mlrs": s.mlrs,
-                "plss": s.plss,
-                "rationale": s.rationale,
-            }
-        )
-    body = {"format": INSTALLED_PINS_MANIFEST_FORMAT, "pins": pins_payload}
-    return json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
-
-
-def _geodataframe_installed_pins(preset: Preset) -> gpd.GeoDataFrame:
-    pieces: list[dict[str, Any]] = []
-    geoms: list[Point] = []
-    for slug in preset.installed_pins:
-        s = preset.sites[slug]
-        geoms.append(Point(s.lon, s.lat))
-        pieces.append(
-            {
-                "site_slug": slug,
-                "name": s.name,
-                "elevation_m": s.elevation_m,
-                "mlrs": s.mlrs,
-                "plss": s.plss,
-                "rationale": s.rationale,
-            }
-        )
-    return gpd.GeoDataFrame(pieces, geometry=geoms, crs="EPSG:4326")
-
-
-def _maybe_build_installed_pins_bundle(
-    *,
-    bundle_dir: Path,
-    force: bool,
-    plc: BundleConfig,
-    preset: Preset,
-    verbose: bool,
-) -> None:
-    out_dir = bundle_dir / SUBDIR_INSTALLED_PINS
-    manifest_path = out_dir / INSTALLED_PINS_MANIFEST_BASENAME
-    out_gpkg = out_dir / INSTALLED_PINS_GPKG_BASENAME
-    out_kml = out_dir / INSTALLED_PINS_KML_BASENAME
-
-    if not preset.installed_pins:
-        if out_dir.is_dir():
-            shutil.rmtree(out_dir)
-        return
-
-    expected_manifest = _installed_pins_manifest_text(preset)
-    if not force and manifest_path.is_file() and out_gpkg.is_file() and out_kml.is_file():
-        try:
-            if manifest_path.read_text(encoding="utf-8") == expected_manifest:
-                _bundle_log(verbose, "installed_pins: skip (installed_pins_manifest.json unchanged)")
-                return
-        except OSError:
-            pass
-
-    gdf = _geodataframe_installed_pins(preset)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_gpkg.unlink(missing_ok=True)
-
-    gdf.reset_index(drop=True).to_file(
-        out_gpkg, driver="GPKG", layer=INSTALLED_PINS_LAYER, mode="w"
-    )
-
-    _ogr2ogr_to_libkml(
-        out_gpkg,
-        out_kml,
-        layers=[INSTALLED_PINS_LAYER],
-        human_name="installed_pins.kml",
-    )
-    _kml_inject_final_bundle_styles(out_kml, plc.kml_overlay)
-    manifest_path.write_text(expected_manifest, encoding="utf-8")
-    _bundle_log(
-        verbose,
-        "installed_pins: done  "
-        f"GPKG {out_gpkg.relative_to(bundle_dir)} (layer: {INSTALLED_PINS_LAYER}); "
-        f"KML {out_kml.relative_to(bundle_dir)}",
-    )
-    print(
-        f"bundle: installed_pins: {len(preset.installed_pins):,} pin(s) → {out_dir}",
-        flush=True,
-    )
 
 
 def ensure_land_use_bundle(
@@ -2163,13 +2058,5 @@ def ensure_land_use_bundle(
                 f"(bbox_tiles={n_cover} fetched={dl} skipped_present={skipped} mirror_dir={splat_tile_dir})",
                 flush=True,
             )
-
-    _maybe_build_installed_pins_bundle(
-        bundle_dir=bundle_dir,
-        plc=plc,
-        preset=preset,
-        force=force,
-        verbose=verbose,
-    )
 
     return eligible_gpkg, reused_cache

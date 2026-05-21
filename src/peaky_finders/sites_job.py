@@ -656,7 +656,6 @@ class BundleKmlOverlayStyles(BaseModel):
     exclude: BundleKmlLayerStyle | None = None
     eligible: BundleKmlLayerStyle | None = None
     summits: BundleKmlLayerStyle | None = None
-    installed_pins: BundleKmlLayerStyle | None = None
     reference: BundleKmlLayerStyle | None = Field(
         default=None,
         description="Fallback style for bundle.reference sidecar KML when an entry omits ``style``.",
@@ -883,24 +882,13 @@ class Preset(BaseModel):
     simulation: SimulationConfig
     display: dict[str, Any]
     sites: dict[str, SiteEntry]
-    installed_pins: list[str] = Field(
-        default_factory=list,
-        description="Ordered site slugs (keys into sites) written to bundle installed_pins.{gpkg,kml}.",
-    )
     build_docker: bool = True
     bundle: BundleConfig | None = None
 
     @model_validator(mode="after")
-    def _sites_non_empty_and_installed_pins(self) -> Preset:
+    def _sites_non_empty_and_sees_valid(self) -> Preset:
         if not self.sites:
             raise ValueError("sites must contain at least one entry")
-        seen_pin: set[str] = set()
-        for slug in self.installed_pins:
-            if slug not in self.sites:
-                raise ValueError(f"installed_pins references unknown site slug {slug!r}")
-            if slug in seen_pin:
-                raise ValueError(f"duplicate slug in installed_pins: {slug!r}")
-            seen_pin.add(slug)
         for slug, entry in self.sites.items():
             seen_sees: set[str] = set()
             for target in entry.sees:
@@ -986,15 +974,6 @@ def parse_preset_dict(raw: dict) -> Preset:
             "sites": {
                 str(slug): SiteEntry.model_validate(dict(site)) for slug, site in sites_raw.items()
             },
-        }
-
-    pins_raw = raw.get("installed_pins")
-    if pins_raw is None:
-        raw = {**raw, "installed_pins": []}
-    elif isinstance(pins_raw, list):
-        raw = {
-            **raw,
-            "installed_pins": [str(x).strip() for x in pins_raw if str(x).strip()],
         }
 
     return Preset.model_validate(raw)

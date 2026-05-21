@@ -24,23 +24,6 @@ def test_mesh_gx_draw_order_band_above_viewsheds() -> None:
     assert GX_DRAW_ORDER_MESH_SITE_TO_SITE > GX_DRAW_ORDER_VIEWSHED_COVERAGE_POLYGON
 
 
-def test_bundle_land_use_layers_omits_installed_pins(tmp_path: Path) -> None:
-    from peaky_finders.cli import _bundle_land_use_layers_for_kmz
-
-    ip = tmp_path / "installed_pins"
-    ip.mkdir()
-    kml = ip / bundle_build.INSTALLED_PINS_KML_BASENAME
-    kml.write_text("<?xml version='1.0'?><kml/>", encoding="utf-8")
-    png = kml.with_suffix(".png")
-    png.write_bytes(b"\x89PNG\r\n")
-
-    nets, zpairs, _refs = _bundle_land_use_layers_for_kmz(tmp_path)
-    assert not any(lbl == "installed_pins" for lbl, _ in nets)
-    arcs = {a for _s, a in zpairs}
-    assert "installed_pins/installed_pins.kml" not in arcs
-    assert "installed_pins/installed_pins.png" not in arcs
-
-
 def test_build_aggregate_document_kml_order_sites_then_bundle_tail() -> None:
     xml = kml_bundle.build_aggregate_document_kml(
         document_title="t",

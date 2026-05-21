@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Preset YAML first
 
-Tunable **run configuration** for Peaky lives in **one preset file per job** — a root-level `<name>.yaml` loaded by `load_preset` / `Preset` in `sites_job.py` (RF blocks, `simulation`, `display`, `bundle` AOI/include/exclude, `sites`, `installed_pins`, etc.). **`nevada.yaml` is the reference shape.** Legacy `.json` job presets are not supported.
+Tunable **run configuration** for Peaky lives in **one preset file per job** — a root-level `<name>.yaml` loaded by `load_preset` / `Preset` in `sites_job.py` (RF blocks, `simulation`, `display`, `bundle` AOI/include/exclude, `sites`, etc.). **`nevada.yaml` is the reference shape.** Legacy `.json` job presets are not supported.
 
 Use `write_preset_document` / `dump_preset_yaml_document` when authoring writes; tooling that edits PLSS strings uses ruamel round-trip load/dump via `read_preset_yaml_tree` so `#` comments are preserved where possible.
 
