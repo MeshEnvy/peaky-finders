@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
+
+from fixture_paths import SAMPLE_PROJECT_CONFIG
 
 from peaky_finders.sites_job import CoverageProvider, Preset, SimulationConfig, load_preset
 
@@ -24,14 +24,14 @@ def _minimal_simulation() -> SimulationConfig:
                 }
             },
             "environment_presets": {
-                "nevada-desert": {
+                "test-desert": {
                     "climate": "desert",
                     "polarization": "vertical",
                     "clutter_height_m": 1.0,
                 }
             },
             "modem": "meshcore-us",
-            "environment": "nevada-desert",
+            "environment": "test-desert",
             "transmitter": {"height_m": 2.0, "gain_dbi": 3.0, "loss_db": 2.0},
             "receiver": {"height_m": 2.0, "gain_dbi": 3.0, "loss_db": 2.0},
             "provider": CoverageProvider.LOS,
@@ -53,8 +53,9 @@ def test_site_sees_unknown_slug_raises() -> None:
         )
 
 
-def test_nevada_preset_poito_sees_mutual_with_russell_and_ruslito() -> None:
-    job = load_preset(Path("projects/nevada/config.yaml"))
-    assert job.sites["poito"].sees == ["russell-peak", "ruslito-peak"]
-    assert job.sites["russell-peak"].sees == ["poito"]
-    assert job.sites["ruslito-peak"].sees == ["poito"]
+def test_sample_preset_hub_sees_peers_and_peers_see_hub() -> None:
+    job = load_preset(SAMPLE_PROJECT_CONFIG)
+    assert job.sites["hub"].sees == ["peer-a", "peer-b", "peer-c"]
+    assert job.sites["peer-a"].sees == ["hub"]
+    assert job.sites["peer-b"].sees == ["hub"]
+    assert job.sites["peer-c"].sees == ["hub"]

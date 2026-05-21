@@ -15,7 +15,7 @@ from peaky_finders.sites_job import (
     resolved_coverage_dispatcher_max_workers,
 )
 
-FIXTURE_MINIMAL = Path(__file__).resolve().parent / "fixtures" / "minimal_preset.yaml"
+from fixture_paths import MINIMAL_PRESET_YAML as FIXTURE_MINIMAL
 
 
 def test_load_minimal_preset_yaml_fixture() -> None:

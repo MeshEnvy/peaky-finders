@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fixture_paths import PEAKY_TEST_HOME, SAMPLE_PROJECT_CONFIG
+
 from peaky_finders.bundle_build import aoi_inputs_fingerprint_body, require_bundle_config
 from peaky_finders.bundle_clips import (
     clip_layer_fingerprint_body,
@@ -94,21 +96,11 @@ def test_plan_clip_build_result_paths_under_clips_root(tmp_path: Path) -> None:
     assert len(planned.eligible_sha) == 16
 
 
-def test_plan_with_repo_nevada_preset() -> None:
-    repo = Path(__file__).resolve().parents[1]
-    nevada = repo / "projects" / "nevada" / "config.yaml"
-    if not nevada.is_file():
-        nevada = repo / "nevada.yaml"
-    if not nevada.is_file():
-        return
-    preset = load_preset(nevada)
+def test_plan_with_sample_project_preset() -> None:
+    preset = load_preset(SAMPLE_PROJECT_CONFIG)
     plc = require_bundle_config(preset)
-    data_dir = (
-        (nevada.parent / "data").resolve()
-        if preset.bundle is not None and preset.bundle.inputs_root
-        else repo / "data"
-    )
-    clips = resolved_clips_cache_root(repo / ".cache")
+    data_dir = SAMPLE_PROJECT_CONFIG.parent / "data"
+    clips = resolved_clips_cache_root(PEAKY_TEST_HOME / ".cache")
     planned = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips)
     mask = aoi_inputs_fingerprint_body(plc, data_dir)
     assert mask.startswith("format=bundle_aoi_inputs/v1")

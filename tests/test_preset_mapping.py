@@ -26,8 +26,8 @@ _MESHCORE_US = {
     "sensitivity_dbm": -121.0,
 }
 
-_NEVADA_DESERT = {
-    "description": "Great Basin arid",
+_TEST_DESERT = {
+    "description": "Arid open terrain for unit tests",
     "climate": "desert",
     "polarization": "vertical",
     "clutter_height_m": 1.0,
@@ -40,9 +40,9 @@ _NEVADA_DESERT = {
 def _minimal_simulation(**updates: object) -> SimulationConfig:
     base = {
         "modem_presets": {"meshcore-us": dict(_MESHCORE_US)},
-        "environment_presets": {"nevada-desert": dict(_NEVADA_DESERT)},
+        "environment_presets": {"test-desert": dict(_TEST_DESERT)},
         "modem": "meshcore-us",
-        "environment": "nevada-desert",
+        "environment": "test-desert",
         "transmitter": {"height_m": 2.0, "gain_dbi": 3.0, "loss_db": 2.0},
         "receiver": {"height_m": 2.0, "gain_dbi": 3.0, "loss_db": 2.0},
         "provider": CoverageProvider.LOS,

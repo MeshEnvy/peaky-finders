@@ -54,28 +54,22 @@ def test_peaky_projects_and_cache_env_overrides(tmp_path: Path, monkeypatch: pyt
     assert resolved_cache_base() == cache.resolve()
 
 
-def test_resolve_project_slug_nevada(peaky_env: Path) -> None:
-    nevada = peaky_env / "projects" / "nevada" / "config.yaml"
-    if not nevada.is_file():
-        pytest.skip("nevada project preset not present")
-    assert resolve_preset_yaml_arg("nevada") == nevada.resolve()
+def test_resolve_project_slug_sample(peaky_test_home: Path) -> None:
+    sample = peaky_test_home / "projects" / "sample" / "config.yaml"
+    assert resolve_preset_yaml_arg("sample") == sample.resolve()
 
 
-def test_resolved_preset_slug_for_project_config(peaky_env: Path) -> None:
-    nevada = peaky_env / "projects" / "nevada" / "config.yaml"
-    if not nevada.is_file():
-        pytest.skip("nevada project preset not present")
-    assert resolved_preset_slug(nevada) == "nevada"
-    assert resolved_aggregate_kmz_path(nevada) == (nevada.parent / "nevada.kmz").resolve()
+def test_resolved_preset_slug_for_project_config(peaky_test_home: Path) -> None:
+    sample = peaky_test_home / "projects" / "sample" / "config.yaml"
+    assert resolved_preset_slug(sample) == "sample"
+    assert resolved_aggregate_kmz_path(sample) == (sample.parent / "sample.kmz").resolve()
 
 
-def test_resolved_preset_bundle_data_dir_uses_inputs_root(peaky_env: Path) -> None:
-    nevada = peaky_env / "projects" / "nevada" / "config.yaml"
-    if not nevada.is_file():
-        pytest.skip("nevada project preset not present")
-    preset = load_preset(nevada)
-    data_dir = resolved_preset_bundle_data_dir(preset_path=nevada, preset=preset)
-    assert data_dir == (nevada.parent / "data").resolve()
+def test_resolved_preset_bundle_data_dir_uses_inputs_root(peaky_test_home: Path) -> None:
+    sample = peaky_test_home / "projects" / "sample" / "config.yaml"
+    preset = load_preset(sample)
+    data_dir = resolved_preset_bundle_data_dir(preset_path=sample, preset=preset)
+    assert data_dir == (sample.parent / "data").resolve()
 
 
 def test_resolved_preset_bundle_data_dir_defaults_to_peaky_home_data(
