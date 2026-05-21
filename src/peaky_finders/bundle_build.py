@@ -496,17 +496,128 @@ def _kml_overlay_role(kml_path: Path, layer_label: str) -> str:
     stem = kml_path.stem.lower()
     parts_lower = [p.lower() for p in kml_path.parts]
     lab = layer_label.strip().lower()
+    gdb_path_prefix = lab.split("::", 1)[0].strip()
+    # Resolve preset-path include/exclude before ``\"eligible\" in lab``, which matches layer
+    # names like ``eligible_poly`` under ``include/...``.
+    if (
+        SUBDIR_EXCLUDE in parts_lower
+        or stem == "exclude"
+        or stem.startswith("exclude_")
+        or gdb_path_prefix.startswith("exclude/")
+        or "/exclude/" in gdb_path_prefix
+    ):
+        return "exclude"
+    if (
+        SUBDIR_INCLUDE in parts_lower
+        or stem == "include"
+        or stem.startswith("include_")
+        or gdb_path_prefix.startswith("include/")
+        or "/include/" in gdb_path_prefix
+    ):
+        return "include"
     if SUBDIR_ELIGIBLE_LAND_USE in parts_lower or stem in ("eligible", "eligible_land_use") or "eligible" in lab:
         return "eligible"
-    if SUBDIR_EXCLUDE in parts_lower or stem == "exclude" or stem.startswith("exclude_"):
-        return "exclude"
-    if SUBDIR_INCLUDE in parts_lower or stem == "include" or stem.startswith("include_"):
-        return "include"
     if SUBDIR_AOI in parts_lower or stem == "aoi" or stem.startswith("aoi_") or lab.startswith("aoi:"):
         return "aoi"
     if SUBDIR_REFERENCE in parts_lower:
         return "reference"
     return "default"
+
+
+_GDB_CLIP_PLACEMARK_NAME_COLUMNS = (
+    "NAME",
+    "Name",
+    "name",
+    "LABEL",
+    "Label",
+    "label",
+    "TITLE",
+    "Title",
+    "title",
+)
+
+
+def _gdb_clip_placemark_display_title(row: pd.Series, layer_label: str) -> str:
+    for col in _GDB_CLIP_PLACEMARK_NAME_COLUMNS:
+        if col not in row.index:
+            continue
+        val = row[col]
+        if val is None:
+            continue
+        try:
+            if bool(pd.isna(val)):
+                continue
+        except (TypeError, ValueError):
+            pass
+        s = str(val).strip()
+        if s:
+            return s
+    tail = layer_label.split("::")[-1].strip() if "::" in layer_label else layer_label.strip()
+    return tail or "Feature"
+
+
+def _gdb_clip_placemark_description(row: pd.Series, layer_label: str, *, heading: str) -> str:
+    lines = [f"{heading}: {layer_label}"]
+    for col in sorted(row.index, key=str):
+        if col == "geometry":
+            continue
+        val = row[col]
+        try:
+            if bool(pd.isna(val)):
+                continue
+        except (TypeError, ValueError):
+            pass
+        lines.append(f"{col}: {val}")
+    return "\n".join(lines)
+
+
+def _kml_enrich_gdb_clip_placemarks(
+    kml_path: Path, g: gpd.GeoDataFrame, *, layer_label: str, description_heading: str
+) -> None:
+    """Set polygon Placemark ``name`` / ``description`` for include/exclude GDB clip sidecars."""
+    if g.empty:
+        return
+    try:
+        tree = ET.parse(kml_path)
+    except ET.ParseError:
+        return
+    root = tree.getroot()
+    if root.tag.startswith("{"):
+        ns, local = root.tag[1:].split("}", 1)
+    else:
+        ns, local = "", root.tag
+    if local != "kml":
+        return
+
+    def t(name: str) -> str:
+        return f"{{{ns}}}{name}" if ns else name
+
+    doc = root.find(t("Document"))
+    if doc is None:
+        return
+
+    placemarks = [el for el in doc.iter(t("Placemark"))]
+    if len(placemarks) != len(g):
+        return
+    name_tag = t("name")
+    desc_tag = t("description")
+    for pm, (_, row) in zip(placemarks, g.iterrows(), strict=True):
+        title = _gdb_clip_placemark_display_title(row, layer_label)
+        body = _gdb_clip_placemark_description(row, layer_label, heading=description_heading)
+        name_el = pm.find(name_tag)
+        if name_el is None:
+            name_el = ET.Element(name_tag)
+            pm.insert(0, name_el)
+        name_el.text = title
+        desc_el = pm.find(desc_tag)
+        if desc_el is None:
+            desc_el = ET.SubElement(pm, desc_tag)
+        desc_el.text = body
+
+    if ns:
+        ET.register_namespace("", ns)
+    ET.register_namespace("gx", _GX_NS)
+    tree.write(kml_path, encoding="utf-8", xml_declaration=True)
 
 
 def _kml_build_style_element(
@@ -711,6 +822,15 @@ def _write_geodataframe_kml(
     g.to_file(kml_path, driver="KML", layer=_kml_safe_name(layer_label))
     _kml_inject_filled_overlay_style(kml_path, layer_label=layer_label, kml_overlay=kml_overlay)
     _kml_inject_ge_polygon_render_hints(kml_path, layer_label=layer_label)
+    role_ll = _kml_overlay_role(kml_path, layer_label)
+    if role_ll == "exclude":
+        _kml_enrich_gdb_clip_placemarks(
+            kml_path, g, layer_label=layer_label, description_heading="Exclusion layer"
+        )
+    elif role_ll == "include":
+        _kml_enrich_gdb_clip_placemarks(
+            kml_path, g, layer_label=layer_label, description_heading="Inclusion layer"
+        )
     _write_geodataframe_preview_png(
         g,
         kml_path.with_suffix(".png"),
@@ -1681,14 +1801,27 @@ def refresh_bundle_kml_sidecars(
 ) -> None:
     """Rewrite clip/composite KML/PNG after ``bundle.kml_overlay`` change."""
     from peaky_finders.bundle_clips import (
+        bundle_resolve_path,
         plan_clip_build_result,
         read_bundle_resolve,
         refresh_clip_kml_sidecars,
+        resolved_clips_cache_root,
     )
 
     data_dir = Path(data_dir).expanduser().resolve()
-    resolve = read_bundle_resolve(bundle_dir)
-    clips_root = Path(str(resolve["clips_root"])).resolve()
+    bundle_dir = Path(bundle_dir).expanduser().resolve()
+    rp = bundle_resolve_path(bundle_dir)
+    ref_map_raw: dict[str, Any] | None = None
+    if rp.is_file():
+        resolve = read_bundle_resolve(bundle_dir)
+        clips_root = Path(str(resolve["clips_root"])).resolve()
+        raw_ref = resolve.get("reference")
+        ref_map_raw = raw_ref if isinstance(raw_ref, dict) else None
+    else:
+        # Without ``resolve.json`` (deleted / interrupted write): derive sibling ``clips/`` like ``ensure_land_use_bundle``.
+        cache_base = bundle_dir.parent.parent
+        clips_root = resolved_clips_cache_root(cache_base)
+
     mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
     result = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips_root)
     refresh_clip_kml_sidecars(
@@ -1700,14 +1833,13 @@ def refresh_bundle_kml_sidecars(
         result=result,
         verbose_log=((lambda m: _bundle_log(verbose, m)) if verbose else None),
     )
-    ref_map = resolve.get("reference")
-    if isinstance(ref_map, dict):
+    if isinstance(ref_map_raw, dict) and ref_map_raw:
         from peaky_finders.bundle_clips import refresh_reference_clip_kml_sidecars
 
         refresh_reference_clip_kml_sidecars(
             plc=plc,
             clips_root=clips_root,
-            reference_shas={str(k): str(v) for k, v in ref_map.items()},
+            reference_shas={str(k): str(v) for k, v in ref_map_raw.items()},
             verbose_log=((lambda m: _bundle_log(verbose, m)) if verbose else None),
         )
 

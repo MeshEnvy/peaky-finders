@@ -29,6 +29,7 @@ from peaky_finders.sites_job import (
     BundleKmlOverlayStyles,
     BundleReferenceLayerEntry,
     GdbLayerGroup,
+    Preset,
     _gdb_layer_group_payload,
     _reference_entry_payload,
 )
@@ -83,6 +84,11 @@ def reference_kml_path(clips_root: Path, entry_sha: str) -> Path:
 
 def clip_gpkg_path(clips_root: Path, clip_sha: str) -> Path:
     return _clip_dir(clips_root, clip_sha) / CLIP_GPKG_BASENAME
+
+
+def clip_kml_path(clips_root: Path, clip_sha: str) -> Path:
+    """Sidecar KML beside ``clip.gpkg`` for one cached GDB clip."""
+    return _clip_dir(clips_root, clip_sha) / CLIP_GPKG_BASENAME.replace(".gpkg", ".kml")
 
 
 def composite_union_gpkg(clips_root: Path, role: str, composite_sha: str) -> Path:
@@ -372,6 +378,238 @@ def composite_kml_from_bundle_dir(bundle_dir: Path, role: Literal["aoi", "includ
     root = Path(str(r["clips_root"])).resolve()
     sha = str(r[role])
     return _composite_dir(root, role, sha) / UNION_GPKG_BASENAME.replace(".gpkg", ".kml")
+
+
+def read_composite_exclude_manifest(clips_root: Path, exclude_sha: str) -> list[str]:
+    """Clip SHAs referenced by the composite exclude union manifest (sorted order)."""
+    path = _composite_dir(clips_root, "exclude", exclude_sha) / MANIFEST_BASENAME
+    if not path.is_file():
+        return []
+    raw_obj = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw_obj, dict) or raw_obj.get("format") != COMPOSITE_EXCLUDE_FORMAT:
+        return []
+    clips = raw_obj.get("clips")
+    if not isinstance(clips, list):
+        return []
+    return sorted(str(x) for x in clips if isinstance(x, str))
+
+
+def read_composite_include_manifest(clips_root: Path, include_sha: str) -> list[str]:
+    """Clip SHAs referenced by the composite include union manifest (sorted order)."""
+    path = _composite_dir(clips_root, "include", include_sha) / MANIFEST_BASENAME
+    if not path.is_file():
+        return []
+    raw_obj = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw_obj, dict) or raw_obj.get("format") != COMPOSITE_INCLUDE_FORMAT:
+        return []
+    clips = raw_obj.get("clips")
+    if not isinstance(clips, list):
+        return []
+    return sorted(str(x) for x in clips if isinstance(x, str))
+
+
+def list_exclude_layer_kmz_entries(
+    bundle_dir: Path,
+    *,
+    preset: Preset,
+    data_dir: Path,
+) -> list[tuple[str, Path, str]]:
+    """Sidecar exclude layers for KMZ: ``(NetworkLink label, disk KML path, KMZ arcname)``.
+
+    Uses clip-cache manifests when ``resolve.json`` exists; otherwise legacy ``exclude/clip_manifest.json``.
+    """
+    from peaky_finders.bundle_build import (
+        CLIP_EXCLUDE,
+        CLIP_MANIFEST_BASENAME,
+        SUBDIR_EXCLUDE,
+        _clip_stem,
+        _file_tree_mtime_size_fingerprint,
+        _flatten_gdb_layer_jobs,
+        _kml_label_gdb_job,
+        aoi_inputs_fingerprint_body,
+        resolve_land_use_gdb_path,
+    )
+
+    plc = preset.bundle
+    if plc is None:
+        return []
+
+    data_dir = Path(data_dir).expanduser().resolve()
+    bundle_dir = Path(bundle_dir).expanduser().resolve()
+
+    rows: list[tuple[str, Path, str]] = []
+
+    if bundle_resolve_path(bundle_dir).is_file():
+        resolve = read_bundle_resolve(bundle_dir)
+        clips_root = Path(str(resolve["clips_root"])).resolve()
+        exclude_sha = str(resolve["exclude"])
+        manifest_shas = set(read_composite_exclude_manifest(clips_root, exclude_sha))
+        if not manifest_shas:
+            return []
+
+        mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+        gdb_fp = _file_tree_mtime_size_fingerprint
+
+        for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.exclude, data_dir):
+            body = clip_layer_fingerprint_body(
+                role="exclude",
+                preset_path=preset_path,
+                resolved=resolved,
+                layer=layer_name,
+                where=where,
+                mask_body=mask_body,
+                gdb_tree=gdb_fp(resolved),
+            )
+            sha = clip_layer_sha(body)
+            if sha not in manifest_shas:
+                continue
+            kml_disk = clip_kml_path(clips_root, sha)
+            if not kml_disk.is_file():
+                continue
+            label = _kml_label_gdb_job(preset_path, layer_name)
+            stem = _clip_stem(preset_path, resolved, layer_name, where)
+            arcname = f"exclude/layers/{stem}.kml"
+            rows.append((label, kml_disk.resolve(), arcname))
+        rows.sort(key=lambda t: t[2])
+        return rows
+
+    exc_dir = bundle_dir / SUBDIR_EXCLUDE
+    manifest_path = exc_dir / CLIP_MANIFEST_BASENAME
+    if not manifest_path.is_file():
+        return []
+    try:
+        raw_obj = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(raw_obj, dict) or raw_obj.get("format") != CLIP_EXCLUDE.manifest_format:
+        return []
+    items = raw_obj.get("items")
+    if not isinstance(items, list):
+        return []
+
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        fn = it.get("file")
+        path_str = it.get("path")
+        layer_str = it.get("layer")
+        if not isinstance(fn, str) or not isinstance(path_str, str) or not isinstance(layer_str, str):
+            continue
+        kml_disk = exc_dir / fn.replace(".gpkg", ".kml")
+        if not kml_disk.is_file():
+            continue
+        where_raw = it.get("where")
+        where_s = where_raw if isinstance(where_raw, str) else None
+        resolved = resolve_land_use_gdb_path(data_dir, path_str)
+        stem = _clip_stem(path_str, resolved, layer_str, where_s)
+        label = _kml_label_gdb_job(path_str, layer_str)
+        arcname = f"exclude/layers/{stem}.kml"
+        rows.append((label, kml_disk.resolve(), arcname))
+
+    rows.sort(key=lambda t: t[2])
+    return rows
+
+
+def list_include_layer_kmz_entries(
+    bundle_dir: Path,
+    *,
+    preset: Preset,
+    data_dir: Path,
+) -> list[tuple[str, Path, str]]:
+    """Sidecar include layers for KMZ: ``(NetworkLink label, disk KML path, KMZ arcname)``.
+
+    Uses clip-cache manifests when ``resolve.json`` exists; otherwise legacy ``include/clip_manifest.json``.
+    """
+    from peaky_finders.bundle_build import (
+        CLIP_INCLUDE,
+        CLIP_MANIFEST_BASENAME,
+        SUBDIR_INCLUDE,
+        _clip_stem,
+        _file_tree_mtime_size_fingerprint,
+        _flatten_gdb_layer_jobs,
+        _kml_label_gdb_job,
+        aoi_inputs_fingerprint_body,
+        resolve_land_use_gdb_path,
+    )
+
+    plc = preset.bundle
+    if plc is None:
+        return []
+
+    data_dir = Path(data_dir).expanduser().resolve()
+    bundle_dir = Path(bundle_dir).expanduser().resolve()
+
+    rows: list[tuple[str, Path, str]] = []
+
+    if bundle_resolve_path(bundle_dir).is_file():
+        resolve = read_bundle_resolve(bundle_dir)
+        clips_root = Path(str(resolve["clips_root"])).resolve()
+        include_sha = str(resolve["include"])
+        manifest_shas = set(read_composite_include_manifest(clips_root, include_sha))
+        if not manifest_shas:
+            return []
+
+        mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+        gdb_fp = _file_tree_mtime_size_fingerprint
+
+        for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir):
+            body = clip_layer_fingerprint_body(
+                role="include",
+                preset_path=preset_path,
+                resolved=resolved,
+                layer=layer_name,
+                where=where,
+                mask_body=mask_body,
+                gdb_tree=gdb_fp(resolved),
+            )
+            sha = clip_layer_sha(body)
+            if sha not in manifest_shas:
+                continue
+            kml_disk = clip_kml_path(clips_root, sha)
+            if not kml_disk.is_file():
+                continue
+            label = _kml_label_gdb_job(preset_path, layer_name)
+            stem = _clip_stem(preset_path, resolved, layer_name, where)
+            arcname = f"include/layers/{stem}.kml"
+            rows.append((label, kml_disk.resolve(), arcname))
+        rows.sort(key=lambda t: t[2])
+        return rows
+
+    inc_dir = bundle_dir / SUBDIR_INCLUDE
+    manifest_path = inc_dir / CLIP_MANIFEST_BASENAME
+    if not manifest_path.is_file():
+        return []
+    try:
+        raw_obj = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(raw_obj, dict) or raw_obj.get("format") != CLIP_INCLUDE.manifest_format:
+        return []
+    items = raw_obj.get("items")
+    if not isinstance(items, list):
+        return []
+
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        fn = it.get("file")
+        path_str = it.get("path")
+        layer_str = it.get("layer")
+        if not isinstance(fn, str) or not isinstance(path_str, str) or not isinstance(layer_str, str):
+            continue
+        kml_disk = inc_dir / fn.replace(".gpkg", ".kml")
+        if not kml_disk.is_file():
+            continue
+        where_raw = it.get("where")
+        where_s = where_raw if isinstance(where_raw, str) else None
+        resolved = resolve_land_use_gdb_path(data_dir, path_str)
+        stem = _clip_stem(path_str, resolved, layer_str, where_s)
+        label = _kml_label_gdb_job(path_str, layer_str)
+        arcname = f"include/layers/{stem}.kml"
+        rows.append((label, kml_disk.resolve(), arcname))
+
+    rows.sort(key=lambda t: t[2])
+    return rows
 
 
 def _write_manifest(path: Path, *, fmt: str, payload: dict[str, Any]) -> None:

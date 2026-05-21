@@ -218,10 +218,6 @@ class AggregateSiteOverlay:
     coverage_kml_href: str | None = None
 
 
-# Top-level ``doc.kml`` order after ``sites`` (NetworkLink folders only).
-_BUNDLE_LINK_ORDER_AFTER_SITES = ("eligible", "exclude", "include", "aoi")
-
-
 @dataclass(frozen=True)
 class KmzDocumentLayerVisibility:
     """Default on/off state for doc.kml folders and NetworkLinks (Google Earth initial checkbox state)."""
@@ -267,6 +263,33 @@ def _network_link_folder_xml(*, folder_label: str, kml_href: str, visible: bool 
           <href>{href_esc}</href>
         </Link>
       </NetworkLink>
+    </Folder>"""
+
+
+def _land_use_layers_folder_xml(*, folder_title: str, links: Sequence[tuple[str, str]], visible: bool) -> str:
+    """Parent ``exclude`` / ``include`` folder with per-layer NetworkLinks (preset KMZ visibility)."""
+    esc_attr = {"'": "&apos;", '"': "&quot;"}
+    title_esc = escape(folder_title, esc_attr)
+    vis_s = "1" if visible else "0"
+    inner_parts: list[str] = []
+    for label, href in links:
+        label_esc = escape(label, esc_attr)
+        href_esc = escape(href, esc_attr)
+        inner_parts.append(
+            f"""      <NetworkLink>
+        <name>{label_esc}</name>
+        <visibility>{vis_s}</visibility>
+        <Link>
+          <href>{href_esc}</href>
+        </Link>
+      </NetworkLink>"""
+        )
+    inner = "\n".join(inner_parts)
+    return f"""    <Folder>
+      <name>{title_esc}</name>
+      <visibility>{vis_s}</visibility>
+      <open>0</open>
+{inner}
     </Folder>"""
 
 
@@ -323,6 +346,8 @@ def build_aggregate_document_kml(
     sites: list[AggregateSiteOverlay],
     overlay_opacity_pct: float = 100.0,
     bundle_network_links: Sequence[tuple[str, str]] = (),
+    exclude_layer_network_links: Sequence[tuple[str, str]] = (),
+    include_layer_network_links: Sequence[tuple[str, str]] = (),
     reference_bundle_links: Sequence[tuple[str, str, bool]] = (),
     mesh_edges_href: str | None = None,
     mesh_depth_network_links: Sequence[tuple[str, str, str, str]] = (),
@@ -346,6 +371,10 @@ def build_aggregate_document_kml(
     NetworkLinks. Document order is
     ``sites`` → ``eligible`` → ``exclude`` → ``include`` →
     ``reference_bundle_links`` (each ``(name, href, visible)``) → ``aoi`` (omitting missing layers).
+
+    When ``exclude_layer_network_links`` / ``include_layer_network_links`` are non-empty, that role is one
+    parent folder whose children reference per-layer ``exclude/layers/*.kml`` or ``include/layers/*.kml``
+    sidecars (merged union KML for that role is omitted).
 
     ``sites/mesh`` holds mutual viewshed edges (``mesh_edges_href``), footprint depth bands (per-site
     NetworkLinks grouped by band), and pairwise intersections. Depth entries are
@@ -563,15 +592,47 @@ def build_aggregate_document_kml(
     )
 
     by_label = {n.strip().lower(): (n, h) for n, h in bundle_network_links}
-    bundle_tail_blocks: list[str] = [
-        _network_link_folder_xml(
-            folder_label=by_label[k][0],
-            kml_href=by_label[k][1],
-            visible=getattr(lv, k),
+    bundle_tail_blocks: list[str] = []
+    if "eligible" in by_label:
+        bundle_tail_blocks.append(
+            _network_link_folder_xml(
+                folder_label=by_label["eligible"][0],
+                kml_href=by_label["eligible"][1],
+                visible=getattr(lv, "eligible"),
+            )
         )
-        for k in _BUNDLE_LINK_ORDER_AFTER_SITES
-        if k != "aoi" and k in by_label
-    ]
+    if exclude_layer_network_links:
+        bundle_tail_blocks.append(
+            _land_use_layers_folder_xml(
+                folder_title="exclude",
+                links=exclude_layer_network_links,
+                visible=getattr(lv, "exclude"),
+            )
+        )
+    elif "exclude" in by_label:
+        bundle_tail_blocks.append(
+            _network_link_folder_xml(
+                folder_label=by_label["exclude"][0],
+                kml_href=by_label["exclude"][1],
+                visible=getattr(lv, "exclude"),
+            )
+        )
+    if include_layer_network_links:
+        bundle_tail_blocks.append(
+            _land_use_layers_folder_xml(
+                folder_title="include",
+                links=include_layer_network_links,
+                visible=getattr(lv, "include"),
+            )
+        )
+    elif "include" in by_label:
+        bundle_tail_blocks.append(
+            _network_link_folder_xml(
+                folder_label=by_label["include"][0],
+                kml_href=by_label["include"][1],
+                visible=getattr(lv, "include"),
+            )
+        )
     for label, href, vis in reference_bundle_links:
         bundle_tail_blocks.append(
             _network_link_folder_xml(folder_label=label, kml_href=href, visible=vis)

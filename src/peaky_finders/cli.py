@@ -157,10 +157,18 @@ def _bundle_land_use_layers_for_kmz(
     bundle_dir: Path,
     *,
     preset: Preset | None = None,
-) -> tuple[list[tuple[str, str]], list[tuple[Path, str]], list[tuple[str, str, bool]]]:
-    """``(bundle_network_links, zip_write_pairs, reference_links)``.
+    data_dir: Path | None = None,
+) -> tuple[
+    list[tuple[str, str]],
+    list[tuple[Path, str]],
+    list[tuple[str, str, bool]],
+    list[tuple[str, str]],
+    list[tuple[str, str]],
+]:
+    """``(bundle_network_links, zip_write_pairs, reference_links, exclude_layer_links, include_layer_links)``.
 
     ``reference_links`` entries are ``(folder_label, kml_path_in_kmz, visible)`` from ``preset.bundle.reference``.
+    ``exclude_layer_links`` / ``include_layer_links`` are ``(NetworkLink label, kmz_arcname)`` for per-layer folders.
     """
     from peaky_finders.bundle_build import (
         SUBDIR_REFERENCE,
@@ -171,19 +179,19 @@ def _bundle_land_use_layers_for_kmz(
         bundle_resolve_path,
         composite_kml_from_bundle_dir,
         eligible_gpkg_from_bundle_dir,
+        list_exclude_layer_kmz_entries,
+        list_include_layer_kmz_entries,
         read_bundle_resolve,
         reference_kml_from_bundle_dir,
     )
 
     nets: list[tuple[str, str]] = []
     zpairs: list[tuple[Path, str]] = []
+    exclude_layer_links: list[tuple[str, str]] = []
+    include_layer_links: list[tuple[str, str]] = []
     if bundle_resolve_path(bundle_dir).is_file():
-        quartet: tuple[tuple[str, Literal["aoi", "include", "exclude"], str], ...] = (
-            ("aoi", "aoi", "aoi/aoi.kml"),
-            ("include", "include", "include/include.kml"),
-            ("exclude", "exclude", "exclude/exclude.kml"),
-        )
-        for label, role, kmz_arc_s in quartet:
+        ao_pair: tuple[tuple[str, Literal["aoi"], str], ...] = (("aoi", "aoi", "aoi/aoi.kml"),)
+        for label, role, kmz_arc_s in ao_pair:
             kml_disk = composite_kml_from_bundle_dir(bundle_dir, role)
             if kml_disk.is_file():
                 nets.append((label, kmz_arc_s))
@@ -192,12 +200,10 @@ def _bundle_land_use_layers_for_kmz(
     else:
         from peaky_finders.bundle_build import SUBDIR_ELIGIBLE_LAND_USE
 
-        quartet_legacy: tuple[tuple[str, Path, str], ...] = (
+        ao_legacy: tuple[tuple[str, Path, str], ...] = (
             ("aoi", bundle_dir / "aoi" / "aoi.kml", "aoi/aoi.kml"),
-            ("include", bundle_dir / "include" / "include.kml", "include/include.kml"),
-            ("exclude", bundle_dir / "exclude" / "exclude.kml", "exclude/exclude.kml"),
         )
-        for label, kml_disk, kmz_arc_s in quartet_legacy:
+        for label, kml_disk, kmz_arc_s in ao_legacy:
             if kml_disk.is_file():
                 nets.append((label, kmz_arc_s))
                 zpairs.append((kml_disk, kmz_arc_s))
@@ -237,7 +243,20 @@ def _bundle_land_use_layers_for_kmz(
             if kml_disk is not None and kml_disk.is_file():
                 ref_links.append((ent.id, arc, ent.visible))
                 zpairs.append((kml_disk, arc))
-    return nets, zpairs, ref_links
+
+    if preset is not None and data_dir is not None:
+        for label, disk, arcname in list_exclude_layer_kmz_entries(
+            bundle_dir, preset=preset, data_dir=data_dir
+        ):
+            exclude_layer_links.append((label, arcname))
+            zpairs.append((disk, arcname))
+        for label, disk, arcname in list_include_layer_kmz_entries(
+            bundle_dir, preset=preset, data_dir=data_dir
+        ):
+            include_layer_links.append((label, arcname))
+            zpairs.append((disk, arcname))
+
+    return nets, zpairs, ref_links, exclude_layer_links, include_layer_links
 
 
 def _docker_build(repo: Path, *, dockerfile_name: str, image: str, context: str = ".") -> int:
@@ -715,8 +734,8 @@ def run_splat(args: argparse.Namespace) -> int:
                 coverage_gpkg_paths.append(gp.resolve())
 
     print("Aggregate KMZ: attaching bundle layers...", flush=True)
-    bundle_nets, bundle_zpairs, reference_bundle_links = _bundle_land_use_layers_for_kmz(
-        bundle_dir, preset=job
+    bundle_nets, bundle_zpairs, reference_bundle_links, exclude_layer_links, include_layer_links = (
+        _bundle_land_use_layers_for_kmz(bundle_dir, preset=job, data_dir=bundle_bb_data_dir)
     )
 
     doc_title = preset_id.replace("-", " ")
@@ -840,6 +859,8 @@ def run_splat(args: argparse.Namespace) -> int:
             sites=overlays,
             overlay_opacity_pct=overlay_opacity_pct,
             bundle_network_links=bundle_nets,
+            exclude_layer_network_links=exclude_layer_links,
+            include_layer_network_links=include_layer_links,
             reference_bundle_links=reference_bundle_links,
             mesh_edges_href=mesh_edges_href,
             mesh_depth_network_links=[
