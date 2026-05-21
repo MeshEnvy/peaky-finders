@@ -252,6 +252,14 @@ class SimulationConfig(BaseModel):
             "ignored by legacy SPLAT."
         ),
     )
+    coverage_pessimism_db: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Extra decode margin (dB) for conservative coverage: added to ``implementation_margin_db`` only in "
+            "emitted ``request.json`` (splatter + SPLAT thresholds). ``modem_presets`` stay datasheet-spec."
+        ),
+    )
     max_workers: SimulationMaxWorkers = Field(
         default_factory=SimulationMaxWorkers,
         description="Concurrent site jobs on the host; pick the entry matching ``provider`` (see each field).",
@@ -321,6 +329,28 @@ class SiteEntry(BaseModel):
     plss: str | None = None
     mlrs: str | None = None
     rationale: str | None = None
+    sees: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Other site slugs this location can reach in the field. A mesh edge is drawn when "
+            "both sites list each other (same layer as mutual viewshed links)."
+        ),
+    )
+
+    @field_validator("sees", mode="before")
+    @classmethod
+    def _coerce_sees(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("sees must be a list of site slugs")
+        out: list[str] = []
+        for item in v:
+            slug = str(item).strip()
+            if not slug:
+                raise ValueError("sees entries must be non-empty site slugs")
+            out.append(slug)
+        return out
 
 
 class GdbAttributeRule(BaseModel):
@@ -871,6 +901,16 @@ class Preset(BaseModel):
             if slug in seen_pin:
                 raise ValueError(f"duplicate slug in installed_pins: {slug!r}")
             seen_pin.add(slug)
+        for slug, entry in self.sites.items():
+            seen_sees: set[str] = set()
+            for target in entry.sees:
+                if target not in self.sites:
+                    raise ValueError(f"sites.{slug}.sees references unknown site slug {target!r}")
+                if target == slug:
+                    raise ValueError(f"sites.{slug}.sees must not include the site itself")
+                if target in seen_sees:
+                    raise ValueError(f"duplicate slug in sites.{slug}.sees: {target!r}")
+                seen_sees.add(target)
         return self
 
 
@@ -978,7 +1018,7 @@ def viewshed_polygon_coverage_kml_arcname(site_slug: str) -> str:
 
 
 def mesh_edges_site_to_site_kml_arcname() -> str:
-    """Path inside KMZ for mutual site–site viewshed link LineStrings."""
+    """Path inside KMZ for mutual site link LineStrings (viewshed and/or ``sites.*.sees``)."""
     return "sites/mesh/edges/site_to_site.kml"
 
 

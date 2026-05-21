@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 RadioClimate = Literal[
@@ -14,6 +14,18 @@ RadioClimate = Literal[
     "maritime_temperate_land",
     "maritime_temperate_sea",
 ]
+
+
+class LoRaModemParams(BaseModel):
+    """LoRa modem / air-interface parameters (splatter decodes cutoff from here; SPLAT ignores this block)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    spreading_factor: int = Field(ge=6, le=12)
+    bandwidth_khz: float = Field(gt=0)
+    coding_rate: int = Field(ge=5, le=8, default=5)
+    implementation_margin_db: float = Field(ge=0, default=0.0)
+    sensitivity_dbm: float | None = None
 
 
 class SplatCoverageRequest(BaseModel):
@@ -51,3 +63,7 @@ class SplatCoverageRequest(BaseModel):
     min_dbm: float = -130.0
     max_dbm: float = -30.0
     high_resolution: bool = True
+    modem: LoRaModemParams | None = Field(
+        default=None,
+        description="Peaky/populated preset: required for splatter; ignored by SPLAT (flat fields only).",
+    )

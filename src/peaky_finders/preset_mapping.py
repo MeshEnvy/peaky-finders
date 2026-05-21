@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
+from statistics import NormalDist
 from typing import Any, Literal, cast
 
-from peaky_finders.models import RadioClimate, SplatCoverageRequest
+from peaky_finders.models import LoRaModemParams, RadioClimate, SplatCoverageRequest
 from peaky_finders.sites_job import Preset, SimulationConfig
 
 _CLIMATES: frozenset[str] = frozenset(
@@ -29,6 +30,9 @@ _LORA_SENSITIVITY_125KHZ_DBM: dict[int, float] = {
     11: -134.5,
     12: -137.0,
 }
+
+# RSS × σ model for combined situation×time variability (Gaussian quantiles).
+_RELIABILITY_SIGMA_DB = 2.375
 
 _DEFAULT_ENVIRONMENT: dict[str, Any] = {
     "climate": "continental_temperate",
@@ -140,6 +144,24 @@ def _preset_tx_power_dbm(preset: Preset) -> float:
     )
 
 
+def reliability_margin_db(
+    situation_pct: float, time_pct: float, *, sigma_db: float | None = None
+) -> float:
+    """Combined reliability margin (dB) folded into SPLAT flat ``signal_threshold``.
+
+    Mirrors splatter logic: Gaussian quantiles for location and time, RSS-combined × ``σ``.
+    """
+    sigma = _RELIABILITY_SIGMA_DB if sigma_db is None else float(sigma_db)
+
+    def _z(p_pct: float) -> float:
+        p = max(1e-9, min(1.0 - 1e-9, float(p_pct) / 100.0))
+        return float(NormalDist().inv_cdf(p))
+
+    zs = _z(situation_pct)
+    zt = _z(time_pct)
+    return math.hypot(zs, zt) * sigma
+
+
 def _lora_sensitivity_dbm(modem: dict[str, Any]) -> float:
     sf = int(modem["spreading_factor"])
     if sf not in _LORA_SENSITIVITY_125KHZ_DBM:
@@ -157,21 +179,26 @@ def _lora_sensitivity_dbm(modem: dict[str, Any]) -> float:
     return sens
 
 
-def _preset_signal_threshold_dbm(preset: Preset) -> float:
+def _modem_dict_for_request(preset: Preset) -> dict[str, Any]:
+    modem = dict(resolved_modem(preset))
     rx = _sim(preset).receiver
     if "sensitivity_dbm" in rx:
-        return _f(rx["sensitivity_dbm"])
-    modem = resolved_modem(preset)
-    if "sensitivity_dbm" in modem:
-        return _f(modem["sensitivity_dbm"])
+        modem["sensitivity_dbm"] = _f(rx["sensitivity_dbm"])
+    return modem
+
+
+def modem_decode_threshold_dbm(modem: dict[str, Any]) -> float:
+    """Minimum received power at decode (dBm) before reliability margin."""
+    impl = _f(modem.get("implementation_margin_db", 0.0))
+    if "sensitivity_dbm" in modem and modem["sensitivity_dbm"] is not None:
+        return _f(modem["sensitivity_dbm"]) + impl
     required = ("spreading_factor", "bandwidth_khz")
     if not all(k in modem for k in required):
         raise ValueError(
-            "preset requires simulation.receiver.sensitivity_dbm, modem.sensitivity_dbm, "
-            "or modem spreading_factor + bandwidth_khz"
+            "preset requires modem sensitivity_dbm, or spreading_factor + bandwidth_khz "
+            "(or simulation.receiver.sensitivity_dbm, merged onto modem)"
         )
-    margin = _f(modem.get("implementation_margin_db", 0.0))
-    return _lora_sensitivity_dbm(modem) + margin
+    return _lora_sensitivity_dbm(modem) + impl
 
 
 def preset_to_request(
@@ -197,6 +224,24 @@ def preset_to_request(
     polar = str(env["polarization"]).lower()
     pol: Literal["horizontal", "vertical"] = "vertical" if polar == "vertical" else "horizontal"
 
+    modem_raw = _modem_dict_for_request(preset)
+    # Fold scenario pessimism into emitted modem margins only (YAML catalogs stay literal on-spec).
+    modem_eff = dict(modem_raw)
+    modem_eff["implementation_margin_db"] = _f(modem_eff.get("implementation_margin_db", 0.0)) + _f(
+        sim.coverage_pessimism_db
+    )
+    rel_margin = reliability_margin_db(_f(sim.situation_pct), _f(sim.time_pct))
+    decode = modem_decode_threshold_dbm(modem_eff)
+    sens_raw = modem_eff.get("sensitivity_dbm")
+
+    lm = LoRaModemParams(
+        spreading_factor=int(modem_eff["spreading_factor"]),
+        bandwidth_khz=_f(modem_eff["bandwidth_khz"]),
+        coding_rate=int(modem_eff.get("coding_rate", 5)),
+        implementation_margin_db=_f(modem_eff.get("implementation_margin_db", 0.0)),
+        sensitivity_dbm=None if sens_raw is None else _f(sens_raw),
+    )
+
     return SplatCoverageRequest(
         lat=lat,
         lon=lon,
@@ -206,7 +251,7 @@ def preset_to_request(
         frequency_mhz=_preset_frequency_mhz(preset),
         rx_height=max(1.0, _f(rx["height_m"])),
         rx_gain=_f(rx["gain_dbi"]),
-        signal_threshold=_preset_signal_threshold_dbm(preset),
+        signal_threshold=decode + rel_margin,
         clutter_height=max(0.0, _f(env["clutter_height_m"])),
         ground_dielectric=_f(env["ground_dielectric_v_m"]),
         ground_conductivity=_f(env["ground_conductivity_s_m"]),
@@ -222,4 +267,5 @@ def preset_to_request(
         min_dbm=_f(disp["min_dbm"]),
         max_dbm=_f(disp["max_dbm"]),
         high_resolution=high_resolution,
+        modem=lm,
     )

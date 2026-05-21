@@ -1,4 +1,4 @@
-"""Mutual viewshed links between sites (pairwise polygon ``covers`` on coverage footprints)."""
+"""Mutual site–site links from coverage footprints and/or preset ``sites.*.sees``."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from peaky_finders.splat_polygonize import (
     GX_NS,
 )
 
-
 KML_NS = "http://www.opengis.net/kml/2.2"
 
 
@@ -29,48 +28,88 @@ class _SiteLinkNode:
     lat: float
     lon: float
     antenna_height_agl_m: float
-    footprint: BaseGeometry
+    footprint: BaseGeometry | None = None
 
 
-def mutual_site_link_pairs(sites: Sequence[_SiteLinkNode]) -> list[tuple[int, int]]:
+def _canonical_pair(a: str, b: str) -> tuple[str, str]:
+    return (a, b) if a <= b else (b, a)
+
+
+def mutual_sees_slug_pairs(sees_by_slug: Mapping[str, Sequence[str]]) -> list[tuple[str, str]]:
+    """Slug pairs where each site lists the other in ``sees``."""
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for slug_a, targets in sees_by_slug.items():
+        target_set = {str(t).strip() for t in targets if str(t).strip()}
+        for slug_b in target_set:
+            if slug_a == slug_b:
+                continue
+            if slug_a not in {str(t).strip() for t in sees_by_slug.get(slug_b, ())}:
+                continue
+            key = _canonical_pair(slug_a, slug_b)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def mutual_footprint_link_pairs(sites: Sequence[_SiteLinkNode]) -> list[tuple[int, int]]:
     """Indices (i, j) with i < j where each pin lies in the other's footprint."""
     n = len(sites)
     out: list[tuple[int, int]] = []
     for i in range(n):
         fi = sites[i].footprint
+        if fi is None:
+            continue
         pi = Point(sites[i].lon, sites[i].lat)
         for j in range(i + 1, n):
             fj = sites[j].footprint
+            if fj is None:
+                continue
             pj = Point(sites[j].lon, sites[j].lat)
             if fi.covers(pj) and fj.covers(pi):
                 out.append((i, j))
     return out
 
 
+def mutual_site_link_slug_pairs(
+    *,
+    footprint_nodes: Sequence[_SiteLinkNode],
+    sees_by_slug: Mapping[str, Sequence[str]],
+) -> list[tuple[str, str]]:
+    """Union of mutual footprint coverage and mutual ``sees`` pairs (canonical slug order)."""
+    pairs: set[tuple[str, str]] = set()
+    for i, j in mutual_footprint_link_pairs(footprint_nodes):
+        pairs.add(_canonical_pair(footprint_nodes[i].slug, footprint_nodes[j].slug))
+    pairs.update(mutual_sees_slug_pairs(sees_by_slug))
+    return sorted(pairs)
+
+
 def write_site_links_kml(
     *,
     coverage_gpkg_by_slug: Mapping[str, Path],
     sites: Sequence[AggregateSiteOverlay],
+    sees_by_slug: Mapping[str, Sequence[str]] | None = None,
     out_kml: Path,
 ) -> bool:
-    """Write LineString KML for site–site mutual viewshed links; False if none or unsolvable.
+    """Write LineString KML for mutual site links; False if none.
 
-    ``coverage_gpkg_by_slug`` maps each site ``slug`` to its ``coverage_area.gpkg`` path
-    (propagation workspaces may be shared across slugs when inputs match).
-
-    Lines use ``altitudeMode`` ``relativeToGround`` and endpoint altitudes from
-    ``AggregateSiteOverlay.antenna_height_agl_m`` (preset transmitter AGL).
+    A pair is linked when footprints mutually cover both pins **or** both sites list each
+    other under ``sites.<slug>.sees`` in the preset.
     """
-    nodes: list[_SiteLinkNode] = []
+    overlay_by_slug = {s.slug: s for s in sites}
+    footprint_nodes: list[_SiteLinkNode] = []
     for s in sites:
-        gpkg = Path(coverage_gpkg_by_slug[s.slug])
-        fp = read_coverage_footprint(gpkg)
-        if fp is None or fp.is_empty:
-            continue
-        fp = make_valid(fp) if not fp.is_valid else fp
-        if fp.is_empty:
-            continue
-        nodes.append(
+        gpkg = coverage_gpkg_by_slug.get(s.slug)
+        fp: BaseGeometry | None = None
+        if gpkg is not None:
+            loaded = read_coverage_footprint(Path(gpkg))
+            if loaded is not None and not loaded.is_empty:
+                fp = make_valid(loaded) if not loaded.is_valid else loaded
+                if fp.is_empty:
+                    fp = None
+        footprint_nodes.append(
             _SiteLinkNode(
                 slug=s.slug,
                 folder_name=s.folder_name,
@@ -81,18 +120,30 @@ def write_site_links_kml(
             ),
         )
 
-    pairs = mutual_site_link_pairs(nodes)
-    if not pairs:
+    pair_slugs = mutual_site_link_slug_pairs(
+        footprint_nodes=footprint_nodes,
+        sees_by_slug=sees_by_slug or {},
+    )
+    if not pair_slugs:
         return False
 
-    _write_site_links_kml_document(nodes=nodes, pairs=pairs, out_kml=out_kml)
+    endpoints: list[tuple[_SiteLinkNode, _SiteLinkNode]] = []
+    node_by_slug = {n.slug: n for n in footprint_nodes}
+    for slug_a, slug_b in pair_slugs:
+        if slug_a not in overlay_by_slug or slug_b not in overlay_by_slug:
+            continue
+        endpoints.append((node_by_slug[slug_a], node_by_slug[slug_b]))
+
+    if not endpoints:
+        return False
+
+    _write_site_links_kml_document(pairs=endpoints, out_kml=out_kml)
     return True
 
 
 def _write_site_links_kml_document(
     *,
-    nodes: Sequence[_SiteLinkNode],
-    pairs: Sequence[tuple[int, int]],
+    pairs: Sequence[tuple[_SiteLinkNode, _SiteLinkNode]],
     out_kml: Path,
 ) -> None:
     out_kml = Path(out_kml)
@@ -105,10 +156,9 @@ def _write_site_links_kml_document(
     root = ET.Element(t("kml"))
     doc = ET.SubElement(root, t("Document"))
     ET.register_namespace("gx", GX_NS)
-    ET.SubElement(doc, t("name")).text = "Mutual viewshed links"
+    ET.SubElement(doc, t("name")).text = "Mutual site links"
 
-    for idx_a, idx_b in pairs:
-        a, b = nodes[idx_a], nodes[idx_b]
+    for a, b in pairs:
         pm = ET.SubElement(doc, t("Placemark"))
         ET.SubElement(pm, t("name")).text = f"{a.folder_name} ↔ {b.folder_name}"
         ls = ET.SubElement(pm, t("LineString"))

@@ -10,7 +10,7 @@ from peaky_finders.splat_input_hash import splat_input_sha256
 REPO = Path(__file__).resolve().parents[1]
 FIXTURE = REPO / "tests" / "fixtures" / "splat_request_hash_fixture.json"
 GOLDEN_SHA256 = (
-    "c65b683ee85ff7ca5876c16e1bfc9fd55929f585d3985c33cb9f7591cbe6c658"
+    "c08c8569a1ab414a053679c7fb0ed9c8726c943449f514472e3ac4f71e27011d"
 )
 
 

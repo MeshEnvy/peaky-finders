@@ -813,8 +813,12 @@ def run_splat(args: argparse.Namespace) -> int:
         mesh_edges_disk: Path | None = None
         mesh_edges_href: str | None = None
         sl_kml = overlap_dir / "site_to_site.kml"
+        sees_by_slug = {slug: entry.sees for slug, entry in job.sites.items()}
         if write_site_links_kml(
-            coverage_gpkg_by_slug=coverage_gpkg_by_slug, sites=overlays, out_kml=sl_kml
+            coverage_gpkg_by_slug=coverage_gpkg_by_slug,
+            sites=overlays,
+            sees_by_slug=sees_by_slug,
+            out_kml=sl_kml,
         ):
             mesh_edges_disk = sl_kml
             mesh_edges_href = mesh_edges_site_to_site_kml_arcname()

@@ -438,7 +438,7 @@ def build_aggregate_document_kml(
         sl_esc = escape(mesh_edges_href, {"'": "&apos;", '"': "&quot;"})
         v_nl = "1" if lv.mesh_edges else "0"
         edges_inner = f"""        <NetworkLink>
-          <name>Site-to-site mutual viewshed</name>
+          <name>Site-to-site links</name>
           <visibility>{v_nl}</visibility>
           <Link>
             <href>{sl_esc}</href>

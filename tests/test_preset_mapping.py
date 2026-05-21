@@ -7,9 +7,10 @@ import pytest
 from peaky_finders.preset_mapping import (
     _lora_sensitivity_dbm,
     _preset_frequency_mhz,
-    _preset_signal_threshold_dbm,
     _preset_tx_power_dbm,
+    modem_decode_threshold_dbm,
     preset_to_request,
+    reliability_margin_db,
     resolved_environment,
     resolved_modem,
 )
@@ -107,19 +108,57 @@ def test_lora_sensitivity_sf7_62khz() -> None:
     assert sens == -126.01029995663981
 
 
-def test_derived_threshold_without_modem_sensitivity() -> None:
+def test_derived_modem_decode_without_modem_sensitivity() -> None:
     catalog = dict(_MESHCORE_US)
     catalog.pop("sensitivity_dbm")
     sim = _minimal_simulation()
     sim.modem_presets["meshcore-us"] = catalog
     preset = _minimal_preset(simulation=sim)
-    assert _preset_signal_threshold_dbm(preset) == -123.01029995663981
+    modem = resolved_modem(preset)
+    expected = modem_decode_threshold_dbm(modem)
+    assert expected == pytest.approx(-123.01029995663981)
 
 
 def test_preset_to_request_uses_simulation_presets() -> None:
-    req = preset_to_request(_minimal_preset(), 39.0, -119.0)
+    preset = _minimal_preset()
+    req = preset_to_request(preset, 39.0, -119.0)
     assert req.frequency_mhz == 910.525
     assert req.tx_power == 22.0
-    assert req.signal_threshold == -121.0
+    assert req.signal_threshold == pytest.approx(
+        modem_decode_threshold_dbm(resolved_modem(preset))
+        + reliability_margin_db(float(preset.simulation.situation_pct), float(preset.simulation.time_pct))
+    )
+    assert req.modem is not None
+    assert req.modem.spreading_factor == 7
+    assert req.modem.bandwidth_khz == 62.5
+    assert req.modem.implementation_margin_db == 3.0
+    assert req.modem.sensitivity_dbm == -121.0
     assert req.radio_climate == "desert"
     assert req.clutter_height == 1.0
+
+
+def test_coverage_pessimism_db_folds_into_emitted_modem_margin() -> None:
+    """Preset catalogs stay literal; pessimism merges into ``request.json`` modem block only."""
+    preset = _minimal_preset(simulation=_minimal_simulation(coverage_pessimism_db=5.5))
+    assert resolved_modem(preset)["implementation_margin_db"] == 3.0
+
+    req = preset_to_request(preset, 39.0, -119.0)
+    assert req.modem is not None
+    assert req.modem.implementation_margin_db == pytest.approx(3.0 + 5.5)
+    rel = reliability_margin_db(
+        float(preset.simulation.situation_pct), float(preset.simulation.time_pct)
+    )
+    assert req.signal_threshold == pytest.approx(-121.0 + 3.0 + 5.5 + rel)
+
+
+def test_receiver_sensitivity_overrides_modem_in_request_modem_block() -> None:
+    preset = _minimal_preset()
+    preset.simulation.receiver["sensitivity_dbm"] = -117.5
+    req = preset_to_request(preset, 39.0, -119.0)
+    assert req.modem is not None and req.modem.sensitivity_dbm == -117.5
+    rel = reliability_margin_db(
+        float(preset.simulation.situation_pct), float(preset.simulation.time_pct)
+    )
+    assert req.signal_threshold == pytest.approx(-117.5 + 3.0 + rel)
+
+

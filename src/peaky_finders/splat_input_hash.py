@@ -2,7 +2,7 @@
 
 Stable hash for skipping reruns when RF inputs are unchanged. Schema ``v`` bumps when
 normalization or coverage semantics change (e.g. SPLAT ITM vs splatter Fresnel/FSPL).
-Version **5**: splatter uses ITU-R P.526 knife-edge excess loss from terrain/Fresnel violation instead of hard LOS blocking.
+Version **6**: mandatory ``modem`` block for splatter; LoRa cutoff + RSS reliability margin hashed; SPLAT ignores ``modem``.
 
 Use Docker image ``splatter:latest`` by default; override with ``PEAKY_SPLAT_IMAGE``.
 Default coverage image: ``docker build -t splatter:latest splatter/``.
@@ -17,7 +17,7 @@ import json
 from peaky_finders.models import SplatCoverageRequest
 
 # Bump when SPLAT invocation, normalization, or output semantics change (invalidates host-side skips).
-SPLAT_CACHE_SCHEMA_VERSION = 5
+SPLAT_CACHE_SCHEMA_VERSION = 6
 
 
 def normalize_splat_request(request: SplatCoverageRequest) -> SplatCoverageRequest:

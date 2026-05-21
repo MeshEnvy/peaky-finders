@@ -9,7 +9,7 @@ from shapely.geometry import box
 
 from peaky_finders import kml_bundle
 from peaky_finders.splat_polygonize import COVERAGE_GPKG_NAME, GX_DRAW_ORDER_MESH_SITE_TO_SITE
-from peaky_finders.viewshed_links import write_site_links_kml
+from peaky_finders.viewshed_links import mutual_sees_slug_pairs, write_site_links_kml
 
 
 def _write_coverage_gpkg(path: Path, geom) -> None:
@@ -91,3 +91,33 @@ def test_write_site_links_single_site_no_pairs(tmp_path: Path) -> None:
         sites=[_overlay(slug="only", lat=39.01, lon=-115.02)],
         out_kml=out,
     )
+
+
+def test_mutual_sees_slug_pairs_requires_both_directions() -> None:
+    assert mutual_sees_slug_pairs({"a": ["b"], "b": ["a"]}) == [("a", "b")]
+    assert mutual_sees_slug_pairs({"a": ["b"], "b": []}) == []
+    assert mutual_sees_slug_pairs({"a": ["b"], "b": ["c"], "c": ["b"]}) == [("b", "c")]
+
+
+def test_write_site_links_mutual_sees_without_footprint_overlap(tmp_path: Path) -> None:
+    splats = tmp_path / "splats"
+    _write_coverage_gpkg(splats / "a" / COVERAGE_GPKG_NAME, box(-116.0, 39.0, -115.9, 39.1))
+    _write_coverage_gpkg(splats / "b" / COVERAGE_GPKG_NAME, box(-114.0, 39.0, -113.9, 39.1))
+
+    out = tmp_path / "links.kml"
+    ok = write_site_links_kml(
+        coverage_gpkg_by_slug={
+            "a": splats / "a" / COVERAGE_GPKG_NAME,
+            "b": splats / "b" / COVERAGE_GPKG_NAME,
+        },
+        sites=[
+            _overlay(slug="a", lat=39.05, lon=-115.95),
+            _overlay(slug="b", lat=39.05, lon=-113.95),
+        ],
+        sees_by_slug={"a": ["b"], "b": ["a"]},
+        out_kml=out,
+    )
+    assert ok
+    raw = out.read_text(encoding="utf-8")
+    assert "<LineString>" in raw
+    assert "A" in raw and "B" in raw
