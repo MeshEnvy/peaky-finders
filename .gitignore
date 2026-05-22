@@ -12,5 +12,8 @@ dist/
 **/target/
 
 .local
-projects
 .cache
+*.kmz
+share
+build
+projects/nevada/data
