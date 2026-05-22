@@ -4,6 +4,3 @@
 [submodule "splat"]
 	path = splat
 	url = git@github.com:jmcmellen/splat.git
-[submodule "mesh-rf-antennas"]
-	path = mesh-rf-antennas
-	url = git@github.com:WanderingMesh/mesh-rf-antennas.git
