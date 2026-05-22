@@ -6,6 +6,7 @@ Layout::
     clips/aoi/<aoi_sha>/union.{gpkg,kml,png} + manifest.json
     clips/include|<exclude>/<sha>/union.{gpkg,kml,png} + manifest.json
     clips/eligible/<eligible_sha>/eligible_land_use.{gpkg,kml,png}
+    clips/eligible/<eligible_sha>/layers/<stem>.{kml,png}  (per-include eligible ∩ global eligible)
     clips/reference/<entry_sha>/reference.{gpkg,kml,png} or .empty
 
 Job workspaces live at ``<cache_base>/bundles/<job_sha>/`` with ``resolve.json`` pointing into ``clips/``.
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -47,6 +49,8 @@ CLIP_GPKG_BASENAME = "clip.gpkg"
 UNION_GPKG_BASENAME = "union.gpkg"
 ELIGIBLE_GPKG_BASENAME = "eligible_land_use.gpkg"
 ELIGIBLE_LAYER = "eligible_land_use"
+# Slice sidecars in KMZ: subsets of aggregated eligible attributable to each include clip.
+ELIGIBLE_SLICE_LAYERS_SUBDIR = "layers"
 REFERENCE_GPKG_BASENAME = "reference.gpkg"
 REFERENCE_GPKG_LAYER = "reference"
 REFERENCE_EMPTY_MARKER = ".empty"
@@ -612,6 +616,170 @@ def list_include_layer_kmz_entries(
     return rows
 
 
+def sync_eligible_include_layer_slices(
+    *,
+    plc: BundleConfig,
+    data_dir: Path,
+    clips_root: Path,
+    mask_body: str,
+    eligible_gpkg: Path,
+    kml_overlay: BundleKmlOverlayStyles | None,
+) -> None:
+    """Write ``clips/eligible/<sha>/layers/<stem>.kml``: global eligible ∩ each include clip (post-exclusions)."""
+
+    from peaky_finders.bundle_build import (
+        eligible_land_slice_from_include_clip_gpkg,
+        _clip_stem,
+        _file_tree_mtime_size_fingerprint,
+        _flatten_gdb_layer_jobs,
+        _kml_label_gdb_job,
+        _write_geodataframe_kml,
+    )
+
+    eligible_gpkg = eligible_gpkg.expanduser().resolve()
+    if not eligible_gpkg.is_file():
+        return
+
+    clips_root = Path(clips_root).expanduser().resolve()
+    data_dir_res = Path(data_dir).expanduser().resolve()
+    layers_root = eligible_gpkg.parent / ELIGIBLE_SLICE_LAYERS_SUBDIR
+    gdb_fp = _file_tree_mtime_size_fingerprint
+
+    try:
+        g_el = gpd.read_file(eligible_gpkg, layer=ELIGIBLE_LAYER)
+    except Exception:
+        if layers_root.is_dir():
+            shutil.rmtree(layers_root)
+        return
+
+    if g_el.empty or g_el.geometry.is_empty.iloc[0]:
+        if layers_root.is_dir():
+            shutil.rmtree(layers_root)
+        return
+
+    geom_ll = make_valid(g_el.geometry.iloc[0])
+    if geom_ll.is_empty:
+        if layers_root.is_dir():
+            shutil.rmtree(layers_root)
+        return
+
+    mask_sha = aoi_mask_sha_from_body(mask_body)
+    include_sha = _sha16(
+        composite_include_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+    )
+    manifest_shas = set(read_composite_include_manifest(clips_root, include_sha))
+
+    wanted_stems: set[str] = set()
+    layers_root.mkdir(parents=True, exist_ok=True)
+
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir_res):
+        body = clip_layer_fingerprint_body(
+            role="include",
+            preset_path=preset_path,
+            resolved=resolved,
+            layer=layer_name,
+            where=where,
+            mask_body=mask_body,
+            gdb_tree=gdb_fp(resolved),
+        )
+        sha = clip_layer_sha(body)
+        if sha not in manifest_shas:
+            continue
+        stem = _clip_stem(preset_path, resolved, layer_name, where)
+        wanted_stems.add(stem)
+        clip_disk = clip_gpkg_path(clips_root, sha)
+        kml_out = layers_root / f"{stem}.kml"
+
+        png_out = kml_out.with_suffix(".png")
+        if not clip_disk.is_file():
+            kml_out.unlink(missing_ok=True)
+            png_out.unlink(missing_ok=True)
+            continue
+
+        layer_label = _kml_label_gdb_job(preset_path, layer_name)
+        slice_df = eligible_land_slice_from_include_clip_gpkg(geom_ll, clip_disk)
+
+        kml_out.unlink(missing_ok=True)
+        png_out.unlink(missing_ok=True)
+        if slice_df.empty or slice_df.geometry.is_empty.all():
+            continue
+        _write_geodataframe_kml(slice_df, kml_out, layer_label=layer_label, kml_overlay=kml_overlay)
+
+    for stray in layers_root.glob("*.kml"):
+        if stray.stem not in wanted_stems:
+            stray.unlink(missing_ok=True)
+            stray.with_suffix(".png").unlink(missing_ok=True)
+
+
+def list_eligible_layer_kmz_entries(
+    bundle_dir: Path,
+    *,
+    preset: Preset,
+    data_dir: Path,
+) -> list[tuple[str, Path, str]]:
+    """Eligible slice KMZ triples mapped to arcnames ``eligible/layers/<stem>.kml``."""
+    from peaky_finders.bundle_build import (
+        _clip_stem,
+        _file_tree_mtime_size_fingerprint,
+        _flatten_gdb_layer_jobs,
+        _kml_label_gdb_job,
+        aoi_inputs_fingerprint_body,
+    )
+
+    plc = preset.bundle
+    if plc is None:
+        return []
+
+    bundle_dir = Path(bundle_dir).expanduser().resolve()
+    data_dir = Path(data_dir).expanduser().resolve()
+
+    rows: list[tuple[str, Path, str]] = []
+
+    if not bundle_resolve_path(bundle_dir).is_file():
+        return rows
+
+    resolve = read_bundle_resolve(bundle_dir)
+    clips_root = Path(str(resolve["clips_root"])).resolve()
+
+    gdb_fp = _file_tree_mtime_size_fingerprint
+
+    eligible_gpkg = eligible_gpkg_path(clips_root, str(resolve["eligible"]))
+    layers_root = eligible_gpkg.parent / ELIGIBLE_SLICE_LAYERS_SUBDIR
+    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+    mask_sha = aoi_mask_sha_from_body(mask_body)
+    include_sha = _sha16(
+        composite_include_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+    )
+    manifest_shas = set(read_composite_include_manifest(clips_root, include_sha))
+    if not manifest_shas:
+        return []
+
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir):
+        body = clip_layer_fingerprint_body(
+            role="include",
+            preset_path=preset_path,
+            resolved=resolved,
+            layer=layer_name,
+            where=where,
+            mask_body=mask_body,
+            gdb_tree=gdb_fp(resolved),
+        )
+        sha = clip_layer_sha(body)
+        if sha not in manifest_shas:
+            continue
+        stem = _clip_stem(preset_path, resolved, layer_name, where)
+        kml_disk = layers_root / f"{stem}.kml"
+        if not kml_disk.is_file():
+            continue
+        base = _kml_label_gdb_job(preset_path, layer_name)
+        label = f"Eligible: {base}"
+        arcname = f"eligible/layers/{stem}.kml"
+        rows.append((label, kml_disk.resolve(), arcname))
+
+    rows.sort(key=lambda t: t[2])
+    return rows
+
+
 def _write_manifest(path: Path, *, fmt: str, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     body = {"format": fmt, **payload}
@@ -949,6 +1117,9 @@ def ensure_bundle_clip_cache(
     eligible_dir = _composite_dir(clips_root, "eligible", eligible_sha)
     eligible_gpkg = eligible_dir / ELIGIBLE_GPKG_BASENAME
     if force and eligible_gpkg.is_file():
+        lyr = eligible_dir / ELIGIBLE_SLICE_LAYERS_SUBDIR
+        if lyr.is_dir():
+            shutil.rmtree(lyr)
         for suf in (".gpkg", ".kml", ".png"):
             (eligible_dir / ELIGIBLE_GPKG_BASENAME.replace(".gpkg", suf)).unlink(missing_ok=True)
 
@@ -963,6 +1134,15 @@ def ensure_bundle_clip_cache(
             layer_label=ELIGIBLE_LAYER,
             kml_overlay=kml_overlay,
         )
+
+    sync_eligible_include_layer_slices(
+        plc=plc,
+        data_dir=data_dir,
+        clips_root=clips_root,
+        mask_body=mask_body,
+        eligible_gpkg=eligible_gpkg,
+        kml_overlay=kml_overlay,
+    )
 
     return ClipBuildResult(
         aoi_sha=aoi_sha,
@@ -1079,6 +1259,14 @@ def refresh_clip_kml_sidecars(
             gdf,
             result.eligible_gpkg.with_suffix(".kml"),
             layer_label=ELIGIBLE_LAYER,
+            kml_overlay=kml_overlay,
+        )
+        sync_eligible_include_layer_slices(
+            plc=plc,
+            data_dir=data_dir,
+            clips_root=clips_root,
+            mask_body=mask_body,
+            eligible_gpkg=result.eligible_gpkg,
             kml_overlay=kml_overlay,
         )
 

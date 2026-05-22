@@ -615,3 +615,82 @@ def test_include_kml_placemark_balloon(tmp_path: Path) -> None:
     assert "<name>Sector 7</name>" in raw
     assert "Inclusion layer:" in raw and "include/foo.gpkg::public_land" in raw
     assert "ACRES:" in raw
+
+
+def test_build_aggregate_document_kml_eligible_layers_parent_folder() -> None:
+    xml = kml_bundle.build_aggregate_document_kml(
+        document_title="t",
+        sites=[
+            kml_bundle.AggregateSiteOverlay(
+                slug="s",
+                folder_name="S",
+                overlay_href="sites/viewsheds/raster/s/splat.png",
+                north=1.0,
+                south=0.0,
+                east=1.0,
+                west=0.0,
+                rotation=0.0,
+                center_lat=0.5,
+                center_lon=0.5,
+                antenna_height_agl_m=2.0,
+                pin_description="p",
+            )
+        ],
+        bundle_network_links=[
+            ("aoi", "aoi/aoi.kml"),
+            ("exclude", "exclude/exclude.kml"),
+            ("include", "include/include.kml"),
+        ],
+        eligible_layer_network_links=[
+            ("Eligible: foo", "eligible/layers/part_a.kml"),
+            ("Eligible: bar", "eligible/layers/part_b.kml"),
+        ],
+        reference_bundle_links=[("blm_districts", "reference/districts.kml", False)],
+    )
+    assert "eligible/eligible_land_use.kml" not in xml
+    assert '<Folder>\n      <name>eligible</name>' in xml
+    assert "eligible/layers/part_a.kml" in xml and "eligible/layers/part_b.kml" in xml
+    i_elig_folder = xml.find('<Folder>\n      <name>eligible</name>')
+    i_exclude = xml.find("<name>exclude</name>")
+    assert i_elig_folder != -1 and i_exclude != -1
+    assert i_elig_folder < i_exclude
+
+
+def test_kml_overlay_role_eligible_slices_use_disk_layout_not_include_label() -> None:
+    slice_kml = Path("/work/clips/eligible/a1b2c3d412345678/layers/inc.kml")
+    lab = "include/foo.gpkg::public_land"
+    assert bundle_build._kml_overlay_role(slice_kml, lab) == "eligible"
+
+
+def test_eligible_land_slice_trimmed_to_global_eligible_polygon(tmp_path: Path) -> None:
+    eligible_ll = box(-118.5, 38.0, -118.2, 38.4)
+    clip_ll = box(-118.4, 38.05, -117.95, 38.45)
+    g_clip = gpd.GeoDataFrame(geometry=[clip_ll], crs="EPSG:4326").to_crs("EPSG:3857")
+    clip_path = tmp_path / "inc.gpkg"
+    g_clip.to_file(clip_path, driver="GPKG", layer="features")
+
+    out = bundle_build.eligible_land_slice_from_include_clip_gpkg(eligible_ll, clip_path)
+    assert not out.empty
+    xmax = out.geometry.iloc[0].bounds[2]
+    assert xmax <= -118.2 + 1e-6
+
+
+def test_eligible_slice_under_layers_placemark_heading(tmp_path: Path) -> None:
+    lyr = tmp_path / "clips" / "eligible" / "0123456789abcdef" / "layers"
+    lyr.mkdir(parents=True)
+    kml_path = lyr / "stem.kml"
+    gdf = gpd.GeoDataFrame(
+        {
+            "NAME": ["Remainder"],
+            "geometry": [box(-118.4, 38.1, -118.3, 38.15)],
+        },
+        crs="EPSG:4326",
+    )
+    bundle_build._write_geodataframe_kml(
+        gdf,
+        kml_path,
+        layer_label="include/foo.gpkg::public_land",
+        kml_overlay=None,
+    )
+    raw = kml_path.read_text(encoding="utf-8")
+    assert "Eligible land (after exclusions):" in raw and "include/foo.gpkg::public_land" in raw

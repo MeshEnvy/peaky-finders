@@ -164,11 +164,12 @@ def _bundle_land_use_layers_for_kmz(
     list[tuple[str, str, bool]],
     list[tuple[str, str]],
     list[tuple[str, str]],
+    list[tuple[str, str]],
 ]:
-    """``(bundle_network_links, zip_write_pairs, reference_links, exclude_layer_links, include_layer_links)``.
+    """``(nets, zpairs, refs, exclude links, include links, eligible_slice links)``.
 
     ``reference_links`` entries are ``(folder_label, kml_path_in_kmz, visible)`` from ``preset.bundle.reference``.
-    ``exclude_layer_links`` / ``include_layer_links`` are ``(NetworkLink label, kmz_arcname)`` for per-layer folders.
+    Per-role layer links pair ``NetworkLink`` label with KMZ arcname (``*/layers/*.kml`` trees).
     """
     from peaky_finders.bundle_build import (
         SUBDIR_REFERENCE,
@@ -179,6 +180,7 @@ def _bundle_land_use_layers_for_kmz(
         bundle_resolve_path,
         composite_kml_from_bundle_dir,
         eligible_gpkg_from_bundle_dir,
+        list_eligible_layer_kmz_entries,
         list_exclude_layer_kmz_entries,
         list_include_layer_kmz_entries,
         read_bundle_resolve,
@@ -189,6 +191,7 @@ def _bundle_land_use_layers_for_kmz(
     zpairs: list[tuple[Path, str]] = []
     exclude_layer_links: list[tuple[str, str]] = []
     include_layer_links: list[tuple[str, str]] = []
+    eligible_layer_links: list[tuple[str, str]] = []
     if bundle_resolve_path(bundle_dir).is_file():
         ao_pair: tuple[tuple[str, Literal["aoi"], str], ...] = (("aoi", "aoi", "aoi/aoi.kml"),)
         for label, role, kmz_arc_s in ao_pair:
@@ -209,9 +212,7 @@ def _bundle_land_use_layers_for_kmz(
                 zpairs.append((kml_disk, kmz_arc_s))
         elig_kml = bundle_dir / SUBDIR_ELIGIBLE_LAND_USE / "eligible_land_use.kml"
     elig_arc = "eligible/eligible_land_use.kml"
-    if elig_kml.is_file():
-        nets.append(("eligible", elig_arc))
-        zpairs.append((elig_kml, elig_arc))
+    use_eligible_slices = False
 
     ref_links: list[tuple[str, str, bool]] = []
     b = preset.bundle if preset is not None else None
@@ -255,8 +256,18 @@ def _bundle_land_use_layers_for_kmz(
         ):
             include_layer_links.append((label, arcname))
             zpairs.append((disk, arcname))
+        for label, disk, arcname in list_eligible_layer_kmz_entries(
+            bundle_dir, preset=preset, data_dir=data_dir
+        ):
+            eligible_layer_links.append((label, arcname))
+            zpairs.append((disk, arcname))
+        use_eligible_slices = len(eligible_layer_links) > 0
 
-    return nets, zpairs, ref_links, exclude_layer_links, include_layer_links
+    if not use_eligible_slices and elig_kml.is_file():
+        nets.append(("eligible", elig_arc))
+        zpairs.append((elig_kml, elig_arc))
+
+    return nets, zpairs, ref_links, exclude_layer_links, include_layer_links, eligible_layer_links
 
 
 def _docker_build(repo: Path, *, dockerfile_name: str, image: str, context: str = ".") -> int:
@@ -734,7 +745,7 @@ def run_splat(args: argparse.Namespace) -> int:
                 coverage_gpkg_paths.append(gp.resolve())
 
     print("Aggregate KMZ: attaching bundle layers...", flush=True)
-    bundle_nets, bundle_zpairs, reference_bundle_links, exclude_layer_links, include_layer_links = (
+    bundle_nets, bundle_zpairs, reference_bundle_links, exclude_layer_links, include_layer_links, eligible_layer_links = (
         _bundle_land_use_layers_for_kmz(bundle_dir, preset=job, data_dir=bundle_bb_data_dir)
     )
 
@@ -859,6 +870,7 @@ def run_splat(args: argparse.Namespace) -> int:
             sites=overlays,
             overlay_opacity_pct=overlay_opacity_pct,
             bundle_network_links=bundle_nets,
+            eligible_layer_network_links=eligible_layer_links,
             exclude_layer_network_links=exclude_layer_links,
             include_layer_network_links=include_layer_links,
             reference_bundle_links=reference_bundle_links,

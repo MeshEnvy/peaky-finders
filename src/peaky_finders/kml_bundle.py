@@ -348,6 +348,7 @@ def build_aggregate_document_kml(
     bundle_network_links: Sequence[tuple[str, str]] = (),
     exclude_layer_network_links: Sequence[tuple[str, str]] = (),
     include_layer_network_links: Sequence[tuple[str, str]] = (),
+    eligible_layer_network_links: Sequence[tuple[str, str]] = (),
     reference_bundle_links: Sequence[tuple[str, str, bool]] = (),
     mesh_edges_href: str | None = None,
     mesh_depth_network_links: Sequence[tuple[str, str, str, str]] = (),
@@ -371,6 +372,10 @@ def build_aggregate_document_kml(
     NetworkLinks. Document order is
     ``sites`` → ``eligible`` → ``exclude`` → ``include`` →
     ``reference_bundle_links`` (each ``(name, href, visible)``) → ``aoi`` (omitting missing layers).
+
+    When ``eligible_layer_network_links`` are non-empty, ``eligible`` is one parent folder whose children
+    reference per-include ``eligible/layers/*.kml`` sidecars derived from aggregated eligible ∩ each
+    include clip (areas removed by exclusions are not shown).
 
     When ``exclude_layer_network_links`` / ``include_layer_network_links`` are non-empty, that role is one
     parent folder whose children reference per-layer ``exclude/layers/*.kml`` or ``include/layers/*.kml``
@@ -593,7 +598,15 @@ def build_aggregate_document_kml(
 
     by_label = {n.strip().lower(): (n, h) for n, h in bundle_network_links}
     bundle_tail_blocks: list[str] = []
-    if "eligible" in by_label:
+    if eligible_layer_network_links:
+        bundle_tail_blocks.append(
+            _land_use_layers_folder_xml(
+                folder_title="eligible",
+                links=eligible_layer_network_links,
+                visible=getattr(lv, "eligible"),
+            )
+        )
+    elif "eligible" in by_label:
         bundle_tail_blocks.append(
             _network_link_folder_xml(
                 folder_label=by_label["eligible"][0],

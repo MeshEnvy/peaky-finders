@@ -491,6 +491,23 @@ def _kml_inject_ge_polygon_render_hints(kml_path: Path, *, layer_label: str) -> 
     tree.write(kml_path, encoding="utf-8", xml_declaration=True)
 
 
+def _disk_path_under_clip_eligible_composite(kml_path: Path) -> bool:
+    """Detect ``.../eligible/<composite_sha>/...`` clip-cache layout (eligible union or per-include slices).
+
+    Paths use the same preset ``layer_label`` as include GDB clips — classify by filesystem location before
+    ``include/…`` GDB path prefixes on the label.
+    """
+    parts_lower = [p.lower() for p in kml_path.parts]
+    hex16 = frozenset("0123456789abcdef")
+    for i in range(len(parts_lower) - 1):
+        if parts_lower[i] != "eligible":
+            continue
+        seg = parts_lower[i + 1]
+        if len(seg) == 16 and all(ch in hex16 for ch in seg):
+            return True
+    return False
+
+
 def _kml_overlay_role(kml_path: Path, layer_label: str) -> str:
     """Preset ``kml_overlay`` role key: aoi, include, exclude, eligible, etc."""
     stem = kml_path.stem.lower()
@@ -507,6 +524,8 @@ def _kml_overlay_role(kml_path: Path, layer_label: str) -> str:
         or "/exclude/" in gdb_path_prefix
     ):
         return "exclude"
+    if _disk_path_under_clip_eligible_composite(kml_path):
+        return "eligible"
     if (
         SUBDIR_INCLUDE in parts_lower
         or stem == "include"
@@ -574,7 +593,7 @@ def _gdb_clip_placemark_description(row: pd.Series, layer_label: str, *, heading
 def _kml_enrich_gdb_clip_placemarks(
     kml_path: Path, g: gpd.GeoDataFrame, *, layer_label: str, description_heading: str
 ) -> None:
-    """Set polygon Placemark ``name`` / ``description`` for include/exclude GDB clip sidecars."""
+    """Set polygon ``Placemark`` ``name`` / ``description`` for bundle vector sidecars."""
     if g.empty:
         return
     try:
@@ -831,6 +850,13 @@ def _write_geodataframe_kml(
         _kml_enrich_gdb_clip_placemarks(
             kml_path, g, layer_label=layer_label, description_heading="Inclusion layer"
         )
+    elif role_ll == "eligible" and kml_path.parent.name.lower() == "layers":
+        _kml_enrich_gdb_clip_placemarks(
+            kml_path,
+            g,
+            layer_label=layer_label,
+            description_heading="Eligible land (after exclusions)",
+        )
     _write_geodataframe_preview_png(
         g,
         kml_path.with_suffix(".png"),
@@ -1023,6 +1049,56 @@ def build_eligible_land_use_gdf(
     if geom_ll.is_empty:
         return empty
     return gpd.GeoDataFrame(geometry=[geom_ll], crs="EPSG:4326")
+
+
+def eligible_land_slice_from_include_clip_gpkg(
+    eligible_geom_ll: BaseGeometry,
+    include_clip_gpkg: Path,
+) -> gpd.GeoDataFrame:
+    """Eligible land attributable to one include clip: ``eligible ∩ clip`` projected like the global eligible op.
+
+    The global eligible area is ``(∪ include) \\\\ ∪ exclude`` (:func:`build_eligible_land_use_gdf`).
+    Returned polygons are subsets of ``eligible_geom_ll`` (after exclusions): each feature lies within that
+    include clip footprint and within the aggregated eligible polygon.
+    """
+    empty_ll = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+    if eligible_geom_ll is None or eligible_geom_ll.is_empty:
+        return empty_ll
+
+    igpkg = Path(include_clip_gpkg).expanduser().resolve()
+    if not igpkg.is_file():
+        return empty_ll
+
+    inc = gpd.read_file(igpkg)
+    if inc.empty:
+        return empty_ll
+    if inc.crs is None:
+        raise ValueError(f"CRS missing on include clip for eligible slice KML build: {igpkg}")
+    inc_3857 = inc.to_crs("EPSG:3857")
+    clip_u = _sanitize_collection(list(inc_3857.geometry))
+    clip_u = make_valid(clip_u) if not clip_u.is_valid else clip_u
+    if clip_u.is_empty:
+        return empty_ll
+
+    elig_ll = make_valid(eligible_geom_ll)
+    elig_3857 = gpd.GeoDataFrame(geometry=[elig_ll], crs="EPSG:4326").to_crs("EPSG:3857")
+    eg3857 = make_valid(elig_3857.geometry.iloc[0])
+    if eg3857.is_empty:
+        return empty_ll
+
+    raw = eg3857.intersection(clip_u)
+    raw = make_valid(raw) if not raw.is_valid else raw
+    if raw.is_empty:
+        return empty_ll
+
+    clipped = _polygonal_area_only(raw)
+    if clipped.is_empty:
+        return empty_ll
+    slice_ll = gpd.GeoDataFrame(geometry=[clipped], crs="EPSG:3857").to_crs("EPSG:4326")
+    geom_out = make_valid(slice_ll.geometry.iloc[0])
+    if geom_out.is_empty:
+        return empty_ll
+    return gpd.GeoDataFrame(geometry=[geom_out], crs="EPSG:4326")
 
 
 def _kml_label_aoi_clip(path: str, layer: str) -> str:
