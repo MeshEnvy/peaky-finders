@@ -51,12 +51,34 @@ def peaky_projects_dir() -> Path:
     return peaky_home() / "projects"
 
 
-def peaky_cache_dir() -> Path:
-    """Shared cache root (``PEAKY_CACHE`` or ``<peaky_home>/.cache``)."""
-    raw = os.environ.get("PEAKY_CACHE", "").strip()
+def peaky_share_dir() -> Path:
+    """Optional shared root (``PEAKY_SHARE``); default ``<peaky_home>/share``.
+
+    Clips/DEM/PLSS locator cache use :func:`resolved_preset_build_dir` subtrees
+    (``<preset>/build/{clips,dem,plss_mlrs}``) — this path is only for ad-hoc tooling.
+    """
+    raw = os.environ.get("PEAKY_SHARE", "").strip()
     if raw:
         return Path(raw).expanduser().resolve()
-    return peaky_home() / ".cache"
+    return peaky_home() / "share"
+
+
+def resolved_preset_build_dir(preset_path: Path) -> Path:
+    """Per-preset Makefile outputs root: ``<preset-dir>/build``."""
+    p = Path(preset_path).expanduser().resolve()
+    return (p.parent / "build").resolve()
+
+
+def resolved_preset_clips_dir(preset_path: Path | str) -> Path:
+    """Content-addressed GDB clip + composite cache: ``<preset>/build/clips``."""
+    p = Path(preset_path).expanduser().resolve()
+    return (resolved_preset_build_dir(p) / "clips").resolve()
+
+
+def resolved_preset_dem_tile_cache_dir(preset_path: Path | str) -> Path:
+    """Skadi ``*.hgt.gz`` mirror under ``<preset>/build/dem``."""
+    p = Path(preset_path).expanduser().resolve()
+    return (resolved_preset_build_dir(p) / "dem").resolve()
 
 
 def resolve_preset_yaml_arg(
@@ -113,9 +135,16 @@ def resolved_preset_slug(preset_path: Path) -> str:
 
 
 def resolved_aggregate_kmz_path(preset_path: Path) -> Path:
-    """Write aggregate KMZ beside the preset (``projects/<slug>/<slug>.kmz`` for project configs)."""
+    """Write aggregate KMZ under preset build dir (``<preset-dir>/build/<slug>.kmz``)."""
     path = Path(preset_path).expanduser().resolve()
-    return path.parent / f"{resolved_preset_slug(path)}.kmz"
+    slug = resolved_preset_slug(path)
+    return (resolved_preset_build_dir(path) / f"{slug}.kmz").resolve()
+
+
+def resolved_mesh_site_links_kml(preset_path: Path) -> Path:
+    """Stable mesh linkage KML emitted by ``peaky mesh links``."""
+    path = Path(preset_path).expanduser().resolve()
+    return resolved_preset_build_dir(path) / "mesh" / "links" / "site_to_site.kml"
 
 
 def resolved_preset_bundle_data_dir(
@@ -205,25 +234,19 @@ class CoverageProvider(StrEnum):
 
 
 class SimulationMaxWorkers(BaseModel):
-    """Per-provider host parallelism for concurrent site coverage jobs (``SplatDispatcher``)."""
+    """Optional per-provider parallelism hints on the preset (Makefile ``-j`` owns real fan-out today)."""
 
     model_config = ConfigDict(extra="ignore")
 
     los: int = Field(
         default=1,
         ge=1,
-        description=(
-            "Threadpool size when ``simulation.provider`` is ``los``. splatter parallelizes the raster "
-            "with Rayon inside one container; 1 avoids oversubscribing CPUs across sites."
-        ),
+        description="Unused at runtime today; LOS runs one workspace per ``peaky viewshed`` invocation.",
     )
     splat: int = Field(
         default=8,
         ge=1,
-        description=(
-            "Threadpool size when ``simulation.provider`` is ``splat``. SPLAT! is typically one CPU-heavy "
-            "process per site, so >1 uses idle cores for additional sites."
-        ),
+        description="Unused at runtime today; SPLAT runs one workspace per ``peaky viewshed`` invocation.",
     )
 
 
@@ -903,55 +926,45 @@ class Preset(BaseModel):
 
 
 def resolved_coverage_dispatcher_max_workers(job: Preset) -> int:
-    """Host ``SplatDispatcher`` size: ``simulation.max_workers`` entry for the active ``provider``."""
+    """Resolve ``simulation.max_workers.{los|splat}`` (kept for preset schema/tests)."""
     mw = job.simulation.max_workers
     if job.simulation.provider == CoverageProvider.LOS:
         return mw.los
     return mw.splat
 
 
-def resolved_cache_base() -> Path:
-    """Directory holding ``clips/``, ``bundles/``, ``splat_tiles/``, ``viewsheds/``, ``mesh_pairwise/``, and ``mesh_depth/``."""
-    return peaky_cache_dir()
+def resolved_bundle_dir(*, preset_path: Path) -> Path:
+    """Preset bundle workspace root: ``<preset>/build/bundle`` (``resolve.json`` and sidecars)."""
+
+    pp = Path(preset_path).expanduser().resolve()
+    return resolved_preset_build_dir(pp) / "bundle"
 
 
-def resolved_bundle_cache_root(*, cli_bundle_cache_root: Path | None) -> Path:
-    """GeoPackage bundle cache root ``…/bundles`` unless ``cli_bundle_cache_root`` is set."""
-    if cli_bundle_cache_root is not None:
-        return Path(cli_bundle_cache_root).expanduser().resolve()
-    return resolved_cache_base() / "bundles"
-
-
-def resolved_viewshed_cache_root(bundle_cache_root: Path) -> Path:
-    """Host SPLAT workdirs ``…/viewsheds`` sibling to the bundle cache root."""
+def resolved_viewshed_dir(bundle_cache_root: Path) -> Path:
+    """SPLAT workdirs sibling to ``bundle``: ``<build>/viewsheds``."""
     root = Path(bundle_cache_root).expanduser().resolve()
-    return root.parent / "viewsheds"
+    return (root.parent / "viewsheds").resolve()
 
 
-def resolved_mesh_pairwise_geometry_cache_root(bundle_cache_root: Path) -> Path:
-    """Pairwise footprint∩footprint overlap geometry ``…/mesh_pairwise`` sibling to bundle cache root."""
+def resolved_mesh_pairwise_dir(bundle_cache_root: Path) -> Path:
+    """Pairwise overlap geometry: ``<build>/mesh/pairwise``."""
     root = Path(bundle_cache_root).expanduser().resolve()
-    return root.parent / "mesh_pairwise"
+    return (root.parent / "mesh" / "pairwise").resolve()
 
 
-def resolved_mesh_depth_cache_root(bundle_cache_root: Path) -> Path:
-    """Mesh coverage depth band + slice geometry ``…/mesh_depth`` sibling to bundle cache root."""
+def resolved_mesh_depth_dir(bundle_cache_root: Path) -> Path:
+    """Mesh depth geometry: ``<build>/mesh/depth``."""
     root = Path(bundle_cache_root).expanduser().resolve()
-    return root.parent / "mesh_depth"
+    return (root.parent / "mesh" / "depth").resolve()
 
 
-def resolved_eligible_union_cache_root(bundle_cache_root: Path) -> Path:
-    """Eligible land-use union geometry ``…/eligible_union`` sibling to bundle cache root."""
+def resolved_eligible_union_build_dir(bundle_cache_root: Path) -> Path:
+    """Eligible union subtree: ``<build>/eligible_union``."""
     root = Path(bundle_cache_root).expanduser().resolve()
-    return root.parent / "eligible_union"
+    return (root.parent / "eligible_union").resolve()
 
 
-def resolved_splat_tile_cache_dir() -> Path:
-    """Skadi / SPLAT DEM tile mirror ``…/splat_tiles`` under :func:`resolved_cache_base`."""
-    return resolved_cache_base() / "splat_tiles"
-
-
-def parse_preset_dict(raw: dict) -> Preset:
+def parse_preset_dict(raw: Mapping[str, Any]) -> Preset:
     """Coerce/validate a preset mapping (same rules as :func:`load_preset` without file I/O)."""
     sites_raw = raw.get("sites")
     if isinstance(sites_raw, list):

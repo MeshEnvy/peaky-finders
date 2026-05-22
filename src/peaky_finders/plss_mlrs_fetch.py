@@ -70,22 +70,6 @@ def write_plss_mlrs_loc_cache(cache_base: Path, by_loc: dict[str, dict[str, str]
     )
 
 
-def cadnsdi_slugs_needing_refresh(
-    preset: Preset,
-    cached_locs: set[str],
-    *,
-    force_all: bool,
-) -> set[str]:
-    if force_all:
-        return set(preset.sites.keys())
-    need: set[str] = set()
-    for slug, ent in preset.sites.items():
-        st = loc_stamp(ent.lat, ent.lon)
-        if st not in cached_locs:
-            need.add(slug)
-    return need
-
-
 def _query(layer: int, lon: float, lat: float) -> dict:
     params = urllib.parse.urlencode(
         {
@@ -263,46 +247,25 @@ def _seed_loc_cache_from_preset(preset: Preset, loc_cache: dict[str, dict[str, s
             loc_cache[stamp] = {"plss": ent.plss or "", "mlrs": ent.mlrs or ""}
 
 
-def maybe_refresh_plss_mlrs_for_bundle(
+def refresh_plss_mlrs_for_bundle(
     *,
     preset_path: Path,
     cache_base: Path,
     preset: Preset,
-    force_all: bool,
-    skip_network: bool,
-    verbose_log: Callable[[str], None] | None,
 ) -> None:
-    """Update preset ``plss`` / ``mlrs`` via CadNSDI when ``loc`` is not yet cached (or ``force_all``).
-
-    Cached by lat/lon under ``{cache_base}/plss_mlrs/by_loc.json`` — independent of bundle AOI digest.
-    """
-    if skip_network:
-        if verbose_log:
-            verbose_log("plss/mlrs: skip (--no-plss-fetch)")
-        return
+    """Rewrite PLSS/mlrs from CadNSDI for every preset site and update ``by_loc.json``."""
 
     cache_base = Path(cache_base).expanduser().resolve()
     preset_path = Path(preset_path).expanduser().resolve()
     loc_cache = read_plss_mlrs_loc_cache(cache_base)
-    before_len = len(loc_cache)
     _seed_loc_cache_from_preset(preset, loc_cache)
-    need = cadnsdi_slugs_needing_refresh(preset, set(loc_cache), force_all=force_all)
-
-    if not need:
-        if len(loc_cache) > before_len:
-            write_plss_mlrs_loc_cache(cache_base, loc_cache)
-        if verbose_log:
-            verbose_log("plss/mlrs: skip (all site locs cached)")
-        return
-
-    print(f"plss/mlrs: CadNSDI refresh for {len(need)} site(s)", flush=True)
-
+    site_slugs = set(preset.sites.keys())
+    print(f"plss/mlrs: CadNSDI refresh for {len(site_slugs)} site(s)", flush=True)
     populate_preset_plss_mlrs_file(
         preset_path,
-        site_slugs=need,
+        site_slugs=site_slugs,
         loc_cache=loc_cache,
-        force_network=force_all,
-        progress=verbose_log,
+        force_network=True,
+        progress=None,
     )
-
     write_plss_mlrs_loc_cache(cache_base, loc_cache)

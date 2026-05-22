@@ -129,6 +129,21 @@ def iter_skadi_tile_names_for_wgs84_bounds(
     return names
 
 
+def fetch_skadi_hgt_tile_always(
+    tile_name: str,
+    splat_tile_cache_dir: str | Path,
+    *,
+    bucket_name: str = DEFAULT_SKADI_BUCKET,
+    bucket_prefix: str = DEFAULT_SKADI_PREFIX,
+) -> None:
+    """Download one Skadi ``*.hgt.gz`` tile and write to the mirror (overwrites)."""
+    tn = tile_name if str(tile_name).endswith(".hgt.gz") else f"{tile_name}.hgt.gz"
+    mirror_root = skadi_mirror_resolve_root(splat_tile_cache_dir)
+    cli = skadi_unsigned_s3_client()
+    blob = fetch_skadi_hgt_gzip_bytes(cli, tn, bucket_name=bucket_name, bucket_prefix=bucket_prefix)
+    skadi_write_bytes_atomic(skadi_mirror_tile_gz_path(mirror_root, tn), blob)
+
+
 def prefetch_skadi_hgt_for_bounds(
     *,
     minx: float,
@@ -141,24 +156,15 @@ def prefetch_skadi_hgt_for_bounds(
     bucket_prefix: str = DEFAULT_SKADI_PREFIX,
     verbose_log: Callable[[str], None] | None = None,
     log_parallel_errors: Callable[[str], None] | None = None,
-) -> tuple[int, int, list[str]]:
-    """Fetch missing Skadi tiles into loose-file mirror; returns ``(skipped, downloaded, errs)``.
+) -> tuple[int, list[str]]:
+    """Fetch every Skadi tile intersecting the bbox; always overwrites mirror files.
 
-    Each tile is written as ``mirror_root/{{NxxWyyy}}.hgt.gz`` verbatim from S3.
+    Returns ``(n_tiles_attempted, errs)``.
     """
     all_tiles = iter_skadi_tile_names_for_wgs84_bounds(minx, miny, maxx, maxy)
     if not all_tiles:
-        return (0, 0, [])
+        return (0, [])
     mirror_root = skadi_mirror_resolve_root(splat_tile_cache_dir)
-
-    missing: list[str] = []
-    for t in all_tiles:
-        p = skadi_mirror_tile_gz_path(mirror_root, t)
-        if not p.is_file():
-            missing.append(t)
-
-    skipped = len(all_tiles) - len(missing)
-    downloaded = 0
     errs: list[str] = []
 
     def _say(msg: str) -> None:
@@ -167,7 +173,7 @@ def prefetch_skadi_hgt_for_bounds(
 
     _say(
         f"dem prefetch bbox (4326)=({minx},{miny},{maxx},{maxy}) "
-        f"tiles={len(all_tiles)} missing={len(missing)} mirror={mirror_root}"
+        f"tiles={len(all_tiles)} mirror={mirror_root}"
     )
 
     def _pull_one(tile_name: str) -> tuple[str, bytes]:
@@ -176,9 +182,9 @@ def prefetch_skadi_hgt_for_bounds(
             cli, tile_name, bucket_name=bucket_name, bucket_prefix=bucket_prefix
         )
 
-    worker_cap = max(1, min(max_workers, len(missing)))
+    worker_cap = max(1, min(max_workers, len(all_tiles)))
     with ThreadPoolExecutor(max_workers=worker_cap) as ex:
-        futs = {ex.submit(_pull_one, t): t for t in missing}
+        futs = {ex.submit(_pull_one, t): t for t in all_tiles}
         for fut in as_completed(futs):
             t = futs[fut]
             try:
@@ -186,7 +192,6 @@ def prefetch_skadi_hgt_for_bounds(
                 skadi_write_bytes_atomic(
                     skadi_mirror_tile_gz_path(mirror_root, tile_name), blob
                 )
-                downloaded += 1
                 _say(f"dem prefetch downloaded {tile_name} ({len(blob)} bytes)")
             except Exception as e:  # noqa: BLE001
                 msg = f"{t}: {e}"
@@ -195,7 +200,7 @@ def prefetch_skadi_hgt_for_bounds(
                     log_parallel_errors(msg)
                 else:
                     logger.warning("dem prefetch failed: %s", msg)
-    return (skipped, downloaded, errs)
+    return (len(all_tiles), errs)
 
 
 def prefetch_skadi_hgt_for_bounds_fatal(
@@ -208,8 +213,8 @@ def prefetch_skadi_hgt_for_bounds_fatal(
     max_workers: int = 16,
     verbose_log: Callable[[str], None] | None = None,
     log_parallel_errors: Callable[[str], None] | None = None,
-) -> tuple[int, int]:
-    skipped, dl, errs = prefetch_skadi_hgt_for_bounds(
+) -> int:
+    n_tiles, errs = prefetch_skadi_hgt_for_bounds(
         minx=minx,
         miny=miny,
         maxx=maxx,
@@ -223,4 +228,4 @@ def prefetch_skadi_hgt_for_bounds_fatal(
         preview = errs[:10]
         more = f" (+{len(errs) - 10} more)" if len(errs) > 10 else ""
         raise RuntimeError(f"dem prefetch failures ({len(errs)}): {'; '.join(preview)}{more}")
-    return skipped, dl
+    return n_tiles

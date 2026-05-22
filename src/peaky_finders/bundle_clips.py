@@ -1,25 +1,32 @@
-"""Content-addressed clip cache under ``<cache_base>/clips/``.
+"""Clip cache layout under ``<preset>/build/clips/``.
 
 Layout::
 
-    clips/clip/<clip_sha>/clip.{gpkg,kml,png}
-    clips/aoi/<aoi_sha>/union.{gpkg,kml,png} + manifest.json
-    clips/include|<exclude>/<sha>/union.{gpkg,kml,png} + manifest.json
-    clips/eligible/<eligible_sha>/eligible_land_use.{gpkg,kml,png}
-    clips/eligible/<eligible_sha>/layers/<stem>.{kml,png}  (per-include eligible ∩ global eligible)
-    clips/reference/<entry_sha>/reference.{gpkg,kml,png} or .empty
+    build/clips/layer_jobs/{aoi|include|exclude}/<stem>/clip.{gpkg,kml,png} + clip_job.json
 
-Job workspaces live at ``<cache_base>/bundles/<job_sha>/`` with ``resolve.json`` pointing into ``clips/``.
+``<stem>`` is preset GDB path + layer (+ optional ``where``); no content hash in the path.
+    build/clips/{aoi|include|exclude}/composite_workspace.json + manifest.json + union.{gpkg,kml,png}
+    build/clips/eligible/… (:func:`eligible_land_use_workspace_dir`, etc.)
+    build/clips/reference/<safe-entry-id>/reference_workspace.json + reference.{gpkg,kml,png|.empty}
+
+``resolve.json`` still stores logical fingerprints; directories use stable labels, not fingerprint segments.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Iterator, Literal
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # pragma: no cover — Windows lacks flock; rely on caller not parallelizing
 
 import geopandas as gpd
 from shapely import make_valid
@@ -40,22 +47,53 @@ CLIP_LAYER_FORMAT = "clip_layer/v1"
 COMPOSITE_AOI_FORMAT = "composite_aoi/v1"
 COMPOSITE_INCLUDE_FORMAT = "composite_include/v1"
 COMPOSITE_EXCLUDE_FORMAT = "composite_exclude/v1"
-COMPOSITE_ELIGIBLE_FORMAT = "composite_eligible/v1"
+COMPOSITE_ELIGIBLE_FORMAT = "composite_eligible/v2"
 REFERENCE_ENTRY_FORMAT = "reference_entry/v1"
 BUNDLE_RESOLVE_FORMAT = "bundle_resolve/v2"
 
 MANIFEST_BASENAME = "manifest.json"
+LAYER_JOBS_SUBDIR = "layer_jobs"
+COMPOSITE_WORKSPACE_JSON_NAME = "composite_workspace.json"
+COMPOSITE_WORKSPACE_FMT = "peaky_clip_composite_workspace/v1"
+CLIP_JOB_WORKSPACE_NAME = "clip_job.json"
+CLIP_JOB_WORKSPACE_FMT = "peaky_clip_job_workspace/v1"
+REFERENCE_WORKSPACE_JSON_NAME = "reference_workspace.json"
+REFERENCE_WORKSPACE_FMT = "peaky_clip_reference_workspace/v1"
+
 CLIP_GPKG_BASENAME = "clip.gpkg"
 UNION_GPKG_BASENAME = "union.gpkg"
 ELIGIBLE_GPKG_BASENAME = "eligible_land_use.gpkg"
 ELIGIBLE_LAYER = "eligible_land_use"
 # Slice sidecars in KMZ: subsets of aggregated eligible attributable to each include clip.
 ELIGIBLE_SLICE_LAYERS_SUBDIR = "layers"
+ELIGIBLE_WORKSPACE_MANIFEST_NAME = "eligible_workspace.json"
+ELIGIBLE_WORKSPACE_MANIFEST_FMT = "peaky_eligible_workspace/v1"
 REFERENCE_GPKG_BASENAME = "reference.gpkg"
 REFERENCE_GPKG_LAYER = "reference"
 REFERENCE_EMPTY_MARKER = ".empty"
 
 ClipRole = Literal["aoi", "include", "exclude"]
+
+
+@contextmanager
+def _clips_cache_exclusive_lock(clips_root: Path) -> Iterator[None]:
+    """Exclusive lock so parallel ``make -j`` bundle jobs cannot clobber clip cache writes.
+
+    Granular ``bundle clip`` / ``bundle composite`` / ``bundle eligible`` jobs may run under
+    ``make -j``; the lock prevents concurrent writers from clobbering the same clip workspace.
+    """
+    lock_path = clips_root / ".peaky_bundle_clip_cache.lock"
+    lock_path.touch(exist_ok=True)
+    if fcntl is None:
+        yield
+        return
+    handle = lock_path.open("a", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def resolved_clips_cache_root(cache_base: Path) -> Path:
@@ -66,41 +104,60 @@ def _sha16(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
-def _clip_dir(clips_root: Path, clip_sha: str) -> Path:
-    return clips_root / "clip" / clip_sha
+def composite_workspace_dir(clips_root: Path, role: ClipRole | str) -> Path:
+    """Stable directory for AOI / include / exclude union artifacts."""
+
+    rr = str(role)
+    if rr not in {"aoi", "include", "exclude"}:
+        raise ValueError(f"composite_workspace_dir: bad role {role!r}")
+    return Path(clips_root).expanduser().resolve() / rr
 
 
-def _composite_dir(clips_root: Path, role: str, composite_sha: str) -> Path:
-    return clips_root / role / composite_sha
+def clip_job_dir(clips_root: Path, role: ClipRole, stem: str) -> Path:
+    return Path(clips_root).expanduser().resolve() / LAYER_JOBS_SUBDIR / role / stem
 
 
-def _reference_dir(clips_root: Path, entry_sha: str) -> Path:
-    return clips_root / "reference" / entry_sha
+def layer_job_gpkg_path(clips_root: Path, role: ClipRole, stem: str) -> Path:
+    return clip_job_dir(clips_root, role, stem) / CLIP_GPKG_BASENAME
 
 
-def reference_gpkg_path(clips_root: Path, entry_sha: str) -> Path:
-    return _reference_dir(clips_root, entry_sha) / REFERENCE_GPKG_BASENAME
+def layer_job_kml_path(clips_root: Path, role: ClipRole, stem: str) -> Path:
+    return clip_job_dir(clips_root, role, stem) / CLIP_GPKG_BASENAME.replace(".gpkg", ".kml")
 
 
-def reference_kml_path(clips_root: Path, entry_sha: str) -> Path:
-    return _reference_dir(clips_root, entry_sha) / REFERENCE_GPKG_BASENAME.replace(".gpkg", ".kml")
+def composite_union_gpkg(clips_root: Path, role: str, composite_sha: str | None = None) -> Path:
+    _ = composite_sha
+    return composite_workspace_dir(clips_root, role) / UNION_GPKG_BASENAME
 
 
-def clip_gpkg_path(clips_root: Path, clip_sha: str) -> Path:
-    return _clip_dir(clips_root, clip_sha) / CLIP_GPKG_BASENAME
+def reference_entry_dir(clips_root: Path, entry_id: str) -> Path:
+    from peaky_finders.path_labels import filesystem_safe_slug
+
+    return Path(clips_root).expanduser().resolve() / "reference" / filesystem_safe_slug(entry_id)
 
 
-def clip_kml_path(clips_root: Path, clip_sha: str) -> Path:
-    """Sidecar KML beside ``clip.gpkg`` for one cached GDB clip."""
-    return _clip_dir(clips_root, clip_sha) / CLIP_GPKG_BASENAME.replace(".gpkg", ".kml")
+def reference_gpkg_path(clips_root: Path, entry_id: str) -> Path:
+    return reference_entry_dir(clips_root, entry_id) / REFERENCE_GPKG_BASENAME
 
 
-def composite_union_gpkg(clips_root: Path, role: str, composite_sha: str) -> Path:
-    return _composite_dir(clips_root, role, composite_sha) / UNION_GPKG_BASENAME
+def reference_kml_path(clips_root: Path, entry_id: str) -> Path:
+    return reference_entry_dir(clips_root, entry_id) / REFERENCE_GPKG_BASENAME.replace(".gpkg", ".kml")
 
 
-def eligible_gpkg_path(clips_root: Path, eligible_sha: str) -> Path:
-    return _composite_dir(clips_root, "eligible", eligible_sha) / ELIGIBLE_GPKG_BASENAME
+
+
+
+def eligible_land_use_workspace_dir(clips_root: Path) -> Path:
+    """Stable directory ``clips/eligible`` (eligible SHA is recorded in workspace manifest only)."""
+
+    return Path(clips_root).expanduser().resolve() / "eligible"
+
+
+def eligible_gpkg_path(clips_root: Path, eligible_sha: str | None = None) -> Path:
+    """Path to aggregated eligible GeoPackage under ``clips/eligible`` (SHA argument ignored; kept for callers)."""
+
+    _ = eligible_sha
+    return eligible_land_use_workspace_dir(clips_root) / ELIGIBLE_GPKG_BASENAME
 
 
 def clip_layer_fingerprint_body(
@@ -199,11 +256,14 @@ def composite_exclude_fingerprint_body(
     return "\n".join(parts) + "\n"
 
 
-def eligible_fingerprint_body(*, include_sha: str, exclude_sha: str) -> str:
+def eligible_fingerprint_body(*, include_sha: str, exclude_sha: str, bundle_land_digest: str) -> str:
+    """Inputs for aggregated eligible polygon (include/exclude composites + bundle-wide land-use tree digest)."""
+
     return (
         f"format={COMPOSITE_ELIGIBLE_FORMAT}\n"
         f"include={include_sha}\n"
         f"exclude={exclude_sha}\n"
+        f"bundle_land_digest={bundle_land_digest}\n"
     )
 
 
@@ -218,6 +278,7 @@ def plan_clip_build_result(
         _file_tree_mtime_size_fingerprint,
         _flatten_gdb_layer_jobs,
         aoi_inputs_fingerprint_body,
+        land_use_inputs_fingerprint_body,
     )
 
     data_dir = Path(data_dir).expanduser().resolve()
@@ -246,18 +307,164 @@ def plan_clip_build_result(
     exclude_sha = _sha16(
         composite_exclude_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
     )
-    eligible_sha = _sha16(eligible_fingerprint_body(include_sha=include_sha, exclude_sha=exclude_sha))
+    bundle_land_digest = _sha16(land_use_inputs_fingerprint_body(plc, data_dir))
+    eligible_sha = _sha16(
+        eligible_fingerprint_body(
+            include_sha=include_sha,
+            exclude_sha=exclude_sha,
+            bundle_land_digest=bundle_land_digest,
+        )
+    )
     return ClipBuildResult(
         aoi_sha=aoi_sha,
         include_sha=include_sha,
         exclude_sha=exclude_sha,
         eligible_sha=eligible_sha,
-        eligible_gpkg=eligible_gpkg_path(clips_root, eligible_sha),
+        eligible_gpkg=eligible_gpkg_path(clips_root),
     )
+
+
+@dataclass(frozen=True)
+class PlannedClipLayer:
+    """One GDB layer clip under ``clips/layer_jobs/{role}/{stem}/clip.gpkg``."""
+
+    role: ClipRole
+    preset_path: str
+    layer: str
+    where: str | None
+    stem: str
+    sha: str
+    gpkg: Path
+    input_files: tuple[Path, ...]
+
+
+def _plan_clip_layer_job(
+    *,
+    clips_root: Path,
+    role: ClipRole,
+    preset_path: str,
+    resolved: Path,
+    layer_name: str,
+    where: str | None,
+    mask_body: str,
+    gdb_fp: Any,
+) -> PlannedClipLayer:
+    from peaky_finders.bundle_build import _clip_stem, list_gdb_input_files
+
+    body = clip_layer_fingerprint_body(
+        role=role,
+        preset_path=preset_path,
+        resolved=resolved,
+        layer=layer_name,
+        where=where,
+        mask_body=mask_body,
+        gdb_tree=gdb_fp(resolved),
+    )
+    sha = clip_layer_sha(body)
+    stem = _clip_stem(preset_path, layer_name, where)
+    return PlannedClipLayer(
+        role=role,
+        preset_path=preset_path,
+        layer=layer_name,
+        where=where,
+        stem=stem,
+        sha=sha,
+        gpkg=layer_job_gpkg_path(clips_root, role, stem),
+        input_files=list_gdb_input_files(resolved),
+    )
+
+
+def plan_clip_layer_jobs(
+    *,
+    plc: BundleConfig,
+    data_dir: Path,
+    clips_root: Path,
+) -> tuple[tuple[PlannedClipLayer, ...], ClipBuildResult]:
+    """Resolve every clip layer job plus composite SHAs (no builds)."""
+    from peaky_finders.bundle_build import (
+        _file_tree_mtime_size_fingerprint,
+        _flatten_gdb_layer_jobs,
+        aoi_inputs_fingerprint_body,
+    )
+
+    data_dir = Path(data_dir).expanduser().resolve()
+    clips_root = Path(clips_root).expanduser().resolve()
+    composites = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips_root)
+    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+    gdb_fp = _file_tree_mtime_size_fingerprint
+
+    layers: list[PlannedClipLayer] = []
+    for role, groups in (
+        ("aoi", plc.aoi),
+        ("include", plc.include),
+        ("exclude", plc.exclude),
+    ):
+        for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(groups, data_dir):
+            if not resolved.exists():
+                raise FileNotFoundError(
+                    f"{role} GDB not found: {resolved} (preset path {preset_path!r})"
+                )
+            job = _plan_clip_layer_job(
+                clips_root=clips_root,
+                role=role,  # type: ignore[arg-type]
+                preset_path=preset_path,
+                resolved=resolved,
+                layer_name=layer_name,
+                where=where,
+                mask_body=mask_body,
+                gdb_fp=gdb_fp,
+            )
+            layers.append(
+                PlannedClipLayer(
+                    role=job.role,
+                    preset_path=job.preset_path,
+                    layer=job.layer,
+                    where=job.where,
+                    stem=job.stem,
+                    sha=job.sha,
+                    gpkg=job.gpkg,
+                    input_files=job.input_files,
+                )
+            )
+
+    return tuple(layers), composites
 
 
 def aoi_mask_sha_from_body(mask_body: str) -> str:
     return _sha16(mask_body)
+
+
+def _sorted_layer_job_gpkgs_for_clip_shas(
+    *,
+    plc: BundleConfig,
+    role: ClipRole,
+    clips_root: Path,
+    data_dir: Path,
+    mask_body: str,
+    clip_shas: list[str],
+) -> list[Path]:
+    from peaky_finders.bundle_build import _clip_stem, _file_tree_mtime_size_fingerprint, _flatten_gdb_layer_jobs
+
+    gdb_fp = _file_tree_mtime_size_fingerprint
+    groups = plc.aoi if role == "aoi" else plc.include if role == "include" else plc.exclude
+    want = frozenset(clip_shas)
+    by_sha: dict[str, Path] = {}
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(groups, data_dir):
+        body = clip_layer_fingerprint_body(
+            role=role,
+            preset_path=preset_path,
+            resolved=resolved,
+            layer=layer_name,
+            where=where,
+            mask_body=mask_body,
+            gdb_tree=gdb_fp(resolved),
+        )
+        sha = clip_layer_sha(body)
+        if sha not in want:
+            continue
+        stem = _clip_stem(preset_path, layer_name, where)
+        by_sha[sha] = layer_job_gpkg_path(clips_root, role, stem)
+    return [by_sha[s] for s in sorted(clip_shas) if s in by_sha]
 
 
 def bundle_resolve_path(bundle_dir: Path) -> Path:
@@ -297,10 +504,8 @@ def write_bundle_resolve(
     }
     if reference:
         payload["reference"] = dict(sorted(reference.items()))
-    bundle_resolve_path(bundle_dir).write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    path = bundle_resolve_path(bundle_dir)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def reference_entry_fingerprint_body(
@@ -368,25 +573,25 @@ def reference_kml_from_bundle_dir(bundle_dir: Path, entry_id: str) -> Path:
     if not isinstance(sha, str):
         raise KeyError(f"reference entry not in resolve.json: {entry_id!r}")
     root = Path(str(r["clips_root"])).resolve()
-    return reference_kml_path(root, sha)
+    return reference_kml_path(root, entry_id)
 
 
 def eligible_gpkg_from_bundle_dir(bundle_dir: Path) -> Path:
     r = read_bundle_resolve(bundle_dir)
     root = Path(str(r["clips_root"])).resolve()
-    return eligible_gpkg_path(root, str(r["eligible"]))
+    return eligible_gpkg_path(root)
 
 
 def composite_kml_from_bundle_dir(bundle_dir: Path, role: Literal["aoi", "include", "exclude"]) -> Path:
     r = read_bundle_resolve(bundle_dir)
     root = Path(str(r["clips_root"])).resolve()
-    sha = str(r[role])
-    return _composite_dir(root, role, sha) / UNION_GPKG_BASENAME.replace(".gpkg", ".kml")
+    _ = str(r[role])
+    return composite_workspace_dir(root, role) / UNION_GPKG_BASENAME.replace(".gpkg", ".kml")
 
 
-def read_composite_exclude_manifest(clips_root: Path, exclude_sha: str) -> list[str]:
+def read_composite_exclude_manifest(clips_root: Path) -> list[str]:
     """Clip SHAs referenced by the composite exclude union manifest (sorted order)."""
-    path = _composite_dir(clips_root, "exclude", exclude_sha) / MANIFEST_BASENAME
+    path = composite_workspace_dir(clips_root, "exclude") / MANIFEST_BASENAME
     if not path.is_file():
         return []
     raw_obj = json.loads(path.read_text(encoding="utf-8"))
@@ -398,9 +603,9 @@ def read_composite_exclude_manifest(clips_root: Path, exclude_sha: str) -> list[
     return sorted(str(x) for x in clips if isinstance(x, str))
 
 
-def read_composite_include_manifest(clips_root: Path, include_sha: str) -> list[str]:
+def read_composite_include_manifest(clips_root: Path) -> list[str]:
     """Clip SHAs referenced by the composite include union manifest (sorted order)."""
-    path = _composite_dir(clips_root, "include", include_sha) / MANIFEST_BASENAME
+    path = composite_workspace_dir(clips_root, "include") / MANIFEST_BASENAME
     if not path.is_file():
         return []
     raw_obj = json.loads(path.read_text(encoding="utf-8"))
@@ -420,18 +625,14 @@ def list_exclude_layer_kmz_entries(
 ) -> list[tuple[str, Path, str]]:
     """Sidecar exclude layers for KMZ: ``(NetworkLink label, disk KML path, KMZ arcname)``.
 
-    Uses clip-cache manifests when ``resolve.json`` exists; otherwise legacy ``exclude/clip_manifest.json``.
+    Requires ``bundle/resolve.json``.
     """
     from peaky_finders.bundle_build import (
-        CLIP_EXCLUDE,
-        CLIP_MANIFEST_BASENAME,
-        SUBDIR_EXCLUDE,
         _clip_stem,
         _file_tree_mtime_size_fingerprint,
         _flatten_gdb_layer_jobs,
         _kml_label_gdb_job,
         aoi_inputs_fingerprint_body,
-        resolve_land_use_gdb_path,
     )
 
     plc = preset.bundle
@@ -441,75 +642,44 @@ def list_exclude_layer_kmz_entries(
     data_dir = Path(data_dir).expanduser().resolve()
     bundle_dir = Path(bundle_dir).expanduser().resolve()
 
+    resolve_path = bundle_resolve_path(bundle_dir)
+    if not resolve_path.is_file():
+        raise FileNotFoundError(
+            f"bundle resolve manifest missing: {resolve_path}. "
+            "Run ``peaky bundle resolve PRESET.yaml`` (Makefile bundle target)."
+        )
+
     rows: list[tuple[str, Path, str]] = []
 
-    if bundle_resolve_path(bundle_dir).is_file():
-        resolve = read_bundle_resolve(bundle_dir)
-        clips_root = Path(str(resolve["clips_root"])).resolve()
-        exclude_sha = str(resolve["exclude"])
-        manifest_shas = set(read_composite_exclude_manifest(clips_root, exclude_sha))
-        if not manifest_shas:
-            return []
-
-        mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
-        gdb_fp = _file_tree_mtime_size_fingerprint
-
-        for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.exclude, data_dir):
-            body = clip_layer_fingerprint_body(
-                role="exclude",
-                preset_path=preset_path,
-                resolved=resolved,
-                layer=layer_name,
-                where=where,
-                mask_body=mask_body,
-                gdb_tree=gdb_fp(resolved),
-            )
-            sha = clip_layer_sha(body)
-            if sha not in manifest_shas:
-                continue
-            kml_disk = clip_kml_path(clips_root, sha)
-            if not kml_disk.is_file():
-                continue
-            label = _kml_label_gdb_job(preset_path, layer_name)
-            stem = _clip_stem(preset_path, resolved, layer_name, where)
-            arcname = f"exclude/layers/{stem}.kml"
-            rows.append((label, kml_disk.resolve(), arcname))
-        rows.sort(key=lambda t: t[2])
-        return rows
-
-    exc_dir = bundle_dir / SUBDIR_EXCLUDE
-    manifest_path = exc_dir / CLIP_MANIFEST_BASENAME
-    if not manifest_path.is_file():
-        return []
-    try:
-        raw_obj = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(raw_obj, dict) or raw_obj.get("format") != CLIP_EXCLUDE.manifest_format:
-        return []
-    items = raw_obj.get("items")
-    if not isinstance(items, list):
+    resolve = read_bundle_resolve(bundle_dir)
+    clips_root = Path(str(resolve["clips_root"])).resolve()
+    manifest_shas = set(read_composite_exclude_manifest(clips_root))
+    if not manifest_shas:
         return []
 
-    for it in items:
-        if not isinstance(it, dict):
+    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+    gdb_fp = _file_tree_mtime_size_fingerprint
+
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.exclude, data_dir):
+        body = clip_layer_fingerprint_body(
+            role="exclude",
+            preset_path=preset_path,
+            resolved=resolved,
+            layer=layer_name,
+            where=where,
+            mask_body=mask_body,
+            gdb_tree=gdb_fp(resolved),
+        )
+        sha = clip_layer_sha(body)
+        if sha not in manifest_shas:
             continue
-        fn = it.get("file")
-        path_str = it.get("path")
-        layer_str = it.get("layer")
-        if not isinstance(fn, str) or not isinstance(path_str, str) or not isinstance(layer_str, str):
-            continue
-        kml_disk = exc_dir / fn.replace(".gpkg", ".kml")
+        stem = _clip_stem(preset_path, layer_name, where)
+        kml_disk = layer_job_kml_path(clips_root, "exclude", stem)
         if not kml_disk.is_file():
             continue
-        where_raw = it.get("where")
-        where_s = where_raw if isinstance(where_raw, str) else None
-        resolved = resolve_land_use_gdb_path(data_dir, path_str)
-        stem = _clip_stem(path_str, resolved, layer_str, where_s)
-        label = _kml_label_gdb_job(path_str, layer_str)
+        label = _kml_label_gdb_job(preset_path, layer_name)
         arcname = f"exclude/layers/{stem}.kml"
         rows.append((label, kml_disk.resolve(), arcname))
-
     rows.sort(key=lambda t: t[2])
     return rows
 
@@ -522,18 +692,14 @@ def list_include_layer_kmz_entries(
 ) -> list[tuple[str, Path, str]]:
     """Sidecar include layers for KMZ: ``(NetworkLink label, disk KML path, KMZ arcname)``.
 
-    Uses clip-cache manifests when ``resolve.json`` exists; otherwise legacy ``include/clip_manifest.json``.
+    Requires ``bundle/resolve.json``.
     """
     from peaky_finders.bundle_build import (
-        CLIP_INCLUDE,
-        CLIP_MANIFEST_BASENAME,
-        SUBDIR_INCLUDE,
         _clip_stem,
         _file_tree_mtime_size_fingerprint,
         _flatten_gdb_layer_jobs,
         _kml_label_gdb_job,
         aoi_inputs_fingerprint_body,
-        resolve_land_use_gdb_path,
     )
 
     plc = preset.bundle
@@ -543,77 +709,47 @@ def list_include_layer_kmz_entries(
     data_dir = Path(data_dir).expanduser().resolve()
     bundle_dir = Path(bundle_dir).expanduser().resolve()
 
+    resolve_path = bundle_resolve_path(bundle_dir)
+    if not resolve_path.is_file():
+        raise FileNotFoundError(
+            f"bundle resolve manifest missing: {resolve_path}. "
+            "Run ``peaky bundle resolve PRESET.yaml`` (Makefile bundle target)."
+        )
+
     rows: list[tuple[str, Path, str]] = []
-
-    if bundle_resolve_path(bundle_dir).is_file():
-        resolve = read_bundle_resolve(bundle_dir)
-        clips_root = Path(str(resolve["clips_root"])).resolve()
-        include_sha = str(resolve["include"])
-        manifest_shas = set(read_composite_include_manifest(clips_root, include_sha))
-        if not manifest_shas:
-            return []
-
-        mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
-        gdb_fp = _file_tree_mtime_size_fingerprint
-
-        for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir):
-            body = clip_layer_fingerprint_body(
-                role="include",
-                preset_path=preset_path,
-                resolved=resolved,
-                layer=layer_name,
-                where=where,
-                mask_body=mask_body,
-                gdb_tree=gdb_fp(resolved),
-            )
-            sha = clip_layer_sha(body)
-            if sha not in manifest_shas:
-                continue
-            kml_disk = clip_kml_path(clips_root, sha)
-            if not kml_disk.is_file():
-                continue
-            label = _kml_label_gdb_job(preset_path, layer_name)
-            stem = _clip_stem(preset_path, resolved, layer_name, where)
-            arcname = f"include/layers/{stem}.kml"
-            rows.append((label, kml_disk.resolve(), arcname))
-        rows.sort(key=lambda t: t[2])
-        return rows
-
-    inc_dir = bundle_dir / SUBDIR_INCLUDE
-    manifest_path = inc_dir / CLIP_MANIFEST_BASENAME
-    if not manifest_path.is_file():
-        return []
-    try:
-        raw_obj = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(raw_obj, dict) or raw_obj.get("format") != CLIP_INCLUDE.manifest_format:
-        return []
-    items = raw_obj.get("items")
-    if not isinstance(items, list):
+    resolve = read_bundle_resolve(bundle_dir)
+    clips_root = Path(str(resolve["clips_root"])).resolve()
+    manifest_shas = set(read_composite_include_manifest(clips_root))
+    if not manifest_shas:
         return []
 
-    for it in items:
-        if not isinstance(it, dict):
+    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+    gdb_fp = _file_tree_mtime_size_fingerprint
+
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir):
+        body = clip_layer_fingerprint_body(
+            role="include",
+            preset_path=preset_path,
+            resolved=resolved,
+            layer=layer_name,
+            where=where,
+            mask_body=mask_body,
+            gdb_tree=gdb_fp(resolved),
+        )
+        sha = clip_layer_sha(body)
+        if sha not in manifest_shas:
             continue
-        fn = it.get("file")
-        path_str = it.get("path")
-        layer_str = it.get("layer")
-        if not isinstance(fn, str) or not isinstance(path_str, str) or not isinstance(layer_str, str):
-            continue
-        kml_disk = inc_dir / fn.replace(".gpkg", ".kml")
+        stem = _clip_stem(preset_path, layer_name, where)
+        kml_disk = layer_job_kml_path(clips_root, "include", stem)
         if not kml_disk.is_file():
             continue
-        where_raw = it.get("where")
-        where_s = where_raw if isinstance(where_raw, str) else None
-        resolved = resolve_land_use_gdb_path(data_dir, path_str)
-        stem = _clip_stem(path_str, resolved, layer_str, where_s)
-        label = _kml_label_gdb_job(path_str, layer_str)
+        label = _kml_label_gdb_job(preset_path, layer_name)
         arcname = f"include/layers/{stem}.kml"
         rows.append((label, kml_disk.resolve(), arcname))
-
     rows.sort(key=lambda t: t[2])
     return rows
+
+
 
 
 def sync_eligible_include_layer_slices(
@@ -625,7 +761,7 @@ def sync_eligible_include_layer_slices(
     eligible_gpkg: Path,
     kml_overlay: BundleKmlOverlayStyles | None,
 ) -> None:
-    """Write ``clips/eligible/<sha>/layers/<stem>.kml``: global eligible ∩ each include clip (post-exclusions)."""
+    """Write ``clips/eligible/layers/<stem>.kml``: global eligible ∩ each include clip (post-exclusions)."""
 
     from peaky_finders.bundle_build import (
         eligible_land_slice_from_include_clip_gpkg,
@@ -663,11 +799,7 @@ def sync_eligible_include_layer_slices(
             shutil.rmtree(layers_root)
         return
 
-    mask_sha = aoi_mask_sha_from_body(mask_body)
-    include_sha = _sha16(
-        composite_include_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
-    )
-    manifest_shas = set(read_composite_include_manifest(clips_root, include_sha))
+    manifest_shas = set(read_composite_include_manifest(clips_root))
 
     wanted_stems: set[str] = set()
     layers_root.mkdir(parents=True, exist_ok=True)
@@ -685,13 +817,20 @@ def sync_eligible_include_layer_slices(
         sha = clip_layer_sha(body)
         if sha not in manifest_shas:
             continue
-        stem = _clip_stem(preset_path, resolved, layer_name, where)
+        stem = _clip_stem(preset_path, layer_name, where)
         wanted_stems.add(stem)
-        clip_disk = clip_gpkg_path(clips_root, sha)
+        clip_disk = layer_job_gpkg_path(clips_root, "include", stem)
         kml_out = layers_root / f"{stem}.kml"
-
         png_out = kml_out.with_suffix(".png")
+
         if not clip_disk.is_file():
+            kml_out.unlink(missing_ok=True)
+            png_out.unlink(missing_ok=True)
+            continue
+
+        try:
+            clip_disk.stat()
+        except OSError:
             kml_out.unlink(missing_ok=True)
             png_out.unlink(missing_ok=True)
             continue
@@ -699,10 +838,11 @@ def sync_eligible_include_layer_slices(
         layer_label = _kml_label_gdb_job(preset_path, layer_name)
         slice_df = eligible_land_slice_from_include_clip_gpkg(geom_ll, clip_disk)
 
-        kml_out.unlink(missing_ok=True)
-        png_out.unlink(missing_ok=True)
         if slice_df.empty or slice_df.geometry.is_empty.all():
+            kml_out.unlink(missing_ok=True)
+            png_out.unlink(missing_ok=True)
             continue
+
         _write_geodataframe_kml(slice_df, kml_out, layer_label=layer_label, kml_overlay=kml_overlay)
 
     for stray in layers_root.glob("*.kml"):
@@ -735,22 +875,22 @@ def list_eligible_layer_kmz_entries(
 
     rows: list[tuple[str, Path, str]] = []
 
-    if not bundle_resolve_path(bundle_dir).is_file():
-        return rows
+    resolve_path = bundle_resolve_path(bundle_dir)
+    if not resolve_path.is_file():
+        raise FileNotFoundError(
+            f"bundle resolve manifest missing: {resolve_path}. "
+            "Run ``peaky bundle resolve PRESET.yaml`` (Makefile bundle target)."
+        )
 
     resolve = read_bundle_resolve(bundle_dir)
     clips_root = Path(str(resolve["clips_root"])).resolve()
 
     gdb_fp = _file_tree_mtime_size_fingerprint
 
-    eligible_gpkg = eligible_gpkg_path(clips_root, str(resolve["eligible"]))
+    eligible_gpkg = eligible_gpkg_path(clips_root)
     layers_root = eligible_gpkg.parent / ELIGIBLE_SLICE_LAYERS_SUBDIR
     mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
-    mask_sha = aoi_mask_sha_from_body(mask_body)
-    include_sha = _sha16(
-        composite_include_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
-    )
-    manifest_shas = set(read_composite_include_manifest(clips_root, include_sha))
+    manifest_shas = set(read_composite_include_manifest(clips_root))
     if not manifest_shas:
         return []
 
@@ -767,7 +907,7 @@ def list_eligible_layer_kmz_entries(
         sha = clip_layer_sha(body)
         if sha not in manifest_shas:
             continue
-        stem = _clip_stem(preset_path, resolved, layer_name, where)
+        stem = _clip_stem(preset_path, layer_name, where)
         kml_disk = layers_root / f"{stem}.kml"
         if not kml_disk.is_file():
             continue
@@ -807,12 +947,12 @@ class ClipBuildResult:
     eligible_gpkg: Path
 
 
-def _union_wgs84_from_clip_shas(clips_root: Path, clip_shas: list[str]) -> gpd.GeoDataFrame:
+def _union_wgs84_from_job_paths(paths: list[Path]) -> gpd.GeoDataFrame:
     from peaky_finders.bundle_build import _sanitize_collection
 
     pieces_ll: list[BaseGeometry] = []
-    for sha in sorted(clip_shas):
-        gdf = gpd.read_file(clip_gpkg_path(clips_root, sha))
+    for pth in sorted(paths, key=lambda p: str(p)):
+        gdf = gpd.read_file(pth)
         if gdf.empty:
             continue
         pieces_ll.extend(gdf.geometry.tolist())
@@ -820,12 +960,12 @@ def _union_wgs84_from_clip_shas(clips_root: Path, clip_shas: list[str]) -> gpd.G
     return gpd.GeoDataFrame(geometry=[u_ll], crs="EPSG:4326")
 
 
-def _union_include_from_clip_shas(clips_root: Path, clip_shas: list[str]) -> gpd.GeoDataFrame:
+def _union_include_from_job_paths(paths: list[Path]) -> gpd.GeoDataFrame:
     from peaky_finders.bundle_build import _sanitize_collection
 
     pieces: list[BaseGeometry] = []
-    for sha in sorted(clip_shas):
-        gdf = gpd.read_file(clip_gpkg_path(clips_root, sha))
+    for pth in sorted(paths, key=lambda p: str(p)):
+        gdf = gpd.read_file(pth)
         if gdf.empty:
             continue
         g3857 = gdf.to_crs("EPSG:3857")
@@ -854,7 +994,7 @@ def _write_composite_union(
     )
 
 
-def _ensure_clip_layer(
+def build_clip_layer(
     clips_root: Path,
     *,
     role: ClipRole,
@@ -871,13 +1011,15 @@ def _ensure_clip_layer(
     verbose_log: Callable[[str], None] | None,
     progress_log: Callable[[str], None] | None,
 ) -> str | None:
-    """Build or reuse one clip; return clip_sha, or ``None`` if clip is empty (exclude only)."""
+    """Build one clip layer job; return clip_sha, or ``None`` if clip is empty (exclude only)."""
+
     from peaky_finders.bundle_build import (
-        _gdf_coordinate_vertex_count,
         _read_and_clip_gdb_layer_to_aoi,
+        _clip_stem,
         _write_geodataframe_gpkg_and_kml,
     )
 
+    clips_root = Path(clips_root).expanduser().resolve()
     body = clip_layer_fingerprint_body(
         role=role,
         preset_path=preset_path,
@@ -888,114 +1030,126 @@ def _ensure_clip_layer(
         gdb_tree=gdb_tree,
     )
     sha = clip_layer_sha(body)
-    out = clip_gpkg_path(clips_root, sha)
-    if out.is_file():
+    stem = _clip_stem(preset_path, layer, where)
+    job_dir = clip_job_dir(clips_root, role, stem)
+    out = job_dir / CLIP_GPKG_BASENAME
+    ws = job_dir / CLIP_JOB_WORKSPACE_NAME
+
+    with _clips_cache_exclusive_lock(clips_root):
+        if job_dir.is_dir():
+            shutil.rmtree(job_dir)
+
+        if progress_log:
+            progress_log(f"clip {role} read+clip {preset_path}::{layer} …")
+        gdf, clipped = _read_and_clip_gdb_layer_to_aoi(
+            preset_path, resolved, layer, aoi_poly_4326, kind=role, where=where
+        )
+        if clipped.empty:
+            if verbose_log:
+                verbose_log(f"clip {role} {preset_path}::{layer}: empty after clip (skip)")
+            return None
+
+        if store_crs_3857:
+            out_gdf = clipped.to_crs("EPSG:3857")
+        else:
+            out_gdf = clipped.to_crs("EPSG:4326")
+
+        job_dir.mkdir(parents=True, exist_ok=True)
+        if progress_log:
+            progress_log(f"clip/{role}/{stem}: write ({len(out_gdf):,} features) …")
+        _write_geodataframe_gpkg_and_kml(
+            out_gdf,
+            out,
+            gpkg_layer="features",
+            layer_label=kml_label,
+            kml_overlay=kml_overlay,
+        )
+        _write_manifest(ws, fmt=CLIP_JOB_WORKSPACE_FMT, payload={"clip_sha": sha})
         if verbose_log:
-            verbose_log(f"clip reuse {role} {preset_path}::{layer} → clip/{sha}")
+            verbose_log(
+                f"clip {role} {preset_path}::{layer}: {len(gdf):,} native → {len(clipped):,} clipped → {stem}"
+            )
         return sha
 
-    if progress_log:
-        progress_log(f"clip {role} read+clip {preset_path}::{layer} …")
-    gdf, clipped = _read_and_clip_gdb_layer_to_aoi(
-        preset_path, resolved, layer, aoi_poly_4326, kind=role, where=where
-    )
-    if clipped.empty:
-        if verbose_log:
-            verbose_log(f"clip {role} {preset_path}::{layer}: empty after clip (skip)")
-        return None
 
-    if store_crs_3857:
-        out_gdf = clipped.to_crs("EPSG:3857")
-    else:
-        out_gdf = clipped.to_crs("EPSG:4326")
+def _clip_shas_for_composite(
+    *,
+    plc: BundleConfig,
+    data_dir: Path,
+    clips_root: Path,
+    mask_body: str,
+    role: ClipRole,
+) -> list[str]:
+    from peaky_finders.bundle_build import _clip_stem, _file_tree_mtime_size_fingerprint, _flatten_gdb_layer_jobs
 
-    out.parent.mkdir(parents=True, exist_ok=True)
-    if progress_log:
-        progress_log(f"clip/{sha}: write ({len(out_gdf):,} features) …")
-    _write_geodataframe_gpkg_and_kml(
-        out_gdf,
-        out,
-        gpkg_layer="features",
-        layer_label=kml_label,
-        kml_overlay=kml_overlay,
-    )
-    if verbose_log:
-        verbose_log(
-            f"clip {role} {preset_path}::{layer}: {len(gdf):,} native → {len(clipped):,} clipped → clip/{sha}"
+    gdb_fp = _file_tree_mtime_size_fingerprint
+    groups = plc.aoi if role == "aoi" else plc.include if role == "include" else plc.exclude
+    shas: list[str] = []
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(groups, data_dir):
+        if not resolved.exists():
+            raise FileNotFoundError(f"{role} GDB not found: {resolved} (preset path {preset_path!r})")
+        body = clip_layer_fingerprint_body(
+            role=role,
+            preset_path=preset_path,
+            resolved=resolved,
+            layer=layer_name,
+            where=where,
+            mask_body=mask_body,
+            gdb_tree=gdb_fp(resolved),
         )
-    return sha
+        sha = clip_layer_sha(body)
+        stem = _clip_stem(preset_path, layer_name, where)
+        gpkg = layer_job_gpkg_path(clips_root, role, stem)
+        if role == "exclude":
+            if gpkg.is_file():
+                shas.append(sha)
+        elif gpkg.is_file():
+            shas.append(sha)
+        else:
+            raise FileNotFoundError(
+                f"{role} clip missing: {gpkg} (run `peaky bundle clip {role} {layer_name}` first)"
+            )
+    return shas
 
 
-def ensure_bundle_clip_cache(
+def build_composite_aoi(
     *,
     plc: BundleConfig,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
     kml_overlay: BundleKmlOverlayStyles | None,
-    force: bool,
     verbose_log: Callable[[str], None] | None = None,
     progress_log: Callable[[str], None] | None = None,
-) -> ClipBuildResult:
-    """Build or reuse global clip cache entries; return composite SHAs and eligible GPKG path."""
-    from peaky_finders.bundle_build import (
-        _file_tree_mtime_size_fingerprint,
-        _flatten_gdb_layer_jobs,
-        _kml_label_aoi_clip,
-        _kml_label_gdb_job,
-        build_eligible_land_use_gdf,
-        load_composite_aoi_polygon,
-        resolve_land_use_gdb_path,
-    )
-
+) -> str:
+    _ = verbose_log, progress_log
     clips_root = Path(clips_root).expanduser().resolve()
-    clips_root.mkdir(parents=True, exist_ok=True)
     data_dir = Path(data_dir).expanduser().resolve()
-    mask_sha = aoi_mask_sha_from_body(mask_body)
-    gdb_fp = _file_tree_mtime_size_fingerprint
 
-    # --- AOI layer clips + composite ---
-    aoi_poly_full = load_composite_aoi_polygon(plc, data_dir)
-    aoi_poly_full = make_valid(aoi_poly_full)
-    if aoi_poly_full.is_empty:
-        raise ValueError("AOI union from bundle.aoi is empty")
-
-    aoi_clip_shas: list[str] = []
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.aoi, data_dir):
-        if not resolved.exists():
-            raise FileNotFoundError(f"AOI GDB not found: {resolved} (preset path {preset_path!r})")
-        tree = gdb_fp(resolved)
-        sha = _ensure_clip_layer(
-            clips_root,
-            role="aoi",
-            preset_path=preset_path,
-            resolved=resolved,
-            layer=layer_name,
-            where=where,
-            mask_body=mask_body,
-            gdb_tree=tree,
-            aoi_poly_4326=aoi_poly_full,
-            kml_label=_kml_label_aoi_clip(preset_path, layer_name),
-            kml_overlay=kml_overlay,
-            store_crs_3857=False,
-            verbose_log=verbose_log,
-            progress_log=progress_log,
-        )
-        if sha is not None:
-            aoi_clip_shas.append(sha)
-
+    aoi_clip_shas = _clip_shas_for_composite(
+        plc=plc, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="aoi"
+    )
     if not aoi_clip_shas:
         raise ValueError("AOI clip set is empty")
 
-    aoi_body = composite_aoi_fingerprint_body(aoi_clip_shas)
-    aoi_sha = _sha16(aoi_body)
-    aoi_dir = _composite_dir(clips_root, "aoi", aoi_sha)
-    aoi_gpkg = aoi_dir / UNION_GPKG_BASENAME
-    if force and aoi_gpkg.is_file():
-        for suf in (".gpkg", ".kml", ".png"):
-            (aoi_dir / UNION_GPKG_BASENAME.replace(".gpkg", suf)).unlink(missing_ok=True)
-    if not aoi_gpkg.is_file():
-        g_aoi = _union_wgs84_from_clip_shas(clips_root, aoi_clip_shas)
+    aoi_sha = _sha16(composite_aoi_fingerprint_body(aoi_clip_shas))
+    aoi_workspace = composite_workspace_dir(clips_root, "aoi")
+    aoi_gpkg = aoi_workspace / UNION_GPKG_BASENAME
+    aoi_ws_manifest = aoi_workspace / COMPOSITE_WORKSPACE_JSON_NAME
+
+    with _clips_cache_exclusive_lock(clips_root):
+        if aoi_workspace.is_dir():
+            shutil.rmtree(aoi_workspace)
+        aoi_workspace.mkdir(parents=True, exist_ok=True)
+        aoi_job_paths = _sorted_layer_job_gpkgs_for_clip_shas(
+            plc=plc,
+            role="aoi",
+            clips_root=clips_root,
+            data_dir=data_dir,
+            mask_body=mask_body,
+            clip_shas=aoi_clip_shas,
+        )
+        g_aoi = _union_wgs84_from_job_paths(aoi_job_paths)
         if g_aoi.empty or g_aoi.geometry.is_empty.iloc[0]:
             raise ValueError("AOI composite union is empty")
         _write_composite_union(
@@ -1006,47 +1160,59 @@ def ensure_bundle_clip_cache(
             kml_overlay=kml_overlay,
         )
         _write_manifest(
-            aoi_dir / MANIFEST_BASENAME,
+            aoi_workspace / MANIFEST_BASENAME,
             fmt=COMPOSITE_AOI_FORMAT,
             payload={"clips": sorted(aoi_clip_shas)},
         )
-
-    aoi_poly = make_valid(gpd.read_file(aoi_gpkg, layer="aoi").geometry.iloc[0])
-
-    # --- Include ---
-    inc_body = composite_include_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
-    include_sha = _sha16(inc_body)
-    include_dir = _composite_dir(clips_root, "include", include_sha)
-    include_gpkg = include_dir / UNION_GPKG_BASENAME
-    if force and include_gpkg.is_file():
-        for suf in (".gpkg", ".kml", ".png"):
-            (include_dir / UNION_GPKG_BASENAME.replace(".gpkg", suf)).unlink(missing_ok=True)
-
-    include_clip_shas: list[str] = []
-    for preset_path, resolved, layer, where in _flatten_gdb_layer_jobs(plc.include, data_dir):
-        if not resolved.exists():
-            raise FileNotFoundError(f"Include GDB not found: {resolved} (preset path {preset_path!r})")
-        sha = _ensure_clip_layer(
-            clips_root,
-            role="include",
-            preset_path=preset_path,
-            resolved=resolved,
-            layer=layer,
-            where=where,
-            mask_body=mask_body,
-            gdb_tree=gdb_fp(resolved),
-            aoi_poly_4326=aoi_poly,
-            kml_label=_kml_label_gdb_job(preset_path, layer),
-            kml_overlay=kml_overlay,
-            store_crs_3857=True,
-            verbose_log=verbose_log,
-            progress_log=progress_log,
+        _write_manifest(
+            aoi_ws_manifest,
+            fmt=COMPOSITE_WORKSPACE_FMT,
+            payload={"composite_sha": aoi_sha, "kind": "aoi"},
         )
-        if sha is not None:
-            include_clip_shas.append(sha)
+    return aoi_sha
 
-    if not include_gpkg.is_file():
-        g_inc = _union_include_from_clip_shas(clips_root, include_clip_shas)
+
+def build_composite_include(
+    *,
+    plc: BundleConfig,
+    data_dir: Path,
+    clips_root: Path,
+    mask_body: str,
+    kml_overlay: BundleKmlOverlayStyles | None,
+    verbose_log: Callable[[str], None] | None = None,
+    progress_log: Callable[[str], None] | None = None,
+) -> str:
+    _ = verbose_log, progress_log
+    from peaky_finders.bundle_build import _file_tree_mtime_size_fingerprint
+
+    clips_root = Path(clips_root).expanduser().resolve()
+    data_dir = Path(data_dir).expanduser().resolve()
+    mask_sha = aoi_mask_sha_from_body(mask_body)
+    gdb_fp = _file_tree_mtime_size_fingerprint
+
+    include_clip_shas = _clip_shas_for_composite(
+        plc=plc, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="include"
+    )
+    include_sha = _sha16(
+        composite_include_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+    )
+    include_workspace = composite_workspace_dir(clips_root, "include")
+    include_gpkg = include_workspace / UNION_GPKG_BASENAME
+    include_ws_manifest = include_workspace / COMPOSITE_WORKSPACE_JSON_NAME
+
+    with _clips_cache_exclusive_lock(clips_root):
+        if include_workspace.is_dir():
+            shutil.rmtree(include_workspace)
+        include_workspace.mkdir(parents=True, exist_ok=True)
+        inc_job_paths = _sorted_layer_job_gpkgs_for_clip_shas(
+            plc=plc,
+            role="include",
+            clips_root=clips_root,
+            data_dir=data_dir,
+            mask_body=mask_body,
+            clip_shas=include_clip_shas,
+        )
+        g_inc = _union_include_from_job_paths(inc_job_paths)
         _write_composite_union(
             g_inc,
             include_gpkg,
@@ -1055,47 +1221,60 @@ def ensure_bundle_clip_cache(
             kml_overlay=kml_overlay,
         )
         _write_manifest(
-            include_dir / MANIFEST_BASENAME,
+            include_workspace / MANIFEST_BASENAME,
             fmt=COMPOSITE_INCLUDE_FORMAT,
             payload={"clips": sorted(include_clip_shas), "aoi_mask": mask_sha},
         )
+        _write_manifest(
+            include_ws_manifest,
+            fmt=COMPOSITE_WORKSPACE_FMT,
+            payload={"composite_sha": include_sha, "kind": "include"},
+        )
+    return include_sha
 
-    # --- Exclude ---
-    exc_body = composite_exclude_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
-    exclude_sha = _sha16(exc_body)
-    exclude_dir = _composite_dir(clips_root, "exclude", exclude_sha)
-    exclude_gpkg = exclude_dir / UNION_GPKG_BASENAME
-    if force and exclude_gpkg.is_file():
-        for suf in (".gpkg", ".kml", ".png"):
-            (exclude_dir / UNION_GPKG_BASENAME.replace(".gpkg", suf)).unlink(missing_ok=True)
 
-    exclude_clip_shas: list[str] = []
-    if plc.exclude:
-        for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.exclude, data_dir):
-            if not resolved.exists():
-                raise FileNotFoundError(f"Exclude GDB not found: {resolved} (preset path {preset_path!r})")
-            sha = _ensure_clip_layer(
-                clips_root,
-                role="exclude",
-                preset_path=preset_path,
-                resolved=resolved,
-                layer=layer_name,
-                where=where,
-                mask_body=mask_body,
-                gdb_tree=gdb_fp(resolved),
-                aoi_poly_4326=aoi_poly,
-                kml_label=_kml_label_gdb_job(preset_path, layer_name),
-                kml_overlay=kml_overlay,
-                store_crs_3857=False,
-                verbose_log=verbose_log,
-                progress_log=progress_log,
-            )
-            if sha is not None:
-                exclude_clip_shas.append(sha)
+def build_composite_exclude(
+    *,
+    plc: BundleConfig,
+    data_dir: Path,
+    clips_root: Path,
+    mask_body: str,
+    kml_overlay: BundleKmlOverlayStyles | None,
+    verbose_log: Callable[[str], None] | None = None,
+    progress_log: Callable[[str], None] | None = None,
+) -> str:
+    _ = verbose_log, progress_log
+    from peaky_finders.bundle_build import _file_tree_mtime_size_fingerprint
 
-    if not exclude_gpkg.is_file():
+    clips_root = Path(clips_root).expanduser().resolve()
+    data_dir = Path(data_dir).expanduser().resolve()
+    mask_sha = aoi_mask_sha_from_body(mask_body)
+    gdb_fp = _file_tree_mtime_size_fingerprint
+
+    exclude_clip_shas = _clip_shas_for_composite(
+        plc=plc, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="exclude"
+    )
+    exclude_sha = _sha16(
+        composite_exclude_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+    )
+    exclude_workspace = composite_workspace_dir(clips_root, "exclude")
+    exclude_gpkg = exclude_workspace / UNION_GPKG_BASENAME
+    exclude_ws_manifest = exclude_workspace / COMPOSITE_WORKSPACE_JSON_NAME
+
+    with _clips_cache_exclusive_lock(clips_root):
+        if exclude_workspace.is_dir():
+            shutil.rmtree(exclude_workspace)
+        exclude_workspace.mkdir(parents=True, exist_ok=True)
         if exclude_clip_shas:
-            g_exc = _union_wgs84_from_clip_shas(clips_root, exclude_clip_shas)
+            exc_job_paths = _sorted_layer_job_gpkgs_for_clip_shas(
+                plc=plc,
+                role="exclude",
+                clips_root=clips_root,
+                data_dir=data_dir,
+                mask_body=mask_body,
+                clip_shas=exclude_clip_shas,
+            )
+            g_exc = _union_wgs84_from_job_paths(exc_job_paths)
         else:
             g_exc = gpd.GeoDataFrame(geometry=[Polygon()], crs="EPSG:4326")
         _write_composite_union(
@@ -1106,24 +1285,71 @@ def ensure_bundle_clip_cache(
             kml_overlay=kml_overlay,
         )
         _write_manifest(
-            exclude_dir / MANIFEST_BASENAME,
+            exclude_workspace / MANIFEST_BASENAME,
             fmt=COMPOSITE_EXCLUDE_FORMAT,
             payload={"clips": sorted(exclude_clip_shas), "aoi_mask": mask_sha},
         )
+        _write_manifest(
+            exclude_ws_manifest,
+            fmt=COMPOSITE_WORKSPACE_FMT,
+            payload={"composite_sha": exclude_sha, "kind": "exclude"},
+        )
+    return exclude_sha
 
-    # --- Eligible ---
-    elig_body = eligible_fingerprint_body(include_sha=include_sha, exclude_sha=exclude_sha)
-    eligible_sha = _sha16(elig_body)
-    eligible_dir = _composite_dir(clips_root, "eligible", eligible_sha)
-    eligible_gpkg = eligible_dir / ELIGIBLE_GPKG_BASENAME
-    if force and eligible_gpkg.is_file():
-        lyr = eligible_dir / ELIGIBLE_SLICE_LAYERS_SUBDIR
-        if lyr.is_dir():
-            shutil.rmtree(lyr)
-        for suf in (".gpkg", ".kml", ".png"):
-            (eligible_dir / ELIGIBLE_GPKG_BASENAME.replace(".gpkg", suf)).unlink(missing_ok=True)
 
-    if not eligible_gpkg.is_file():
+def build_eligible_workspace(
+    *,
+    plc: BundleConfig,
+    data_dir: Path,
+    clips_root: Path,
+    mask_body: str,
+    kml_overlay: BundleKmlOverlayStyles | None,
+    verbose_log: Callable[[str], None] | None = None,
+    progress_log: Callable[[str], None] | None = None,
+) -> ClipBuildResult:
+    _ = verbose_log, progress_log
+    from peaky_finders.bundle_build import (
+        _file_tree_mtime_size_fingerprint,
+        build_eligible_land_use_gdf,
+        land_use_inputs_fingerprint_body,
+    )
+
+    clips_root = Path(clips_root).expanduser().resolve()
+    data_dir = Path(data_dir).expanduser().resolve()
+    mask_sha = aoi_mask_sha_from_body(mask_body)
+    gdb_fp = _file_tree_mtime_size_fingerprint
+
+    include_sha = _sha16(
+        composite_include_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+    )
+    exclude_sha = _sha16(
+        composite_exclude_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+    )
+    bundle_land_digest = _sha16(land_use_inputs_fingerprint_body(plc, data_dir))
+    eligible_sha = _sha16(
+        eligible_fingerprint_body(
+            include_sha=include_sha,
+            exclude_sha=exclude_sha,
+            bundle_land_digest=bundle_land_digest,
+        )
+    )
+
+    include_gpkg = composite_union_gpkg(clips_root, "include")
+    exclude_gpkg = composite_union_gpkg(clips_root, "exclude")
+    if not include_gpkg.is_file():
+        raise FileNotFoundError(f"Include composite missing: {include_gpkg}")
+    if not exclude_gpkg.is_file():
+        raise FileNotFoundError(f"Exclude composite missing: {exclude_gpkg}")
+
+    ew_dir = eligible_land_use_workspace_dir(clips_root)
+    eligible_gpkg = ew_dir / ELIGIBLE_GPKG_BASENAME
+    manifest_path = ew_dir / ELIGIBLE_WORKSPACE_MANIFEST_NAME
+
+    with _clips_cache_exclusive_lock(clips_root):
+        if ew_dir.is_dir():
+            shutil.rmtree(ew_dir)
+        ew_dir.mkdir(parents=True, exist_ok=True)
+
         include_union = gpd.read_file(include_gpkg, layer="include")
         exclude_union = gpd.read_file(exclude_gpkg, layer="exclude")
         eligible_gdf = build_eligible_land_use_gdf(include_union, exclude_union)
@@ -1134,16 +1360,32 @@ def ensure_bundle_clip_cache(
             layer_label=ELIGIBLE_LAYER,
             kml_overlay=kml_overlay,
         )
+        _write_manifest(
+            manifest_path,
+            fmt=ELIGIBLE_WORKSPACE_MANIFEST_FMT,
+            payload={
+                "eligible_sha": eligible_sha,
+                "include_sha": include_sha,
+                "exclude_sha": exclude_sha,
+                "bundle_land_digest": bundle_land_digest,
+            },
+        )
+        sync_eligible_include_layer_slices(
+            plc=plc,
+            data_dir=data_dir,
+            clips_root=clips_root,
+            mask_body=mask_body,
+            eligible_gpkg=eligible_gpkg,
+            kml_overlay=kml_overlay,
+        )
 
-    sync_eligible_include_layer_slices(
-        plc=plc,
-        data_dir=data_dir,
-        clips_root=clips_root,
-        mask_body=mask_body,
-        eligible_gpkg=eligible_gpkg,
-        kml_overlay=kml_overlay,
+    aoi_sha = _sha16(
+        composite_aoi_fingerprint_body(
+            _clip_shas_for_composite(
+                plc=plc, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="aoi"
+            )
+        )
     )
-
     return ClipBuildResult(
         aoi_sha=aoi_sha,
         include_sha=include_sha,
@@ -1153,139 +1395,19 @@ def ensure_bundle_clip_cache(
     )
 
 
-def refresh_clip_kml_sidecars(
+def build_reference_entry(
     *,
-    plc: BundleConfig,
-    data_dir: Path,
-    clips_root: Path,
-    mask_body: str,
-    kml_overlay: BundleKmlOverlayStyles | None,
-    result: ClipBuildResult,
-    verbose_log: Callable[[str], None] | None = None,
-) -> None:
-    """Regenerate KML/PNG for clips and composites after ``bundle.kml_overlay`` change."""
-    from peaky_finders.bundle_build import (
-        _file_tree_mtime_size_fingerprint,
-        _flatten_gdb_layer_jobs,
-        _kml_label_aoi_clip,
-        _kml_label_gdb_job,
-        _write_geodataframe_kml,
-        load_composite_aoi_polygon,
-        resolve_land_use_gdb_path,
-    )
-
-    clips_root = Path(clips_root).expanduser().resolve()
-    data_dir = Path(data_dir).expanduser().resolve()
-    gdb_fp = _file_tree_mtime_size_fingerprint
-    aoi_poly_full = make_valid(load_composite_aoi_polygon(plc, data_dir))
-
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.aoi, data_dir):
-        body = clip_layer_fingerprint_body(
-            role="aoi",
-            preset_path=preset_path,
-            resolved=resolved,
-            layer=layer_name,
-            where=where,
-            mask_body=mask_body,
-            gdb_tree=gdb_fp(resolved),
-        )
-        sha = clip_layer_sha(body)
-        p = clip_gpkg_path(clips_root, sha)
-        if p.is_file():
-            gdf = gpd.read_file(p)
-            _write_geodataframe_kml(
-                gdf, p.with_suffix(".kml"), layer_label=_kml_label_aoi_clip(preset_path, layer_name), kml_overlay=kml_overlay
-            )
-
-    aoi_gpkg = composite_union_gpkg(clips_root, "aoi", result.aoi_sha)
-    if aoi_gpkg.is_file():
-        gdf = gpd.read_file(aoi_gpkg, layer="aoi")
-        _write_geodataframe_kml(gdf, aoi_gpkg.with_suffix(".kml"), layer_label="aoi", kml_overlay=kml_overlay)
-
-    aoi_poly = make_valid(gpd.read_file(aoi_gpkg, layer="aoi").geometry.iloc[0]) if aoi_gpkg.is_file() else aoi_poly_full
-
-    for preset_path, resolved, layer, where in _flatten_gdb_layer_jobs(plc.include, data_dir):
-        body = clip_layer_fingerprint_body(
-            role="include",
-            preset_path=preset_path,
-            resolved=resolved,
-            layer=layer,
-            where=where,
-            mask_body=mask_body,
-            gdb_tree=gdb_fp(resolved),
-        )
-        sha = clip_layer_sha(body)
-        p = clip_gpkg_path(clips_root, sha)
-        if p.is_file():
-            gdf = gpd.read_file(p)
-            _write_geodataframe_kml(
-                gdf, p.with_suffix(".kml"), layer_label=_kml_label_gdb_job(preset_path, layer), kml_overlay=kml_overlay
-            )
-
-    inc_gpkg = composite_union_gpkg(clips_root, "include", result.include_sha)
-    if inc_gpkg.is_file():
-        gdf = gpd.read_file(inc_gpkg, layer="include")
-        _write_geodataframe_kml(gdf, inc_gpkg.with_suffix(".kml"), layer_label="include", kml_overlay=kml_overlay)
-
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.exclude, data_dir):
-        body = clip_layer_fingerprint_body(
-            role="exclude",
-            preset_path=preset_path,
-            resolved=resolved,
-            layer=layer_name,
-            where=where,
-            mask_body=mask_body,
-            gdb_tree=gdb_fp(resolved),
-        )
-        sha = clip_layer_sha(body)
-        p = clip_gpkg_path(clips_root, sha)
-        if p.is_file():
-            gdf = gpd.read_file(p)
-            _write_geodataframe_kml(
-                gdf,
-                p.with_suffix(".kml"),
-                layer_label=_kml_label_gdb_job(preset_path, layer_name),
-                kml_overlay=kml_overlay,
-            )
-
-    exc_gpkg = composite_union_gpkg(clips_root, "exclude", result.exclude_sha)
-    if exc_gpkg.is_file():
-        gdf = gpd.read_file(exc_gpkg, layer="exclude")
-        _write_geodataframe_kml(gdf, exc_gpkg.with_suffix(".kml"), layer_label="exclude", kml_overlay=kml_overlay)
-
-    if result.eligible_gpkg.is_file():
-        gdf = gpd.read_file(result.eligible_gpkg, layer=ELIGIBLE_LAYER)
-        _write_geodataframe_kml(
-            gdf,
-            result.eligible_gpkg.with_suffix(".kml"),
-            layer_label=ELIGIBLE_LAYER,
-            kml_overlay=kml_overlay,
-        )
-        sync_eligible_include_layer_slices(
-            plc=plc,
-            data_dir=data_dir,
-            clips_root=clips_root,
-            mask_body=mask_body,
-            eligible_gpkg=result.eligible_gpkg,
-            kml_overlay=kml_overlay,
-        )
-
-    if verbose_log:
-        verbose_log("clips: refreshed KML/PNG sidecars for kml_overlay change")
-
-
-def ensure_reference_clip_cache(
-    *,
+    entry_id: str,
     plc: BundleConfig,
     data_dir: Path,
     clips_root: Path,
     aoi_sha: str,
     kml_overlay: BundleKmlOverlayStyles | None,
-    force: bool,
     verbose_log: Callable[[str], None] | None = None,
     progress_log: Callable[[str], None] | None = None,
-) -> dict[str, str]:
-    """Build or reuse ``clips/reference/<sha>/`` per ``bundle.reference`` entry."""
+) -> str:
+    """Build ``clips/reference/<entry_id>/`` for one ``bundle.reference`` entry."""
+
     import pandas as pd
 
     from peaky_finders.bundle_build import (
@@ -1296,41 +1418,32 @@ def ensure_reference_clip_cache(
     )
 
     if not plc.reference:
-        return {}
+        raise ValueError("preset has no bundle.reference entries")
+
+    want = entry_id.strip()
+    ent = next((e for e in plc.reference if e.id == want), None)
+    if ent is None:
+        known = [e.id for e in plc.reference]
+        raise KeyError(f"unknown reference id {want!r} (configured: {', '.join(repr(k) for k in known)})")
 
     clips_root = Path(clips_root).expanduser().resolve()
     data_dir = Path(data_dir).expanduser().resolve()
-    entry_shas = plan_reference_entries(plc=plc, data_dir=data_dir, clips_root=clips_root)
+    entry_sha = plan_reference_entries(plc=plc, data_dir=data_dir, clips_root=clips_root)[want]
 
     aoi_gpkg = composite_union_gpkg(clips_root, "aoi", aoi_sha)
+    if not aoi_gpkg.is_file():
+        raise FileNotFoundError(f"AOI composite missing: {aoi_gpkg}")
     aoi_poly = make_valid(gpd.read_file(aoi_gpkg, layer="aoi").geometry.iloc[0])
 
-    for ent in plc.reference:
-        entry_sha = entry_shas[ent.id]
-        ref_dir = _reference_dir(clips_root, entry_sha)
-        out_gpkg = reference_gpkg_path(clips_root, entry_sha)
-        out_kml = reference_kml_path(clips_root, entry_sha)
-        empty_marker = ref_dir / REFERENCE_EMPTY_MARKER
+    ref_dir = reference_entry_dir(clips_root, ent.id)
+    ws_ref = ref_dir / REFERENCE_WORKSPACE_JSON_NAME
+    out_gpkg = reference_gpkg_path(clips_root, ent.id)
+    empty_marker = ref_dir / REFERENCE_EMPTY_MARKER
 
-        if force and ref_dir.is_dir():
-            for p in ref_dir.iterdir():
-                if p.is_file():
-                    p.unlink(missing_ok=True)
-
-        if not force and empty_marker.is_file():
-            if verbose_log:
-                verbose_log(f"reference reuse {ent.id} → reference/{entry_sha} (empty)")
-            continue
-        if not force and out_gpkg.is_file():
-            if verbose_log:
-                verbose_log(f"reference reuse {ent.id} → reference/{entry_sha}")
-            continue
-
+    with _clips_cache_exclusive_lock(clips_root):
+        if ref_dir.is_dir():
+            shutil.rmtree(ref_dir)
         ref_dir.mkdir(parents=True, exist_ok=True)
-        empty_marker.unlink(missing_ok=True)
-        out_gpkg.unlink(missing_ok=True)
-        out_kml.unlink(missing_ok=True)
-        out_kml.with_suffix(".png").unlink(missing_ok=True)
 
         jobs = _flatten_gdb_layer_jobs(
             [GdbLayerGroup(path=ent.path, layers=ent.layers)],
@@ -1357,14 +1470,15 @@ def ensure_reference_clip_cache(
 
         if not pieces_ll:
             if verbose_log:
-                verbose_log(f"reference [{ent.id}]: empty after clip → reference/{entry_sha}/.empty")
+                verbose_log(f"reference [{ent.id}]: empty after clip → {ref_dir}/.empty")
             empty_marker.write_text("1\n", encoding="utf-8")
-            continue
+            _write_manifest(ws_ref, fmt=REFERENCE_WORKSPACE_FMT, payload={"reference_sha": entry_sha, "id": ent.id})
+            return entry_sha
 
         merged = gpd.GeoDataFrame(pd.concat(pieces_ll, ignore_index=True), crs="EPSG:4326")
         overlay = _overlay_for_reference_entry(ent, plc)
         if progress_log:
-            progress_log(f"reference/{entry_sha}: write reference.gpkg + kml …")
+            progress_log(f"{ref_dir.name}: write reference.gpkg + kml …")
         _write_geodataframe_gpkg_and_kml(
             merged,
             out_gpkg,
@@ -1373,34 +1487,7 @@ def ensure_reference_clip_cache(
             kml_overlay=overlay,
         )
         if verbose_log:
-            verbose_log(f"reference [{ent.id}]: wrote reference/{entry_sha}/reference.gpkg + kml")
+            verbose_log(f"reference [{ent.id}]: wrote {out_gpkg}")
+        _write_manifest(ws_ref, fmt=REFERENCE_WORKSPACE_FMT, payload={"reference_sha": entry_sha, "id": ent.id})
+    return entry_sha
 
-    return entry_shas
-
-
-def refresh_reference_clip_kml_sidecars(
-    *,
-    plc: BundleConfig,
-    clips_root: Path,
-    reference_shas: dict[str, str],
-    verbose_log: Callable[[str], None] | None = None,
-) -> None:
-    """Re-style reference KML/PNG from cached GeoPackages (``bundle.kml_overlay`` change)."""
-    from peaky_finders.bundle_build import _overlay_for_reference_entry, _write_geodataframe_kml
-
-    if not plc.reference or not reference_shas:
-        return
-    clips_root = Path(clips_root).expanduser().resolve()
-    for ent in plc.reference:
-        sha = reference_shas.get(ent.id)
-        if not sha:
-            continue
-        gpkg = reference_gpkg_path(clips_root, sha)
-        kml = reference_kml_path(clips_root, sha)
-        if not gpkg.is_file():
-            continue
-        gdf = gpd.read_file(gpkg, layer=REFERENCE_GPKG_LAYER)
-        overlay = _overlay_for_reference_entry(ent, plc)
-        _write_geodataframe_kml(gdf, kml, layer_label=ent.id, kml_overlay=overlay)
-    if verbose_log:
-        verbose_log("clips: refreshed reference KML/PNG sidecars")
