@@ -19,6 +19,7 @@ from peaky_finders.sites_job import BundleKmlLayerStyle, DEFAULT_VIEWSHED_COVERA
 
 COVERAGE_GPKG_NAME = "coverage_area.gpkg"
 COVERAGE_KML_NAME = "coverage_area.kml"
+SPLAT_OUTPUT_PPM_BASENAME = "output.ppm"
 
 VIEWSHED_COVERAGE_KML_STYLE_ID = "peaky_viewshed_coverage"
 MESH_PAIRWISE_KML_STYLE_ID = "peaky_mesh_pairwise"

@@ -13,12 +13,9 @@ from peaky_finders import bundle_build, kml_bundle
 from peaky_finders.bundle_clips import (
     COMPOSITE_EXCLUDE_FORMAT,
     COMPOSITE_INCLUDE_FORMAT,
-    list_exclude_layer_kmz_entries,
-    list_include_layer_kmz_entries,
     read_composite_exclude_manifest,
     read_composite_include_manifest,
 )
-from peaky_finders.bundle_build import _clip_stem, resolve_land_use_gdb_path
 from peaky_finders.sites_job import BundleConfig, GdbLayerGroup, GdbLayerSpec
 from peaky_finders.splat_polygonize import (
     GX_DRAW_ORDER_MESH_DEPTH_D1,
@@ -468,93 +465,30 @@ def test_build_aggregate_document_kml_include_layers_folder_visibility() -> None
 
 def test_read_composite_exclude_manifest_sorts_clip_shas(tmp_path: Path) -> None:
     clips_root = tmp_path / "clips"
-    manifest_dir = clips_root / "exclude" / "abcd1234deadbeef"
-    manifest_dir.mkdir(parents=True)
-    (manifest_dir / "manifest.json").write_text(
+    workspace = clips_root / "exclude"
+    workspace.mkdir(parents=True)
+    (workspace / "manifest.json").write_text(
         json.dumps({"format": COMPOSITE_EXCLUDE_FORMAT, "clips": ["zzz", "aaa"], "aoi_mask": "x"}),
         encoding="utf-8",
     )
-    assert read_composite_exclude_manifest(clips_root, "abcd1234deadbeef") == ["aaa", "zzz"]
+    assert read_composite_exclude_manifest(clips_root) == ["aaa", "zzz"]
 
 
 def test_read_composite_include_manifest_sorts_clip_shas(tmp_path: Path) -> None:
     clips_root = tmp_path / "clips"
-    manifest_dir = clips_root / "include" / "feedbeef4321abcd"
-    manifest_dir.mkdir(parents=True)
-    (manifest_dir / "manifest.json").write_text(
+    workspace = clips_root / "include"
+    workspace.mkdir(parents=True)
+    (workspace / "manifest.json").write_text(
         json.dumps({"format": COMPOSITE_INCLUDE_FORMAT, "clips": ["zzz", "aaa"], "aoi_mask": "x"}),
         encoding="utf-8",
     )
-    assert read_composite_include_manifest(clips_root, "feedbeef4321abcd") == ["aaa", "zzz"]
-
-
-def test_list_exclude_layer_kmz_entries_legacy(tmp_path: Path) -> None:
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    bundle_dir = tmp_path / "bundle"
-    exc = bundle_dir / "exclude"
-    exc.mkdir(parents=True)
-
-    preset_path_str = "exclude/foo.gpkg"
-    resolved = resolve_land_use_gdb_path(data_dir, preset_path_str)
-    stem = _clip_stem(preset_path_str, resolved, "exclusion", None)
-    fname = f"exclude_{stem}.gpkg"
-    (exc / fname.replace(".gpkg", ".kml")).write_text("<kml/>", encoding="utf-8")
-
-    manifest = {
-        "format": "bundle_exclude_clip_manifest/v4",
-        "items": [{"file": fname, "path": preset_path_str, "layer": "exclusion"}],
-    }
-    (exc / "clip_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-
-    bundle = BundleConfig(
-        aoi=[GdbLayerGroup(path="aoi/a.gpkg", layers=[GdbLayerSpec(name="la")])],
-        include=[GdbLayerGroup(path="inc/i.gpkg", layers=[GdbLayerSpec(name="li")])],
-        exclude=[],
-    )
-    preset = tpm._minimal_preset(bundle=bundle)
-
-    rows = list_exclude_layer_kmz_entries(bundle_dir, preset=preset, data_dir=data_dir)
-    assert len(rows) == 1
-    assert rows[0][0] == "exclude/foo.gpkg::exclusion"
-    assert rows[0][2] == f"exclude/layers/{stem}.kml"
-
-
-def test_list_include_layer_kmz_entries_legacy(tmp_path: Path) -> None:
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    bundle_dir = tmp_path / "bundle"
-    inc = bundle_dir / "include"
-    inc.mkdir(parents=True)
-
-    preset_path_str = "include/foo.gpkg"
-    resolved = resolve_land_use_gdb_path(data_dir, preset_path_str)
-    stem = _clip_stem(preset_path_str, resolved, "public_land", None)
-    fname = f"include_{stem}.gpkg"
-    (inc / fname.replace(".gpkg", ".kml")).write_text("<kml/>", encoding="utf-8")
-
-    manifest = {
-        "format": "bundle_include_clip_manifest/v4",
-        "items": [{"file": fname, "path": preset_path_str, "layer": "public_land"}],
-    }
-    (inc / "clip_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-
-    bundle = BundleConfig(
-        aoi=[GdbLayerGroup(path="aoi/a.gpkg", layers=[GdbLayerSpec(name="la")])],
-        include=[],
-        exclude=[GdbLayerGroup(path="exclude/e.gpkg", layers=[GdbLayerSpec(name="lx")])],
-    )
-    preset = tpm._minimal_preset(bundle=bundle)
-
-    rows = list_include_layer_kmz_entries(bundle_dir, preset=preset, data_dir=data_dir)
-    assert len(rows) == 1
-    assert rows[0][0] == "include/foo.gpkg::public_land"
-    assert rows[0][2] == f"include/layers/{stem}.kml"
+    assert read_composite_include_manifest(clips_root) == ["aaa", "zzz"]
 
 
 def test_kml_overlay_role_exclude_for_clip_cache_sidecar_path() -> None:
-    """Clip-cache KML is ``clip.kml`` under ``clips/clip/<sha>/``; rely on GDB preset path prefix."""
-    clip_kml = Path("/cache/clips/clip/deadbeef12345678/clip.kml")
+    """Layer-job KML lives under ``clips/layer_jobs/{role}/<stem>/clip.kml``."""
+
+    clip_kml = Path("/cache/clips/layer_jobs/exclude/foo_stem/clip.kml")
     lab = "exclude/BLM_Natl_Wilderness_Areas.gdb::Wilderness_Polygons"
     assert bundle_build._kml_overlay_role(clip_kml, lab) == "exclude"
     nested = Path("/tmp/foo.kml")
@@ -562,7 +496,7 @@ def test_kml_overlay_role_exclude_for_clip_cache_sidecar_path() -> None:
 
 
 def test_kml_overlay_role_include_for_clip_cache_sidecar_path() -> None:
-    clip_kml = Path("/cache/clips/clip/cafe4321beef9876/clip.kml")
+    clip_kml = Path("/cache/clips/layer_jobs/include/bar_stem/clip.kml")
     lab = "include/SMA_WM.gdb::eligible_poly"
     assert bundle_build._kml_overlay_role(clip_kml, lab) == "include"
     nested = Path("/tmp/foo.kml")
@@ -657,7 +591,7 @@ def test_build_aggregate_document_kml_eligible_layers_parent_folder() -> None:
 
 
 def test_kml_overlay_role_eligible_slices_use_disk_layout_not_include_label() -> None:
-    slice_kml = Path("/work/clips/eligible/a1b2c3d412345678/layers/inc.kml")
+    slice_kml = Path("/work/clips/eligible/layers/inc.kml")
     lab = "include/foo.gpkg::public_land"
     assert bundle_build._kml_overlay_role(slice_kml, lab) == "eligible"
 
@@ -676,7 +610,7 @@ def test_eligible_land_slice_trimmed_to_global_eligible_polygon(tmp_path: Path) 
 
 
 def test_eligible_slice_under_layers_placemark_heading(tmp_path: Path) -> None:
-    lyr = tmp_path / "clips" / "eligible" / "0123456789abcdef" / "layers"
+    lyr = tmp_path / "clips" / "eligible" / "layers"
     lyr.mkdir(parents=True)
     kml_path = lyr / "stem.kml"
     gdf = gpd.GeoDataFrame(

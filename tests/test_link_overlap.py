@@ -9,7 +9,7 @@ import pytest
 from shapely.geometry import box
 
 import peaky_finders.link_overlap as link_overlap_module
-from peaky_finders.mesh_pairwise_cache import mesh_pairwise_pair_digest
+from peaky_finders.path_labels import mesh_depth_network_rel_dir, mesh_pairwise_rel_dir
 from peaky_finders.link_overlap import (
     compute_pair_eligible_overlap_geometry,
     compute_pair_overlap_geometry,
@@ -94,7 +94,9 @@ def test_compute_footprint_depth_bands_fewer_than_two_returns_empty(tmp_path: Pa
     )
 
 
-def test_plain_pairwise_geometry_cache_hit_skips_compute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plain_pairwise_overlap_geometry_computed_each_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     a = tmp_path / "a.gpkg"
     b = tmp_path / "b.gpkg"
     _write_coverage_gpkg(a, box(-115.02, 39.01, -115.00, 39.03))
@@ -103,6 +105,15 @@ def test_plain_pairwise_geometry_cache_hit_skips_compute(tmp_path: Path, monkeyp
     slugs_digest = {"sa": "vdA", "sb": "vdB"}
     footprints = [(a, "sa", "Site A"), (b, "sb", "Site B")]
 
+    n_compute = {"n": 0}
+    orig_geom = link_overlap_module.compute_pair_overlap_geometry
+
+    def wrap_geom(pa: Path, pb: Path):
+        n_compute["n"] += 1
+        return orig_geom(pa, pb)
+
+    monkeypatch.setattr(link_overlap_module, "compute_pair_overlap_geometry", wrap_geom)
+
     write_pairwise_link_overlap_layers(
         footprints=footprints,
         scratch_dir=tmp_path / "kml1",
@@ -110,15 +121,11 @@ def test_plain_pairwise_geometry_cache_hit_skips_compute(tmp_path: Path, monkeyp
         pairwise_overlap_workers=1,
         geometry_cache_root=geom_root,
         slug_to_viewshed_digest=slugs_digest,
-        force_pairwise_geometry=False,
     )
-    pd = geom_root / mesh_pairwise_pair_digest("vdA", "vdB")
+    pd = geom_root / mesh_pairwise_rel_dir("sa", "sb")
     assert pd.is_dir() and (pd / "overlap.gpkg").is_file()
+    assert n_compute["n"] == 1
 
-    def boom(_pa: Path, _pb: Path) -> None:
-        raise AssertionError("compute_pair_overlap_geometry should stay cold on cache hit")
-
-    monkeypatch.setattr(link_overlap_module, "compute_pair_overlap_geometry", boom)
     write_pairwise_link_overlap_layers(
         footprints=footprints,
         scratch_dir=tmp_path / "kml2",
@@ -126,15 +133,16 @@ def test_plain_pairwise_geometry_cache_hit_skips_compute(tmp_path: Path, monkeyp
         pairwise_overlap_workers=1,
         geometry_cache_root=geom_root,
         slug_to_viewshed_digest=slugs_digest,
-        force_pairwise_geometry=False,
     )
+    assert n_compute["n"] == 2
 
 
-def test_plain_pairwise_flat_kml_cache_skips_second_base_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """With overlay digest + geom cache, second render copies pairwise_plain.kml without rebuilding base KML."""
+def test_plain_pairwise_flat_kml_rewrites_scratch_each_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
 
     from peaky_finders.link_overlap import write_pairwise_link_overlap_kml_pairs
-    from peaky_finders.mesh_pairwise_cache import PAIRWISE_FLAT_PLAIN_KML
+    from peaky_finders.mesh_pairwise_store import PAIRWISE_FLAT_PLAIN_KML
 
     a = tmp_path / "a.gpkg"
     b = tmp_path / "b.gpkg"
@@ -159,7 +167,6 @@ def test_plain_pairwise_flat_kml_cache_skips_second_base_write(tmp_path: Path, m
         pairwise_overlap_workers=1,
         geometry_cache_root=geom_root,
         slug_to_viewshed_digest=slugs_digest,
-        force_pairwise_geometry=False,
         bundle_kml_overlay_digest="overlay_xx",
         bundle_land_use_inputs_digest=None,
     )
@@ -173,19 +180,19 @@ def test_plain_pairwise_flat_kml_cache_skips_second_base_write(tmp_path: Path, m
 
     monkeypatch.setattr(link_overlap_module, "_write_flat_pair_overlap_kml_base", count_base)
     write_pairwise_link_overlap_kml_pairs(**{**base_kw, "link_scratch_dir": tmp_path / "kmla"})
-    pd = geom_root / mesh_pairwise_pair_digest("vdAflat", "vdBflat")
+    pd = geom_root / mesh_pairwise_rel_dir("sa", "sb")
     assert (pd / PAIRWISE_FLAT_PLAIN_KML).is_file()
     assert counts["n"] == 1
 
     write_pairwise_link_overlap_kml_pairs(**{**base_kw, "link_scratch_dir": tmp_path / "kmlb"})
-    assert counts["n"] == 1
+    assert counts["n"] == 2
 
 
-def test_eligible_pairwise_flat_kml_cache_skips_second_base_writes(
+def test_eligible_pairwise_flat_kml_rewrites_scratch_each_render(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from peaky_finders.link_overlap import write_pairwise_link_overlap_kml_pairs
-    from peaky_finders.mesh_pairwise_cache import PAIRWISE_FLAT_ELIG_KML, PAIRWISE_FLAT_PLAIN_KML
+    from peaky_finders.mesh_pairwise_store import PAIRWISE_FLAT_ELIG_KML, PAIRWISE_FLAT_PLAIN_KML
 
     a = tmp_path / "a.gpkg"
     b = tmp_path / "b.gpkg"
@@ -211,7 +218,6 @@ def test_eligible_pairwise_flat_kml_cache_skips_second_base_writes(
         pairwise_overlap_workers=1,
         geometry_cache_root=geom_root,
         slug_to_viewshed_digest=slugs_digest,
-        force_pairwise_geometry=False,
         bundle_kml_overlay_digest="ov_el",
         bundle_land_use_inputs_digest="lu_el",
     )
@@ -225,14 +231,16 @@ def test_eligible_pairwise_flat_kml_cache_skips_second_base_writes(
     monkeypatch.setattr(link_overlap_module, "_write_flat_pair_overlap_kml_base", count_base)
 
     write_pairwise_link_overlap_kml_pairs(**{**base_kw, "link_scratch_dir": tmp_path / "pa", "eligible_scratch_dir": tmp_path / "ea"})
-    pd = geom_root / mesh_pairwise_pair_digest("vdAel", "vdBel")
+    pd = geom_root / mesh_pairwise_rel_dir("sa", "sb")
     assert (pd / PAIRWISE_FLAT_PLAIN_KML).is_file()
     assert (pd / PAIRWISE_FLAT_ELIG_KML).is_file()
     assert counts["n"] == 2
 
     write_pairwise_link_overlap_kml_pairs(**{**base_kw, "link_scratch_dir": tmp_path / "pb", "eligible_scratch_dir": tmp_path / "eb"})
-    assert counts["n"] == 2
-    """Second render skips global_max_skadi_elevation_in_polygon when pair + DEM JSON are warm."""
+    assert counts["n"] == 4
+
+
+def test_dem_peak_sampling_runs_on_each_overlap_render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     a = tmp_path / "a.gpkg"
     b = tmp_path / "b.gpkg"
     _write_coverage_gpkg(a, box(-115.02, 39.01, -115.00, 39.03))
@@ -271,7 +279,7 @@ def test_eligible_pairwise_flat_kml_cache_skips_second_base_writes(
         dem_mirror_root=mirror,
         emit_dem_peak_pins=True,
     )
-    assert calls["n"] == 1
+    assert calls["n"] == 2
 
 
 def test_write_pairwise_link_overlap_writes_flat_and_arcname(tmp_path: Path) -> None:
@@ -442,7 +450,7 @@ def test_write_mesh_depth_emits_per_site_kmls(tmp_path: Path) -> None:
         assert path.is_file()
 
 
-def test_write_mesh_depth_cache_second_run_skips_compute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_write_mesh_depth_recomputes_bands_each_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from peaky_finders import mesh_coverage_depth as mcd
 
     a = tmp_path / "a.gpkg"
@@ -462,17 +470,17 @@ def test_write_mesh_depth_cache_second_run_skips_compute(tmp_path: Path, monkeyp
         geometry_cache_root=cache_root,
         slug_to_viewshed_digest=digest_map,
     )
+    n_compute = {"n": 0}
+    orig_compute = mcd.compute_footprint_depth_bands_wgs84
+
+    def wrap_compute(paths, **kw):
+        n_compute["n"] += 1
+        return orig_compute(paths, **kw)
+
+    monkeypatch.setattr(mcd, "compute_footprint_depth_bands_wgs84", wrap_compute)
+
     plain1, _ = mcd.write_mesh_depth_kml_layers(**kw)
     assert plain1
-
-    def boom_compute(*_a, **_k):
-        raise AssertionError("compute_footprint_depth_bands_wgs84 should stay cold on band cache hit")
-
-    def boom_fp(_p):
-        raise AssertionError("read_coverage_footprint should stay cold on slice cache hit")
-
-    monkeypatch.setattr(mcd, "compute_footprint_depth_bands_wgs84", boom_compute)
-    monkeypatch.setattr(mcd, "read_coverage_footprint", boom_fp)
 
     plain2, _ = mcd.write_mesh_depth_kml_layers(
         **{
@@ -481,12 +489,13 @@ def test_write_mesh_depth_cache_second_run_skips_compute(tmp_path: Path, monkeyp
         }
     )
     assert len(plain2) == len(plain1)
+    assert n_compute["n"] == 2
 
 
-def test_mesh_depth_flat_kml_second_run_skips_base_write_plain(
+def test_mesh_depth_flat_kml_rewrites_base_each_plain_render(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from peaky_finders.mesh_depth_cache import mesh_depth_flat_kml_slug_id
+    from peaky_finders.mesh_depth_store import mesh_depth_flat_kml_slug_id
 
     a = tmp_path / "a.gpkg"
     b = tmp_path / "b.gpkg"
@@ -523,30 +532,24 @@ def test_mesh_depth_flat_kml_second_run_skips_base_write_plain(
     first_n = counts["n"]
     assert first_n >= 1
     hid_sa = mesh_depth_flat_kml_slug_id("sa")
-    from peaky_finders.mesh_depth_cache import mesh_depth_set_digest, resolved_mesh_depth_slice_dir
+    from peaky_finders.mesh_depth_store import resolved_mesh_depth_slice_dir
 
-    sdig = mesh_depth_set_digest(
-        viewshed_digests=sorted(("vdA", "vdB")),
-        max_raster_dimension=512,
-    )
+    depth_set = cache_root / mesh_depth_network_rel_dir(max_raster_dimension=512)
     one_slice = resolved_mesh_depth_slice_dir(
-        set_dir=cache_root / sdig,
+        set_dir=depth_set,
         band="d1_unique",
         site_vd="vdA",
     )
     assert (one_slice / f"mesh_depth_plain_{hid_sa}.kml").is_file()
 
-    def boom(*_a: object, **_k: object) -> None:
-        raise AssertionError("_write_flat_pair_overlap_kml_base should stay cold")
-
-    monkeypatch.setattr(mcd, "_write_flat_pair_overlap_kml_base", boom)
     plain2, _ = mcd.write_mesh_depth_kml_layers(
         **{**base_kw, "scratch_depth_dir": tmp_path / "mdp2"},
     )
     assert len(plain2) == len(plain1)
+    assert counts["n"] == 2 * first_n
 
 
-def test_mesh_depth_flat_kml_second_run_skips_base_write_plain_and_eligible(
+def test_mesh_depth_flat_kml_rewrites_base_each_plain_and_eligible_render(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import peaky_finders.mesh_coverage_depth as mcd
@@ -586,10 +589,6 @@ def test_mesh_depth_flat_kml_second_run_skips_base_write_plain_and_eligible(
     first_writes = counts["n"]
     assert first_writes >= len(plain1) + len(elig1)
 
-    def boom(*_a: object, **_k: object) -> None:
-        raise AssertionError("_write_flat_pair_overlap_kml_base should stay cold")
-
-    monkeypatch.setattr(mcd, "_write_flat_pair_overlap_kml_base", boom)
     plain2, elig2 = mcd.write_mesh_depth_kml_layers(
         **{
             **base_kw,
@@ -598,3 +597,4 @@ def test_mesh_depth_flat_kml_second_run_skips_base_write_plain_and_eligible(
         }
     )
     assert len(plain2) == len(plain1) and len(elig2) == len(elig1)
+    assert counts["n"] == 2 * first_writes
