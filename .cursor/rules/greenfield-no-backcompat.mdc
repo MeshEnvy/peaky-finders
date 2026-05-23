@@ -12,7 +12,7 @@ Treat continuity with past behavior as **non-requirements**: optimizing for a cl
 ## Expectations
 
 - Prefer **clean breaks** over compatibility shims (rename/remove APIs freely when it improves the design).
-- **Caches** (e.g. `.cache/`, build artifacts, downloaded tiles): safe to invalidate, relocate, or delete formats when behavior changes — document breaking cache layout in commits or release notes only if the user cares.
+- **Caches** (e.g. per-project ``projects/<slug>/build/``, downloaded tiles): safe to invalidate, relocate, or delete formats when behavior changes — document breaking build layout in commits or release notes only if the user cares.
 - **CLI / config / file formats**: OK to change in breaking ways; update callers and defaults rather than supporting old shapes.
 - **Dependencies**: OK to bump majors and adopt new APIs without maintaining fallbacks for older versions.
 

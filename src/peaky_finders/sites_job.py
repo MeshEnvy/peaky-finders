@@ -51,14 +51,6 @@ def peaky_projects_dir() -> Path:
     return peaky_home() / "projects"
 
 
-def peaky_cache_dir() -> Path:
-    """Shared cache root (``PEAKY_CACHE`` or ``<peaky_home>/.cache``)."""
-    raw = os.environ.get("PEAKY_CACHE", "").strip()
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return peaky_home() / ".cache"
-
-
 def resolve_preset_yaml_arg(
     raw: str | Path,
     *,
@@ -119,6 +111,51 @@ def resolved_aggregate_kmz_path(preset_path: Path) -> Path:
     """Write aggregate KMZ beside the preset (``projects/<slug>/<slug>.kmz`` for project configs)."""
     path = Path(preset_path).expanduser().resolve()
     return path.parent / f"{resolved_preset_slug(path)}.kmz"
+
+
+def resolved_preset_build_dir(preset_path: Path) -> Path:
+    """Intermediate outputs root: ``<preset-dir>/build`` (sibling to ``config.yaml``)."""
+    p = Path(preset_path).expanduser().resolve()
+    require_preset_yaml_path(p)
+    return p.parent / "build"
+
+
+def resolved_preset_build_subdir(preset_path: Path, name: str) -> Path:
+    return resolved_preset_build_dir(preset_path) / name
+
+
+def resolved_preset_build_tmp_dir(preset_path: Path) -> Path:
+    d = resolved_preset_build_subdir(preset_path, "tmp")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def preset_tmp_subdir(preset_path: Path, *parts: str) -> Path:
+    """Under ``<preset>/build/tmp/…``; creates parent directories."""
+    base = resolved_preset_build_tmp_dir(preset_path)
+    if not parts:
+        return base
+    d = base.joinpath(*parts)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def resolved_inspect_tmp_parent(anchor_path: Path) -> Path:
+    """Temp parent for tools without an explicit preset (e.g. ``peaky inspect``).
+
+    Walks parents of ``anchor_path`` for a sibling ``config.yaml`` / ``config.yml`` and returns
+    that project's ``build/tmp``. Otherwise ``<PEAKY_HOME>/build/tmp``.
+    """
+    p = Path(anchor_path).expanduser().resolve()
+    for d in [p.parent, *list(p.parents)]:
+        for name in ("config.yaml", "config.yml"):
+            cfg = d / name
+            if cfg.is_file():
+                require_preset_yaml_path(cfg)
+                return resolved_preset_build_tmp_dir(cfg)
+    fb = peaky_home() / "build" / "tmp"
+    fb.mkdir(parents=True, exist_ok=True)
+    return fb
 
 
 def resolved_preset_bundle_data_dir(
@@ -913,16 +950,9 @@ def resolved_coverage_dispatcher_max_workers(job: Preset) -> int:
     return mw.splat
 
 
-def resolved_cache_base() -> Path:
-    """Directory holding ``clips/``, ``bundles/``, ``splat_tiles/``, ``viewsheds/``, ``mesh_pairwise/``, and ``mesh_depth/``."""
-    return peaky_cache_dir()
-
-
-def resolved_bundle_cache_root(*, cli_bundle_cache_root: Path | None) -> Path:
-    """GeoPackage bundle cache root ``…/bundles`` unless ``cli_bundle_cache_root`` is set."""
-    if cli_bundle_cache_root is not None:
-        return Path(cli_bundle_cache_root).expanduser().resolve()
-    return resolved_cache_base() / "bundles"
+def resolved_bundle_cache_root(*, preset_path: Path) -> Path:
+    """GeoPackage bundle job dirs under ``<preset-dir>/build/bundles``."""
+    return resolved_preset_build_subdir(preset_path, "bundles")
 
 
 def resolved_viewshed_cache_root(bundle_cache_root: Path) -> Path:
@@ -949,9 +979,9 @@ def resolved_eligible_union_cache_root(bundle_cache_root: Path) -> Path:
     return root.parent / "eligible_union"
 
 
-def resolved_splat_tile_cache_dir() -> Path:
-    """Skadi / SPLAT DEM tile mirror ``…/splat_tiles`` under :func:`resolved_cache_base`."""
-    return resolved_cache_base() / "splat_tiles"
+def resolved_splat_tile_cache_dir(preset_path: Path) -> Path:
+    """Skadi / SPLAT DEM tile mirror under ``<preset-dir>/build/splat_tiles``."""
+    return resolved_preset_build_subdir(preset_path, "splat_tiles")
 
 
 def parse_preset_dict(raw: dict) -> Preset:

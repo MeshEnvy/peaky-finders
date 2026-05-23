@@ -1,10 +1,10 @@
 """Host CLI: batch coverage from ``<preset>.yaml`` → one KMZ (Docker).
 
 When RF propagation inputs plus tile mirror/image match, Docker coverage may skip (see
-``splat_input_hash.py``); workspaces persist under ``<cache>/viewsheds/<digest>/``.
-Plain pairwise footprint∩polygon geometry may persist under ``<cache>/mesh_pairwise/<digest>/``
+``splat_input_hash.py``); workspaces persist under ``<preset-dir>/build/viewsheds/<digest>/``.
+Plain pairwise footprint∩polygon geometry may persist under ``build/mesh_pairwise/<digest>/``
 (``overlap.gpkg`` plus optional ``dem_peak_plain.json`` / ``dem_peak_eligible.json`` for Skadi DEM pins).
-Mesh coverage depth band + slice geometry may persist under ``<cache>/mesh_depth/<digest>/``.
+Mesh coverage depth band + slice geometry may persist under ``build/mesh_depth/<digest>/``.
 Stitched mesh-depth flat KML (plain + eligible) may cache beside each slice keyed by preset slug under the same dirs.
 """
 
@@ -35,6 +35,7 @@ from peaky_finders.sites_job import (
     SiteEntry,
     load_preset,
     mesh_edges_site_to_site_kml_arcname,
+    preset_tmp_subdir,
     resolved_aggregate_kmz_path,
     resolved_bundle_cache_root,
     resolved_coverage_dispatcher_max_workers,
@@ -108,14 +109,8 @@ def _bundle_render_data_dir(args: argparse.Namespace, preset_path: Path, job: Pr
     )
 
 
-def _bundle_render_cache_root(args: argparse.Namespace) -> Path:
-    raw = getattr(args, "cache_dir", None)
-    cli = None if raw is None else Path(raw).expanduser().resolve()
-    return resolved_bundle_cache_root(cli_bundle_cache_root=cli)
-
-
-def _ensure_tile_cache_dir() -> Path:
-    d = resolved_splat_tile_cache_dir()
+def _ensure_tile_build_dir(preset_path: Path) -> Path:
+    d = resolved_splat_tile_cache_dir(preset_path)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -508,7 +503,7 @@ def run_splat(args: argparse.Namespace) -> int:
         print(f"Invalid preset or RF parameters: {e}", file=sys.stderr)
         return 2
 
-    tile_cache_host = _ensure_tile_cache_dir()
+    tile_cache_host = _ensure_tile_build_dir(job_path)
 
     image = resolved_coverage_image(job)
     dockerfile_name = resolved_coverage_dockerfile(job)
@@ -522,7 +517,7 @@ def run_splat(args: argparse.Namespace) -> int:
     if job.bundle is None:
         print(
             "SPLAT requires a preset with bundle.* (AOI / land-use); "
-            "propagation workspaces live under $PEAKY_CACHE/viewsheds/<digest>/ (sibling to bundles/).",
+            "propagation workspaces live under <preset-dir>/build/viewsheds/<digest>/ (sibling to bundles/).",
             file=sys.stderr,
         )
         return 2
@@ -536,14 +531,13 @@ def run_splat(args: argparse.Namespace) -> int:
     )
     from peaky_finders.viewshed_cache import resolved_viewshed_workdir, viewshed_workspace_digest
 
-    bundle_cache_root = _bundle_render_cache_root(args)
+    bundle_cache_root = resolved_bundle_cache_root(preset_path=job_path)
 
     bundle_bb_data_dir = _bundle_render_data_dir(args, job_path, job)
 
     bundle_dir = bundle_directory_for_preset(
         preset_path=job_path,
         data_dir=bundle_bb_data_dir,
-        cache_root=bundle_cache_root,
     )
     if bundle_dir is None:
         print("Could not resolve bundle directory for preset.", file=sys.stderr)
@@ -752,7 +746,10 @@ def run_splat(args: argparse.Namespace) -> int:
     doc_title = preset_id.replace("-", " ")
     overlay_opacity_pct = kml_bundle.overlay_opacity_pct_from_display_transparency(job.display)
 
-    with tempfile.TemporaryDirectory() as overlap_td:
+    with tempfile.TemporaryDirectory(
+        prefix="overlap-",
+        dir=str(preset_tmp_subdir(job_path, "kmz-overlap")),
+    ) as overlap_td:
         overlap_dir = Path(overlap_td)
         mesh_depth_plain: list[tuple[str, str, Path, str, str]] = []
         mesh_depth_elig: list[tuple[str, str, Path, str, str]] = []

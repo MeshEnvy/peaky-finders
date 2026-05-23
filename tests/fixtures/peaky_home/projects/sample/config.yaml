@@ -1,0 +1,54 @@
+# Sample project preset for fixture-based tests (preset paths, sites.sees, bundle clips).
+simulation:
+  modem_presets:
+    meshcore-us:
+      frequency_mhz: 910.525
+      bandwidth_khz: 62.5
+      spreading_factor: 7
+      coding_rate: 5
+      implementation_margin_db: 3.0
+      power_dbm: 22.0
+      sensitivity_dbm: -121.0
+  environment_presets:
+    test-desert:
+      climate: desert
+      polarization: vertical
+      clutter_height_m: 1.0
+  modem: meshcore-us
+  environment: test-desert
+  transmitter: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
+  receiver: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
+  provider: los
+  radius_km: 60.0
+display:
+  colormap: plasma
+  min_dbm: -130.0
+  max_dbm: -80.0
+sites:
+  hub:
+    name: Hub
+    loc: [39.0, -119.0]
+    sees: [peer-a, peer-b, peer-c]
+  peer-a:
+    name: Peer A
+    loc: [39.1, -119.0]
+    sees: [hub]
+  peer-b:
+    name: Peer B
+    loc: [39.05, -119.05]
+    sees: [hub]
+  peer-c:
+    name: Peer C
+    loc: [39.02, -119.02]
+    sees: [hub]
+bundle:
+  inputs_root: data
+  aoi:
+    - path: aoi/test.gdb
+      layers:
+        - name: boundary
+  include:
+    - path: include/test.gdb
+      layers:
+        - name: inc_layer
+  exclude: []
