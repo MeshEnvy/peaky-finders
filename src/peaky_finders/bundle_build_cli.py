@@ -33,15 +33,6 @@ def build_bundle_argument_parser() -> argparse.ArgumentParser:
         help="Rebuild eligible-land AOI bundle even when a matching cache exists",
     )
     p.add_argument(
-        "--cache-dir",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help=(
-            "Override bundle cache root (default: $PEAKY_CACHE/bundles, else $PEAKY_HOME/.cache/bundles)"
-        ),
-    )
-    p.add_argument(
         "--data-dir",
         type=Path,
         default=None,
@@ -64,8 +55,7 @@ def build_bundle_argument_parser() -> argparse.ArgumentParser:
         metavar="N",
         help=(
             "Parallel S3 workers fetching Skadi `*.hgt.gz` into the DEM mirror "
-            "(default mirror: $PEAKY_CACHE/splat_tiles, else $PEAKY_HOME/.cache/splat_tiles; "
-            "worker default: 16)"
+            "(default: <preset-dir>/build/splat_tiles/; worker default: 16)"
         ),
     )
     p.add_argument(
@@ -73,13 +63,13 @@ def build_bundle_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Do not prefetch Skadi HGT tiles into the DEM mirror "
-            "(see $PEAKY_CACHE/splat_tiles)."
+            "(see <preset-dir>/build/splat_tiles/)."
         ),
     )
     p.add_argument(
         "--no-plss-fetch",
         action="store_true",
-        help="Skip BLM CadNSDI refresh of site plss/mlrs (loc-keyed cache under $PEAKY_CACHE)",
+        help="Skip BLM CadNSDI refresh of site plss/mlrs (loc-keyed cache under build/plss_mlrs/)",
     )
     p.add_argument("--quiet", "-q", action="store_true")
     return p
@@ -143,13 +133,10 @@ def run_bundle_build(ns: argparse.Namespace, *, log_prefix: str) -> int:
         preset=preset,
         cli_override=None if ns.data_dir is None else Path(ns.data_dir).expanduser().resolve(),
     )
-    cache_root = Path(ns.cache_dir).expanduser().resolve() if ns.cache_dir is not None else None
-
     try:
         gpkg, reused_cache = ensure_land_use_bundle(
             preset_path=preset_path,
             data_dir=data_dir,
-            cache_root=cache_root,
             force=ns.force,
             verbose=ns.verbose,
             prefetch_dem=not ns.skip_dem_prefetch,

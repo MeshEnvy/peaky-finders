@@ -81,8 +81,12 @@ class Splat:
         logger.info("SPLAT request: %s", request.model_dump_json())
         work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
+        run_dir = work_dir / "_run"
+        if run_dir.is_dir():
+            shutil.rmtree(run_dir, ignore_errors=True)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            tmpdir = str(run_dir)
             input_sha256 = splat_input_sha256(request)
             request = normalize_splat_request(request)
 
@@ -172,6 +176,8 @@ class Splat:
             shutil.copy2(kml_path, work_dir / "output.kml")
 
             Path(work_dir, "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
 
     @staticmethod
     def _calculate_required_terrain_tiles(lat: float, lon: float, radius: float) -> List[Tuple[str, str, str]]:
@@ -291,7 +297,9 @@ class Splat:
         if sdf_path.is_file():
             return sdf_path.read_bytes()
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        scratch = self.mirror_root / "_sdf_scratch"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=str(scratch)) as tmpdir:
             hgt_path = os.path.join(tmpdir, tile_name.replace(".gz", ""))
             with gzip.GzipFile(fileobj=io.BytesIO(tile)) as gz_file:
                 Path(hgt_path).write_bytes(gz_file.read())

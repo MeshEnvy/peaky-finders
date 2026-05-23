@@ -1,7 +1,7 @@
-"""Build the AOI / land-use bundle: preset-listed GDB layers → global ``clips/`` cache + job workspace.
+"""Build the AOI / land-use bundle: preset-listed GDB layers → project ``build/clips/`` + job workspace.
 
 Per-layer clips and composites (aoi, include, exclude, eligible) live under
-``<cache_base>/clips/``. Each preset job writes ``<cache_base>/bundles/<job_sha>/resolve.json``
+``<preset-dir>/build/clips/``. Each preset job writes ``build/bundles/<job_sha>/resolve.json``
 pointing at those artifacts.
 ``bundle.kml_overlay`` is tracked separately so sidecar KML/PNG can refresh without a full GDB rebuild.
 """
@@ -45,7 +45,8 @@ from peaky_finders.sites_job import (
     ogr_where_for_layer_spec,
     peaky_home,
     resolved_bundle_cache_root,
-    resolved_cache_base,
+    resolved_inspect_tmp_parent,
+    resolved_preset_build_dir,
     resolved_splat_tile_cache_dir,
 )
 
@@ -322,8 +323,16 @@ def is_polygon_geometry_type(gt: str) -> bool:
 
 
 @contextmanager
-def openfilegdb_dataset_path(gdb_path: Path) -> Iterator[str]:
-    """Yield a GDAL-readable dataset path (FileGDB folder, unpacked GDB sibling, GeoPackage, or KML file)."""
+def openfilegdb_dataset_path(
+    gdb_path: Path,
+    *,
+    tmp_parent: Path | None = None,
+) -> Iterator[str]:
+    """Yield a GDAL-readable dataset path (FileGDB folder, unpacked GDB sibling, GeoPackage, or KML file).
+
+    OpenFileGDB symlink staging uses ``tmp_parent`` (default: project ``build/tmp`` from path walk, see
+    :func:`peaky_finders.sites_job.resolved_inspect_tmp_parent`).
+    """
     gdb_path = gdb_path.expanduser().resolve()
     if not gdb_path.exists():
         raise FileNotFoundError(f"GDB path not found: {gdb_path}")
@@ -337,7 +346,8 @@ def openfilegdb_dataset_path(gdb_path: Path) -> Iterator[str]:
         yield str(gdb_path)
         return
     if gdb_path.is_dir() and any(gdb_path.glob("*.gdbtable")):
-        td = Path(tempfile.mkdtemp(prefix="openfilegdb_", dir=None))
+        parent = tmp_parent if tmp_parent is not None else resolved_inspect_tmp_parent(gdb_path)
+        td = Path(tempfile.mkdtemp(prefix="openfilegdb_", dir=str(parent)))
         try:
             link = td / f"{gdb_path.name}.gdb"
             link.symlink_to(gdb_path, target_is_directory=True)
@@ -1207,9 +1217,9 @@ def bundle_directory_for_preset(
     *,
     preset_path: Path,
     data_dir: Path,
-    cache_root: Path | None = None,
+    build_root: Path | None = None,
 ) -> Path | None:
-    """Stable bundle cache dir for ``preset_path`` when it defines ``bundle.*``; else ``None``.
+    """Stable bundle job dir under ``build/bundles/`` when ``preset_path`` defines ``bundle.*``; else ``None``.
 
     Mirrors :func:`ensure_land_use_bundle` layout resolution (does not ensure the bundle exists).
     """
@@ -1218,10 +1228,10 @@ def bundle_directory_for_preset(
     if preset.bundle is None:
         return None
     data_dir = Path(data_dir).expanduser().resolve()
-    if cache_root is not None:
-        cache_root_final = Path(cache_root).expanduser().resolve()
+    if build_root is not None:
+        cache_root_final = Path(build_root).expanduser().resolve() / "bundles"
     else:
-        cache_root_final = resolved_bundle_cache_root(cli_bundle_cache_root=None)
+        cache_root_final = resolved_bundle_cache_root(preset_path=preset_path_resolved)
     bundle_dir, _ = bundle_paths(cache_root_final, preset=preset, data_dir=data_dir)
     return bundle_dir
 
@@ -1952,17 +1962,17 @@ def ensure_reference_bundle_layers(
 def cached_gpkg_path_from_preset(
     *,
     preset_path: Path,
-    cache_root: Path | None = None,
+    build_root: Path | None = None,
     data_dir: Path | None = None,
 ) -> Path:
     """Return planned eligible GPKG path for ``preset_path`` (``clips/eligible/<sha>/…``)."""
     p = Path(preset_path).expanduser().resolve()
     preset = load_preset(p)
     dd = Path(data_dir).expanduser().resolve() if data_dir is not None else peaky_home() / "data"
-    if cache_root is not None:
-        bundles_root = Path(cache_root).expanduser().resolve()
+    if build_root is not None:
+        bundles_root = Path(build_root).expanduser().resolve() / "bundles"
     else:
-        bundles_root = resolved_bundle_cache_root(cli_bundle_cache_root=None)
+        bundles_root = resolved_bundle_cache_root(preset_path=p)
     bundle_dir, gpkg = bundle_paths(bundles_root, preset=preset, data_dir=dd)
     from peaky_finders.bundle_clips import (
         bundle_resolve_path,
@@ -1983,12 +1993,12 @@ def cached_gpkg_path_from_preset(
 def require_cached_gpkg(
     *,
     preset_path: Path,
-    cache_root: Path | None = None,
+    build_root: Path | None = None,
     data_dir: Path | None = None,
 ) -> Path:
     """Resolve cached ``eligible_land_use/eligible_land_use.gpkg`` or raise ``FileNotFoundError`` with a fix hint."""
     gpkg = cached_gpkg_path_from_preset(
-        preset_path=preset_path, cache_root=cache_root, data_dir=data_dir
+        preset_path=preset_path, build_root=build_root, data_dir=data_dir
     )
     if not gpkg.is_file():
         hint = (
@@ -2115,12 +2125,12 @@ def ensure_land_use_bundle(
     *,
     preset_path: Path,
     data_dir: Path,
-    cache_root: Path | None,
     force: bool,
     verbose: bool = False,
     prefetch_dem: bool = True,
     dem_workers: int | None = None,
     no_plss_fetch: bool = False,
+    build_root: Path | None = None,
 ) -> tuple[Path, bool]:
     """Build or reuse land-use bundle. Returns ``(eligible_land_use_gpkg_path, reused_cache)``."""
     data_dir = Path(data_dir).expanduser().resolve()
@@ -2129,11 +2139,12 @@ def ensure_land_use_bundle(
     preset = load_preset(preset_path_resolved)
     plc = require_bundle_config(preset)
     digest = bundle_cache_digest(preset=preset, data_dir=data_dir)
-    if cache_root is not None:
-        cache_root_final = Path(cache_root).expanduser().resolve()
+    if build_root is not None:
+        cache_base = Path(build_root).expanduser().resolve()
+        cache_root_final = cache_base / "bundles"
     else:
-        cache_root_final = resolved_bundle_cache_root(cli_bundle_cache_root=None)
-    cache_base = cache_root_final.parent
+        cache_base = resolved_preset_build_dir(preset_path_resolved)
+        cache_root_final = resolved_bundle_cache_root(preset_path=preset_path_resolved)
     from peaky_finders.bundle_clips import (
         ensure_bundle_clip_cache,
         plan_clip_build_result,
@@ -2157,7 +2168,7 @@ def ensure_land_use_bundle(
 
     maybe_refresh_plss_mlrs_for_bundle(
         preset_path=preset_path_resolved,
-        cache_base=resolved_cache_base(),
+        cache_base=cache_base,
         preset=preset,
         force_all=force,
         skip_network=no_plss_fetch,
@@ -2240,7 +2251,7 @@ def ensure_land_use_bundle(
                 f"eligible WGS84 bounds (minx,miny,maxx,maxy): {eligible_bounds}",
             )
 
-    splat_tile_dir = resolved_splat_tile_cache_dir()
+    splat_tile_dir = resolved_splat_tile_cache_dir(preset_path_resolved)
 
     if prefetch_dem:
         if eligible_bounds is None:

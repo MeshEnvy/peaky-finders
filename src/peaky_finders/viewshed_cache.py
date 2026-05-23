@@ -1,6 +1,6 @@
-"""Filesystem layout for SPLAT workspaces (outside bundle caches).
+"""Filesystem layout for SPLAT workspaces (outside bundle job dirs).
 
-Workspaces live under ``<cache_base>/viewsheds/<digest>/`` where ``digest`` is
+Workspaces live under ``<preset-dir>/build/viewsheds/<digest>/`` where ``digest`` is
 :func:`splat_input_sha256` of the propagation request. Provider, Docker image, tile
 mirror, and host overlay knobs are not part of the key — delete the workspace directory
 to evict after changing those.

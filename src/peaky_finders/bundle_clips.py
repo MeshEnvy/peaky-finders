@@ -1,4 +1,4 @@
-"""Content-addressed clip cache under ``<cache_base>/clips/``.
+"""Content-addressed clip cache under ``<preset-dir>/build/clips/``.
 
 Layout::
 
@@ -9,7 +9,7 @@ Layout::
     clips/eligible/<eligible_sha>/layers/<stem>.{kml,png}  (per-include eligible ∩ global eligible)
     clips/reference/<entry_sha>/reference.{gpkg,kml,png} or .empty
 
-Job workspaces live at ``<cache_base>/bundles/<job_sha>/`` with ``resolve.json`` pointing into ``clips/``.
+Job workspaces live at ``<preset-dir>/build/bundles/<job_sha>/`` with ``resolve.json`` pointing into ``clips/``.
 """
 
 from __future__ import annotations

@@ -19,5 +19,4 @@ def peaky_test_home(monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolated ``PEAKY_HOME`` with ``projects/sample/config.yaml`` (no repo Nevada preset)."""
     monkeypatch.setenv("PEAKY_HOME", str(PEAKY_TEST_HOME))
     monkeypatch.delenv("PEAKY_PROJECTS", raising=False)
-    monkeypatch.delenv("PEAKY_CACHE", raising=False)
     return PEAKY_TEST_HOME
