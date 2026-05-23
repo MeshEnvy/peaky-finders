@@ -85,6 +85,33 @@ def fetch_layer_metadata(layer_url: str, *, timeout_s: float, user_agent: str = 
     return fetch_json(f"{base}?f=json", timeout_s=timeout_s, user_agent=user_agent)
 
 
+def fetch_layer_feature_count(
+    layer_url: str,
+    *,
+    where: str,
+    timeout_s: float,
+    user_agent: str = DEFAULT_UA,
+) -> int | None:
+    """Return feature count from ArcGIS ``query`` with ``returnCountOnly`` (cheap)."""
+
+    base = strip_layer_base_url(layer_url)
+    qs = urllib.parse.urlencode({"where": where, "returnCountOnly": "true", "f": "json"})
+    try:
+        data = fetch_json(f"{base}/query?{qs}", timeout_s=timeout_s, user_agent=user_agent)
+    except Exception:
+        return None
+    if isinstance(data, dict) and data.get("error"):
+        return None
+    if not isinstance(data, dict):
+        return None
+    c = data.get("count")
+    if isinstance(c, int):
+        return c
+    if isinstance(c, str) and c.isdigit():
+        return int(c)
+    return None
+
+
 def arcgis_geometry_exclude_eligible(geometry_type: str | None) -> bool:
     """True if Peaky ``bundle.exclude`` can consume the layer (polygon-like only)."""
     if not geometry_type:

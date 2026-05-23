@@ -73,7 +73,7 @@ def require_bundle_config(preset: Preset) -> BundleConfig:
     if not pre.include:
         raise ValueError(
             'Preset needs non-empty "bundle.include". Layer names:'
-            "\n  peaky inspect <path_to.gdb>"
+            "\n  peaky inspect <path_to.gdb|.gpkg|.kml|.pjson>"
             "\nthen edit the preset JSON bundle.include / bundle.exclude arrays."
         )
     return pre
@@ -323,11 +323,14 @@ def is_polygon_geometry_type(gt: str) -> bool:
 
 @contextmanager
 def openfilegdb_dataset_path(gdb_path: Path) -> Iterator[str]:
-    """Yield a GDAL-readable dataset path (FileGDB folder, unpacked GDB sibling, or GeoPackage file)."""
+    """Yield a GDAL-readable dataset path (FileGDB folder, unpacked GDB sibling, GeoPackage, or KML file)."""
     gdb_path = gdb_path.expanduser().resolve()
     if not gdb_path.exists():
         raise FileNotFoundError(f"GDB path not found: {gdb_path}")
     if gdb_path.is_file() and gdb_path.suffix.lower() == ".gpkg":
+        yield str(gdb_path)
+        return
+    if gdb_path.is_file() and gdb_path.suffix.lower() == ".kml":
         yield str(gdb_path)
         return
     if gdb_path.is_dir() and gdb_path.name.lower().endswith(".gdb"):
@@ -343,7 +346,7 @@ def openfilegdb_dataset_path(gdb_path: Path) -> Iterator[str]:
             shutil.rmtree(td, ignore_errors=True)
         return
     raise FileNotFoundError(
-        f"Not a supported bundle vector dataset (File Geodatabase directory or .gpkg file): {gdb_path}"
+        f"Not a supported bundle vector dataset (File Geodatabase directory, .gpkg, or .kml): {gdb_path}"
     )
 
 
