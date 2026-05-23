@@ -129,10 +129,6 @@ bundle:
       exclude/BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons_-3786779803719444042
     layers:
     - name: BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons
-  - path: 
-      exclude/FRTC exclusion.pjson
-    layers:
-    - name: exclusion
   - path:
       exclude/FRTCMapData_LandStatus_styled.kml
 

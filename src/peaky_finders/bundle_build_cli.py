@@ -87,7 +87,7 @@ def build_bundle_argument_parser() -> argparse.ArgumentParser:
 
 def add_bundle_subcommands(pre_sub: argparse.Action) -> None:
     """Register ``run`` and ``inspect`` for ``python -m peaky_finders.bundle_build_cli``."""
-    from peaky_finders.gdb_inspect_cli import (
+    from peaky_finders.inspect_cli import (
         build_inspect_parser,
         run_inspect,
     )
@@ -102,7 +102,7 @@ def add_bundle_subcommands(pre_sub: argparse.Action) -> None:
     p_inspect = pre_sub.add_parser(
         "inspect",
         parents=[build_inspect_parser()],
-        help="List layers in a File Geodatabase",
+        help="List layers and attributes (GDB, GeoPackage, KML, or web map JSON)",
     )
     p_inspect.set_defaults(_handler=run_inspect)
 
@@ -111,7 +111,7 @@ def build_bundle_build_entry_parser(*, prog: str = "bundle_build_cli") -> argpar
     """CLI for ``python -m peaky_finders.bundle_build_cli`` (subcommands: run, inspect)."""
     parser = argparse.ArgumentParser(
         prog=prog,
-        description="AOI bundle cache: build (run) or list GDB layers (inspect).",
+        description="AOI bundle cache: build (run) or inspect vector / web map sources.",
     )
     sub = parser.add_subparsers(dest="bundle_action", required=True)
     add_bundle_subcommands(sub)

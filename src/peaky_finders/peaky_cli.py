@@ -1,4 +1,4 @@
-"""Unified CLI: ``peaky render`` (full pipeline), ``peaky inspect`` (GDB layers)."""
+"""Unified CLI: ``peaky render`` (full pipeline), ``peaky inspect`` (layers + attributes)."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ import argparse
 import sys
 
 from peaky_finders.cli import build_render_argument_parser, run_render
-from peaky_finders.gdb_inspect_cli import build_inspect_parser, run_inspect
+from peaky_finders.inspect_cli import build_inspect_parser, run_inspect
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="peaky",
-        description="Peaky Finders: render a preset to KMZ, or inspect GDB datasets.",
+        description="Peaky Finders: render a preset to KMZ, or inspect GDB/GPKG/KML/web map data.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -26,7 +26,7 @@ def main() -> None:
     p_inspect = sub.add_parser(
         "inspect",
         parents=[build_inspect_parser()],
-        help="List layers and attributes in a File Geodatabase",
+        help="List layers and attributes (GDB, GeoPackage, KML, or ArcGIS web map JSON)",
     )
     p_inspect.set_defaults(_handler=run_inspect)
 
