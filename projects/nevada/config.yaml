@@ -1,0 +1,481 @@
+# Peaky preset — Nevada reference job (YAML only; legacy `.json` presets are unsupported).
+# GDB paths under bundle.* resolve under ``<preset-directory>/<bundle.inputs_root>`` unless absolute.
+#
+
+# --- Propagation simulation (RF catalogs, antenna chains, coverage engine) ---
+simulation:
+  provider: los # los | splat — splatter (Fresnel/FSPL) vs legacy SPLAT binary
+  verbose: true
+  situation_pct: 95.0 # reliability margin on decode threshold (planned splatter wire)
+  time_pct: 95.0
+  radius_km: 100.0 # search disk / overlay frame, not expected range
+  fresnel_clearance_fraction: 0.25 # splatter: knife-edge F₁ clearance; field-calibrated Poito→Russell ~6.75 dB decode margin (0.6 was ~4 dB pessimistic)
+  coverage_pessimism_db: 0.0 # extra decode margin folded into emitted request.json modem margins (modem_presets unchanged)
+
+  modem_presets:
+    meshcore-us:
+      frequency_mhz: 910.525
+      bandwidth_khz: 62.5
+      spreading_factor: 7
+      coding_rate: 5 # 4/5
+      implementation_margin_db: 3.0
+      power_dbm: 22.0
+      sensitivity_dbm: -121.0
+
+  environment_presets:
+    nevada-desert:
+      description: Great Basin arid open terrain — minimal foliage clutter
+      climate: desert # SPLAT ITM/ITWOM only; ignored by splatter
+      polarization: vertical
+      clutter_height_m: 1.0 # splatter: added to terrain for knife-edge loss
+      ground_dielectric_v_m: 15.0
+      ground_conductivity_s_m: 0.005
+      atmosphere_bending_n: 301.0
+
+  modem: meshcore-us
+  environment: nevada-desert
+
+  transmitter:
+    height_m: 2.0
+    gain_dbi: 3.0
+    loss_db: 2.0
+
+  receiver:
+    height_m: 2.0
+    gain_dbi: 3.0
+    loss_db: 2.0
+
+  # max_workers:
+  #   los: 1
+  #   splat: 8
+
+# --- Raster / KMZ visualization (not physical RF inputs to the solver beyond min/max clamp.) ---
+display:
+  colormap: plasma
+  transparency: 50 # Meshtastic-style % transparency for PNG overlay in Earth
+  min_dbm: -130.0
+  max_dbm: -80.0
+
+# --- GDB-driven bundle (AOI, eligible land masks, overlays, DEM pin scan, KMZ layer toggles) ---
+bundle:
+  inputs_root: data
+
+  # Context maps (AOI-clipped; KMZ only — not used for eligibility). Ordered before ``aoi`` in doc.kml.
+  reference:
+  - id: blm_nevada_districts
+    path: reference/BLM_Nevada_District_Office_Boundary.gdb
+    visible: false
+    style:
+      line: ff4488cc
+      fill: 664488cc
+      fill_polygons: true
+      line_width: 1.5
+    layers:
+    - admu_district_poly
+  - id: blm_nv_field_offices
+    path: reference/BLM_NV_Field_Office_Boundary_Polygons.gdb
+    visible: false
+    style:
+      line: ffcc8844
+      fill: 66cc8844
+      fill_polygons: true
+      line_width: 1.0
+    layers:
+    - admu_ofc_poly
+
+  # Outer clip — state hull or arbitrary polygon union
+  aoi:
+  - path: aoi/State_of_Nevada_Boundary_74510041082641794
+    layers:
+    - Nevada_State_Boundary
+
+  # Polygons counted as permissible land (attribute filter on GDB layer rows)
+  include:
+  - path: include/BLM_Nevada_Surface_Management_Agency.gdb
+    layers:
+    - name: Land_Status_Dis
+      include:
+      - name: ABBR
+        value: BLM
+      - name: ABBR
+        value: FS
+  - path: include/National_Wildlife_Refuge_System_Boundaries.gdb
+    layers:
+    - name: FWSBoundaries
+
+  # Subtracted before eligible land (wilderness, ACEC, LWCF, etc.)
+  exclude:
+  - path: 
+      exclude/BLM_Natl_Areas_of_Critical_Environmental_Concern_-8889489521581605133
+    layers:
+    - name: acec_desig_poly
+  - path: 
+      exclude/BLM_Natl_Historic_Areas_of_Critical_of_Environmental_Concern_3039259636030657794
+    layers:
+    - name: acec_hist_poly
+  - path: 
+      exclude/BLM_Natl_Land_and_Water_Conservation_Fund_LWCF_Polygons_2503496445228609816
+    layers:
+    - name: BLM_Natl_Land_and_Water_Conservation_Fund__LWCF__Polygons
+  - path: 
+      exclude/BLM_Natl_NLCS_National_Monuments_National_Conservation_Areas_Polygons_3820554695161457218
+    layers:
+    - name: 
+        BLM_Natl_NLCS_National_Monuments_National_Conservation_Areas_Polygons
+  - path: exclude/BLM_Natl_NLCS_Wilderness_Areas_Polygons_-100690039319256330
+    layers:
+    - name: BLM_Natl_NLCS_Wilderness_Areas_Polygons
+  - path: 
+      exclude/BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons_-3786779803719444042
+    layers:
+    - name: BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons
+  - path: 
+      exclude/FRTC exclusion.pjson
+    layers:
+    - name: exclusion
+  - path:
+      exclude/FRTCMapData_LandStatus_styled.kml
+
+  # KML fill/line defaults (AABBGGRR where applicable — Google Earth convention)
+  kml_overlay:
+    default:
+      line: ff666666
+      fill: '66888888'
+      fill_polygons: true
+    aoi:
+      line: ffff6600
+      fill: 66ffaa66
+      fill_polygons: true
+    include:
+      line: 6600f300
+      fill: 6600f300
+      fill_polygons: true
+      line_width: 0
+    exclude:
+      line: 660000ff
+      fill: 660000ff
+      fill_polygons: true
+      line_width: 0
+    eligible:
+      line: 6600f300
+      fill: 6600f300
+      fill_polygons: true
+      line_width: 0
+    reference:
+      line: ff666666
+      fill: '66888888'
+      fill_polygons: true
+      line_width: 1.0
+    summits:
+      line: ff0099ff
+      fill: '00000000'
+      fill_polygons: false
+    viewshed_coverage:
+      line: '00000000'
+      fill: 9900ff00
+      fill_polygons: true
+      line_width: 0
+    mesh:
+      depth:
+        d1_unique:
+          line: '00000000'
+          fill: 9900ff00 # #00ff00; aabbggrr (alpha matches other mesh depth bands)
+          fill_polygons: true
+          line_width: 0
+        d2_pair:
+          line: '00000000'
+          fill: 9966ff66
+          fill_polygons: true
+          line_width: 0
+        d3_quad:
+          line: '00000000'
+          fill: 99ffaa00
+          fill_polygons: true
+          line_width: 0
+        d5_plus:
+          line: '00000000'
+          fill: 99ff0066
+          fill_polygons: true
+          line_width: 0
+      depth_eligible:
+        d1_unique:
+          line: '00000000'
+          fill: 9900ff00
+          fill_polygons: true
+          line_width: 0
+        d2_pair:
+          line: '00000000'
+          fill: 9966ff66
+          fill_polygons: true
+          line_width: 0
+        d3_quad:
+          line: '00000000'
+          fill: 99ffaa00
+          fill_polygons: true
+          line_width: 0
+        d5_plus:
+          line: '00000000'
+          fill: 99ff0066
+          fill_polygons: true
+          line_width: 0
+      pairwise:
+        line: '00000000'
+        fill: 99ff0000
+        fill_polygons: true
+        line_width: 0
+      pairwise_eligible:
+        line: '00000000'
+        fill: 99ffff00
+        fill_polygons: true
+        line_width: 0
+
+  # Footprint overlap-count rasters in aggregate KMZ: EPSG:3857 grid longer edge (px). Higher → finer bands, more CPU/RAM (256–16384).
+  mesh_coverage:
+    max_raster_dimension: 4096
+    # Highest Skadi SRTM cell inside each pairwise / pairwise_eligible footprint ∩ (requires splat tile mirror).
+    pairwise_dem_peak_pin: true
+    # Pairwise ∩ + DEM placemarks: thread pool size (tiles cached in-process across pairs).
+    pairwise_overlap_workers: 8
+    # Mesh depth rasters + per-site band slices per render phase.
+    mesh_depth_workers: 8
+
+  # doc.kml initial NetworkLink checkbox visibility inside aggregate KMZ
+  kmz:
+    layers:
+      viewshed_raster: true
+      viewshed_polygon: false
+      mesh:
+        edges: true
+        depth_d1_unique: false
+        depth_d2_pair: false
+        depth_d3_quad: false
+        depth_d5_plus: false
+        depth_eligible_d1_unique: false
+        depth_eligible_d2_pair: false
+        depth_eligible_d3_quad: false
+        depth_eligible_d5_plus: false
+        pairwise: false
+        pairwise_eligible: false
+      pins: true
+      eligible: false
+      exclude: false
+      include: false
+      aoi: false
+
+# --- Named sites (``peaky viewshed`` / LOS slugs.) `plss`/`mlrs` from CadNSDI; cached by lat/lon under cache_path/plss_mlrs/. ---
+sites:
+  davidson-peak:
+    name: Davidson Peak
+    loc:
+    - 39.30831
+    - -119.66388
+    elevation_m: 2372.0
+    rationale: BLM surface management (national SMA); approved with explicit 
+      user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 30 — CadNSDI 
+      PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN300
+    mlrs: NV210170N0210E0SN300
+  lower-spanish-benchmark:
+    name: Lower Spanish Benchmark
+    loc:
+    - 39.64484
+    - -119.7649
+    elevation_m: 1789.0
+    rationale: BLM surface management (national SMA); approved with explicit 
+      user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.21N R.20E; Sec. 32 — CadNSDI 
+      PLSSID=NV210210N0200E0 | FRSTDIVID=NV210210N0200E0SN320
+    mlrs: NV210210N0200E0SN320
+  ophir-hill:
+    name: Ophir Hill
+    loc:
+    - 39.31862
+    - -119.66943
+    elevation_m: 2353.0
+    rationale: BLM surface management (national SMA); approved with explicit 
+      user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 19 — CadNSDI 
+      PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN190
+    mlrs: NV210170N0210E0SN190
+  poito:
+    name: Poito
+    loc:
+    - 40.42619
+    - -119.35167
+    elevation_m: 1713.0
+    sees: [russell-peak, ruslito-peak, poiton-peak]
+    rationale: BLM surface management (national SMA); approved with explicit 
+      user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.30N R.23E; Sec. 36 — CadNSDI 
+      PLSSID=NV210300N0230E0 | FRSTDIVID=NV210300N0230E0SN360
+    mlrs: NV210300N0230E0SN360
+  poiton-peak:
+    experimental: true
+    name: Poitón
+    loc:
+    - 40.40376111
+    - -119.36080556
+    sees: [poito]
+    rationale: BLM surface management (national SMA); approved with explicit 
+      user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.29N R.23E; Sec. 11 — CadNSDI 
+      PLSSID=NV210290N0230E0 | FRSTDIVID=NV210290N0230E0SN110
+    mlrs: NV210290N0230E0SN110
+  ruslito-peak:
+    experimental: true
+    name: Ruslito Peak
+    loc:
+    - 39.91342
+    - -119.32289
+    elevation_m: 1361.0
+    sees: [poito]
+    rationale: BLM surface management (national SMA); approved with explicit 
+      user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.24N R.24E; Sec. 31 — CadNSDI 
+      PLSSID=NV210240N0240E0 | FRSTDIVID=NV210240N0240E0SN310
+    mlrs: NV210240N0240E0SN310
+  russell-peak:
+    name: Russell Peak
+    loc:
+    - 39.90951
+    - -119.3289
+    elevation_m: 1420.0
+    sees: [poito]
+    rationale: BLM surface management (national SMA); approved with explicit 
+      user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.24N R.24E; Sec. 31 — CadNSDI 
+      PLSSID=NV210240N0240E0 | FRSTDIVID=NV210240N0240E0SN310
+    mlrs: NV210240N0240E0SN310
+  slpt-east:
+    name: SLPT East
+    loc:
+    - 41.53783
+    - -119.02876
+    elevation_m: 1839.0
+    rationale: Non-BLM site with explicit user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.42N R.26E; Sec. 20 — CadNSDI 
+      PLSSID=NV210420N0260E0 | FRSTDIVID=NV210420N0260E0SN200
+    mlrs: NV210420N0260E0SN200
+  slpt-north:
+    name: SLPT North
+    loc:
+    - 41.56303
+    - -119.04481
+    elevation_m: 1830.0
+    rationale: Non-BLM site with explicit user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.42N R.26E; Sec. 17 — CadNSDI 
+      PLSSID=NV210420N0260E0 | FRSTDIVID=NV210420N0260E0SN170
+    mlrs: NV210420N0260E0SN170
+  slpt-south:
+    name: SLPT South
+    loc:
+    - 41.49465
+    - -119.05593
+    elevation_m: 1798.0
+    rationale: Non-BLM site with explicit user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.41N R.26E; Sec. 06 — CadNSDI 
+      PLSSID=NV210410N0260E0 | FRSTDIVID=NV210410N0260E0SN060
+    mlrs: NV210410N0260E0SN060
+  slpt-south-entrance:
+    name: SLPT South Entrance
+    loc:
+    - 41.49575
+    - -119.07732
+    elevation_m: 1817.0
+    rationale: Non-BLM site with explicit user-documented permission.
+    plss: NV; Mount Diablo Meridian; T.41N R.25E; Sec. 01 — CadNSDI 
+      PLSSID=NV210410N0250E0 | FRSTDIVID=NV210410N0250E0SN010
+    mlrs: NV210410N0250E0SN010
+  tric-east:
+    experimental: true
+    name: TRIC West
+    loc:
+    - 39.56552
+    - -119.45988
+    plss: NV; Mount Diablo Meridian; T.20N R.22E; Sec. 25 — CadNSDI 
+      PLSSID=NV210200N0220E0 | FRSTDIVID=NV210200N0220E0SN250
+    mlrs: NV210200N0220E0SN250
+  tric-west:
+    experimental: true
+    name: TRIC East
+    loc:
+    - 39.56486
+    - -119.46195
+    plss: NV; Mount Diablo Meridian; T.20N R.22E; Sec. 25 — CadNSDI 
+      PLSSID=NV210200N0220E0 | FRSTDIVID=NV210200N0220E0SN250
+    mlrs: NV210200N0220E0SN250
+  pond-peak:
+    experimental: true
+    name: Pond Peak
+    loc:
+    - 39.65217
+    - -119.46363
+    plss: NV; Mount Diablo Meridian; T.21N R.22E; Sec. 25 — CadNSDI 
+      PLSSID=NV210210N0220E0 | FRSTDIVID=NV210210N0220E0SN250
+    mlrs: NV210210N0220E0SN250
+  tule-peak:
+    experimental: true
+    name: Tule Peak
+    loc:
+    - 39.97557
+    - -119.74414
+    plss: NV; Mount Diablo Meridian; T.24N R.20E; Sec. 04 — CadNSDI 
+      PLSSID=NV210240N0200E0 | FRSTDIVID=NV210240N0200E0SN040
+    mlrs: NV210240N0200E0SN040
+  virginia-peak:
+    experimental: true
+    name: Virginia Peak
+    loc:
+    - 39.75567
+    - -119.46126
+    plss: NV; Mount Diablo Meridian; T.22N R.22E; Sec. 24 — CadNSDI 
+      PLSSID=NV210220N0220E0 | FRSTDIVID=NV210220N0220E0SN240
+    mlrs: NV210220N0220E0SN240
+  fox-mountain:
+    experimental: true
+    name: Fox Mountain
+    loc:
+    - 41.02538
+    - -119.55835
+
+    plss: NV; Mount Diablo Meridian; T.36N R.22E; Sec. 06 — CadNSDI 
+      PLSSID=NV210360N0220E0 | FRSTDIVID=NV210360N0220E0SN060
+    mlrs: NV210360N0220E0SN060
+  old-razorback:
+    experimental: true
+    name: Old Razorback
+    loc:
+    - 40.7447
+    - -119.14262
+    plss: NV; Mount Diablo Meridian; T.33N R.25E; Sec. 11 — CadNSDI 
+      PLSSID=NV210330N0250E0 | FRSTDIVID=NV210330N0250E0SN110
+    mlrs: NV210330N0250E0SN110
+  biggler-mountain:
+    experimental: true
+    name: Biggler Mountain
+    loc:
+    - 41.33138889
+    - -119.10138889
+
+    plss: NV; Mount Diablo Meridian; T.40N R.25E; Sec. 35 — CadNSDI 
+      PLSSID=NV210400N0250E0 | FRSTDIVID=NV210400N0250E0UP350
+    mlrs: NV210400N0250E0UP350
+  wagon-tire-mountain:
+    experimental: true
+    name: Wagon Tire Mountain
+    loc:
+    - 40.88944444
+    - -119.48611111
+    plss: NV; Mount Diablo Meridian; T.35N R.22E; Sec. 28 — CadNSDI 
+      PLSSID=NV210350N0220E0 | FRSTDIVID=NV210350N0220E0SN280
+    mlrs: NV210350N0220E0SN280
+  poito-russel-link:
+    experimental: true
+    name: Poito-Russel Link
+    loc:
+    - 40.1537889
+    - -119.2584806
+    rationale: Link site between Poito and Russell Peak.
+    plss: NV; Mount Diablo Meridian; T.26N R.24E; Sec. 02 — CadNSDI 
+      PLSSID=NV210260N0240E0 | FRSTDIVID=NV210260N0240E0SN020
+    mlrs: NV210260N0240E0SN020

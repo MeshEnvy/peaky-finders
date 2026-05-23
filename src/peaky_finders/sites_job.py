@@ -74,18 +74,19 @@ def resolve_preset_yaml_arg(
     home = peaky_home()
     projects = peaky_projects_dir()
 
+    project_slug: str | None = None
     candidates: list[Path] = []
     if arg.is_absolute():
         candidates.append(arg)
     else:
+        if len(arg.parts) == 1:
+            project_slug = arg.stem if arg.suffix.lower() in _PRESET_EXTENSIONS else str(arg)
+            candidates.append(projects / project_slug / "config.yaml")
+            candidates.append(projects / project_slug / "config.yml")
         candidates.append(base_cwd / arg)
         if arg.suffix.lower() not in _PRESET_EXTENSIONS:
             candidates.append(base_cwd / f"{arg}.yaml")
             candidates.append(base_cwd / f"{arg}.yml")
-        if len(arg.parts) == 1:
-            slug = arg.stem if arg.suffix.lower() in _PRESET_EXTENSIONS else str(arg)
-            candidates.append(projects / slug / "config.yaml")
-            candidates.append(projects / slug / "config.yml")
         candidates.append(home / arg)
         if arg.suffix.lower() not in _PRESET_EXTENSIONS and len(arg.parts) == 1:
             candidates.append(home / f"{arg}.yaml")
@@ -101,6 +102,8 @@ def resolve_preset_yaml_arg(
             require_preset_yaml_path(path)
             return path
 
+    if project_slug is not None:
+        return (projects / project_slug / "config.yaml").resolve()
     return (candidates[0] if candidates else arg).expanduser().resolve()
 
 
