@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from peaky_finders.build_keys import build_key_hex, read_build_key_hex, write_build_key
 from peaky_finders.sites_job import Preset, _slugify_files_segment, dump_preset_yaml_document, read_preset_yaml_tree
 
 CADNSDI_BASE = "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer"
@@ -18,6 +19,8 @@ CADNSDI_BASE = "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS
 PLSS_MLRS_LOC_CACHE_FORMAT = "plss_mlrs_loc_cache/v1"
 PLSS_MLRS_LOC_CACHE_SUBDIR = "plss_mlrs"
 PLSS_MLRS_LOC_CACHE_BASENAME = "by_loc.json"
+PLSS_BUNDLE_KEY_BASENAME = "input.sha"
+PLSS_SITES_DIGEST_FORMAT = "plss_bundle_sites/v1"
 
 
 def loc_stamp(lat: float, lon: float) -> str:
@@ -27,6 +30,10 @@ def loc_stamp(lat: float, lon: float) -> str:
 
 def plss_mlrs_loc_cache_path(cache_base: Path) -> Path:
     return Path(cache_base).expanduser().resolve() / PLSS_MLRS_LOC_CACHE_SUBDIR / PLSS_MLRS_LOC_CACHE_BASENAME
+
+
+def plss_bundle_key_path(cache_base: Path) -> Path:
+    return plss_mlrs_loc_cache_path(cache_base).parent / PLSS_BUNDLE_KEY_BASENAME
 
 
 def read_plss_mlrs_loc_cache(cache_base: Path) -> dict[str, dict[str, str]]:
@@ -70,20 +77,38 @@ def write_plss_mlrs_loc_cache(cache_base: Path, by_loc: dict[str, dict[str, str]
     )
 
 
-def cadnsdi_slugs_needing_refresh(
-    preset: Preset,
-    cached_locs: set[str],
-    *,
-    force_all: bool,
-) -> set[str]:
-    if force_all:
-        return set(preset.sites.keys())
-    need: set[str] = set()
-    for slug, ent in preset.sites.items():
-        st = loc_stamp(ent.lat, ent.lon)
-        if st not in cached_locs:
-            need.add(slug)
-    return need
+def loc_plss_resolved(entry: dict[str, str]) -> bool:
+    """True when a loc cache row has a prior CadNSDI lookup result."""
+    return bool((entry.get("mlrs") or "").strip() or (entry.get("plss") or "").strip())
+
+
+def plss_sites_loc_digest(preset: Preset) -> str:
+    """Stable hash of site slugs and coordinates that drive PLSS/MLRS lookup."""
+    rows = [(slug, loc_stamp(ent.lat, ent.lon)) for slug, ent in sorted(preset.sites.items())]
+    body = json.dumps({"format": PLSS_SITES_DIGEST_FORMAT, "sites": rows}, sort_keys=True, ensure_ascii=False)
+    return build_key_hex(body)
+
+
+def plss_bundle_build_stale(*, cache_base: Path, preset: Preset) -> bool:
+    """True when site coords changed, cache misses, or preset PLSS fields are out of sync."""
+
+    cache_base = Path(cache_base).expanduser().resolve()
+    want = plss_sites_loc_digest(preset)
+    if read_build_key_hex(plss_bundle_key_path(cache_base)) != want:
+        return True
+    if not plss_mlrs_loc_cache_path(cache_base).is_file():
+        return True
+
+    loc_cache = read_plss_mlrs_loc_cache(cache_base)
+    _seed_loc_cache_from_preset(preset, loc_cache)
+    for ent in preset.sites.values():
+        stamp = loc_stamp(ent.lat, ent.lon)
+        cached = loc_cache.get(stamp, {})
+        if not loc_plss_resolved(cached):
+            return True
+        if (ent.plss or "") != (cached.get("plss") or "") or (ent.mlrs or "") != (cached.get("mlrs") or ""):
+            return True
+    return False
 
 
 def _query(layer: int, lon: float, lat: float) -> dict:
@@ -178,6 +203,14 @@ def _list_site_slug_assignments(entries: list[Any]) -> list[tuple[str, dict[str,
     return out
 
 
+def _yaml_plss_mlrs(ent: dict[str, Any]) -> tuple[str | None, str | None]:
+    plss = ent.get("plss")
+    mlrs = ent.get("mlrs")
+    plss_s = plss if isinstance(plss, str) else None
+    mlrs_s = mlrs if isinstance(mlrs, str) else None
+    return plss_s, mlrs_s
+
+
 def populate_preset_plss_mlrs_file(
     preset_path: Path,
     *,
@@ -187,18 +220,20 @@ def populate_preset_plss_mlrs_file(
     loc_cache: dict[str, dict[str, str]] | None = None,
     force_network: bool = False,
     progress: Callable[[str], None] | None = None,
-) -> None:
+) -> int:
     """Update ``plss`` / ``mlrs`` in ``preset_path`` for ``site_slugs`` from coordinates (CadNSDI).
 
-    Saves the preset after each site so a crash mid-batch does not lose progress.
+    Saves the preset after each site when values change so a crash mid-batch does not lose progress.
 
-    When ``loc_cache`` is set, hits are served from cache; misses are fetched and stored.
+    When ``loc_cache`` is set, resolved hits are served from cache; only unknown locs hit CadNSDI.
+
+    Returns the number of CadNSDI network lookups performed.
     """
     preset_path = preset_path.expanduser()
     yaml_rt, root = read_preset_yaml_tree(preset_path)
     sites_raw = root.get("sites")
     if sites_raw is None:
-        return
+        return 0
 
     slug_entries: list[tuple[str, dict[str, Any]]] = []
 
@@ -220,6 +255,7 @@ def populate_preset_plss_mlrs_file(
         else:
             print(msg, file=log_fp, flush=True)
 
+    network_count = 0
     total = len(slug_entries)
     for i, (slug, ent) in enumerate(slug_entries, start=1):
         loc_v = ent.get("loc")
@@ -230,28 +266,36 @@ def populate_preset_plss_mlrs_file(
         except (TypeError, ValueError):
             continue
         stamp = loc_stamp(lat, lon)
-        _emit(f"PLSS/MLRS: [{i}/{total}] {slug} …")
         try:
             cached = (loc_cache or {}).get(stamp)
             from_network = False
-            if cached is not None and not force_network:
+            if cached is not None and loc_plss_resolved(cached) and not force_network:
                 plss, mlrs = cached.get("plss", ""), cached.get("mlrs", "")
             else:
+                _emit(f"PLSS/MLRS: [{i}/{total}] {slug} …")
                 plss, mlrs = plss_mlrs_for_point(lon, lat)
                 from_network = True
+                network_count += 1
                 if loc_cache is not None:
                     loc_cache[stamp] = {"plss": plss or "", "mlrs": mlrs or ""}
-            ent["plss"] = plss or None
-            ent["mlrs"] = mlrs or None
-            dump_preset_yaml_document(yaml_rt, root, preset_path)
+            new_plss = plss or None
+            new_mlrs = mlrs or None
+            old_plss, old_mlrs = _yaml_plss_mlrs(ent)
+            if old_plss != new_plss or old_mlrs != new_mlrs:
+                ent["plss"] = new_plss
+                ent["mlrs"] = new_mlrs
+                dump_preset_yaml_document(yaml_rt, root, preset_path)
         except Exception as e:
             _emit(f"  ERROR {slug}: {e}")
-            ent["plss"] = None
-            ent["mlrs"] = None
-            dump_preset_yaml_document(yaml_rt, root, preset_path)
+            old_plss, old_mlrs = _yaml_plss_mlrs(ent)
+            if old_plss is not None or old_mlrs is not None:
+                ent["plss"] = None
+                ent["mlrs"] = None
+                dump_preset_yaml_document(yaml_rt, root, preset_path)
             from_network = False
         if request_delay_s > 0 and from_network:
             time.sleep(request_delay_s)
+    return network_count
 
 
 def _seed_loc_cache_from_preset(preset: Preset, loc_cache: dict[str, dict[str, str]]) -> None:
@@ -263,46 +307,39 @@ def _seed_loc_cache_from_preset(preset: Preset, loc_cache: dict[str, dict[str, s
             loc_cache[stamp] = {"plss": ent.plss or "", "mlrs": ent.mlrs or ""}
 
 
-def maybe_refresh_plss_mlrs_for_bundle(
+def refresh_plss_mlrs_for_bundle(
     *,
     preset_path: Path,
     cache_base: Path,
     preset: Preset,
-    force_all: bool,
-    skip_network: bool,
-    verbose_log: Callable[[str], None] | None,
 ) -> None:
-    """Update preset ``plss`` / ``mlrs`` via CadNSDI when ``loc`` is not yet cached (or ``force_all``).
-
-    Cached by lat/lon under ``{cache_base}/plss_mlrs/by_loc.json`` — independent of bundle AOI digest.
-    """
-    if skip_network:
-        if verbose_log:
-            verbose_log("plss/mlrs: skip (--no-plss-fetch)")
-        return
+    """Fill missing PLSS/mlrs from CadNSDI, sync preset YAML, and record the input key."""
 
     cache_base = Path(cache_base).expanduser().resolve()
     preset_path = Path(preset_path).expanduser().resolve()
     loc_cache = read_plss_mlrs_loc_cache(cache_base)
-    before_len = len(loc_cache)
     _seed_loc_cache_from_preset(preset, loc_cache)
-    need = cadnsdi_slugs_needing_refresh(preset, set(loc_cache), force_all=force_all)
+    site_slugs = set(preset.sites.keys())
 
-    if not need:
-        if len(loc_cache) > before_len:
-            write_plss_mlrs_loc_cache(cache_base, loc_cache)
-        if verbose_log:
-            verbose_log("plss/mlrs: skip (all site locs cached)")
-        return
+    unresolved = 0
+    for ent in preset.sites.values():
+        stamp = loc_stamp(ent.lat, ent.lon)
+        if not loc_plss_resolved(loc_cache.get(stamp, {})):
+            unresolved += 1
 
-    print(f"plss/mlrs: CadNSDI refresh for {len(need)} site(s)", flush=True)
+    if unresolved:
+        print(f"plss/mlrs: CadNSDI lookup for {unresolved} unresolved site(s)", flush=True)
+    else:
+        print(f"plss/mlrs: sync {len(site_slugs)} site(s) from cache", flush=True)
 
-    populate_preset_plss_mlrs_file(
+    network_count = populate_preset_plss_mlrs_file(
         preset_path,
-        site_slugs=need,
+        site_slugs=site_slugs,
         loc_cache=loc_cache,
-        force_network=force_all,
-        progress=verbose_log,
+        force_network=False,
+        progress=None,
     )
-
     write_plss_mlrs_loc_cache(cache_base, loc_cache)
+    write_build_key(plss_bundle_key_path(cache_base), plss_sites_loc_digest(preset))
+    if network_count:
+        print(f"plss/mlrs: {network_count} CadNSDI quer{'y' if network_count == 1 else 'ies'}", flush=True)

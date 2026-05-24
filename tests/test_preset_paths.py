@@ -12,12 +12,11 @@ from peaky_finders.sites_job import (
     load_preset,
     peaky_home,
     peaky_projects_dir,
+    peaky_share_dir,
     repo_root,
     resolve_preset_yaml_arg,
     resolved_aggregate_kmz_path,
-    resolved_inspect_tmp_parent,
     resolved_preset_build_dir,
-    resolved_preset_build_tmp_dir,
     resolved_preset_bundle_data_dir,
     resolved_preset_slug,
 )
@@ -28,6 +27,7 @@ def peaky_env(monkeypatch: pytest.MonkeyPatch) -> Path:
     home = repo_root()
     monkeypatch.setenv("PEAKY_HOME", str(home))
     monkeypatch.delenv("PEAKY_PROJECTS", raising=False)
+    monkeypatch.delenv("PEAKY_SHARE", raising=False)
     return home
 
 
@@ -40,13 +40,17 @@ def test_peaky_home_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("PEAKY_HOME", str(tmp_path))
     assert peaky_home() == tmp_path.resolve()
     assert peaky_projects_dir() == (tmp_path / "projects").resolve()
+    assert peaky_share_dir() == (tmp_path / "share").resolve()
 
 
-def test_peaky_projects_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_peaky_projects_and_share_env_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     projects = tmp_path / "custom-projects"
+    share = tmp_path / "custom-share"
     monkeypatch.setenv("PEAKY_HOME", str(tmp_path))
     monkeypatch.setenv("PEAKY_PROJECTS", str(projects))
+    monkeypatch.setenv("PEAKY_SHARE", str(share))
     assert peaky_projects_dir() == projects.resolve()
+    assert peaky_share_dir() == share.resolve()
 
 
 def test_resolve_project_slug_sample(peaky_test_home: Path) -> None:
@@ -57,27 +61,12 @@ def test_resolve_project_slug_sample(peaky_test_home: Path) -> None:
 def test_resolved_preset_slug_for_project_config(peaky_test_home: Path) -> None:
     sample = peaky_test_home / "projects" / "sample" / "config.yaml"
     assert resolved_preset_slug(sample) == "sample"
-    assert resolved_aggregate_kmz_path(sample) == (sample.parent / "sample.kmz").resolve()
+    assert resolved_aggregate_kmz_path(sample) == (sample.parent / "build" / "sample.kmz").resolve()
 
 
-def test_resolved_preset_build_dir_for_project_config(peaky_test_home: Path) -> None:
+def test_resolved_preset_build_dir(peaky_test_home: Path) -> None:
     sample = peaky_test_home / "projects" / "sample" / "config.yaml"
     assert resolved_preset_build_dir(sample) == (sample.parent / "build").resolve()
-    assert resolved_preset_build_tmp_dir(sample) == (sample.parent / "build" / "tmp").resolve()
-
-
-def test_resolved_inspect_tmp_parent_with_project_config(peaky_test_home: Path) -> None:
-    sample = peaky_test_home / "projects" / "sample" / "config.yaml"
-    data_gdb = sample.parent / "data" / "inspect_tmp_walk" / "probe.gdb"
-    data_gdb.mkdir(parents=True, exist_ok=True)
-    assert resolved_inspect_tmp_parent(data_gdb) == resolved_preset_build_tmp_dir(sample)
-
-
-def test_resolved_inspect_tmp_parent_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("PEAKY_HOME", str(tmp_path))
-    p = tmp_path / "orphan" / "x.gdb"
-    p.mkdir(parents=True)
-    assert resolved_inspect_tmp_parent(p) == (tmp_path / "build" / "tmp").resolve()
 
 
 def test_resolved_preset_bundle_data_dir_uses_inputs_root(peaky_test_home: Path) -> None:

@@ -1,5 +1,7 @@
-# Sample project preset for fixture-based tests (preset paths, sites.sees, bundle clips).
+# Minimal project preset for integration-style tests (not production data).
 simulation:
+  provider: los
+  radius_km: 10.0
   modem_presets:
     meshcore-us:
       frequency_mhz: 910.525
@@ -16,31 +18,20 @@ simulation:
       clutter_height_m: 1.0
   modem: meshcore-us
   environment: test-desert
-  transmitter: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
-  receiver: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
-  provider: los
-  radius_km: 60.0
+  transmitter:
+    height_m: 2.0
+    gain_dbi: 3.0
+    loss_db: 2.0
+  receiver:
+    height_m: 2.0
+    gain_dbi: 3.0
+    loss_db: 2.0
+
 display:
   colormap: plasma
   min_dbm: -130.0
   max_dbm: -80.0
-sites:
-  hub:
-    name: Hub
-    loc: [39.0, -119.0]
-    sees: [peer-a, peer-b, peer-c]
-  peer-a:
-    name: Peer A
-    loc: [39.1, -119.0]
-    sees: [hub]
-  peer-b:
-    name: Peer B
-    loc: [39.05, -119.05]
-    sees: [hub]
-  peer-c:
-    name: Peer C
-    loc: [39.02, -119.02]
-    sees: [hub]
+
 bundle:
   inputs_root: data
   aoi:
@@ -52,3 +43,21 @@ bundle:
       layers:
         - name: inc_layer
   exclude: []
+
+sites:
+  hub:
+    name: Hub Site
+    loc: [40.42619, -119.5]
+    sees: [peer-a, peer-b, peer-c]
+  peer-a:
+    name: Peer A
+    loc: [39.90951, -119.4]
+    sees: [hub]
+  peer-b:
+    name: Peer B
+    loc: [39.91342, -119.3]
+    sees: [hub]
+  peer-c:
+    name: Peer C
+    loc: [40.40376, -119.6]
+    sees: [hub]
