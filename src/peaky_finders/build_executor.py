@@ -29,6 +29,7 @@ from peaky_finders.build_graph import (
     subgraph_roots_for,
     topo_sort,
 )
+from peaky_finders.site_suggestions.runner import run_site_suggestion_pass
 from peaky_finders.bundle_clips import composite_workspace_dir, eligible_land_use_workspace_dir
 from peaky_finders.bundle_commands import (
     run_bundle_clip,
@@ -373,6 +374,78 @@ def execute_target(
     raise ValueError(f"execute unsupported for target {tid!r}")
 
 
+def _subgraph_without_target(
+    nodes: dict[str, PeakyGraphTarget],
+    target_id: str,
+) -> dict[str, PeakyGraphTarget]:
+    sub = filter_subgraph(nodes, (target_id,))
+    return {k: v for k, v in sub.items() if k != target_id}
+
+
+def _run_target_subgraph(
+    *,
+    plan: BuildConfigurePlan,
+    preset: Preset,
+    subset: dict[str, PeakyGraphTarget],
+    force: bool,
+    dry_run: bool,
+    jobs: int,
+    verbose: bool,
+    bundle_data_dir: Path | None,
+) -> int:
+    seq = topo_sort(subset)
+    if dry_run:
+        for tid in seq:
+            node = subset[tid]
+            stale = force or target_stale(plan, preset, node)
+            tag = "build" if stale else "fresh"
+            print(f"{tag}: {tid}")
+        return 0
+
+    pending = set(seq)
+    parallel = max(1, jobs)
+    while pending:
+        runnable = sorted(
+            (tid for tid in pending if all(d not in pending for d in subset[tid].depends_on)),
+        )
+        if not runnable:
+            print("build: internal error — stalled waiting on unresolved nodes", file=sys.stderr)
+            return 2
+
+        wave = runnable if len(runnable) <= parallel else runnable[:parallel]
+
+        def runner(tid_: str, node_: PeakyGraphTarget) -> tuple[str, int]:
+            stale = force or target_stale(plan, preset, node_)
+            if verbose:
+                verb = "run" if stale or force else "skip"
+                _log(f"build: {tid_} [{verb}]")
+            if not stale and not force:
+                return tid_, 0
+            rc = execute_target(plan, preset, node_, bundle_data_dir=bundle_data_dir, verbose=verbose)
+            return tid_, rc
+
+        codes: dict[str, int] = {}
+        if parallel <= 1 or len(wave) == 1:
+            for tid in wave:
+                nid, rc = runner(tid, subset[tid])
+                codes[nid] = rc
+        else:
+            mx = min(parallel, len(wave))
+            with ThreadPoolExecutor(max_workers=mx) as pool:
+                futs = {pool.submit(runner, tid, subset[tid]): tid for tid in wave}
+                for fut in as_completed(futs):
+                    tid_, rc = fut.result()
+                    codes[tid_] = rc
+
+        failures = [(t, codes[t]) for t in wave if codes[t] != 0]
+        if failures:
+            tt, rr = failures[0]
+            print(f"build: target {tt!r} exited {rr}", file=sys.stderr)
+            return rr
+        pending.difference_update(wave)
+    return 0
+
+
 def run_incremental_build(
     *,
     preset_path: Path,
@@ -383,6 +456,8 @@ def run_incremental_build(
 
     jobs: int,
     verbose: bool,
+    suggest_n: int | None = None,
+    replace_suggested: bool = False,
 
 ) -> int:
     preset_path_r = preset_path.expanduser().resolve()
@@ -403,95 +478,60 @@ def run_incremental_build(
 
 
     nodes_all = build_target_graph(plan, preset)
+
+    if suggest_n is not None and suggest_n > 0:
+        if selection.strip().lower() not in ("all", "kmz"):
+            print(
+                "build: --suggest requires --target all (default) or kmz",
+                file=sys.stderr,
+            )
+            return 2
+        pre_nodes = _subgraph_without_target(nodes_all, "kmz:out")
+        print(f"build: suggest pass — materialize known sites ({len(pre_nodes)} targets)…", flush=True)
+        rc = _run_target_subgraph(
+            plan=plan,
+            preset=preset,
+            subset=pre_nodes,
+            force=force,
+            dry_run=dry_run,
+            jobs=jobs,
+            verbose=verbose,
+            bundle_data_dir=data_dir_arg,
+        )
+        if rc != 0:
+            return rc
+        if dry_run:
+            print(f"build: would run site suggest pass (n={suggest_n})")
+        else:
+            run_site_suggestion_pass(
+                preset=preset,
+                preset_path=preset_path_r,
+                plan=plan,
+                n_suggestions=int(suggest_n),
+                replace_suggested=replace_suggested,
+                verbose=verbose,
+            )
+            preset = load_preset(preset_path_r)
+            try:
+                plan = configure_preset_build(preset_path=preset_path_r, data_dir=data_dir_arg)
+            except ConfigureError as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+            nodes_all = build_target_graph(plan, preset)
+
     roots = subgraph_roots_for(selection, plan, preset, nodes_all)
     subset = filter_subgraph(nodes_all, roots)
 
-
-
-    seq = topo_sort(subset)
-
-
-    if dry_run:
-        for tid in seq:
-            node = subset[tid]
-
-
-            stale = force or target_stale(plan, preset, node)
-
-
-
-            tag = "build" if stale else "fresh"
-
-
-
-
-
-
-            print(f"{tag}: {tid}")
-
-
-        return 0
-
-
-    pending = set(seq)
-
-    completed = set()
-
-    parallel = max(1, jobs)
-
-    while pending:
-        runnable = sorted(
-            (tid for tid in pending if all(d not in pending for d in subset[tid].depends_on)),
-        )
-        if not runnable:
-            print("build: internal error — stalled waiting on unresolved nodes", file=sys.stderr)
-            return 2
-
-        wave = runnable if len(runnable) <= parallel else runnable[:parallel]
-
-
-        def runner(tid_: str, node_: PeakyGraphTarget) -> tuple[str, int]:
-            stale = force or target_stale(plan, preset, node_)
-            if verbose:
-                verb = "run" if stale or force else "skip"
-
-
-                _log(f"build: {tid_} [{verb}]")
-            if not stale and not force:
-                return tid_, 0
-            rc = execute_target(plan, preset, node_, bundle_data_dir=data_dir_arg, verbose=verbose)
-            return tid_, rc
-
-        codes: dict[str, int] = {}
-
-        if parallel <= 1 or len(wave) == 1:
-            for tid in wave:
-                nid, rc = runner(tid, subset[tid])
-                codes[nid] = rc
-        else:
-
-
-            mx = min(parallel, len(wave))
-            with ThreadPoolExecutor(max_workers=mx) as pool:
-                futs = {pool.submit(runner, tid, subset[tid]): tid for tid in wave}
-                for fut in as_completed(futs):
-
-                    tid_, rc = fut.result()
-                    codes[tid_] = rc
-
-        failures = [(t, codes[t]) for t in wave if codes[t] != 0]
-        if failures:
-            tt, rr = failures[0]
-            print(f"build: target {tt!r} exited {rr}", file=sys.stderr)
-            return rr
-
-        pending.difference_update(wave)
-
-
-
-        completed.update(wave)
-
-    return 0
+    return _run_target_subgraph(
+        plan=plan,
+        preset=preset,
+        subset=subset,
+        force=force,
+        dry_run=dry_run,
+        jobs=jobs,
+        verbose=verbose,
+        bundle_data_dir=data_dir_arg,
+    )
 
 
 

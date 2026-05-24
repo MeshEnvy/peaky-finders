@@ -326,9 +326,18 @@ def _slugify_files_segment(site_name: str) -> str:
     return base or "site"
 
 
+class SiteType(StrEnum):
+    """Site lifecycle in a preset job."""
+
+    INSTALLED = "installed"
+    PLANNED = "planned"
+    SUGGESTED = "suggested"
+
+
 class SiteEntry(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    type: SiteType = SiteType.INSTALLED
     name: str
     loc: tuple[float, float]
 
@@ -338,6 +347,23 @@ class SiteEntry(BaseModel):
         if not isinstance(v, (list, tuple)) or len(v) != 2:
             raise ValueError("loc must be a length-2 array [lat, lon]")
         return (float(v[0]), float(v[1]))
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _coerce_type(cls, v: Any) -> SiteType:
+        if v is None:
+            return SiteType.INSTALLED
+        if isinstance(v, SiteType):
+            return v
+        s = str(v).strip().lower()
+        if s == "placed":
+            s = "installed"
+        try:
+            return SiteType(s)
+        except ValueError as e:
+            raise ValueError(
+                f"type must be one of: installed, planned, suggested (got {v!r})"
+            ) from e
 
     @property
     def lat(self) -> float:
@@ -629,6 +655,42 @@ class BundleMeshKmlStyles(BaseModel):
     )
 
 
+class BundleSiteSuggestionsConfig(BaseModel):
+    """Greedy AOI coverage planner (``peaky build --suggest``)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    coverage_goal_depth: int = Field(
+        default=1,
+        ge=1,
+        le=32,
+        description="Target footprint overlap count across AOI (depth ≥ N).",
+    )
+    planner_raster_dimension: int = Field(
+        default=1024,
+        ge=64,
+        le=8192,
+        description="EPSG:3857 grid longer edge for suggest marginal-gain raster.",
+    )
+    max_candidates_per_round: int = Field(
+        default=12,
+        ge=1,
+        le=256,
+        description="Skadi-ranked eligible candidates viewshed-evaluated per greedy pick.",
+    )
+    peak_cluster_radius_m: float = Field(
+        default=1500.0,
+        ge=50.0,
+        description="Merge nearby eligible peak samples before viewshed trials.",
+    )
+    uncovered_stop_pct: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=100.0,
+        description="Stop early when uncovered AOI fraction falls below this percent.",
+    )
+
+
 class BundleMeshCoverageConfig(BaseModel):
     """Knobs for raster footprint-depth layers inside the aggregate KMZ."""
 
@@ -758,6 +820,17 @@ class BundleConfig(BaseModel):
         default=None,
         description="Optional footprint depth raster grid size for aggregate KMZ mesh layers.",
     )
+    site_suggestions: BundleSiteSuggestionsConfig | None = Field(
+        default=None,
+        description="Greedy site planner knobs for ``peaky build --suggest``.",
+    )
+
+
+def resolved_site_suggestions_config(bundle: BundleConfig | None) -> BundleSiteSuggestionsConfig:
+    """``bundle.site_suggestions`` or defaults."""
+    if bundle is None or bundle.site_suggestions is None:
+        return BundleSiteSuggestionsConfig()
+    return bundle.site_suggestions
 
 
 def _reference_entry_payload(e: BundleReferenceLayerEntry) -> dict[str, Any]:

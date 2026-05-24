@@ -129,8 +129,7 @@ bundle:
       exclude/BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons_-3786779803719444042
     layers:
     - name: BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons
-  - path:
-     exclude/FRTCMapData_LandStatus_styled.kml
+  - path: exclude/FRTCMapData_LandStatus_styled.kml
 
   # KML fill/line defaults (AABBGGRR where applicable — Google Earth convention)
   kml_overlay:
@@ -261,6 +260,7 @@ bundle:
 # --- Named sites (``peaky viewshed`` / LOS slugs.) `plss`/`mlrs` from CadNSDI; cached by lat/lon under cache_path/plss_mlrs/. ---
 sites:
   davidson-peak:
+    type: installed
     name: Davidson Peak
     loc:
     - 39.30831
@@ -272,6 +272,7 @@ sites:
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN300
     mlrs: NV210170N0210E0SN300
   lower-spanish-benchmark:
+    type: installed
     name: Lower Spanish Benchmark
     loc:
     - 39.64484
@@ -283,6 +284,7 @@ sites:
       PLSSID=NV210210N0200E0 | FRSTDIVID=NV210210N0200E0SN320
     mlrs: NV210210N0200E0SN320
   ophir-hill:
+    type: installed
     name: Ophir Hill
     loc:
     - 39.31862
@@ -294,6 +296,7 @@ sites:
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN190
     mlrs: NV210170N0210E0SN190
   poito:
+    type: installed
     name: Poito
     loc:
     - 40.42619
@@ -306,7 +309,7 @@ sites:
       PLSSID=NV210300N0230E0 | FRSTDIVID=NV210300N0230E0SN360
     mlrs: NV210300N0230E0SN360
   poiton-peak:
-    experimental: true
+    type: planned
     name: Poitón
     loc:
     - 40.40376111
@@ -318,7 +321,7 @@ sites:
       PLSSID=NV210290N0230E0 | FRSTDIVID=NV210290N0230E0SN110
     mlrs: NV210290N0230E0SN110
   ruslito-peak:
-    experimental: true
+    type: planned
     name: Ruslito Peak
     loc:
     - 39.91342
@@ -331,6 +334,7 @@ sites:
       PLSSID=NV210240N0240E0 | FRSTDIVID=NV210240N0240E0SN310
     mlrs: NV210240N0240E0SN310
   russell-peak:
+    type: installed
     name: Russell Peak
     loc:
     - 39.90951
@@ -343,6 +347,7 @@ sites:
       PLSSID=NV210240N0240E0 | FRSTDIVID=NV210240N0240E0SN310
     mlrs: NV210240N0240E0SN310
   slpt-east:
+    type: installed
     name: SLPT East
     loc:
     - 41.53783
@@ -353,6 +358,7 @@ sites:
       PLSSID=NV210420N0260E0 | FRSTDIVID=NV210420N0260E0SN200
     mlrs: NV210420N0260E0SN200
   slpt-north:
+    type: installed
     name: SLPT North
     loc:
     - 41.56303
@@ -363,6 +369,7 @@ sites:
       PLSSID=NV210420N0260E0 | FRSTDIVID=NV210420N0260E0SN170
     mlrs: NV210420N0260E0SN170
   slpt-south:
+    type: installed
     name: SLPT South
     loc:
     - 41.49465
@@ -373,6 +380,7 @@ sites:
       PLSSID=NV210410N0260E0 | FRSTDIVID=NV210410N0260E0SN060
     mlrs: NV210410N0260E0SN060
   slpt-south-entrance:
+    type: installed
     name: SLPT South Entrance
     loc:
     - 41.49575
@@ -383,7 +391,7 @@ sites:
       PLSSID=NV210410N0250E0 | FRSTDIVID=NV210410N0250E0SN010
     mlrs: NV210410N0250E0SN010
   tric-east:
-    experimental: true
+    type: planned
     name: TRIC West
     loc:
     - 39.56552
@@ -392,7 +400,7 @@ sites:
       PLSSID=NV210200N0220E0 | FRSTDIVID=NV210200N0220E0SN250
     mlrs: NV210200N0220E0SN250
   tric-west:
-    experimental: true
+    type: planned
     name: TRIC East
     loc:
     - 39.56486
@@ -401,7 +409,7 @@ sites:
       PLSSID=NV210200N0220E0 | FRSTDIVID=NV210200N0220E0SN250
     mlrs: NV210200N0220E0SN250
   pond-peak:
-    experimental: true
+    type: planned
     name: Pond Peak
     loc:
     - 39.65217
@@ -410,7 +418,7 @@ sites:
       PLSSID=NV210210N0220E0 | FRSTDIVID=NV210210N0220E0SN250
     mlrs: NV210210N0220E0SN250
   tule-peak:
-    experimental: true
+    type: planned
     name: Tule Peak
     loc:
     - 39.97557
@@ -419,7 +427,7 @@ sites:
       PLSSID=NV210240N0200E0 | FRSTDIVID=NV210240N0200E0SN040
     mlrs: NV210240N0200E0SN040
   virginia-peak:
-    experimental: true
+    type: planned
     name: Virginia Peak
     loc:
     - 39.75567
@@ -428,7 +436,7 @@ sites:
       PLSSID=NV210220N0220E0 | FRSTDIVID=NV210220N0220E0SN240
     mlrs: NV210220N0220E0SN240
   fox-mountain:
-    experimental: true
+    type: planned
     name: Fox Mountain
     loc:
     - 41.02538
@@ -438,7 +446,7 @@ sites:
       PLSSID=NV210360N0220E0 | FRSTDIVID=NV210360N0220E0SN060
     mlrs: NV210360N0220E0SN060
   old-razorback:
-    experimental: true
+    type: planned
     name: Old Razorback
     loc:
     - 40.7447
@@ -447,7 +455,7 @@ sites:
       PLSSID=NV210330N0250E0 | FRSTDIVID=NV210330N0250E0SN110
     mlrs: NV210330N0250E0SN110
   biggler-mountain:
-    experimental: true
+    type: planned
     name: Biggler Mountain
     loc:
     - 41.33138889
@@ -457,7 +465,7 @@ sites:
       PLSSID=NV210400N0250E0 | FRSTDIVID=NV210400N0250E0UP350
     mlrs: NV210400N0250E0UP350
   wagon-tire-mountain:
-    experimental: true
+    type: planned
     name: Wagon Tire Mountain
     loc:
     - 40.88944444
@@ -466,7 +474,7 @@ sites:
       PLSSID=NV210350N0220E0 | FRSTDIVID=NV210350N0220E0SN280
     mlrs: NV210350N0220E0SN280
   poito-russel-link:
-    experimental: true
+    type: planned
     name: Poito-Russel Link
     loc:
     - 40.1537889
@@ -475,3 +483,14 @@ sites:
     plss: NV; Mount Diablo Meridian; T.26N R.24E; Sec. 02 — CadNSDI 
       PLSSID=NV210260N0240E0 | FRSTDIVID=NV210260N0240E0SN020
     mlrs: NV210260N0240E0SN020
+  suggest-01-suggested-1-2481-m:
+    name: Suggested 1 (2481 m)
+    loc:
+    - 39.627500000000005
+    - -116.09194444444444
+    rationale: 'Greedy suggest #1: +6953 AOI cells toward depth≥1 (peak candidate)'
+    elevation_m: 2481.0
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.20N R.52E; Sec. 03 — CadNSDI 
+      PLSSID=NV210200N0520E0 | FRSTDIVID=NV210200N0520E0UP030
+    mlrs: NV210200N0520E0UP030
