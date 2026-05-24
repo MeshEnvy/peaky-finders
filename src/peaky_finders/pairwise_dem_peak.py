@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import gzip
 import io
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
 
@@ -248,12 +250,42 @@ def global_max_skadi_elevation_in_polygon(
     return (best_lon, best_lat, best_z)
 
 
+def _binned_peaks_for_tile(
+    *,
+    tile_name: str,
+    geom_ll: BaseGeometry,
+    mirror_root: Path,
+    bin_size_m: float,
+    void_val: int,
+) -> list[tuple[float, float, float]]:
+    geom_clip = _clip_geom_to_tile(geom_ll, tile_name)
+    if geom_clip is None:
+        return []
+    try:
+        tp = skadi_mirror_tile_gz_path(mirror_root, tile_name)
+    except ValueError:
+        return []
+    if not tp.is_file():
+        return []
+    elev, aff_tup = _cached_skadi_elev_affine(str(tp.resolve()))
+    return _tile_binned_peaks_on_geom(
+        elev=elev,
+        transform_like=aff_tup,
+        geom_ll=geom_clip,
+        void_val=void_val,
+        bin_size_m=bin_size_m,
+    )
+
+
 def skadi_binned_peaks_in_polygon(
     geom_ll: BaseGeometry | None,
     mirror_root: Path | str,
     *,
     bin_size_m: float = 1500.0,
     void_val: int = VOID_SRTM,
+    max_workers: int = 1,
+    verbose: bool = False,
+    log_prefix: str = "",
 ) -> list[tuple[float, float, float]]:
     """Return ``[(lon, lat, elev_m), …]`` — highest SRTM cell per bin inside ``geom_ll``.
 
@@ -269,28 +301,54 @@ def skadi_binned_peaks_in_polygon(
     minx, miny, maxx, maxy = g0.bounds
     tiles = iter_skadi_tile_names_for_wgs84_bounds(minx, miny, maxx, maxy)
     root = Path(mirror_root)
-
-    raw: list[tuple[float, float, float]] = []
-    for tile_name in tiles:
-        geom_clip = _clip_geom_to_tile(g0, tile_name)
-        if geom_clip is None:
-            continue
-        try:
-            tp = skadi_mirror_tile_gz_path(root, tile_name)
-        except ValueError:
-            continue
-        if not tp.is_file():
-            continue
-        elev, aff_tup = _cached_skadi_elev_affine(str(tp.resolve()))
-        raw.extend(
-            _tile_binned_peaks_on_geom(
-                elev=elev,
-                transform_like=aff_tup,
-                geom_ll=geom_clip,
-                void_val=void_val,
-                bin_size_m=bin_size_m,
-            )
+    workers = max(1, int(max_workers))
+    if verbose:
+        print(
+            f"{log_prefix}Skadi peak scan: {len(tiles)} tile(s), workers={workers}",
+            flush=True,
         )
 
+    raw: list[tuple[float, float, float]] = []
+    done = 0
+
+    def _run_tile(tile_name: str) -> tuple[str, list[tuple[float, float, float]], float]:
+        t0 = time.perf_counter()
+        peaks = _binned_peaks_for_tile(
+            tile_name=tile_name,
+            geom_ll=g0,
+            mirror_root=root,
+            bin_size_m=bin_size_m,
+            void_val=void_val,
+        )
+        return tile_name, peaks, time.perf_counter() - t0
+
+    if workers <= 1 or len(tiles) <= 1:
+        for tile_name in tiles:
+            tile_name, peaks, elapsed = _run_tile(tile_name)
+            raw.extend(peaks)
+            done += 1
+            if verbose:
+                print(
+                    f"{log_prefix}  tile [{done}/{len(tiles)}] {tile_name}: "
+                    f"{len(peaks)} peak(s) ({elapsed:.1f}s)",
+                    flush=True,
+                )
+    else:
+        mx = min(workers, len(tiles))
+        with ThreadPoolExecutor(max_workers=mx) as pool:
+            futs = {pool.submit(_run_tile, tile_name): tile_name for tile_name in tiles}
+            for fut in as_completed(futs):
+                tile_name, peaks, elapsed = fut.result()
+                raw.extend(peaks)
+                done += 1
+                if verbose:
+                    print(
+                        f"{log_prefix}  tile [{done}/{len(tiles)}] {tile_name}: "
+                        f"{len(peaks)} peak(s) ({elapsed:.1f}s)",
+                        flush=True,
+                    )
+
     raw.sort(key=lambda p: (-p[2], p[0], p[1]))
+    if verbose:
+        print(f"{log_prefix}Skadi peak scan done: {len(raw)} raw peak(s)", flush=True)
     return raw

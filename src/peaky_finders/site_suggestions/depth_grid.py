@@ -8,8 +8,9 @@ from typing import Sequence
 
 import geopandas as gpd
 import numpy as np
+from pyproj import Transformer
 from rasterio import features
-from rasterio.transform import from_bounds
+from rasterio.transform import from_bounds, rowcol, xy
 from shapely import make_valid
 from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
@@ -42,6 +43,50 @@ class CoverageDepthGrid:
         if total <= 0:
             return 0.0
         return float(np.count_nonzero(self.uncovered_mask(goal_depth=goal_depth))) / float(total)
+
+    def point_marginal_gain_cells(self, lon: float, lat: float, *, goal_depth: int) -> int:
+        """Return 1 when ``(lon, lat)`` lies in an AOI cell still below ``goal_depth``."""
+        kept = self.filter_peaks_llz_by_uncovered_grid([(float(lon), float(lat), 0.0)], goal_depth=goal_depth)
+        return 1 if kept else 0
+
+    def filter_peaks_llz_by_uncovered_grid(
+        self,
+        peaks_llz: Sequence[tuple[float, float, float]],
+        *,
+        goal_depth: int,
+        verbose: bool = False,
+        progress_every: int = 20_000,
+    ) -> list[tuple[float, float, float]]:
+        """Keep peaks whose grid cell is in the AOI and still below ``goal_depth``."""
+        if not peaks_llz:
+            return []
+
+        from peaky_finders.site_suggestions.log import suggest_progress
+
+        n = len(peaks_llz)
+        need = int(goal_depth)
+        to_m = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+        out: list[tuple[float, float, float]] = []
+        chunk = max(1, int(progress_every))
+        for start in range(0, n, chunk):
+            end = min(n, start + chunk)
+            block = peaks_llz[start:end]
+            lons = np.fromiter((p[0] for p in block), dtype=np.float64, count=len(block))
+            lats = np.fromiter((p[1] for p in block), dtype=np.float64, count=len(block))
+            xs, ys = to_m.transform(lons, lats)
+            rows, cols = rowcol(self.transform, xs, ys)
+            rows = np.asarray(rows, dtype=np.int64)
+            cols = np.asarray(cols, dtype=np.int64)
+            in_bounds = (rows >= 0) & (cols >= 0) & (rows < self.rows) & (cols < self.cols)
+            sel = np.zeros(len(block), dtype=bool)
+            if np.any(in_bounds):
+                rr = rows[in_bounds]
+                cc = cols[in_bounds]
+                sel[in_bounds] = self.aoi_mask[rr, cc] & (self.depth[rr, cc].astype(np.uint32) < need)
+            out.extend(p for p, keep in zip(block, sel, strict=True) if keep)
+            if verbose and end < n:
+                suggest_progress(verbose, f"uncovered grid filter {end}/{n} peaks checked, {len(out)} kept so far")
+        return out
 
     def uncovered_geometry_wgs84(self, *, goal_depth: int) -> BaseGeometry | None:
         """EPSG:4326 union of AOI cells still below ``goal_depth``."""
@@ -180,16 +225,15 @@ def largest_uncovered_patch_centroid_ll(
     if not np.any(mask):
         return None
     pieces: list[BaseGeometry] = []
-    from shapely.geometry import shape
-
-    for geom, val in features.shapes(mask, mask=mask, transform=grid.transform, connectivity=8):
+    for geom, val in features.shapes(mask, mask=mask.astype(bool), transform=grid.transform, connectivity=8):
         if int(val) == 1:
             pieces.append(shape(geom))
     if not pieces:
         return None
-    metric_pieces = [gpd.GeoDataFrame(geometry=[p], crs="EPSG:3857").to_crs("EPSG:4326").geometry.iloc[0] for p in pieces]
-    best = max(metric_pieces, key=lambda g: g.area if g is not None and not g.is_empty else 0.0)
+    best = max(pieces, key=lambda g: g.area if not g.is_empty else 0.0)
     if best is None or best.is_empty:
         return None
-    c = best.centroid
-    return (float(c.y), float(c.x))
+    out = gpd.GeoDataFrame(geometry=[best.centroid], crs="EPSG:3857").to_crs("EPSG:4326").geometry.iloc[0]
+    if out is None or out.is_empty:
+        return None
+    return (float(out.y), float(out.x))

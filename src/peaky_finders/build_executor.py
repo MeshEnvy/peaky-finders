@@ -511,6 +511,7 @@ def run_incremental_build(
                 n_suggestions=int(suggest_n),
                 replace_suggested=replace_suggested,
                 verbose=verbose,
+                jobs=jobs,
             )
             preset = load_preset(preset_path_r)
             try:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -17,7 +18,7 @@ from peaky_finders.bundle_clips import ELIGIBLE_LAYER
 from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_site_candidates
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_coverage_depth_grid
 from peaky_finders.site_suggestions.ephemeral_viewshed import candidate_viewshed_workdir, run_ephemeral_viewshed_footprint
-from peaky_finders.site_suggestions.log import suggest_log
+from peaky_finders.site_suggestions.log import suggest_log, suggest_step
 from peaky_finders.sites_job import Preset, resolved_site_suggestions_config
 
 
@@ -50,6 +51,13 @@ class CandidateTrial:
     footprint_area_km2: float | None
     workdir: Path | None
     detail: str
+    footprint: BaseGeometry | None = None
+
+
+@dataclass(frozen=True)
+class _CandidateTrialEval:
+    trial: CandidateTrial
+    pick: PlannedSuggestion | None
 
 
 def _composite_by_role(plan: BuildConfigurePlan, role: str):
@@ -101,6 +109,7 @@ def _log_planner_config(
     grid: CoverageDepthGrid,
     seed_paths: list[Path],
     preset: Preset,
+    jobs: int,
 ) -> None:
     if not verbose:
         return
@@ -116,6 +125,7 @@ def _log_planner_config(
     suggest_log(verbose, f"  max_candidates_per_round: {cfg.max_candidates_per_round}")
     suggest_log(verbose, f"  peak_cluster_radius_m: {cfg.peak_cluster_radius_m}")
     suggest_log(verbose, f"  uncovered_stop_pct: {cfg.uncovered_stop_pct}")
+    suggest_log(verbose, f"  suggest_parallelism: {max(1, int(jobs))}")
     suggest_log(verbose, "site suggest: ── seed sites ──")
     for slug, ent in sorted(preset.sites.items()):
         suggest_log(
@@ -222,6 +232,214 @@ def _log_selection_summary(
         suggest_log(verbose, f"  rationale: {best.rationale}")
 
 
+def _evaluate_candidate_trial(
+    *,
+    ci: int,
+    cand: SiteCandidate,
+    iteration: int,
+    goal: int,
+    grid: CoverageDepthGrid,
+    preset: Preset,
+    preset_path: Path,
+    plan: BuildConfigurePlan,
+    footprint_runner,
+) -> _CandidateTrialEval:
+    point_gain = grid.point_marginal_gain_cells(cand.lon, cand.lat, goal_depth=goal)
+    wd = candidate_viewshed_workdir(
+        preset=preset,
+        viewshed_root=plan.viewsheds_root,
+        lat=cand.lat,
+        lon=cand.lon,
+    )
+
+    try:
+        footprint = footprint_runner(
+            preset=preset,
+            preset_path=preset_path,
+            lat=cand.lat,
+            lon=cand.lon,
+            workdir=wd,
+        )
+    except Exception as exc:
+        msg = f"viewshed failed: {exc}"
+        print(f"site suggest: candidate [{ci}] failed ({cand.lat:.5f},{cand.lon:.5f}): {exc}", flush=True)
+        return _CandidateTrialEval(
+            trial=CandidateTrial(
+                index=ci,
+                candidate=cand,
+                outcome=CandidateOutcome.VIEWSHED_FAILED,
+                point_gain_cells=point_gain,
+                footprint_gain_cells=None,
+                footprint_area_km2=None,
+                workdir=wd,
+                detail=msg,
+            ),
+            pick=None,
+        )
+
+    if footprint is None or footprint.is_empty:
+        return _CandidateTrialEval(
+            trial=CandidateTrial(
+                index=ci,
+                candidate=cand,
+                outcome=CandidateOutcome.EMPTY_FOOTPRINT,
+                point_gain_cells=point_gain,
+                footprint_gain_cells=None,
+                footprint_area_km2=None,
+                workdir=wd,
+                detail="viewshed produced no footprint polygon",
+            ),
+            pick=None,
+        )
+
+    gain = grid.marginal_gain_cells(footprint, goal_depth=goal)
+    area_km2 = _footprint_area_km2(footprint)
+    if gain <= 0:
+        return _CandidateTrialEval(
+            trial=CandidateTrial(
+                index=ci,
+                candidate=cand,
+                outcome=CandidateOutcome.ZERO_GAIN,
+                point_gain_cells=point_gain,
+                footprint_gain_cells=gain,
+                footprint_area_km2=area_km2,
+                workdir=wd,
+                detail=(
+                    f"footprint covers {area_km2:.1f} km² but adds 0 new AOI cells "
+                    f"toward depth≥{goal} (already covered or outside AOI need)"
+                ),
+            ),
+            pick=None,
+        )
+
+    rationale = (
+        f"Greedy suggest #{iteration}: +{gain} AOI cells toward depth≥{goal} "
+        f"({cand.strategy} candidate)"
+    )
+    pick = PlannedSuggestion(
+        lat=cand.lat,
+        lon=cand.lon,
+        elev_m=cand.elev_m,
+        gain_cells=gain,
+        strategy=cand.strategy,
+        iteration=iteration,
+        rationale=rationale,
+    )
+    return _CandidateTrialEval(
+        trial=CandidateTrial(
+            index=ci,
+            candidate=cand,
+            outcome=CandidateOutcome.RUNNER_UP,
+            point_gain_cells=point_gain,
+            footprint_gain_cells=gain,
+            footprint_area_km2=area_km2,
+            workdir=wd,
+            detail=f"footprint {area_km2:.1f} km²",
+            footprint=footprint,
+        ),
+        pick=pick,
+    )
+
+
+def _log_trial_completion(*, verbose: bool, ev: _CandidateTrialEval) -> None:
+    t = ev.trial
+    gain_s = "—" if t.footprint_gain_cells is None else str(t.footprint_gain_cells)
+    suggest_log(
+        verbose,
+        f"site suggest:   trial [{t.index}] done outcome={t.outcome.value} "
+        f"footprint_gain={gain_s} cells",
+    )
+
+
+def _run_candidate_trials(
+    *,
+    candidates: list[SiteCandidate],
+    iteration: int,
+    goal: int,
+    grid: CoverageDepthGrid,
+    preset: Preset,
+    preset_path: Path,
+    plan: BuildConfigurePlan,
+    footprint_runner,
+    jobs: int,
+    verbose: bool,
+) -> tuple[PlannedSuggestion | None, BaseGeometry | None, list[CandidateTrial]]:
+    workers = max(1, int(jobs))
+
+    with suggest_step(verbose, f"viewshed trials ({len(candidates)} candidates, workers={workers})"):
+        for ci, cand in enumerate(candidates, start=1):
+            point_gain = grid.point_marginal_gain_cells(cand.lon, cand.lat, goal_depth=goal)
+            suggest_log(
+                verbose,
+                f"site suggest:     trial [{ci}/{len(candidates)}] {_format_candidate_brief(cand)} "
+                f"point_pre_gain={point_gain} cells → viewshed…",
+            )
+
+        if workers <= 1 or len(candidates) <= 1:
+            evals = [
+                _evaluate_candidate_trial(
+                    ci=ci,
+                    cand=cand,
+                    iteration=iteration,
+                    goal=goal,
+                    grid=grid,
+                    preset=preset,
+                    preset_path=preset_path,
+                    plan=plan,
+                    footprint_runner=footprint_runner,
+                )
+                for ci, cand in enumerate(candidates, start=1)
+            ]
+            for ev in evals:
+                _log_trial_completion(verbose=verbose, ev=ev)
+        else:
+            mx = min(workers, len(candidates))
+            evals = []
+            with ThreadPoolExecutor(max_workers=mx) as pool:
+                futs = {
+                    pool.submit(
+                        _evaluate_candidate_trial,
+                        ci=ci,
+                        cand=cand,
+                        iteration=iteration,
+                        goal=goal,
+                        grid=grid,
+                        preset=preset,
+                        preset_path=preset_path,
+                        plan=plan,
+                        footprint_runner=footprint_runner,
+                    ): ci
+                    for ci, cand in enumerate(candidates, start=1)
+                }
+                for fut in as_completed(futs):
+                    ev = fut.result()
+                    evals.append(ev)
+                    _log_trial_completion(verbose=verbose, ev=ev)
+            evals.sort(key=lambda ev: ev.trial.index)
+
+    best: PlannedSuggestion | None = None
+    best_footprint: BaseGeometry | None = None
+    trials: list[CandidateTrial] = []
+    for ev in evals:
+        trial = ev.trial
+        if ev.pick is not None and trial.footprint is not None:
+            if best is None or ev.pick.gain_cells > best.gain_cells:
+                if best is not None:
+                    for t in trials:
+                        if t.outcome == CandidateOutcome.SELECTED:
+                            t.outcome = CandidateOutcome.RUNNER_UP
+                best = ev.pick
+                best_footprint = trial.footprint
+                trial.outcome = CandidateOutcome.SELECTED
+                trial.detail = (
+                    f"current best gain={ev.pick.gain_cells} cells  "
+                    f"footprint {trial.footprint_area_km2:.1f} km²"
+                )
+        trials.append(trial)
+
+    return best, best_footprint, trials
+
+
 def plan_greedy_site_suggestions(
     *,
     preset: Preset,
@@ -231,6 +449,7 @@ def plan_greedy_site_suggestions(
     suggest_root: Path,
     footprint_runner=run_ephemeral_viewshed_footprint,
     verbose: bool = False,
+    jobs: int = 1,
 ) -> list[PlannedSuggestion]:
     """Pick ``n_suggestions`` sites maximizing marginal AOI depth coverage."""
     if preset.bundle is None:
@@ -260,6 +479,7 @@ def plan_greedy_site_suggestions(
         grid=grid,
         seed_paths=seed_paths,
         preset=preset,
+        jobs=jobs,
     )
 
     stop_frac = float(cfg.uncovered_stop_pct) / 100.0
@@ -273,6 +493,7 @@ def plan_greedy_site_suggestions(
         return []
 
     dem_mirror = plan.splat_tiles_root
+    eligible_sha = _composite_by_role(plan, "eligible").sha
     winners: list[PlannedSuggestion] = []
 
     for iteration in range(1, n_suggestions + 1):
@@ -292,9 +513,12 @@ def plan_greedy_site_suggestions(
             grid=grid,
             goal_depth=goal,
             dem_mirror_root=dem_mirror,
+            suggest_root=suggest_root,
+            eligible_sha=eligible_sha,
             max_candidates=int(cfg.max_candidates_per_round),
             cluster_radius_m=float(cfg.peak_cluster_radius_m),
             iteration=iteration - 1,
+            jobs=jobs,
             verbose=verbose,
         )
         _log_candidate_shortlist(verbose=verbose, iteration=iteration, candidates=candidates)
@@ -303,120 +527,18 @@ def plan_greedy_site_suggestions(
             print(f"site suggest: no candidates at iteration {iteration}", flush=True)
             break
 
-        best: PlannedSuggestion | None = None
-        best_footprint: BaseGeometry | None = None
-        trials: list[CandidateTrial] = []
-
-        for ci, cand in enumerate(candidates, start=1):
-            pt = Point(cand.lon, cand.lat)
-            point_gain = grid.marginal_gain_cells(pt, goal_depth=goal)
-            wd = candidate_viewshed_workdir(
-                preset=preset,
-                viewshed_root=plan.viewsheds_root,
-                lat=cand.lat,
-                lon=cand.lon,
-            )
-
-            suggest_log(
-                verbose,
-                f"site suggest:   trial [{ci}/{len(candidates)}] {_format_candidate_brief(cand)} "
-                f"point_pre_gain={point_gain} cells → viewshed…",
-            )
-
-            try:
-                footprint = footprint_runner(
-                    preset=preset,
-                    preset_path=preset_path,
-                    lat=cand.lat,
-                    lon=cand.lon,
-                    workdir=wd,
-                )
-            except Exception as exc:
-                msg = f"viewshed failed: {exc}"
-                print(f"site suggest: candidate [{ci}] failed ({cand.lat:.5f},{cand.lon:.5f}): {exc}", flush=True)
-                trials.append(
-                    CandidateTrial(
-                        index=ci,
-                        candidate=cand,
-                        outcome=CandidateOutcome.VIEWSHED_FAILED,
-                        point_gain_cells=point_gain,
-                        footprint_gain_cells=None,
-                        footprint_area_km2=None,
-                        workdir=wd,
-                        detail=msg,
-                    )
-                )
-                continue
-
-            if footprint is None or footprint.is_empty:
-                trials.append(
-                    CandidateTrial(
-                        index=ci,
-                        candidate=cand,
-                        outcome=CandidateOutcome.EMPTY_FOOTPRINT,
-                        point_gain_cells=point_gain,
-                        footprint_gain_cells=None,
-                        footprint_area_km2=None,
-                        workdir=wd,
-                        detail="viewshed produced no footprint polygon",
-                    )
-                )
-                continue
-
-            gain = grid.marginal_gain_cells(footprint, goal_depth=goal)
-            area_km2 = _footprint_area_km2(footprint)
-            if gain <= 0:
-                trials.append(
-                    CandidateTrial(
-                        index=ci,
-                        candidate=cand,
-                        outcome=CandidateOutcome.ZERO_GAIN,
-                        point_gain_cells=point_gain,
-                        footprint_gain_cells=gain,
-                        footprint_area_km2=area_km2,
-                        workdir=wd,
-                        detail=(
-                            f"footprint covers {area_km2:.1f} km² but adds 0 new AOI cells "
-                            f"toward depth≥{goal} (already covered or outside AOI need)"
-                        ),
-                    )
-                )
-                continue
-
-            rationale = (
-                f"Greedy suggest #{iteration}: +{gain} AOI cells toward depth≥{goal} "
-                f"({cand.strategy} candidate)"
-            )
-            pick = PlannedSuggestion(
-                lat=cand.lat,
-                lon=cand.lon,
-                elev_m=cand.elev_m,
-                gain_cells=gain,
-                strategy=cand.strategy,
-                iteration=iteration,
-                rationale=rationale,
-            )
-            trials.append(
-                CandidateTrial(
-                    index=ci,
-                    candidate=cand,
-                    outcome=CandidateOutcome.RUNNER_UP,
-                    point_gain_cells=point_gain,
-                    footprint_gain_cells=gain,
-                    footprint_area_km2=area_km2,
-                    workdir=wd,
-                    detail=f"footprint {area_km2:.1f} km²",
-                )
-            )
-            if best is None or gain > best.gain_cells:
-                if best is not None:
-                    for t in trials:
-                        if t.outcome == CandidateOutcome.SELECTED:
-                            t.outcome = CandidateOutcome.RUNNER_UP
-                best = pick
-                best_footprint = footprint
-                trials[-1].outcome = CandidateOutcome.SELECTED
-                trials[-1].detail = f"current best gain={gain} cells  footprint {area_km2:.1f} km²"
+        best, best_footprint, trials = _run_candidate_trials(
+            candidates=candidates,
+            iteration=iteration,
+            goal=goal,
+            grid=grid,
+            preset=preset,
+            preset_path=preset_path,
+            plan=plan,
+            footprint_runner=footprint_runner,
+            jobs=jobs,
+            verbose=verbose,
+        )
 
         if best is None or best_footprint is None:
             print(f"site suggest: no improving candidate at iteration {iteration}", flush=True)
