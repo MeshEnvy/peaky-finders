@@ -271,14 +271,11 @@ def configure_preset_build(
     except ValueError as e:
         raise ConfigureError(str(e)) from e
 
-    digest_workspace_master_slug = propagation_digest_to_workspace_master_slug(preset)
-
     viewshed_workspaces: list[PlannedViewshedWorkspace] = []
     for digest, slugs in sorted(digest_to_slugs.items()):
         slugs_sorted = tuple(sorted(slugs))
-        master_slug = digest_workspace_master_slug[digest]
         workdir = resolved_viewshed_workdir(
-            canonical_site_slug=master_slug,
+            digest=digest,
             viewshed_root=viewsheds_root,
         )
         viewshed_workspaces.append(
@@ -290,7 +287,6 @@ def configure_preset_build(
                 coverage_gpkg=workdir / COVERAGE_GPKG_NAME,
                 request_json=workdir / "request.json",
                 site_slugs=slugs_sorted,
-                rep_slug=master_slug,
             )
         )
 

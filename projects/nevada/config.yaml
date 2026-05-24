@@ -549,3 +549,58 @@ sites:
     plss: NV; Mount Diablo Meridian; T.36N R.65E; Sec. 02 — CadNSDI 
       PLSSID=NV210360N0650E0 | FRSTDIVID=NV210360N0650E0SN020
     mlrs: NV210360N0650E0SN020
+  suggest-01-suggested-1-2301-m:
+    name: Suggested 1 (2301 m)
+    loc:
+    - 39.05527777777778
+    - -114.59805555555555
+    rationale: 'Greedy suggest #1: +3435 AOI cells toward depth≥1 (peak candidate)'
+    elevation_m: 2301.0
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.14N R.66E; Sec. 30 — CadNSDI 
+      PLSSID=NV210140N0660E0 | FRSTDIVID=NV210140N0660E0UP300
+    mlrs: NV210140N0660E0UP300
+  suggest-02-suggested-2-2516-m:
+    name: Suggested 2 (2516 m)
+    loc:
+    - 39.05583333333333
+    - -117.58083333333333
+    rationale: 'Greedy suggest #2: +1761 AOI cells toward depth≥1 (peak candidate)'
+    elevation_m: 2516.0
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.14N R.39E; Sec. 27 — CadNSDI 
+      PLSSID=NV210140N0390E0 | FRSTDIVID=NV210140N0390E0UP270
+    mlrs: NV210140N0390E0UP270
+  suggest-03-suggested-3-2325-m:
+    name: Suggested 3 (2325 m)
+    loc:
+    - 38.76555555555556
+    - -116.83694444444444
+    rationale: 'Greedy suggest #3: +1426 AOI cells toward depth≥1 (peak candidate)'
+    elevation_m: 2325.0
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.11N R.46E; Sec. 30 — CadNSDI 
+      PLSSID=NV210110N0460E0 | FRSTDIVID=NV210110N0460E0SN300
+    mlrs: NV210110N0460E0SN300
+  suggest-04-suggested-4-2439-m:
+    name: Suggested 4 (2439 m)
+    loc:
+    - 39.625
+    - -114.97083333333333
+    rationale: 'Greedy suggest #4: +1282 AOI cells toward depth≥1 (peak candidate)'
+    elevation_m: 2439.0
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.20N R.62E; Sec. 02 — CadNSDI 
+      PLSSID=NV210200N0620E0 | FRSTDIVID=NV210200N0620E0UP020
+    mlrs: NV210200N0620E0UP020
+  suggest-05-suggested-5-2257-m:
+    name: Suggested 5 (2257 m)
+    loc:
+    - 38.1875
+    - -115.71805555555555
+    rationale: 'Greedy suggest #5: +4405 AOI cells toward depth≥1 (peak candidate)'
+    elevation_m: 2257.0
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.4N R.56E; Sec. 19 — CadNSDI 
+      PLSSID=NV210040N0560E0 | FRSTDIVID=NV210040N0560E0UP190
+    mlrs: NV210040N0560E0UP190

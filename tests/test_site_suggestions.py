@@ -13,6 +13,32 @@ from peaky_finders.site_suggestions.preset_io import append_suggested_sites_to_p
 from peaky_finders.sites_job import SiteType, load_preset, write_preset_document
 
 
+_SUGGEST_SIMULATION = {
+    "modem_presets": {
+        "meshcore-us": {
+            "frequency_mhz": 910.525,
+            "bandwidth_khz": 62.5,
+            "spreading_factor": 7,
+            "coding_rate": 5,
+            "implementation_margin_db": 3.0,
+            "power_dbm": 22.0,
+            "sensitivity_dbm": -121.0,
+        }
+    },
+    "environment_presets": {
+        "test-desert": {
+            "climate": "desert",
+            "polarization": "vertical",
+            "clutter_height_m": 1.0,
+        }
+    },
+    "modem": "meshcore-us",
+    "environment": "test-desert",
+    "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
+    "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
+}
+
+
 def _write_gpkg(path: Path, geom, *, layer: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     gpd.GeoDataFrame(geometry=[geom], crs="EPSG:4326").to_file(path, driver="GPKG", layer=layer)
@@ -23,10 +49,7 @@ def test_site_type_defaults_to_installed(tmp_path: Path) -> None:
     write_preset_document(
         p,
         {
-            "simulation": {
-                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-            },
+            "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "sites": {"a": {"name": "A", "loc": [39.0, -119.0]}},
         },
@@ -56,10 +79,7 @@ def test_append_and_remove_suggested_sites(tmp_path: Path) -> None:
     write_preset_document(
         p,
         {
-            "simulation": {
-                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-            },
+            "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "sites": {"placed-a": {"name": "A", "loc": [39.0, -119.0]}},
         },
@@ -93,10 +113,7 @@ def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
     write_preset_document(
         preset_path,
         {
-            "simulation": {
-                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-            },
+            "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "bundle": {
                 "site_suggestions": {
@@ -128,10 +145,10 @@ def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
                     coverage_gpkg=seed_gpkg,
                     request_json=tmp_path / "ws/request.json",
                     site_slugs=("seed",),
-                    rep_slug="seed",
                 ),
             ),
             "splat_tiles_root": tmp_path / "dem",
+            "viewsheds_root": tmp_path / "viewsheds",
         },
     )()
 
@@ -170,10 +187,7 @@ def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
     write_preset_document(
         preset_path,
         {
-            "simulation": {
-                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-            },
+            "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "bundle": {"site_suggestions": {"planner_raster_dimension": 256, "max_candidates_per_round": 2}},
             "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.03]}},
@@ -197,10 +211,10 @@ def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
                     coverage_gpkg=seed_gpkg,
                     request_json=tmp_path / "ws/request.json",
                     site_slugs=("seed",),
-                    rep_slug="seed",
                 ),
             ),
             "splat_tiles_root": tmp_path / "dem",
+            "viewsheds_root": tmp_path / "viewsheds",
         },
     )()
 

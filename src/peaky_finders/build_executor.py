@@ -95,11 +95,11 @@ def _clip_for_target(plan: BuildConfigurePlan, tid: str) -> PlannedClipLayer:
     return lyr
 
 
-def _workspace_by_rep(plan: BuildConfigurePlan, rep: str):
+def _workspace_by_digest(plan: BuildConfigurePlan, digest: str):
     for ws in plan.viewshed_workspaces:
-        if ws.rep_slug == rep:
+        if ws.digest == digest:
             return ws
-    raise KeyError(rep)
+    raise KeyError(digest)
 
 
 def _sorted_viewshed_digests(job: Preset) -> tuple[str, ...]:
@@ -208,7 +208,7 @@ def target_stale(plan: BuildConfigurePlan, preset: Preset, node: PeakyGraphTarge
     if tid.startswith("viewshed:"):
         tail = tid.removeprefix("viewshed:")
         rep, phase = tail.rsplit(":", 1)
-        ws = _workspace_by_rep(plan, rep)
+        ws = _workspace_by_digest(plan, rep)
 
         mq = tuple(Path(x).expanduser().resolve() for x in node.mtime_prereqs if Path(x).expanduser().is_file())
         if phase == "request":
@@ -338,9 +338,10 @@ def execute_target(
     if tid.startswith("viewshed:"):
         tail = tid.removeprefix("viewshed:")
         rep, phase = tail.rsplit(":", 1)
+        ws = _workspace_by_digest(plan, rep)
         vs = argparse.Namespace(
             preset_yaml=preset_path_r,
-            granular_viewshed_slug=rep,
+            granular_viewshed_slug=ws.site_slugs[0],
             viewshed_workspace_only=True,
             viewshed_phase=phase,
         )
