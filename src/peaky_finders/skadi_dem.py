@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import re
@@ -129,6 +130,64 @@ def iter_skadi_tile_names_for_wgs84_bounds(
     return names
 
 
+DEM_PREFETCH_STAMP_FMT = "dem_prefetch_v1"
+
+
+def skadi_tile_set_fingerprint_body(
+    minx: float, miny: float, maxx: float, maxy: float
+) -> str:
+    tiles = iter_skadi_tile_names_for_wgs84_bounds(minx, miny, maxx, maxy)
+    lines = "\n".join(sorted(tiles))
+    return f"format={DEM_PREFETCH_STAMP_FMT}\ntiles\n{lines}\n"
+
+
+def skadi_tile_set_fingerprint(minx: float, miny: float, maxx: float, maxy: float) -> str:
+    body = skadi_tile_set_fingerprint_body(minx, miny, maxx, maxy)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def skadi_mirror_tile_cached(mirror_root: Path, tile_name: str) -> bool:
+    try:
+        path = skadi_mirror_tile_gz_path(mirror_root, tile_name)
+    except ValueError:
+        return False
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def skadi_missing_mirror_tiles_for_bounds(
+    *,
+    minx: float,
+    miny: float,
+    maxx: float,
+    maxy: float,
+    mirror_root: Path,
+) -> tuple[str, tuple[str, ...]]:
+    """Return ``(tile_set_fingerprint, missing_tile_names)`` for the bbox."""
+    tiles = iter_skadi_tile_names_for_wgs84_bounds(minx, miny, maxx, maxy)
+    fp = skadi_tile_set_fingerprint(minx, miny, maxx, maxy)
+    root = mirror_root.expanduser().resolve()
+    missing = tuple(t for t in tiles if not skadi_mirror_tile_cached(root, t))
+    return fp, missing
+
+
+def read_dem_prefetch_stamp_fingerprint(stamp_path: Path) -> str | None:
+    try:
+        lines = stamp_path.read_text(encoding="utf-8").strip().splitlines()
+    except OSError:
+        return None
+    if not lines:
+        return None
+    return lines[0]
+
+
+def write_dem_prefetch_stamp(stamp_path: Path, fingerprint: str) -> None:
+    stamp_path.parent.mkdir(parents=True, exist_ok=True)
+    stamp_path.write_text(f"{fingerprint}\n", encoding="utf-8")
+
+
 def fetch_skadi_hgt_tile_always(
     tile_name: str,
     splat_tile_cache_dir: str | Path,
@@ -156,15 +215,17 @@ def prefetch_skadi_hgt_for_bounds(
     bucket_prefix: str = DEFAULT_SKADI_PREFIX,
     verbose_log: Callable[[str], None] | None = None,
     log_parallel_errors: Callable[[str], None] | None = None,
-) -> tuple[int, list[str]]:
-    """Fetch every Skadi tile intersecting the bbox; always overwrites mirror files.
+) -> tuple[int, int, list[str]]:
+    """Fetch Skadi tiles intersecting the bbox; skip non-empty mirror files.
 
-    Returns ``(n_tiles_attempted, errs)``.
+    Returns ``(n_downloaded, n_skipped, errs)``.
     """
     all_tiles = iter_skadi_tile_names_for_wgs84_bounds(minx, miny, maxx, maxy)
     if not all_tiles:
-        return (0, [])
+        return (0, 0, [])
     mirror_root = skadi_mirror_resolve_root(splat_tile_cache_dir)
+    to_fetch = [t for t in all_tiles if not skadi_mirror_tile_cached(mirror_root, t)]
+    n_skipped = len(all_tiles) - len(to_fetch)
     errs: list[str] = []
 
     def _say(msg: str) -> None:
@@ -173,8 +234,11 @@ def prefetch_skadi_hgt_for_bounds(
 
     _say(
         f"dem prefetch bbox (4326)=({minx},{miny},{maxx},{maxy}) "
-        f"tiles={len(all_tiles)} mirror={mirror_root}"
+        f"tiles={len(all_tiles)} fetch={len(to_fetch)} cached={n_skipped} mirror={mirror_root}"
     )
+
+    if not to_fetch:
+        return (0, n_skipped, [])
 
     def _pull_one(tile_name: str) -> tuple[str, bytes]:
         cli = skadi_unsigned_s3_client()
@@ -182,9 +246,10 @@ def prefetch_skadi_hgt_for_bounds(
             cli, tile_name, bucket_name=bucket_name, bucket_prefix=bucket_prefix
         )
 
-    worker_cap = max(1, min(max_workers, len(all_tiles)))
+    n_downloaded = 0
+    worker_cap = max(1, min(max_workers, len(to_fetch)))
     with ThreadPoolExecutor(max_workers=worker_cap) as ex:
-        futs = {ex.submit(_pull_one, t): t for t in all_tiles}
+        futs = {ex.submit(_pull_one, t): t for t in to_fetch}
         for fut in as_completed(futs):
             t = futs[fut]
             try:
@@ -192,6 +257,7 @@ def prefetch_skadi_hgt_for_bounds(
                 skadi_write_bytes_atomic(
                     skadi_mirror_tile_gz_path(mirror_root, tile_name), blob
                 )
+                n_downloaded += 1
                 _say(f"dem prefetch downloaded {tile_name} ({len(blob)} bytes)")
             except Exception as e:  # noqa: BLE001
                 msg = f"{t}: {e}"
@@ -200,7 +266,7 @@ def prefetch_skadi_hgt_for_bounds(
                     log_parallel_errors(msg)
                 else:
                     logger.warning("dem prefetch failed: %s", msg)
-    return (len(all_tiles), errs)
+    return (n_downloaded, n_skipped, errs)
 
 
 def prefetch_skadi_hgt_for_bounds_fatal(
@@ -213,8 +279,10 @@ def prefetch_skadi_hgt_for_bounds_fatal(
     max_workers: int = 16,
     verbose_log: Callable[[str], None] | None = None,
     log_parallel_errors: Callable[[str], None] | None = None,
-) -> int:
-    n_tiles, errs = prefetch_skadi_hgt_for_bounds(
+) -> tuple[int, int, int]:
+    """Prefetch tiles for bbox; return ``(tile_count, downloaded, skipped)``."""
+    all_tiles = iter_skadi_tile_names_for_wgs84_bounds(minx, miny, maxx, maxy)
+    n_downloaded, n_skipped, errs = prefetch_skadi_hgt_for_bounds(
         minx=minx,
         miny=miny,
         maxx=maxx,
@@ -228,4 +296,4 @@ def prefetch_skadi_hgt_for_bounds_fatal(
         preview = errs[:10]
         more = f" (+{len(errs) - 10} more)" if len(errs) > 10 else ""
         raise RuntimeError(f"dem prefetch failures ({len(errs)}): {'; '.join(preview)}{more}")
-    return n_tiles
+    return (len(all_tiles), n_downloaded, n_skipped)

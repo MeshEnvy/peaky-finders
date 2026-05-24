@@ -266,7 +266,7 @@ def run_bundle_dem(preset_path: Path, *, tile: str | None = None) -> int:
         print(f"bundle dem: Skadi tile {want} → {splat_tile_dir}", flush=True)
         return 0
 
-    n_tiles = prefetch_skadi_hgt_for_bounds_fatal(
+    n_tiles, n_downloaded, n_skipped = prefetch_skadi_hgt_for_bounds_fatal(
         minx=minx,
         miny=miny,
         maxx=maxx,
@@ -277,7 +277,7 @@ def run_bundle_dem(preset_path: Path, *, tile: str | None = None) -> int:
     )
     print(
         "bundle dem: Skadi prefetch "
-        f"(bbox_tiles={n_tiles} mirror={splat_tile_dir})",
+        f"(tiles={n_tiles} downloaded={n_downloaded} cached={n_skipped} mirror={splat_tile_dir})",
         flush=True,
     )
     return 0
