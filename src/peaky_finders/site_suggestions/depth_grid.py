@@ -11,6 +11,7 @@ import numpy as np
 from rasterio import features
 from rasterio.transform import from_bounds
 from shapely import make_valid
+from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
@@ -41,6 +42,25 @@ class CoverageDepthGrid:
         if total <= 0:
             return 0.0
         return float(np.count_nonzero(self.uncovered_mask(goal_depth=goal_depth))) / float(total)
+
+    def uncovered_geometry_wgs84(self, *, goal_depth: int) -> BaseGeometry | None:
+        """EPSG:4326 union of AOI cells still below ``goal_depth``."""
+        mask = self.uncovered_mask(goal_depth=goal_depth).astype(np.uint8)
+        if not np.any(mask):
+            return None
+        pieces: list[BaseGeometry] = []
+        for geom, val in features.shapes(mask, mask=mask.astype(bool), transform=self.transform, connectivity=8):
+            if int(val) == 1:
+                pieces.append(shape(geom))
+        if not pieces:
+            return None
+        union_m = unary_union(pieces)
+        if union_m is None or union_m.is_empty:
+            return None
+        out = gpd.GeoDataFrame(geometry=[union_m], crs="EPSG:3857").to_crs("EPSG:4326").geometry.iloc[0]
+        if out is None or out.is_empty:
+            return None
+        return out if out.is_valid else make_valid(out)
 
     def marginal_gain_cells(self, footprint_ll: BaseGeometry, *, goal_depth: int) -> int:
         if footprint_ll is None or footprint_ll.is_empty:
