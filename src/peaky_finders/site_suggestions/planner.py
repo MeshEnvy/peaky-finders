@@ -16,7 +16,7 @@ from peaky_finders.build_configure import BuildConfigurePlan
 from peaky_finders.bundle_clips import ELIGIBLE_LAYER
 from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_site_candidates
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_coverage_depth_grid
-from peaky_finders.site_suggestions.ephemeral_viewshed import candidate_workdir, run_ephemeral_viewshed_footprint
+from peaky_finders.site_suggestions.ephemeral_viewshed import candidate_viewshed_workdir, run_ephemeral_viewshed_footprint
 from peaky_finders.site_suggestions.log import suggest_log
 from peaky_finders.sites_job import Preset, resolved_site_suggestions_config
 
@@ -310,7 +310,12 @@ def plan_greedy_site_suggestions(
         for ci, cand in enumerate(candidates, start=1):
             pt = Point(cand.lon, cand.lat)
             point_gain = grid.marginal_gain_cells(pt, goal_depth=goal)
-            wd = candidate_workdir(suggest_root, cand.lat, cand.lon)
+            wd = candidate_viewshed_workdir(
+                preset=preset,
+                viewshed_root=plan.viewsheds_root,
+                lat=cand.lat,
+                lon=cand.lon,
+            )
 
             suggest_log(
                 verbose,

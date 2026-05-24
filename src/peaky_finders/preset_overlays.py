@@ -16,7 +16,6 @@ from peaky_finders.sites_job import (
 )
 from peaky_finders.splat_polygonize import COVERAGE_GPKG_NAME, COVERAGE_KML_NAME
 from peaky_finders.viewshed_workspace import (
-    propagation_digest_to_workspace_master_slug,
     resolved_viewshed_workdir,
     viewshed_workspace_digest,
 )
@@ -57,8 +56,6 @@ def collect_site_workspace_assets(
         vd = viewshed_workspace_digest(request=preset_to_request(preset, float(site.lat), float(site.lon)))
         slug_to_digest[site_slug] = vd
 
-    master_slug_for_digest = propagation_digest_to_workspace_master_slug(preset)
-
     viewshed_root = resolved_viewshed_dir(bundle_cache_root)
     overlays: list[kml_bundle.AggregateSiteOverlay] = []
     png_paths: list[Path] = []
@@ -70,10 +67,7 @@ def collect_site_workspace_assets(
 
     for site_slug, site in sites_items:
         vd = slug_to_digest[site_slug]
-        canon = master_slug_for_digest[vd]
-        data_dir = resolved_viewshed_workdir(
-            canonical_site_slug=canon, viewshed_root=viewshed_root
-        )
+        data_dir = resolved_viewshed_workdir(digest=vd, viewshed_root=viewshed_root)
         manifest_path = data_dir / "manifest.json"
         bounds = kml_bundle.load_bounds_from_manifest(manifest_path)
         if bounds is None:

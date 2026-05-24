@@ -424,7 +424,7 @@ def run_splat(args: argparse.Namespace) -> int:
     if job.bundle is None:
         print(
             "coverage requires preset bundle.* (AOI / land-use); "
-            "workspaces live under <preset-dir>/build/viewsheds/<canonical-site-slug>/.",
+            "workspaces live under <preset-dir>/build/viewsheds/<propagation-digest>/.",
             file=sys.stderr,
         )
         return 2
@@ -439,7 +439,6 @@ def run_splat(args: argparse.Namespace) -> int:
     )
 
     from peaky_finders.viewshed_workspace import (
-        propagation_digest_to_workspace_master_slug,
         resolved_viewshed_workdir,
         viewshed_workspace_digest,
     )
@@ -449,43 +448,24 @@ def run_splat(args: argparse.Namespace) -> int:
     viewshed_root.mkdir(parents=True, exist_ok=True)
     print(f"Viewshed workspaces: {viewshed_root}", flush=True)
 
-    workspace_master_slug = propagation_digest_to_workspace_master_slug(job)
-    digest_site_groups: dict[str, list[tuple[str, object]]] = {}
-    digest_order: list[str] = []
-    slug_to_digest: dict[str, str] = {}
-
-    for site_slug, site in sorted(job.sites.items(), key=lambda t: t[0]):
-        req = preset_to_request(job, float(site.lat), float(site.lon))
-        vd = viewshed_workspace_digest(request=req)
-        slug_to_digest[site_slug] = vd
-        if vd not in digest_site_groups:
-            digest_order.append(vd)
-            digest_site_groups[vd] = []
-        digest_site_groups[vd].append((site_slug, site))
-
-    for grp in digest_site_groups.values():
-        grp.sort(key=lambda t: t[0])
-
-    workspace_dirs: dict[str, Path] = {}
-    for vd in digest_order:
-        canon_slug = workspace_master_slug[vd]
-        wdir = resolved_viewshed_workdir(canonical_site_slug=canon_slug, viewshed_root=viewshed_root)
-        wdir.mkdir(parents=True, exist_ok=True)
-        workspace_dirs[vd] = wdir
-
-    vd_ws = slug_to_digest[slug_key]
-    data_dir_ws = workspace_dirs[vd_ws]
-    master_slug_ws = workspace_master_slug[vd_ws]
-    master_site_ws = job.sites[master_slug_ws]
-    req_ws = preset_to_request(job, float(master_site_ws.lat), float(master_site_ws.lon))
+    site = job.sites[slug_key]
+    req_ws = preset_to_request(job, float(site.lat), float(site.lon))
+    vd_ws = viewshed_workspace_digest(request=req_ws)
+    data_dir_ws = resolved_viewshed_workdir(digest=vd_ws, viewshed_root=viewshed_root)
+    data_dir_ws.mkdir(parents=True, exist_ok=True)
     _write_request_json(data_dir_ws, req_ws)
 
-    n_grp_ws = len(digest_site_groups[vd_ws])
+    digest_site_groups: dict[str, list[tuple[str, object]]] = {}
+    for site_slug, ent in sorted(job.sites.items(), key=lambda t: t[0]):
+        vd = viewshed_workspace_digest(request=preset_to_request(job, float(ent.lat), float(ent.lon)))
+        digest_site_groups.setdefault(vd, []).append((site_slug, ent))
+
+    n_grp_ws = len(digest_site_groups.get(vd_ws, ()))
     site_label_ws = (
-        master_site_ws.name.strip()
-        if n_grp_ws == 1
+        site.name.strip()
+        if n_grp_ws <= 1
         else (
-            f"{master_site_ws.name.strip()} (+{n_grp_ws - 1}"
+            f"{site.name.strip()} (+{n_grp_ws - 1}"
             " preset site(s), same propagation key)"
         )
     )

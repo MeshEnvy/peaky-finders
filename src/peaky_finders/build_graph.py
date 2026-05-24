@@ -20,16 +20,16 @@ class PeakyGraphTarget:
     mtime_prereqs: tuple[Path, ...]
 
 
-def site_workspace_rep_slug(plan: BuildConfigurePlan, slug: str) -> str:
+def site_workspace_digest(plan: BuildConfigurePlan, slug: str) -> str:
     for ws in plan.viewshed_workspaces:
         if slug in ws.site_slugs:
-            return ws.rep_slug
+            return ws.digest
     raise KeyError(slug)
 
 
-def _workspace_for_rep(plan: BuildConfigurePlan, rep_slug: str) -> PlannedViewshedWorkspace | None:
+def _workspace_for_digest(plan: BuildConfigurePlan, digest: str) -> PlannedViewshedWorkspace | None:
     for ws in plan.viewshed_workspaces:
-        if ws.rep_slug == rep_slug:
+        if ws.digest == digest:
             return ws
     return None
 
@@ -95,8 +95,8 @@ def pairwise_mtime_prereqs(plan: BuildConfigurePlan, slug_a: str, slug_b: str) -
         parts.append(stamp_path(preset_f, sec).resolve())
     parts.append(dem_bulk_stamp_path(plan))
     for slug in (slug_a, slug_b):
-        rep = site_workspace_rep_slug(plan, slug)
-        w = _workspace_for_rep(plan, rep)
+        rep = site_workspace_digest(plan, slug)
+        w = _workspace_for_digest(plan, rep)
         if w:
             parts.append(w.splat_png.resolve())
             parts.append(w.coverage_gpkg.resolve())
@@ -106,8 +106,8 @@ def pairwise_mtime_prereqs(plan: BuildConfigurePlan, slug_a: str, slug_b: str) -
 def footprints_all(plan: BuildConfigurePlan, preset: Preset) -> tuple[Path, ...]:
     out: list[Path] = []
     for slug in sorted(preset.sites.keys()):
-        rep = site_workspace_rep_slug(plan, slug)
-        ws = _workspace_for_rep(plan, rep)
+        rep = site_workspace_digest(plan, slug)
+        ws = _workspace_for_digest(plan, rep)
         if ws:
             out.append(ws.splat_png.resolve())
             out.append(ws.coverage_gpkg.resolve())
@@ -253,7 +253,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
     mesh_depth_var_present = False
 
     for ws in plan.viewshed_workspaces:
-        rep = ws.rep_slug
+        rep = ws.digest
         deps_vs = tuple(sorted(_viewshed_deps(plan, ws)))
         mq_all = viewshed_mtime_prereqs(plan, ws)
         mq_nopreq = tuple(sorted({p for p in mq_all if p.name != "request.json"}, key=str))
@@ -302,10 +302,10 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
                     depends_on=tuple(
                         sorted(
                             {
-                                f"viewshed:{site_workspace_rep_slug(plan, pair.slug_a)}:footprint",
-                                f"viewshed:{site_workspace_rep_slug(plan, pair.slug_b)}:footprint",
-                                f"viewshed:{site_workspace_rep_slug(plan, pair.slug_a)}:raster",
-                                f"viewshed:{site_workspace_rep_slug(plan, pair.slug_b)}:raster",
+                                f"viewshed:{site_workspace_digest(plan, pair.slug_a)}:footprint",
+                                f"viewshed:{site_workspace_digest(plan, pair.slug_b)}:footprint",
+                                f"viewshed:{site_workspace_digest(plan, pair.slug_a)}:raster",
+                                f"viewshed:{site_workspace_digest(plan, pair.slug_b)}:raster",
                                 "bundle:resolve",
                                 "stamp:bundle_kml_overlay",
                                 "stamp:bundle_mesh_coverage",
@@ -364,7 +364,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
                 sorted(
                     {
                         "stamp:sites_sees",
-                        *[f"viewshed:{site_workspace_rep_slug(plan, slug)}:footprint" for slug in site_slugs],
+                        *[f"viewshed:{site_workspace_digest(plan, slug)}:footprint" for slug in site_slugs],
                     }
                 )
             )
@@ -389,7 +389,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
 
     if plan.viewshed_workspaces:
         for slug in site_slugs:
-            rep = site_workspace_rep_slug(plan, slug)
+            rep = site_workspace_digest(plan, slug)
             kmz_deps.extend([f"viewshed:{rep}:raster", f"viewshed:{rep}:footprint"])
         kmz_mtime.extend(footprints_all(plan, preset))
 
@@ -469,7 +469,7 @@ def subgraph_roots_for(
     site_slugs = tuple(sorted(preset.sites.keys()))
 
     def rep(slug: str) -> str:
-        return site_workspace_rep_slug(plan, slug)
+        return site_workspace_digest(plan, slug)
 
     if s in ("all", "kmz"):
         return ("kmz:out",)
