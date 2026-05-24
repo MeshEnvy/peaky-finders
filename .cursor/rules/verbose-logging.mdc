@@ -1,0 +1,45 @@
+---
+description: --verbose output must log start, progress, and completion of operations
+alwaysApply: true
+---
+
+# Verbose logging
+
+When adding or changing `--verbose` / `verbose_log` / `simulation.verbose` behavior, treat verbose mode as **operation tracing** — not extra debug noise.
+
+## Every operation should log three phases
+
+1. **Start** — what is running, with enough context to identify scope (counts, paths, worker count, key params).
+2. **Progress** — when the work is chunked, long-running, or parallel; omit only for trivial instant steps.
+3. **End** — completion summary (counts, elapsed time, outcome).
+
+Use `flush=True` on `print` (or equivalent) so logs appear promptly in CI and long jobs.
+
+## Progress patterns
+
+Prefer structured, scannable lines:
+
+```python
+# start
+print(f"{prefix}Skadi peak scan: {len(tiles)} tile(s), workers={workers}", flush=True)
+
+# progress (per unit or periodic)
+print(f"{prefix}  tile [{done}/{len(tiles)}] {tile_name}: {len(peaks)} peak(s) ({elapsed:.1f}s)", flush=True)
+
+# end
+print(f"{prefix}Skadi peak scan done: {len(raw)} raw peak(s)", flush=True)
+```
+
+For parallel work, log progress as units **complete** (`as_completed`), not only at submit time.
+
+## Conventions
+
+- Use a stable **prefix** per command or phase (`bundle eligible:`, `build:`, `log_prefix=`).
+- Pass `verbose_log` / `progress_log` callbacks into helpers instead of scattering `if verbose:` at every call site when the helper owns the loop.
+- Non-verbose output stays minimal; verbose adds the lifecycle detail above.
+
+## Avoid
+
+- Silent long loops under `--verbose`.
+- Start-only or end-only logging for multi-step work.
+- Unbounded per-item spam when thousands of trivial items exist — batch or sample instead (e.g. every N items or summary counts).
