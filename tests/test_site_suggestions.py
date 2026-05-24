@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
+import pytest
 from shapely.geometry import box
 
 from peaky_finders.site_suggestions.depth_grid import build_coverage_depth_grid
@@ -72,6 +74,66 @@ def test_depth_grid_marginal_gain(tmp_path: Path) -> None:
     assert gain > 0
     grid.add_footprint(new_fp)
     assert grid.marginal_gain_cells(new_fp, goal_depth=1) == 0
+
+
+def test_uncovered_geometry_wgs84_excludes_covered_aoi(tmp_path: Path) -> None:
+    covered = box(-115.02, 39.01, -115.00, 39.03)
+    a = tmp_path / "a.gpkg"
+    _write_gpkg(a, covered, layer="coverage")
+    aoi = box(-115.05, 39.00, -114.98, 39.05)
+    grid = build_coverage_depth_grid(
+        aoi_ll=aoi,
+        footprint_gpkg_paths=[a],
+        max_raster_dimension=256,
+    )
+    need = grid.uncovered_geometry_wgs84(goal_depth=1)
+    assert need is not None
+    assert not need.intersects(covered.centroid)
+
+
+def test_eligible_peak_candidates_use_masked_dem(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from peaky_finders import pairwise_dem_peak as dem_peak
+    from peaky_finders.site_suggestions.candidates import _eligible_peak_candidates
+    from rasterio.transform import from_bounds
+
+    aoi = box(-115.0, 39.0, -114.0, 40.0)
+    eligible = box(-115.0, 39.0, -114.0, 40.0)
+    grid = build_coverage_depth_grid(
+        aoi_ll=aoi,
+        footprint_gpkg_paths=[],
+        max_raster_dimension=256,
+    )
+
+    transform = from_bounds(-115.0, 39.0, -114.0, 40.0, 21, 21)
+    elev = np.full((21, 21), 2000, dtype=np.int32)
+    elev[15, 5] = 3200
+    mirror = tmp_path / "dem"
+    mirror.mkdir()
+    (mirror / "N39W115.hgt.gz").write_bytes(b"x")
+    aff = tuple(getattr(transform, attr) for attr in ("a", "b", "c", "d", "e", "f"))
+    monkeypatch.setattr(
+        dem_peak,
+        "_cached_skadi_elev_affine",
+        lambda _p: (elev, aff),
+    )
+
+    peaks, stats = _eligible_peak_candidates(
+        eligible_ll=eligible,
+        grid=grid,
+        goal_depth=1,
+        dem_mirror_root=mirror,
+        max_candidates=4,
+        cluster_radius_m=1500.0,
+        return_stats=True,
+    )
+
+    assert stats is not None
+    assert stats["dem_peaks_raw"] >= 1
+    assert peaks
+    assert max(c.elev_m or 0.0 for c in peaks) == 3200.0
 
 
 def test_append_and_remove_suggested_sites(tmp_path: Path) -> None:

@@ -5,14 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import geopandas as gpd
-import numpy as np
-from rasterio import features
-from rasterio.transform import from_bounds, xy
 from shapely import make_valid
 from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 
-from peaky_finders.pairwise_dem_peak import global_max_skadi_elevation_in_polygon
+from peaky_finders.pairwise_dem_peak import skadi_binned_peaks_in_polygon
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, largest_uncovered_patch_centroid_ll
 
 
@@ -81,75 +78,38 @@ def _eligible_peak_candidates(
     if elig.is_empty:
         return [], None
 
-    elig_m = gpd.GeoDataFrame(geometry=[elig], crs="EPSG:4326").to_crs("EPSG:3857").geometry.iloc[0]
-    minx, miny, maxx, maxy = elig_m.bounds
-    width_m = maxx - minx
-    height_m = maxy - miny
-    sample_dim = max(8, min(48, int(max_candidates * 2)))
-    if width_m >= height_m:
-        cols = sample_dim
-        rows = max(8, int(round(sample_dim * height_m / max(width_m, 1.0))))
-    else:
-        rows = sample_dim
-        cols = max(8, int(round(sample_dim * width_m / max(height_m, 1.0))))
-    transform = from_bounds(minx, miny, maxx, maxy, cols, rows)
-
-    elig_mask = features.rasterize(
-        [(elig_m, 1)],
-        out_shape=(rows, cols),
-        transform=transform,
-        fill=0,
-        dtype=np.uint8,
-    ).astype(bool)
-
-    need = grid.uncovered_mask(goal_depth=goal_depth)
-    if not np.any(need):
+    need_ll = grid.uncovered_geometry_wgs84(goal_depth=goal_depth)
+    if need_ll is None or need_ll.is_empty:
         return [], None
 
-    raw: list[SiteCandidate] = []
-    for row in range(rows):
-        for col in range(cols):
-            if not elig_mask[row, col]:
-                continue
-            lon, lat = xy(transform, row, col, offset="center")
-            pt_ll = (
-                gpd.GeoDataFrame(geometry=[Point(float(lon), float(lat))], crs="EPSG:3857")
-                .to_crs("EPSG:4326")
-                .geometry.iloc[0]
-            )
-            if pt_ll is None or pt_ll.is_empty or not elig.intersects(pt_ll):
-                continue
-            if grid.marginal_gain_cells(pt_ll, goal_depth=goal_depth) <= 0:
-                continue
-            peak = global_max_skadi_elevation_in_polygon(pt_ll.buffer(0.002), dem_mirror_root)
-            if peak is not None:
-                raw.append(
-                    SiteCandidate(
-                        lat=float(peak[1]),
-                        lon=float(peak[0]),
-                        elev_m=float(peak[2]),
-                        strategy="peak",
-                    )
-                )
-            else:
-                raw.append(
-                    SiteCandidate(
-                        lat=float(pt_ll.y),
-                        lon=float(pt_ll.x),
-                        elev_m=None,
-                        strategy="peak",
-                    )
-                )
+    search = elig.intersection(need_ll)
+    if search.is_empty:
+        return [], None
+    if not search.is_valid:
+        search = make_valid(search)
+        if search.is_empty:
+            return [], None
 
-    raw.sort(key=lambda c: (c.elev_m is not None, c.elev_m or -1.0), reverse=True)
+    peaks_llz = skadi_binned_peaks_in_polygon(
+        search,
+        dem_mirror_root,
+        bin_size_m=float(cluster_radius_m),
+    )
+    raw = [
+        SiteCandidate(
+            lat=float(lat),
+            lon=float(lon),
+            elev_m=float(elev_m),
+            strategy="peak",
+        )
+        for lon, lat, elev_m in peaks_llz
+    ]
     clustered = _cluster_points_by_buffer(raw, cluster_radius_m=cluster_radius_m)
     kept = clustered[: max(1, int(max_candidates))]
     stats = None
     if return_stats:
         stats = {
-            "cols": cols,
-            "rows": rows,
-            "raw_count": len(raw),
+            "dem_peaks_raw": len(raw),
             "clustered_count": len(clustered),
         }
     return kept, stats
@@ -198,8 +158,10 @@ def generate_site_candidates(
     )
     if verbose and peak_stats is not None:
         suggest_log(verbose, "site suggest:   peak candidate generation:")
-        suggest_log(verbose, f"     eligible sample grid: {peak_stats['cols']}×{peak_stats['rows']}")
-        suggest_log(verbose, f"     raw eligible+uncovered samples: {peak_stats['raw_count']}")
+        suggest_log(
+            verbose,
+            f"     masked DEM peaks (eligible ∩ uncovered): {peak_stats['dem_peaks_raw']}",
+        )
         suggest_log(verbose, f"     after cluster (radius={cluster_radius_m} m): {peak_stats['clustered_count']}")
         suggest_log(verbose, f"     shortlist cap: {max_candidates}  kept: {len(peaks)}")
     out.extend(peaks)
