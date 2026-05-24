@@ -772,6 +772,7 @@ def sync_eligible_include_layer_slices(
     mask_body: str,
     eligible_gpkg: Path,
     kml_overlay: BundleKmlOverlayStyles | None,
+    verbose_log: Callable[[str], None] | None = None,
 ) -> None:
     """Write ``clips/eligible/layers/<stem>.kml``: global eligible ∩ each include clip (post-exclusions)."""
 
@@ -828,6 +829,8 @@ def sync_eligible_include_layer_slices(
         )
         sha = clip_layer_sha(body)
         if sha not in manifest_shas:
+            if verbose_log:
+                verbose_log(f"slice {preset_path}::{layer_name}: not in include manifest (skip)")
             continue
         stem = _clip_stem(preset_path, layer_name, where)
         wanted_stems.add(stem)
@@ -836,6 +839,8 @@ def sync_eligible_include_layer_slices(
         png_out = kml_out.with_suffix(".png")
 
         if not clip_disk.is_file():
+            if verbose_log:
+                verbose_log(f"slice {stem}: include clip missing (skip)")
             kml_out.unlink(missing_ok=True)
             png_out.unlink(missing_ok=True)
             continue
@@ -851,14 +856,20 @@ def sync_eligible_include_layer_slices(
         slice_df = eligible_land_slice_from_include_clip_gpkg(geom_ll, clip_disk)
 
         if slice_df.empty or slice_df.geometry.is_empty.all():
+            if verbose_log:
+                verbose_log(f"slice {stem}: empty after eligible ∩ include (skip)")
             kml_out.unlink(missing_ok=True)
             png_out.unlink(missing_ok=True)
             continue
 
         _write_geodataframe_kml(slice_df, kml_out, layer_label=layer_label, kml_overlay=kml_overlay)
+        if verbose_log:
+            verbose_log(f"slice {stem}: wrote {kml_out.name}")
 
     for stray in layers_root.glob("*.kml"):
         if stray.stem not in wanted_stems:
+            if verbose_log:
+                verbose_log(f"slice {stray.stem}: removed stale KML")
             stray.unlink(missing_ok=True)
             stray.with_suffix(".png").unlink(missing_ok=True)
 
@@ -1319,12 +1330,16 @@ def build_eligible_workspace(
     verbose_log: Callable[[str], None] | None = None,
     progress_log: Callable[[str], None] | None = None,
 ) -> ClipBuildResult:
-    _ = verbose_log, progress_log
+    _ = progress_log
     from peaky_finders.bundle_build import (
         _file_tree_mtime_size_fingerprint,
         build_eligible_land_use_gdf,
         land_use_inputs_fingerprint_body,
     )
+
+    def _vlog(msg: str) -> None:
+        if verbose_log is not None:
+            verbose_log(msg)
 
     clips_root = Path(clips_root).expanduser().resolve()
     data_dir = Path(data_dir).expanduser().resolve()
@@ -1345,6 +1360,10 @@ def build_eligible_workspace(
             bundle_land_digest=bundle_land_digest,
         )
     )
+    _vlog(
+        f"fingerprints include_sha={include_sha} exclude_sha={exclude_sha} "
+        f"eligible_sha={eligible_sha} bundle_land={bundle_land_digest}"
+    )
 
     include_gpkg = composite_union_gpkg(clips_root, "include")
     exclude_gpkg = composite_union_gpkg(clips_root, "exclude")
@@ -1359,12 +1378,24 @@ def build_eligible_workspace(
 
     with _clips_cache_exclusive_lock(clips_root):
         if ew_dir.is_dir():
+            _vlog(f"replacing eligible workspace {ew_dir}")
             shutil.rmtree(ew_dir)
         ew_dir.mkdir(parents=True, exist_ok=True)
 
+        _vlog(f"reading include composite {include_gpkg}")
         include_union = gpd.read_file(include_gpkg, layer="include")
+        _vlog(f"reading exclude composite {exclude_gpkg}")
         exclude_union = gpd.read_file(exclude_gpkg, layer="exclude")
+        _vlog(
+            f"include union {len(include_union)} feature(s); "
+            f"exclude union {len(exclude_union)} feature(s)"
+        )
         eligible_gdf = build_eligible_land_use_gdf(include_union, exclude_union)
+        if eligible_gdf.empty or eligible_gdf.geometry.is_empty.all():
+            _vlog("eligible geometry empty after include − exclude")
+        else:
+            minx, miny, maxx, maxy = map(float, eligible_gdf.total_bounds)
+            _vlog(f"eligible geometry bounds (4326)=({minx},{miny},{maxx},{maxy})")
         _write_composite_union(
             eligible_gdf,
             eligible_gpkg,
@@ -1372,6 +1403,7 @@ def build_eligible_workspace(
             layer_label=ELIGIBLE_LAYER,
             kml_overlay=kml_overlay,
         )
+        _vlog(f"wrote {eligible_gpkg}")
         _write_manifest(
             manifest_path,
             fmt=ELIGIBLE_WORKSPACE_MANIFEST_FMT,
@@ -1382,6 +1414,8 @@ def build_eligible_workspace(
                 "bundle_land_digest": bundle_land_digest,
             },
         )
+        _vlog(f"wrote manifest {manifest_path.name}")
+        _vlog("syncing eligible include layer slices")
         sync_eligible_include_layer_slices(
             plc=plc,
             data_dir=data_dir,
@@ -1389,6 +1423,7 @@ def build_eligible_workspace(
             mask_body=mask_body,
             eligible_gpkg=eligible_gpkg,
             kml_overlay=kml_overlay,
+            verbose_log=verbose_log,
         )
 
     aoi_sha = _sha16(

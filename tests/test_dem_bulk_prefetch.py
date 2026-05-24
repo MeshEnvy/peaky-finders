@@ -75,6 +75,28 @@ def test_prefetch_downloads_missing_tiles_only(tmp_path: Path) -> None:
     assert (mirror / "N37W117.hgt.gz").read_bytes() == b"gz"
 
 
+def test_prefetch_verbose_logs_cached_tiles(tmp_path: Path) -> None:
+    mirror = tmp_path / "dem"
+    mirror.mkdir()
+    (mirror / "N37W118.hgt.gz").write_bytes(b"x" * 64)
+
+    lines: list[str] = []
+
+    with patch("peaky_finders.skadi_dem.fetch_skadi_hgt_gzip_bytes") as fetch:
+        prefetch_skadi_hgt_for_bounds(
+            minx=-117.51,
+            miny=37.1,
+            maxx=-117.1,
+            maxy=37.51,
+            splat_tile_cache_dir=mirror,
+            max_workers=2,
+            verbose_log=lines.append,
+        )
+
+    fetch.assert_not_called()
+    assert any("dem prefetch cached N37W118.hgt.gz" in ln for ln in lines)
+
+
 def test_dem_bulk_stale_when_stamp_missing(peaky_test_home: Path) -> None:
     preset_path = (peaky_test_home / "projects" / "sample" / "config.yaml").resolve()
     preset = load_preset(preset_path)

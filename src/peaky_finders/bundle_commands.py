@@ -160,14 +160,17 @@ def run_bundle_composite(which: str, preset_path: Path) -> int:
     return 0
 
 
-def run_bundle_eligible(preset_path: Path) -> int:
+def run_bundle_eligible(preset_path: Path, *, verbose: bool = False) -> int:
     _preset_path, _preset, plc, data_dir, _cr, clips_root, mask_body = _bundle_context(preset_path)
+    vlog = (lambda msg: print(f"bundle eligible: {msg}", flush=True)) if verbose else None
     build_eligible_workspace(
         plc=plc,
         data_dir=data_dir,
         clips_root=clips_root,
         mask_body=mask_body,
         kml_overlay=plc.kml_overlay,
+        verbose_log=vlog,
+        progress_log=vlog,
     )
     print("bundle eligible: built eligible workspace", flush=True)
     return 0
@@ -228,7 +231,7 @@ def run_bundle_plss(preset_path: Path) -> int:
     return 0
 
 
-def run_bundle_dem(preset_path: Path, *, tile: str | None = None) -> int:
+def run_bundle_dem(preset_path: Path, *, tile: str | None = None, verbose: bool = False) -> int:
     _preset_path_r, _preset, plc, data_dir, _cache_root, clips_root, _mb = _bundle_context(preset_path)
 
     clip_meta = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips_root)
@@ -266,6 +269,7 @@ def run_bundle_dem(preset_path: Path, *, tile: str | None = None) -> int:
         print(f"bundle dem: Skadi tile {want} → {splat_tile_dir}", flush=True)
         return 0
 
+    vlog = (lambda msg: print(msg, flush=True)) if verbose else None
     n_tiles, n_downloaded, n_skipped = prefetch_skadi_hgt_for_bounds_fatal(
         minx=minx,
         miny=miny,
@@ -273,7 +277,7 @@ def run_bundle_dem(preset_path: Path, *, tile: str | None = None) -> int:
         maxy=maxy,
         splat_tile_cache_dir=splat_tile_dir,
         max_workers=prefetch_workers,
-        verbose_log=None,
+        verbose_log=vlog,
     )
     print(
         "bundle dem: Skadi prefetch "
