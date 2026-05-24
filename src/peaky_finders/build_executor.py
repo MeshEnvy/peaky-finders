@@ -53,6 +53,12 @@ from peaky_finders.preset_mapping import preset_to_request
 from peaky_finders.plss_mlrs_fetch import plss_bundle_build_stale
 from peaky_finders.preset_stamps import ensure_stamp, stamp_file_is_current
 from peaky_finders.sites_job import Preset, load_preset, resolved_preset_build_dir
+from peaky_finders.skadi_dem import (
+    read_dem_prefetch_stamp_fingerprint,
+    skadi_missing_mirror_tiles_for_bounds,
+    skadi_tile_set_fingerprint,
+    write_dem_prefetch_stamp,
+)
 from peaky_finders.viewshed_workspace import viewshed_workspace_digest
 
 _print_lock = Lock()
@@ -104,6 +110,44 @@ def _sorted_viewshed_digests(job: Preset) -> tuple[str, ...]:
     return tuple(sorted(out))
 
 
+def _dem_bulk_prefetch_bounds(plan: BuildConfigurePlan) -> tuple[float, float, float, float] | None:
+    import geopandas as gpd
+
+    from peaky_finders.bundle_build import ELIGIBLE_LAND_USE_LAYER
+
+    gpkg = _eligible_composite(plan).union_gpkg
+    if not gpkg.is_file():
+        return None
+    try:
+        loaded = gpd.read_file(gpkg, layer=ELIGIBLE_LAND_USE_LAYER)
+    except (OSError, ValueError):
+        return None
+    if loaded.empty or loaded.geometry.is_empty.all():
+        return None
+    minx, miny, maxx, maxy = map(float, loaded.total_bounds)
+    return (minx, miny, maxx, maxy)
+
+
+def _dem_bulk_prefetch_stale(plan: BuildConfigurePlan) -> bool:
+    bounds = _dem_bulk_prefetch_bounds(plan)
+    if bounds is None:
+        return False
+    minx, miny, maxx, maxy = bounds
+    mirror_root = dem_bulk_stamp_path(plan).parent
+    fp, missing = skadi_missing_mirror_tiles_for_bounds(
+        minx=minx,
+        miny=miny,
+        maxx=maxx,
+        maxy=maxy,
+        mirror_root=mirror_root,
+    )
+    stamp = dem_bulk_stamp_path(plan)
+    got = read_dem_prefetch_stamp_fingerprint(stamp)
+    if got != fp:
+        return True
+    return bool(missing)
+
+
 def target_stale(plan: BuildConfigurePlan, preset: Preset, node: PeakyGraphTarget) -> bool:
     tid = node.id
     if tid.startswith("stamp:"):
@@ -116,15 +160,7 @@ def target_stale(plan: BuildConfigurePlan, preset: Preset, node: PeakyGraphTarge
             preset=preset,
         )
     if tid == "dem:bulk":
-        stamp = dem_bulk_stamp_path(plan)
-        if artefact_mtime_stale((stamp,), node.mtime_prereqs):
-            return True
-        ec = _eligible_composite(plan)
-        try:
-            lines = stamp.read_text(encoding="utf-8").strip().splitlines()
-        except OSError:
-            return True
-        return not (lines and lines[0] == ec.sha)
+        return _dem_bulk_prefetch_stale(plan)
     if tid.startswith("clip:"):
         lyr = _clip_for_target(plan, tid)
         return not clip_layer_artefacts_fresh(lyr.gpkg, expected_sha=lyr.sha)
@@ -275,10 +311,11 @@ def execute_target(
         ec = run_bundle_dem(preset_path_r, tile=None)
         if ec:
             return ec
-        elig = _eligible_composite(plan)
-        outp = dem_bulk_stamp_path(plan)
-        outp.parent.mkdir(parents=True, exist_ok=True)
-        outp.write_text(f"{elig.sha}\n", encoding="utf-8")
+        bounds = _dem_bulk_prefetch_bounds(plan)
+        if bounds is not None:
+            minx, miny, maxx, maxy = bounds
+            fp = skadi_tile_set_fingerprint(minx, miny, maxx, maxy)
+            write_dem_prefetch_stamp(dem_bulk_stamp_path(plan), fp)
         return 0
 
     if tid.startswith("clip:"):

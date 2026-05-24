@@ -167,7 +167,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
                 id="dem:bulk",
                 depends_on=("bundle:eligible",),
                 outputs=(dem_stamp.resolve(),),
-                mtime_prereqs=(_eligible_main_gpkg(plan).resolve(),),
+                mtime_prereqs=tuple(),
             )
         )
 
