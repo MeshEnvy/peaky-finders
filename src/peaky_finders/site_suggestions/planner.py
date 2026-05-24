@@ -376,8 +376,9 @@ def _run_candidate_trials(
             )
 
         if workers <= 1 or len(candidates) <= 1:
-            evals = [
-                _evaluate_candidate_trial(
+            evals = []
+            for ci, cand in enumerate(candidates, start=1):
+                ev = _evaluate_candidate_trial(
                     ci=ci,
                     cand=cand,
                     iteration=iteration,
@@ -388,9 +389,7 @@ def _run_candidate_trials(
                     plan=plan,
                     footprint_runner=footprint_runner,
                 )
-                for ci, cand in enumerate(candidates, start=1)
-            ]
-            for ev in evals:
+                evals.append(ev)
                 _log_trial_completion(verbose=verbose, ev=ev)
         else:
             mx = min(workers, len(candidates))
@@ -460,17 +459,21 @@ def plan_greedy_site_suggestions(
     cfg = resolved_site_suggestions_config(preset.bundle)
     goal = int(cfg.coverage_goal_depth)
 
-    aoi_gpkg = _composite_by_role(plan, "aoi").union_gpkg
-    elig_gpkg = _composite_by_role(plan, "eligible").union_gpkg
-    aoi_ll = _read_union_geometry(aoi_gpkg, "aoi")
-    eligible_ll = _read_union_geometry(elig_gpkg, ELIGIBLE_LAYER)
+    suggest_log(verbose, "site suggest: ── planner setup ──")
+    with suggest_step(verbose, "load AOI and eligible geometries"):
+        aoi_gpkg = _composite_by_role(plan, "aoi").union_gpkg
+        elig_gpkg = _composite_by_role(plan, "eligible").union_gpkg
+        aoi_ll = _read_union_geometry(aoi_gpkg, "aoi")
+        eligible_ll = _read_union_geometry(elig_gpkg, ELIGIBLE_LAYER)
 
     seed_paths = _footprint_paths_for_seed_sites(plan, preset)
-    grid = build_coverage_depth_grid(
-        aoi_ll=aoi_ll,
-        footprint_gpkg_paths=seed_paths,
-        max_raster_dimension=int(cfg.planner_raster_dimension),
-    )
+    with suggest_step(verbose, f"build initial coverage grid ({len(seed_paths)} seed footprint(s))"):
+        grid = build_coverage_depth_grid(
+            aoi_ll=aoi_ll,
+            footprint_gpkg_paths=seed_paths,
+            max_raster_dimension=int(cfg.planner_raster_dimension),
+            verbose=verbose,
+        )
 
     _log_planner_config(
         verbose=verbose,
