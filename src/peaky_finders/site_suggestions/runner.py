@@ -26,6 +26,7 @@ def run_site_suggestion_pass(
     n_suggestions: int,
     replace_suggested: bool = False,
     verbose: bool = False,
+    jobs: int = 1,
     footprint_runner=None,
 ) -> list[str]:
     """Plan sites, append to preset YAML, return new slugs."""
@@ -56,6 +57,7 @@ def run_site_suggestion_pass(
         suggest_root=suggest_root,
         footprint_runner=runner,
         verbose=verbose,
+        jobs=jobs,
     )
     entries = planned_to_preset_entries(winners)
     new_slugs = append_suggested_sites_to_preset(preset_path_r, entries)

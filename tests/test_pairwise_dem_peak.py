@@ -70,3 +70,33 @@ def test_skadi_binned_peaks_respects_search_polygon(monkeypatch: pytest.MonkeyPa
 
     assert len(peaks) == 1
     assert peaks[0][2] == 2500.0
+
+
+def test_skadi_binned_peaks_parallel_matches_serial(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    transform = from_bounds(-115.0, 39.0, -114.0, 40.0, 21, 21)
+    elev_a = np.full((21, 21), 2000, dtype=np.int32)
+    elev_a[5, 5] = 2500
+    elev_b = np.full((21, 21), 2000, dtype=np.int32)
+    elev_b[15, 15] = 3000
+
+    mirror = tmp_path / "dem"
+    mirror.mkdir(parents=True, exist_ok=True)
+    (mirror / "N39W115.hgt.gz").write_bytes(b"a")
+    (mirror / "N39W114.hgt.gz").write_bytes(b"b")
+    aff = tuple(getattr(transform, attr) for attr in ("a", "b", "c", "d", "e", "f"))
+    tile_elev = {
+        str((mirror / "N39W115.hgt.gz").resolve()): (elev_a, aff),
+        str((mirror / "N39W114.hgt.gz").resolve()): (elev_b, aff),
+    }
+
+    def _fake_cached(gz_resolved_posix: str) -> tuple[np.ndarray, tuple[float, ...]]:
+        return tile_elev[gz_resolved_posix]
+
+    monkeypatch.setattr(dem_peak, "_cached_skadi_elev_affine", _fake_cached)
+
+    search = box(-115.0, 39.0, -114.0, 40.0)
+    serial = skadi_binned_peaks_in_polygon(search, mirror, bin_size_m=1500.0, max_workers=1)
+    parallel = skadi_binned_peaks_in_polygon(search, mirror, bin_size_m=1500.0, max_workers=4)
+
+    assert serial == parallel
+    assert serial

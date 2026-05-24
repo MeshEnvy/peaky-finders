@@ -91,6 +91,40 @@ def test_uncovered_geometry_wgs84_excludes_covered_aoi(tmp_path: Path) -> None:
     assert not need.intersects(covered.centroid)
 
 
+def test_point_marginal_gain_cells(tmp_path: Path) -> None:
+    a = tmp_path / "a.gpkg"
+    covered = box(-115.02, 39.01, -115.00, 39.03)
+    _write_gpkg(a, covered, layer="coverage")
+    aoi = box(-115.05, 39.00, -114.98, 39.05)
+    grid = build_coverage_depth_grid(
+        aoi_ll=aoi,
+        footprint_gpkg_paths=[a],
+        max_raster_dimension=256,
+    )
+    assert grid.point_marginal_gain_cells(-115.01, 39.02, goal_depth=1) == 0
+    assert grid.point_marginal_gain_cells(-115.04, 39.04, goal_depth=1) == 1
+
+
+def test_filter_peaks_llz_matches_point_lookup(tmp_path: Path) -> None:
+    a = tmp_path / "a.gpkg"
+    covered = box(-115.02, 39.01, -115.00, 39.03)
+    _write_gpkg(a, covered, layer="coverage")
+    aoi = box(-115.05, 39.00, -114.98, 39.05)
+    grid = build_coverage_depth_grid(
+        aoi_ll=aoi,
+        footprint_gpkg_paths=[a],
+        max_raster_dimension=256,
+    )
+    peaks = [
+        (-115.01, 39.02, 2500.0),
+        (-115.04, 39.04, 3000.0),
+        (-114.99, 39.01, 2800.0),
+    ]
+    batch = grid.filter_peaks_llz_by_uncovered_grid(peaks, goal_depth=1)
+    point = [p for p in peaks if grid.point_marginal_gain_cells(p[0], p[1], goal_depth=1) > 0]
+    assert batch == point
+
+
 def test_eligible_peak_candidates_use_masked_dem(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -125,13 +159,16 @@ def test_eligible_peak_candidates_use_masked_dem(
         grid=grid,
         goal_depth=1,
         dem_mirror_root=mirror,
+        suggest_root=tmp_path / "suggest",
+        eligible_sha="test-eligible",
         max_candidates=4,
         cluster_radius_m=1500.0,
         return_stats=True,
     )
 
     assert stats is not None
-    assert stats["dem_peaks_raw"] >= 1
+    assert stats["eligible_peaks_total"] >= 1
+    assert stats["uncovered_peaks"] >= 1
     assert peaks
     assert max(c.elev_m or 0.0 for c in peaks) == 3200.0
 
