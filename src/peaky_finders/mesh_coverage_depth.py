@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Sequence
 
@@ -362,6 +363,19 @@ def write_mesh_depth_kml_layers(
     if slice_cap > 1:
         print(f"  depth site-slice parallelism: {slice_cap} threads …", flush=True)
 
+    def _log_slice(msg: str) -> None:
+        if slice_log_lock is not None:
+            with slice_log_lock:
+                print(msg, flush=True)
+        else:
+            print(msg, flush=True)
+
+    def log_slice_start(si: int, folder_name: str, band_key: str) -> None:
+        _log_slice(f"  depth site-slice [{si}/{n_sites}] {band_key} {folder_name}…")
+
+    def log_slice_done(si: int, folder_name: str, band_key: str, detail: str) -> None:
+        _log_slice(f"  depth site-slice [{si}/{n_sites}] {band_key} {folder_name}: {detail}")
+
     site_inputs = [
         (si, gpkg, slug, folder_name)
         for si, (gpkg, slug, folder_name) in enumerate(usable, start=1)
@@ -408,10 +422,22 @@ def write_mesh_depth_kml_layers(
             elig_band_dir = Path(scratch_depth_eligible_dir) / band
             elig_band_dir.mkdir(parents=True, exist_ok=True)
 
+        print(f"  depth slice {band}: {n_sites} site(s)…", flush=True)
+        band_t0 = time.perf_counter()
+
         def slice_one_site(
             inp: tuple[int, Path, str, str],
         ) -> tuple[Row | None, Row | None]:
             si, gpkg, slug, folder_name = inp
+            log_slice_start(si, folder_name, band)
+            notes: list[str] = []
+
+            def _finish_slice(
+                result: tuple[Row | None, Row | None],
+            ) -> tuple[Row | None, Row | None]:
+                detail = ", ".join(notes) if notes else "done"
+                log_slice_done(si, folder_name, band, detail)
+                return result
 
             oriented: BaseGeometry | None
             if use_cache and set_dir is not None and vd_row is not None:
@@ -432,10 +458,12 @@ def write_mesh_depth_kml_layers(
                 oriented = compute_oriented_plain(gpkg, band_geom)
 
             if oriented is None:
-                return None, None
+                notes.append("empty intersection")
+                return _finish_slice((None, None))
             polys = _polygons_flat(oriented)
             if not polys:
-                return None, None
+                notes.append("no polygons")
+                return _finish_slice((None, None))
 
             slice_cache_dir: Path | None = None
             site_vd_for_lock = ""
@@ -564,22 +592,27 @@ def write_mesh_depth_kml_layers(
                             )
                         eligible_row = (band, title_nl, epath, earc, vis_field(band, eligible=True))
 
-            return plain_row, eligible_row
+            notes.append(f"plain ({len(polys)} poly(s))")
+            if eligible_row is not None:
+                notes.append("eligible")
+            return _finish_slice((plain_row, eligible_row))
 
         if slice_cap <= 1:
             band_rows = [slice_one_site(inp) for inp in site_inputs]
         else:
+            band_rows = []
             with ThreadPoolExecutor(max_workers=slice_cap) as ex:
-                band_rows = list(ex.map(slice_one_site, site_inputs))
+                futures = {ex.submit(slice_one_site, inp): inp for inp in site_inputs}
+                for fut in as_completed(futures):
+                    band_rows.append(fut.result())
 
-        print(f"  depth slice {band}: materialized ≤{n_sites} site KML rows…", flush=True)
-        for inp in site_inputs:
-            si, _gpkg, _slug, folder_name = inp
-            if slice_log_lock is not None:
-                with slice_log_lock:
-                    print(f"    {band} [{si}/{n_sites}] {folder_name} …", flush=True)
-            else:
-                print(f"    {band} [{si}/{n_sites}] {folder_name} …", flush=True)
+        n_plain = sum(1 for pr, _er in band_rows if pr is not None)
+        n_elig = sum(1 for _pr, er in band_rows if er is not None)
+        band_elapsed = time.perf_counter() - band_t0
+        print(
+            f"  depth slice {band} done: {n_plain} plain, {n_elig} eligible ({band_elapsed:.1f}s)",
+            flush=True,
+        )
 
         for pr, er in band_rows:
             if pr is not None:
@@ -587,4 +620,8 @@ def write_mesh_depth_kml_layers(
             if er is not None:
                 elig_out.append(er)
 
+    print(
+        f"  depth per-site KMLs done: {len(plain_out)} plain, {len(elig_out)} eligible row(s)",
+        flush=True,
+    )
     return plain_out, elig_out
