@@ -34,8 +34,10 @@ from peaky_finders.sites_job import (
     BundleConfig,
     BundleReferenceLayerEntry,
     GdbLayerGroup,
+    GdbLayerSpec,
     Preset,
     _gdb_layer_group_payload,
+    _gdb_layer_group_sort_key,
     canonical_bundle_aoi_config_text,
     canonical_bundle_land_use_config_text,
     canonical_bundle_reference_config_text,
@@ -297,7 +299,7 @@ def load_composite_aoi_polygon(pre: BundleConfig, data_dir: Path) -> BaseGeometr
             gt = _geom_type_for_layer(ds, layer_name)
             if gt is None:
                 raise ValueError(f"AOI layer {layer_name!r} not found in {resolved}")
-            if not is_polygon_geometry_type(gt):
+            if not _ogr_layer_metadata_polygon_eligible(gt, resolved):
                 raise ValueError(
                     f"AOI layer {preset_path}::{layer_name} has geometry {gt!r}; "
                     "only polygon-like layers are supported."
@@ -320,6 +322,17 @@ def load_composite_aoi_polygon(pre: BundleConfig, data_dir: Path) -> BaseGeometr
 def is_polygon_geometry_type(gt: str) -> bool:
     g = gt.lower().replace("_", "").replace("-", "").replace(" ", "")
     return "polygon" in g
+
+
+def _is_kml_path(resolved: Path) -> bool:
+    return resolved.is_file() and resolved.suffix.lower() == ".kml"
+
+
+def _ogr_layer_metadata_polygon_eligible(gt: str | None, resolved: Path) -> bool:
+    """True when OGR metadata is polygon-like, or KML driver reports Unknown."""
+    if gt and is_polygon_geometry_type(gt):
+        return True
+    return _is_kml_path(resolved) and (not gt or str(gt).lower() == "unknown")
 
 
 @contextmanager
@@ -858,6 +871,33 @@ def _geom_type_for_layer(ds: str, layer_name: str) -> str | None:
     return None
 
 
+def list_polygon_layer_names(resolved: Path) -> list[str]:
+    """Return sorted polygon-like OGR layer names for a bundle vector dataset."""
+    resolved = resolved.expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Vector dataset not found: {resolved}")
+    with openfilegdb_dataset_path(resolved) as ds:
+        names: list[str] = []
+        for lyr, gt in _list_layers_pair_rows(ds):
+            if _ogr_layer_metadata_polygon_eligible(gt, resolved):
+                names.append(lyr)
+    return sorted(set(names))
+
+
+def gdb_layer_group_specs(g: GdbLayerGroup, data_dir: Path) -> list[GdbLayerSpec]:
+    """Resolve explicit ``layers`` or all polygon-like layers when the list is empty."""
+    if g.layers:
+        return list(g.layers)
+    resolved = resolve_land_use_gdb_path(data_dir, g.path)
+    names = list_polygon_layer_names(resolved)
+    if not names:
+        raise ValueError(
+            f"No polygon layers found for bundle path {g.path!r} ({resolved}); "
+            "set layers explicitly or use peaky inspect."
+        )
+    return [GdbLayerSpec(name=n) for n in names]
+
+
 def _clip_stem(preset_path: str, layer: str, where: str | None = None) -> str:
     """Basename stem for layer-job dirs from preset GDB path, layer name, and optional ``where``."""
     raw = Path(preset_path).as_posix()
@@ -881,18 +921,9 @@ def _flatten_gdb_layer_jobs(
     groups: list[GdbLayerGroup], data_dir: Path
 ) -> list[tuple[str, Path, str, str | None]]:
     jobs: list[tuple[str, Path, str, str | None]] = []
-    for g in sorted(
-        groups,
-        key=lambda x: (
-            x.path,
-            tuple(
-                (s.name, ogr_where_for_layer_spec(s) or "")
-                for s in sorted(x.layers, key=lambda z: z.name)
-            ),
-        ),
-    ):
+    for g in sorted(groups, key=lambda x: _gdb_layer_group_sort_key(x)):
         r = resolve_land_use_gdb_path(data_dir, g.path)
-        for spec in sorted(g.layers, key=lambda z: z.name):
+        for spec in sorted(gdb_layer_group_specs(g, data_dir), key=lambda z: z.name):
             w = ogr_where_for_layer_spec(spec)
             jobs.append((g.path, r, spec.name, w))
     jobs.sort(key=lambda t: (t[0], t[2], t[3] or ""))
@@ -918,7 +949,7 @@ def _read_and_clip_gdb_layer_to_aoi(
         if kind == "exclude":
             if gt is None:
                 raise ValueError(f"Exclude layer {layer!r} not found in {resolved}")
-            if not is_polygon_geometry_type(gt):
+            if not _ogr_layer_metadata_polygon_eligible(gt, resolved):
                 raise ValueError(
                     f"Exclude layer {preset_path}::{layer} has geometry {gt!r}; "
                     "only polygon-like layers are supported."
@@ -926,7 +957,7 @@ def _read_and_clip_gdb_layer_to_aoi(
         elif kind == "reference":
             if gt is None:
                 raise ValueError(f"Reference layer {layer!r} not found in {resolved}")
-            if not is_polygon_geometry_type(gt):
+            if not _ogr_layer_metadata_polygon_eligible(gt, resolved):
                 raise ValueError(
                     f"Reference layer {preset_path}::{layer} has geometry {gt!r}; "
                     "only polygon-like layers are supported."
@@ -934,7 +965,7 @@ def _read_and_clip_gdb_layer_to_aoi(
         elif kind == "aoi":
             if gt is None:
                 raise ValueError(f"AOI layer {layer!r} not found in {resolved}")
-            if not is_polygon_geometry_type(gt):
+            if not _ogr_layer_metadata_polygon_eligible(gt, resolved):
                 raise ValueError(
                     f"AOI layer {preset_path}::{layer} has geometry {gt!r}; "
                     "only polygon-like layers are supported."

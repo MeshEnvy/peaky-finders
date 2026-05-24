@@ -77,9 +77,9 @@ def _topology_stamp_body(preset: Preset) -> str:
     bundle = preset.bundle
     layer_jobs = 0
     if bundle is not None:
-        layer_jobs = sum(len(g.layers) for g in bundle.aoi)
-        layer_jobs += sum(len(g.layers) for g in bundle.include)
-        layer_jobs += sum(len(g.layers) for g in bundle.exclude)
+        layer_jobs = sum(len(g.layers) or 1 for g in bundle.aoi)
+        layer_jobs += sum(len(g.layers) or 1 for g in bundle.include)
+        layer_jobs += sum(len(g.layers) or 1 for g in bundle.exclude)
     return json.dumps({"site_slugs": slugs, "bundle_layer_jobs": layer_jobs}, sort_keys=True)
 
 

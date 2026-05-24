@@ -423,18 +423,29 @@ class GdbLayerSpec(BaseModel):
 
 
 class GdbLayerGroup(BaseModel):
-    """One File Geodataset path and non-empty list of layer specs (string or object in JSON)."""
+    """One vector dataset path and optional layer specs (GDB, GeoPackage, or KML).
+
+    When ``layers`` is omitted or empty, all polygon-like OGR layers in the dataset are used at build time.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
-    path: str = Field(description="POSIX path relative to data_dir, or absolute path to .gdb / GDB folder")
-    layers: list[GdbLayerSpec] = Field(min_length=1)
+    path: str = Field(
+        description=(
+            "POSIX path relative to data_dir, or absolute path to .gdb / GDB folder, .gpkg, or .kml"
+        )
+    )
+    layers: list[GdbLayerSpec] = Field(default_factory=list)
 
     @field_validator("layers", mode="before")
     @classmethod
     def _coerce_layers(cls, v: Any) -> list[Any]:
-        if not isinstance(v, list) or not v:
-            raise ValueError("layers must be a non-empty list")
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError("layers must be a list")
+        if not v:
+            return []
         out: list[Any] = []
         for item in v:
             if isinstance(item, str):
@@ -448,7 +459,7 @@ class GdbLayerGroup(BaseModel):
             else:
                 raise ValueError("each layer must be a string name or an object with \"name\"")
         if not out:
-            raise ValueError("layers must contain at least one layer")
+            raise ValueError("layers must contain at least one layer when specified")
         return out
 
 
@@ -491,17 +502,22 @@ def ogr_where_for_layer_spec(spec: GdbLayerSpec) -> str | None:
     return " AND ".join(parts)
 
 
+def _gdb_layer_group_sort_key(g: GdbLayerGroup) -> tuple[str, tuple[str, ...]]:
+    if not g.layers:
+        return (g.path, ("*",))
+    return (g.path, tuple(s.name for s in sorted(g.layers, key=lambda x: x.name)))
+
+
 def _gdb_layer_group_payload(g: GdbLayerGroup) -> dict[str, Any]:
+    if not g.layers:
+        return {"layers": "*", "path": g.path}
     sorted_specs = sorted(g.layers, key=lambda s: s.name)
     return {"layers": [s.canonical_dict() for s in sorted_specs], "path": g.path}
 
 
 def canonical_bundle_aoi_config_text(pre: BundleConfig) -> str:
     """Deterministic text for AOI cache keys (sorted groups, sorted layers within each group)."""
-    sorted_groups = sorted(
-        pre.aoi,
-        key=lambda g: (g.path, tuple(s.name for s in sorted(g.layers, key=lambda x: x.name))),
-    )
+    sorted_groups = sorted(pre.aoi, key=_gdb_layer_group_sort_key)
     payload = {"aoi": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
 
@@ -509,10 +525,7 @@ def canonical_bundle_aoi_config_text(pre: BundleConfig) -> str:
 def canonical_bundle_land_use_config_text(pre: BundleConfig) -> str:
     """Deterministic text block for hashing include/exclude only (not AOI)."""
     def groups_payload(groups: list[GdbLayerGroup]) -> list[dict[str, Any]]:
-        sorted_groups = sorted(
-            groups,
-            key=lambda g: (g.path, tuple(s.name for s in sorted(g.layers, key=lambda x: x.name))),
-        )
+        sorted_groups = sorted(groups, key=_gdb_layer_group_sort_key)
         return [_gdb_layer_group_payload(g) for g in sorted_groups]
 
     payload = {
