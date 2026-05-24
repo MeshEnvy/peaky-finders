@@ -225,6 +225,7 @@ def prefetch_skadi_hgt_for_bounds(
         return (0, 0, [])
     mirror_root = skadi_mirror_resolve_root(splat_tile_cache_dir)
     to_fetch = [t for t in all_tiles if not skadi_mirror_tile_cached(mirror_root, t)]
+    to_fetch_set = set(to_fetch)
     n_skipped = len(all_tiles) - len(to_fetch)
     errs: list[str] = []
 
@@ -236,6 +237,9 @@ def prefetch_skadi_hgt_for_bounds(
         f"dem prefetch bbox (4326)=({minx},{miny},{maxx},{maxy}) "
         f"tiles={len(all_tiles)} fetch={len(to_fetch)} cached={n_skipped} mirror={mirror_root}"
     )
+    for tile_name in all_tiles:
+        if tile_name not in to_fetch_set:
+            _say(f"dem prefetch cached {tile_name}")
 
     if not to_fetch:
         return (0, n_skipped, [])

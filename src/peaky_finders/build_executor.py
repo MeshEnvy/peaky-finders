@@ -308,7 +308,7 @@ def execute_target(
         return run_bundle_plss(preset_path_r)
 
     if tid == "dem:bulk":
-        ec = run_bundle_dem(preset_path_r, tile=None)
+        ec = run_bundle_dem(preset_path_r, tile=None, verbose=verbose)
         if ec:
             return ec
         bounds = _dem_bulk_prefetch_bounds(plan)
@@ -326,7 +326,7 @@ def execute_target(
         return run_bundle_composite(tid.removeprefix("composite:"), preset_path_r)
 
     if tid == "bundle:eligible":
-        return run_bundle_eligible(preset_path_r)
+        return run_bundle_eligible(preset_path_r, verbose=verbose)
 
     if tid.startswith("bundle:reference:"):
         return run_bundle_reference(tid.removeprefix("bundle:reference:"), preset_path_r)
@@ -459,7 +459,7 @@ def run_incremental_build(
                 _log(f"build: {tid_} [{verb}]")
             if not stale and not force:
                 return tid_, 0
-            rc = execute_target(plan, preset, node_, bundle_data_dir=data_dir_arg, verbose=False)
+            rc = execute_target(plan, preset, node_, bundle_data_dir=data_dir_arg, verbose=verbose)
             return tid_, rc
 
         codes: dict[str, int] = {}
