@@ -40,6 +40,7 @@ from peaky_finders.sites_job import (
     GdbLayerGroup,
     Preset,
     _gdb_layer_group_payload,
+    _gdb_layer_group_sort_key,
     _reference_entry_payload,
 )
 
@@ -199,19 +200,13 @@ def composite_aoi_fingerprint_body(clip_shas: list[str]) -> str:
 
 
 def _include_config_json(pre: BundleConfig) -> str:
-    sorted_groups = sorted(
-        pre.include,
-        key=lambda g: (g.path, tuple(s.name for s in sorted(g.layers, key=lambda x: x.name))),
-    )
+    sorted_groups = sorted(pre.include, key=_gdb_layer_group_sort_key)
     payload = {"include": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def _exclude_config_json(pre: BundleConfig) -> str:
-    sorted_groups = sorted(
-        pre.exclude,
-        key=lambda g: (g.path, tuple(s.name for s in sorted(g.layers, key=lambda x: x.name))),
-    )
+    sorted_groups = sorted(pre.exclude, key=_gdb_layer_group_sort_key)
     payload = {"exclude": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
