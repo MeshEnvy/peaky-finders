@@ -86,9 +86,22 @@ def build_build_parser() -> argparse.ArgumentParser:
         "-v",
         action="store_true",
         help="Log each target",
-
     )
 
+    p.add_argument(
+        "--suggest",
+        type=int,
+        metavar="N",
+        default=None,
+        dest="suggest_n",
+        help="After building known sites, append N greedy suggested sites to preset YAML then finish build",
+    )
+
+    p.add_argument(
+        "--replace-suggested",
+        action="store_true",
+        help="With --suggest, remove existing type:suggested sites before planning",
+    )
 
     return p
 
@@ -117,4 +130,6 @@ def run_build(args: argparse.Namespace) -> int:
 
         jobs=int(parallel),
         verbose=verbose,
+        suggest_n=getattr(args, "suggest_n", None),
+        replace_suggested=bool(getattr(args, "replace_suggested", False)),
     )
