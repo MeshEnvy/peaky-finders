@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import threading
+import time
 import xml.etree.ElementTree as ET
 
 
@@ -24,19 +25,16 @@ from shapely.ops import unary_union
 
 from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.google_earth_polygon import orient_for_kml
-from peaky_finders.mesh_pairwise_cache import (
+from peaky_finders.mesh_pairwise_store import (
     DEM_PEAK_ELIGIBLE_JSON,
     DEM_PEAK_PLAIN_JSON,
-    mesh_pairwise_pair_digest,
     pairwise_overlap_geometry_digest_sha256,
     resolved_mesh_pairwise_pair_dir,
-    try_read_cached_pair_overlap_geometry,
-    try_read_cached_pairwise_dem_peak,
-    try_read_cached_pairwise_flat_kml,
     write_cached_pair_overlap_geometry,
     write_cached_pairwise_dem_peak,
     write_cached_pairwise_flat_kml,
 )
+from peaky_finders.path_labels import mesh_pairwise_rel_dir
 from peaky_finders.pairwise_dem_peak import global_max_skadi_elevation_in_polygon
 from peaky_finders.sites_job import (
     DEFAULT_MESH_PAIRWISE_ELIGIBLE_PEAK_PIN_STYLE,
@@ -153,28 +151,102 @@ def _polygonal_parts_only(geom: BaseGeometry) -> BaseGeometry:
     return make_valid(u) if not u.is_valid else u
 
 
+_ELIGIBLE_LU_PREFIX = "Eligible land use union"
+_ELIGIBLE_UNION_CHUNK = 2048
+
+
+def _unary_union_batches(parts: list[BaseGeometry], *, log_prefix: str) -> BaseGeometry | None:
+    """Cascaded ``unary_union`` with progress logs (single huge union can be silent for tens of minutes)."""
+
+    stage: list[BaseGeometry] = list(parts)
+    level = 0
+
+    while len(stage) > 1:
+        level += 1
+        t0 = time.monotonic()
+        nxt: list[BaseGeometry] = []
+
+        for bi in range(0, len(stage), _ELIGIBLE_UNION_CHUNK):
+            chunk = stage[bi : bi + _ELIGIBLE_UNION_CHUNK]
+            nxt.append(unary_union(chunk))
+
+        dt = time.monotonic() - t0
+
+        print(
+            f"{log_prefix}: union pass {level}: {len(stage)} part(s) → {len(nxt)} in {dt:.1f}s",
+            flush=True,
+        )
+
+        stage = nxt
+
+    return stage[0]
+
+
 def _compute_eligible_land_use_union(
     eligible_gpkg: Path,
     *,
     layer: str = "eligible_land_use",
 ) -> BaseGeometry | None:
     """Union all polygons from bundle eligible land-use GeoPackage (layer matches bundle_build output)."""
+
+    lp = _ELIGIBLE_LU_PREFIX
     ep = Path(eligible_gpkg)
+
     if not ep.is_file():
         return None
+
+    t_read = time.monotonic()
+
+    print(f"{lp}: reading {ep.resolve()} …", flush=True)
+
     gdf = gpd.read_file(ep, layer=layer)
+
+    dt_r = time.monotonic() - t_read
+
+    n_rows = len(gdf)
+
+    n_geom = int(gdf.geometry.notna().sum())
+
+    print(f"{lp}: loaded {n_rows} row(s), {n_geom} non-null geometries in {dt_r:.1f}s", flush=True)
+
     if gdf.empty or not gdf.geometry.notna().any():
         return None
+
     pieces = list(gdf.geometry.dropna())
+
     if not pieces:
+
         return None
-    u = unary_union(pieces)
+
+    print(
+        f"{lp}: cascading unary_union ({len(pieces)} parts, chunk={_ELIGIBLE_UNION_CHUNK}; may take a while) …",
+        flush=True,
+    )
+
+    t_u = time.monotonic()
+
+    u = _unary_union_batches(pieces, log_prefix=lp)
+
+    print(f"{lp}: unary_union total {time.monotonic() - t_u:.1f}s", flush=True)
+
     if u is None or u.is_empty:
+
         return None
+
     u = make_valid(u) if not u.is_valid else u
+
     if u.is_empty:
         return None
-    return _polygonal_parts_only(u)
+
+    print(f"{lp}: extracting polygonal parts …", flush=True)
+
+    out = _polygonal_parts_only(u)
+
+    print(f"{lp}: polygonal union ready ({out.geom_type})", flush=True)
+
+
+
+    return out
 
 
 def read_eligible_land_use_union(
@@ -184,35 +256,34 @@ def read_eligible_land_use_union(
     cache_root: Path | None = None,
     eligible_sha: str | None = None,
 ) -> BaseGeometry | None:
-    """Union eligible land-use polygons, optionally from ``…/eligible_union/<digest>/`` disk cache."""
+    """Union eligible land-use polygons, optionally persisted under preset ``eligible_union`` cache."""
     ep = Path(eligible_gpkg).expanduser().resolve()
     if not ep.is_file():
         return None
 
     if cache_root is not None:
-        from peaky_finders.eligible_union_cache import (
-            eligible_union_cache_digest,
-            resolved_eligible_union_cache_dir,
-            try_read_cached_eligible_union,
+        from peaky_finders.eligible_union_store import (
+            eligible_union_complete_matches,
+            eligible_union_digest,
+            load_cached_eligible_union,
+            resolved_eligible_union_data_dir,
             write_cached_eligible_union,
         )
 
-        cdig = eligible_union_cache_digest(eligible_gpkg=ep, eligible_sha=eligible_sha)
-        cdir = resolved_eligible_union_cache_dir(cache_digest=cdig, cache_root=cache_root)
-        kind, hit = try_read_cached_eligible_union(
-            cdir,
-            expected_digest=cdig,
-            expected_eligible_sha=eligible_sha,
-            expected_source_gpkg=ep,
-        )
-        if kind == "geometry" and hit is not None:
-            print("Eligible land use union: cache hit…", flush=True)
-            return hit
-        if kind == "empty":
-            print("Eligible land use union: cache hit (empty)…", flush=True)
-            return None
-        print("Eligible land use union: computing from GPKG…", flush=True)
+        cdig = eligible_union_digest(eligible_gpkg=ep, eligible_sha=eligible_sha)
+        cdir = resolved_eligible_union_data_dir(cache_root)
+        print(f"{_ELIGIBLE_LU_PREFIX}: digest {cdig[:12]}… → cache {cdir.resolve()}", flush=True)
+        if eligible_union_complete_matches(
+            cache_dir=cdir,
+            cache_digest=cdig,
+            eligible_sha=eligible_sha,
+            source_gpkg=ep,
+        ):
+            print(f"{_ELIGIBLE_LU_PREFIX}: cache hit", flush=True)
+            return load_cached_eligible_union(cache_dir=cdir)
+
         union = _compute_eligible_land_use_union(ep, layer=layer)
+        print(f"{_ELIGIBLE_LU_PREFIX}: writing GPKG preview + metadata …", flush=True)
         write_cached_eligible_union(
             cache_dir=cdir,
             cache_digest=cdig,
@@ -220,6 +291,9 @@ def read_eligible_land_use_union(
             source_gpkg=ep,
             union_wgs84=union,
         )
+
+        print(f"{_ELIGIBLE_LU_PREFIX}: cache written", flush=True)
+
         return union
 
     return _compute_eligible_land_use_union(ep, layer=layer)
@@ -424,7 +498,6 @@ def write_pairwise_link_overlap_kml_pairs(
     pairwise_overlap_workers: int | None = None,
     geometry_cache_root: Path | None = None,
     slug_to_viewshed_digest: Mapping[str, str] | None = None,
-    force_pairwise_geometry: bool = False,
     bundle_kml_overlay_digest: str | None = None,
     bundle_land_use_inputs_digest: str | None = None,
 ) -> tuple[list[tuple[str, Path, str]], list[tuple[str, Path, str]]]:
@@ -434,12 +507,9 @@ def write_pairwise_link_overlap_kml_pairs(
     geometry + DEM sampling can overlap; Skadi tile decode stays in-process LRU.
 
     Plain footprint∩geometry may be persisted under ``geometry_cache_root`` keyed by unordered
-    viewshed workspace digests (via ``slug_to_viewshed_digest``). When those digests are available,
-    expensive Skadi DEM peak sampling is also persisted per pair (JSON next to overlap geometry).
-    When ``bundle_kml_overlay_digest`` is set (along with geometry cache wiring), stitched flat pairwise
-    KML is cached next to overlap geometry so repeat renders can skip regenerating markup.
-
-    KML payloads are always materialized under ``*_scratch_dir`` on each invocation (copy from cache hit).
+    viewshed workspace digests (via ``slug_to_viewshed_digest``). Skadi DEM peak sampling and stitched
+    flat pairwise KML are written to that cache whenever configured; downstream runs still regenerate
+    scratch KML copies under ``*_scratch_dirs``.
     """
 
     if emit_plain and (link_scratch_dir is None or link_polygon_style is None):
@@ -497,11 +567,11 @@ def write_pairwise_link_overlap_kml_pairs(
     pairwise_geom_locks: dict[str, threading.Lock] = {}
     pairwise_geom_locks_mu = threading.Lock()
 
-    def _pairwise_geom_lock(pair_digest: str) -> threading.Lock:
+    def _pairwise_geom_lock(pair_key: str) -> threading.Lock:
         with pairwise_geom_locks_mu:
-            if pair_digest not in pairwise_geom_locks:
-                pairwise_geom_locks[pair_digest] = threading.Lock()
-            return pairwise_geom_locks[pair_digest]
+            if pair_key not in pairwise_geom_locks:
+                pairwise_geom_locks[pair_key] = threading.Lock()
+            return pairwise_geom_locks[pair_key]
 
     def _pair_log_prefix() -> str:
         if emit_plain and emit_eligible:
@@ -552,35 +622,26 @@ def write_pairwise_link_overlap_kml_pairs(
 
         vd_a_: str | None = None
         vd_b_: str | None = None
-        pdig: str | None = None
         pdir: Path | None = None
+        pair_lock_key = mesh_pairwise_rel_dir(slug_a, slug_b)
 
         plain_geom: BaseGeometry | None
         if use_geom_cache:
             assert geometry_cache_root is not None and slug_to_viewshed_digest is not None
             vd_a_ = slug_to_viewshed_digest[slug_a]
             vd_b_ = slug_to_viewshed_digest[slug_b]
-            pdig = mesh_pairwise_pair_digest(vd_a_, vd_b_)
-            pdir = resolved_mesh_pairwise_pair_dir(pair_digest=pdig, cache_root=geometry_cache_root)
-            with _pairwise_geom_lock(pdig):
-                kind, geo_hit = ("miss", None)
-                if not force_pairwise_geometry:
-                    kind, geo_hit = try_read_cached_pair_overlap_geometry(pdir)
-                if force_pairwise_geometry or kind == "miss":
-                    plain_geom = compute_pair_overlap_geometry(gpkg_a, gpkg_b)
-                    write_cached_pair_overlap_geometry(
-                        pair_dir=pdir,
-                        vd_a=vd_a_,
-                        vd_b=vd_b_,
-                        overlap_wgs84=plain_geom,
-                    )
-                    notes.append("geom computed" if force_pairwise_geometry else "geom computed (cache miss)")
-                elif kind == "empty":
-                    notes.append("geom cache empty (no overlap)")
-                    return _finish_pair((None, None))
-                else:
-                    plain_geom = geo_hit
-                    notes.append("geom cache hit")
+            pdir = resolved_mesh_pairwise_pair_dir(
+                slug_a=slug_a, slug_b=slug_b, cache_root=geometry_cache_root,
+            )
+            with _pairwise_geom_lock(pair_lock_key):
+                plain_geom = compute_pair_overlap_geometry(gpkg_a, gpkg_b)
+                write_cached_pair_overlap_geometry(
+                    pair_dir=pdir,
+                    vd_a=vd_a_,
+                    vd_b=vd_b_,
+                    overlap_wgs84=plain_geom,
+                )
+            notes.append("geom computed")
         else:
             inter_m = _intersection_metric_geometries(metrics[i], metrics[j])
             if inter_m is None:
@@ -602,22 +663,17 @@ def write_pairwise_link_overlap_kml_pairs(
             if polys and scratch_link is not None and link_polygon_style is not None:
                 dem_peak_llz = None
                 if emit_dem_peak_pins and dem_mirror_root is not None:
-                    if use_geom_cache and pdir is not None and pdig is not None:
+                    if use_geom_cache and pdir is not None and pair_lock_key is not None:
                         peak_path = pdir / DEM_PEAK_PLAIN_JSON
-                        with _pairwise_geom_lock(pdig):
-                            hit_p, cached_plain = try_read_cached_pairwise_dem_peak(peak_path)
-                            if not hit_p:
-                                dem_peak_llz = global_max_skadi_elevation_in_polygon(
-                                    plain_geom, dem_mirror_root
-                                )
-                                write_cached_pairwise_dem_peak(
-                                    peak_path,
-                                    peak_llz=dem_peak_llz,
-                                )
-                                notes.append("dem plain computed")
-                            else:
-                                dem_peak_llz = cached_plain
-                                notes.append("dem plain cache hit")
+                        with _pairwise_geom_lock(pair_lock_key):
+                            dem_peak_llz = global_max_skadi_elevation_in_polygon(
+                                plain_geom, dem_mirror_root
+                            )
+                            write_cached_pairwise_dem_peak(
+                                peak_path,
+                                peak_llz=dem_peak_llz,
+                            )
+                            notes.append("dem plain sampled")
                     else:
                         dem_peak_llz = global_max_skadi_elevation_in_polygon(
                             plain_geom, dem_mirror_root
@@ -629,13 +685,13 @@ def write_pairwise_link_overlap_kml_pairs(
                 plain_stable_d = pairwise_overlap_geometry_digest_sha256(poly_u_plain)
                 skadi_on = bool(emit_dem_peak_pins and dem_mirror_root is not None)
                 fp_plain: str | None = None
-                cache_plain_hit = False
-                if (
+                can_cache_plain_kml = (
                     bundle_kml_overlay_digest is not None
                     and use_geom_cache
                     and pdir is not None
-                    and pdig is not None
-                ):
+                    and pair_lock_key is not None
+                )
+                if can_cache_plain_kml:
                     fp_plain = _pairwise_flat_kml_plain_inputs_fingerprint(
                         bundle_kml_overlay_digest=bundle_kml_overlay_digest,
                         polygon_union_stable_digest=plain_stable_d,
@@ -645,17 +701,28 @@ def write_pairwise_link_overlap_kml_pairs(
                         pairwise_peak_pin_style=plain_peak_style,
                         mesh_pairwise_gx_draw_order=GX_DRAW_ORDER_MESH_PAIRWISE,
                     )
-                    with _pairwise_geom_lock(pdig):
-                        cache_plain_hit = try_read_cached_pairwise_flat_kml(
+                    with _pairwise_geom_lock(pair_lock_key):
+                        _write_flat_pair_overlap_kml_base(
+                            out_kml,
+                            title=paired_name,
+                            polygons=polys,
+                            dem_peak_llz=dem_peak_llz,
+                            dem_peak_pin_style=plain_peak_style if dem_peak_llz is not None else None,
+                        )
+                        inject_peaky_polygon_kml_style(
+                            out_kml,
+                            style_id=MESH_PAIRWISE_KML_STYLE_ID,
+                            spec=link_polygon_style,
+                            gx_draw_order=GX_DRAW_ORDER_MESH_PAIRWISE,
+                        )
+                        write_cached_pairwise_flat_kml(
                             pair_dir=pdir,
                             role="plain",
                             fingerprint=fp_plain,
-                            dest_kml=out_kml,
+                            source_kml=out_kml,
                         )
-
-                if cache_plain_hit:
-                    notes.append("plain kml cache hit")
-                elif not cache_plain_hit:
+                    notes.append("plain kml written")
+                else:
                     _write_flat_pair_overlap_kml_base(
                         out_kml,
                         title=paired_name,
@@ -669,15 +736,7 @@ def write_pairwise_link_overlap_kml_pairs(
                         spec=link_polygon_style,
                         gx_draw_order=GX_DRAW_ORDER_MESH_PAIRWISE,
                     )
-                    if fp_plain is not None and pdir is not None and pdig is not None:
-                        with _pairwise_geom_lock(pdig):
-                            write_cached_pairwise_flat_kml(
-                                pair_dir=pdir,
-                                role="plain",
-                                fingerprint=fp_plain,
-                                source_kml=out_kml,
-                            )
-                    notes.append("plain kml computed")
+                    notes.append("plain kml written")
                 out_plain = (paired_name, out_kml, arc)
 
         if want_eligible:
@@ -697,27 +756,19 @@ def write_pairwise_link_overlap_kml_pairs(
                 ):
                     dem_elig_peak = None
                     if emit_dem_peak_pins and dem_mirror_root is not None:
-                        if use_geom_cache and pdir is not None and pdig is not None:
+                        if use_geom_cache and pdir is not None and pair_lock_key is not None:
                             dg_elig = pairwise_overlap_geometry_digest_sha256(clipped)
                             elig_peak_path = pdir / DEM_PEAK_ELIGIBLE_JSON
-                            with _pairwise_geom_lock(pdig):
-                                hit_e, cached_elig = try_read_cached_pairwise_dem_peak(
-                                    elig_peak_path,
-                                    expected_geometry_digest=dg_elig,
+                            with _pairwise_geom_lock(pair_lock_key):
+                                dem_elig_peak = global_max_skadi_elevation_in_polygon(
+                                    clipped, dem_mirror_root
                                 )
-                                if not hit_e:
-                                    dem_elig_peak = global_max_skadi_elevation_in_polygon(
-                                        clipped, dem_mirror_root
-                                    )
-                                    write_cached_pairwise_dem_peak(
-                                        elig_peak_path,
-                                        peak_llz=dem_elig_peak,
-                                        geometry_digest=dg_elig,
-                                    )
-                                    notes.append("dem eligible computed")
-                                else:
-                                    dem_elig_peak = cached_elig
-                                    notes.append("dem eligible cache hit")
+                                write_cached_pairwise_dem_peak(
+                                    elig_peak_path,
+                                    peak_llz=dem_elig_peak,
+                                    geometry_digest=dg_elig,
+                                )
+                                notes.append("dem eligible sampled")
                         else:
                             dem_elig_peak = global_max_skadi_elevation_in_polygon(
                                 clipped, dem_mirror_root
@@ -729,14 +780,14 @@ def write_pairwise_link_overlap_kml_pairs(
                     elig_stable_d = pairwise_overlap_geometry_digest_sha256(poly_u_elig)
                     sk_elig_on = bool(emit_dem_peak_pins and dem_mirror_root is not None)
                     fp_elig: str | None = None
-                    cache_elig_hit = False
-                    if (
+                    can_cache_elig_kml = (
                         bundle_kml_overlay_digest is not None
                         and bundle_land_use_inputs_digest is not None
                         and use_geom_cache
                         and pdir is not None
-                        and pdig is not None
-                    ):
+                        and pair_lock_key is not None
+                    )
+                    if can_cache_elig_kml:
                         fp_elig = _pairwise_flat_kml_eligible_inputs_fingerprint(
                             bundle_kml_overlay_digest=bundle_kml_overlay_digest,
                             bundle_land_use_inputs_digest=bundle_land_use_inputs_digest,
@@ -747,17 +798,28 @@ def write_pairwise_link_overlap_kml_pairs(
                             eligible_peak_pin_style=elig_peak_style,
                             mesh_eligible_gx_draw_order=GX_DRAW_ORDER_MESH_PAIRWISE_ELIGIBLE,
                         )
-                        with _pairwise_geom_lock(pdig):
-                            cache_elig_hit = try_read_cached_pairwise_flat_kml(
+                        with _pairwise_geom_lock(pair_lock_key):
+                            _write_flat_pair_overlap_kml_base(
+                                eout,
+                                title=paired_name,
+                                polygons=polye,
+                                dem_peak_llz=dem_elig_peak,
+                                dem_peak_pin_style=elig_peak_style if dem_elig_peak is not None else None,
+                            )
+                            inject_peaky_polygon_kml_style(
+                                eout,
+                                style_id=MESH_PAIRWISE_ELIGIBLE_KML_STYLE_ID,
+                                spec=eligible_polygon_style,
+                                gx_draw_order=GX_DRAW_ORDER_MESH_PAIRWISE_ELIGIBLE,
+                            )
+                            write_cached_pairwise_flat_kml(
                                 pair_dir=pdir,
                                 role="eligible",
                                 fingerprint=fp_elig,
-                                dest_kml=eout,
+                                source_kml=eout,
                             )
-
-                    if cache_elig_hit:
-                        notes.append("eligible kml cache hit")
-                    elif not cache_elig_hit:
+                        notes.append("eligible kml written")
+                    else:
                         _write_flat_pair_overlap_kml_base(
                             eout,
                             title=paired_name,
@@ -771,15 +833,7 @@ def write_pairwise_link_overlap_kml_pairs(
                             spec=eligible_polygon_style,
                             gx_draw_order=GX_DRAW_ORDER_MESH_PAIRWISE_ELIGIBLE,
                         )
-                        if fp_elig is not None and pdir is not None and pdig is not None:
-                            with _pairwise_geom_lock(pdig):
-                                write_cached_pairwise_flat_kml(
-                                    pair_dir=pdir,
-                                    role="eligible",
-                                    fingerprint=fp_elig,
-                                    source_kml=eout,
-                                )
-                        notes.append("eligible kml computed")
+                        notes.append("eligible kml written")
                     out_elig = (paired_name, eout, earc)
 
         return _finish_pair((out_plain, out_elig))
@@ -812,7 +866,6 @@ def write_pairwise_link_overlap_layers(
     pairwise_overlap_workers: int | None = None,
     geometry_cache_root: Path | None = None,
     slug_to_viewshed_digest: Mapping[str, str] | None = None,
-    force_pairwise_geometry: bool = False,
 ) -> list[tuple[str, Path, str]]:
     """Pairwise footprint ∩ footprint → flat KML under ``sites/mesh/coverage/pairwise/``."""
     emitted, _ = write_pairwise_link_overlap_kml_pairs(
@@ -831,7 +884,6 @@ def write_pairwise_link_overlap_layers(
         pairwise_overlap_workers=pairwise_overlap_workers,
         geometry_cache_root=geometry_cache_root,
         slug_to_viewshed_digest=slug_to_viewshed_digest,
-        force_pairwise_geometry=force_pairwise_geometry,
     )
     return emitted
 
@@ -848,7 +900,6 @@ def write_pairwise_eligible_link_overlap_layers(
     pairwise_overlap_workers: int | None = None,
     geometry_cache_root: Path | None = None,
     slug_to_viewshed_digest: Mapping[str, str] | None = None,
-    force_pairwise_geometry: bool = False,
 ) -> list[tuple[str, Path, str]]:
     """Plain link ∩ eligible (same geometry as pairwise link overlap clipped in WGS-84)."""
 
@@ -871,6 +922,5 @@ def write_pairwise_eligible_link_overlap_layers(
         pairwise_overlap_workers=pairwise_overlap_workers,
         geometry_cache_root=geometry_cache_root,
         slug_to_viewshed_digest=slug_to_viewshed_digest,
-        force_pairwise_geometry=force_pairwise_geometry,
     )
     return emitted

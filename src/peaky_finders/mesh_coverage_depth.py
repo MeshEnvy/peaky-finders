@@ -7,7 +7,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Sequence
 
 import geopandas as gpd
 import numpy as np
@@ -48,18 +48,15 @@ from peaky_finders.splat_polygonize import (
     PEAKY_KML_EMIT_VERSION,
     inject_peaky_polygon_kml_style,
 )
-from peaky_finders.mesh_depth_cache import (
-    mesh_depth_set_digest,
+from peaky_finders.mesh_depth_store import (
     resolved_mesh_depth_set_dir,
     resolved_mesh_depth_slice_dir,
-    try_read_cached_mesh_depth_bands,
-    try_read_cached_mesh_depth_flat_kml,
-    try_read_cached_mesh_depth_slice,
     write_cached_mesh_depth_bands,
     write_cached_mesh_depth_flat_kml,
     write_cached_mesh_depth_slice,
 )
-from peaky_finders.mesh_pairwise_cache import pairwise_overlap_geometry_digest_sha256
+from peaky_finders.mesh_pairwise_store import pairwise_overlap_geometry_digest_sha256
+from peaky_finders.path_labels import mesh_depth_network_rel_dir
 from peaky_finders.sites_job import (
     BundleKmlLayerStyle,
     BundleKmlOverlayStyles,
@@ -291,7 +288,6 @@ def write_mesh_depth_kml_layers(
     mesh_depth_workers: int | None = None,
     geometry_cache_root: Path | None = None,
     slug_to_viewshed_digest: dict[str, str] | None = None,
-    force_mesh_depth_geometry: bool = False,
     bundle_kml_overlay_digest: str | None = None,
     bundle_land_use_inputs_digest: str | None = None,
 ) -> tuple[list[tuple[str, str, Path, str, str]], list[tuple[str, str, Path, str, str]]]:
@@ -303,7 +299,7 @@ def write_mesh_depth_kml_layers(
     when ``mesh_depth_workers`` (or heuristic default) yields more than one thread.
 
     When ``geometry_cache_root`` and ``slug_to_viewshed_digest`` are set, WGS84 band and per-site
-    slice geometry persist under ``<cache_root>/<set_digest>/`` (see :mod:`peaky_finders.mesh_depth_cache`).
+    slice geometry persist under ``<geometry_cache_root>/<coverage_depth_rN>/`` (see :mod:`peaky_finders.mesh_depth_store`).
     With ``bundle_kml_overlay_digest`` set, plain stitched mesh-depth flat KML is cached next to each
     slice; with ``bundle_land_use_inputs_digest`` as well (non-``None``), eligible stitched KML is cached.
     """
@@ -320,52 +316,23 @@ def write_mesh_depth_kml_layers(
     use_cache = geometry_cache_root is not None and vd_row is not None
     set_dir: Path | None = None
     if use_cache:
-        sdig = mesh_depth_set_digest(
-            viewshed_digests=vd_row,
-            max_raster_dimension=max_raster_dimension,
-        )
-        set_dir = resolved_mesh_depth_set_dir(set_digest=sdig, cache_root=geometry_cache_root)
+        rel_label = mesh_depth_network_rel_dir(max_raster_dimension=max_raster_dimension)
+        set_dir = resolved_mesh_depth_set_dir(rel_label=rel_label, cache_root=geometry_cache_root)
 
     bands_ll: dict[str, BaseGeometry]
     if use_cache and set_dir is not None:
-        if not force_mesh_depth_geometry:
-            kind_b, hit_b = try_read_cached_mesh_depth_bands(
-                set_dir,
-                expected_max_raster=max_raster_dimension,
-                expected_viewshed_digests=vd_row,
-            )
-            if kind_b == "hit" and hit_b is not None:
-                bands_ll = hit_b
-                print(
-                    f"Mesh coverage depth: bands cache hit ({len(usable_paths)} footprint(s))…",
-                    flush=True,
-                )
-            else:
-                print(f"Mesh coverage depth: raster {len(usable_paths)} footprint(s)…", flush=True)
-                bands_ll = compute_footprint_depth_bands_wgs84(
-                    usable_paths,
-                    max_raster_dimension=max_raster_dimension,
-                    raster_workers=mesh_depth_workers,
-                )
-                write_cached_mesh_depth_bands(
-                    set_dir=set_dir,
-                    max_raster_dimension=max_raster_dimension,
-                    viewshed_digests=vd_row,
-                    bands_wgs84=bands_ll,
-                )
-        else:
-            print(f"Mesh coverage depth: raster {len(usable_paths)} footprint(s)…", flush=True)
-            bands_ll = compute_footprint_depth_bands_wgs84(
-                usable_paths,
-                max_raster_dimension=max_raster_dimension,
-                raster_workers=mesh_depth_workers,
-            )
-            write_cached_mesh_depth_bands(
-                set_dir=set_dir,
-                max_raster_dimension=max_raster_dimension,
-                viewshed_digests=vd_row,
-                bands_wgs84=bands_ll,
-            )
+        print(f"Mesh coverage depth: raster {len(usable_paths)} footprint(s)…", flush=True)
+        bands_ll = compute_footprint_depth_bands_wgs84(
+            usable_paths,
+            max_raster_dimension=max_raster_dimension,
+            raster_workers=mesh_depth_workers,
+        )
+        write_cached_mesh_depth_bands(
+            set_dir=set_dir,
+            max_raster_dimension=max_raster_dimension,
+            viewshed_digests=vd_row,
+            bands_wgs84=bands_ll,
+        )
     else:
         print(f"Mesh coverage depth: raster {len(usable_paths)} footprint(s)…", flush=True)
         bands_ll = compute_footprint_depth_bands_wgs84(
@@ -401,7 +368,6 @@ def write_mesh_depth_kml_layers(
     ]
 
     Row = tuple[str, str, Path, str, str]
-    SliceKind = Literal["from_cache", "computed"]
 
     mesh_depth_slice_locks: dict[str, threading.Lock] = {}
     mesh_depth_slice_locks_mu = threading.Lock()
@@ -444,11 +410,10 @@ def write_mesh_depth_kml_layers(
 
         def slice_one_site(
             inp: tuple[int, Path, str, str],
-        ) -> tuple[Row | None, Row | None, SliceKind]:
+        ) -> tuple[Row | None, Row | None]:
             si, gpkg, slug, folder_name = inp
-            oriented: BaseGeometry | None = None
-            sk: SliceKind
 
+            oriented: BaseGeometry | None
             if use_cache and set_dir is not None and vd_row is not None:
                 site_vd = vd_row[si - 1]
                 slice_dir = resolved_mesh_depth_slice_dir(
@@ -456,33 +421,21 @@ def write_mesh_depth_kml_layers(
                 )
                 lock = _mesh_depth_slice_lock(band, site_vd)
                 with lock:
-                    if force_mesh_depth_geometry:
-                        kind_s, geo_hit = ("miss", None)
-                    else:
-                        kind_s, geo_hit = try_read_cached_mesh_depth_slice(slice_dir)
-                    if kind_s == "miss":
-                        oriented = compute_oriented_plain(gpkg, band_geom)
-                        write_cached_mesh_depth_slice(
-                            slice_dir=slice_dir,
-                            band=band,
-                            site_vd=site_vd,
-                            slice_wgs84=oriented,
-                        )
-                        sk = "computed"
-                    elif kind_s == "empty":
-                        return None, None, "from_cache"
-                    else:
-                        oriented = geo_hit
-                        sk = "from_cache"
+                    oriented = compute_oriented_plain(gpkg, band_geom)
+                    write_cached_mesh_depth_slice(
+                        slice_dir=slice_dir,
+                        band=band,
+                        site_vd=site_vd,
+                        slice_wgs84=oriented,
+                    )
             else:
                 oriented = compute_oriented_plain(gpkg, band_geom)
-                sk = "computed"
 
             if oriented is None:
-                return None, None, sk
+                return None, None
             polys = _polygons_flat(oriented)
             if not polys:
-                return None, None, sk
+                return None, None
 
             slice_cache_dir: Path | None = None
             site_vd_for_lock = ""
@@ -499,8 +452,9 @@ def write_mesh_depth_kml_layers(
             style_plain = resolved_mesh_depth_band_kml_style(kml_overlay, band, eligible=False)
             sid, gx = _PLAIN_STYLE[band]
             fp_plain: str | None = None
-            plain_hit = False
-            if bundle_kml_overlay_digest is not None and slice_cache_dir is not None:
+            can_cache_plain = bundle_kml_overlay_digest is not None and slice_cache_dir is not None
+            if can_cache_plain:
+                assert slice_cache_dir is not None
                 slice_stable_plain = pairwise_overlap_geometry_digest_sha256(unary_union(polys))
                 fp_plain = _mesh_depth_flat_plain_fingerprint(
                     bundle_kml_overlay_digest=bundle_kml_overlay_digest,
@@ -514,15 +468,21 @@ def write_mesh_depth_kml_layers(
                 )
                 lock_plain = _mesh_depth_slice_lock(band, site_vd_for_lock)
                 with lock_plain:
-                    plain_hit = try_read_cached_mesh_depth_flat_kml(
+                    _write_flat_pair_overlap_kml_base(out_kml, title=doc_title, polygons=polys)
+                    inject_peaky_polygon_kml_style(
+                        out_kml,
+                        style_id=sid,
+                        spec=style_plain,
+                        gx_draw_order=gx,
+                    )
+                    write_cached_mesh_depth_flat_kml(
                         slice_dir=slice_cache_dir,
                         role="plain",
                         slug=slug,
                         fingerprint=fp_plain,
-                        dest_kml=out_kml,
+                        source_kml=out_kml,
                     )
-
-            if not plain_hit:
+            else:
                 _write_flat_pair_overlap_kml_base(out_kml, title=doc_title, polygons=polys)
                 inject_peaky_polygon_kml_style(
                     out_kml,
@@ -530,16 +490,6 @@ def write_mesh_depth_kml_layers(
                     spec=style_plain,
                     gx_draw_order=gx,
                 )
-                if fp_plain is not None and slice_cache_dir is not None:
-                    lock_w = _mesh_depth_slice_lock(band, site_vd_for_lock)
-                    with lock_w:
-                        write_cached_mesh_depth_flat_kml(
-                            slice_dir=slice_cache_dir,
-                            role="plain",
-                            slug=slug,
-                            fingerprint=fp_plain,
-                            source_kml=out_kml,
-                        )
             plain_row: Row = (band, title_nl, out_kml, arc, vis_field(band, eligible=False))
 
             eligible_row: Row | None = None
@@ -559,12 +509,13 @@ def write_mesh_depth_kml_layers(
                         )
                         esid, egx = _ELIG_STYLE[band]
                         fp_elig: str | None = None
-                        elig_hit = False
-                        if (
+                        can_cache_elig = (
                             bundle_kml_overlay_digest is not None
                             and bundle_land_use_inputs_digest is not None
                             and slice_cache_dir is not None
-                        ):
+                        )
+                        if can_cache_elig:
+                            assert slice_cache_dir is not None
                             elig_stable = pairwise_overlap_geometry_digest_sha256(
                                 unary_union(polye),
                             )
@@ -581,15 +532,25 @@ def write_mesh_depth_kml_layers(
                             )
                             lock_e = _mesh_depth_slice_lock(band, site_vd_for_lock)
                             with lock_e:
-                                elig_hit = try_read_cached_mesh_depth_flat_kml(
+                                _write_flat_pair_overlap_kml_base(
+                                    epath,
+                                    title=eligible_doc_title,
+                                    polygons=polye,
+                                )
+                                inject_peaky_polygon_kml_style(
+                                    epath,
+                                    style_id=esid,
+                                    spec=style_elig,
+                                    gx_draw_order=egx,
+                                )
+                                write_cached_mesh_depth_flat_kml(
                                     slice_dir=slice_cache_dir,
                                     role="eligible",
                                     slug=slug,
                                     fingerprint=fp_elig,
-                                    dest_kml=epath,
+                                    source_kml=epath,
                                 )
-
-                        if not elig_hit:
+                        else:
                             _write_flat_pair_overlap_kml_base(
                                 epath,
                                 title=eligible_doc_title,
@@ -601,19 +562,9 @@ def write_mesh_depth_kml_layers(
                                 spec=style_elig,
                                 gx_draw_order=egx,
                             )
-                            if fp_elig is not None and slice_cache_dir is not None:
-                                lock_ew = _mesh_depth_slice_lock(band, site_vd_for_lock)
-                                with lock_ew:
-                                    write_cached_mesh_depth_flat_kml(
-                                        slice_dir=slice_cache_dir,
-                                        role="eligible",
-                                        slug=slug,
-                                        fingerprint=fp_elig,
-                                        source_kml=epath,
-                                    )
                         eligible_row = (band, title_nl, epath, earc, vis_field(band, eligible=True))
 
-            return plain_row, eligible_row, sk
+            return plain_row, eligible_row
 
         if slice_cap <= 1:
             band_rows = [slice_one_site(inp) for inp in site_inputs]
@@ -621,24 +572,16 @@ def write_mesh_depth_kml_layers(
             with ThreadPoolExecutor(max_workers=slice_cap) as ex:
                 band_rows = list(ex.map(slice_one_site, site_inputs))
 
-        n_from_cache = sum(1 for _pr, _er, sk in band_rows if sk == "from_cache")
-        n_computed = sum(1 for _pr, _er, sk in band_rows if sk == "computed")
-        print(
-            f"  depth slice {band}: {n_from_cache} cached, {n_computed} computed (≤{n_sites} sites)…",
-            flush=True,
-        )
-        if n_computed > 0:
-            for inp, (_pr, _er, sk) in zip(site_inputs, band_rows, strict=True):
-                if sk != "computed":
-                    continue
-                si, _gpkg, _slug, folder_name = inp
-                if slice_log_lock is not None:
-                    with slice_log_lock:
-                        print(f"    {band} [{si}/{n_sites}] {folder_name}…", flush=True)
-                else:
-                    print(f"    {band} [{si}/{n_sites}] {folder_name}…", flush=True)
+        print(f"  depth slice {band}: materialized ≤{n_sites} site KML rows…", flush=True)
+        for inp in site_inputs:
+            si, _gpkg, _slug, folder_name = inp
+            if slice_log_lock is not None:
+                with slice_log_lock:
+                    print(f"    {band} [{si}/{n_sites}] {folder_name} …", flush=True)
+            else:
+                print(f"    {band} [{si}/{n_sites}] {folder_name} …", flush=True)
 
-        for pr, er, _sk in band_rows:
+        for pr, er in band_rows:
             if pr is not None:
                 plain_out.append(pr)
             if er is not None:

@@ -1,4 +1,4 @@
-"""Filesystem cache for pairwise footprint∩footprint overlap geometry keyed by viewshed digests."""
+"""Pairwise footprint intersection geometry keyed by viewshed digests (on-disk store)."""
 
 from __future__ import annotations
 
@@ -43,8 +43,11 @@ def mesh_pairwise_pair_digest(vd_a: str, vd_b: str) -> str:
     return hashlib.sha256(mesh_pairwise_pair_digest_body(vd_a, vd_b).encode("utf-8")).hexdigest()
 
 
-def resolved_mesh_pairwise_pair_dir(*, pair_digest: str, cache_root: Path) -> Path:
-    return Path(cache_root).expanduser().resolve() / pair_digest
+def resolved_mesh_pairwise_pair_dir(*, slug_a: str, slug_b: str, cache_root: Path) -> Path:
+    from peaky_finders.path_labels import mesh_pairwise_rel_dir
+
+    rel = mesh_pairwise_rel_dir(slug_a, slug_b)
+    return Path(cache_root).expanduser().resolve() / rel
 
 
 def _canonical_vds(vd_a: str, vd_b: str) -> tuple[str, str]:
@@ -52,43 +55,20 @@ def _canonical_vds(vd_a: str, vd_b: str) -> tuple[str, str]:
     return (xs[0], xs[1])
 
 
-CachedPairOverlapKind = Literal["miss", "empty", "geometry"]
+def pairwise_complete_digest_matches(pair_dir: Path, *, vd_a: str, vd_b: str) -> bool:
+    """Whether ``complete.json`` records the canonical digest pair."""
 
-
-def try_read_cached_pair_overlap_geometry(pair_dir: Path) -> tuple[CachedPairOverlapKind, BaseGeometry | None]:
-    """Inspect an on-disk pairwise geometry cache slot.
-
-    Returns ``(\"miss\", None)``, ``(\"empty\", None)``, or ``(\"geometry\", loaded)``.
-    """
-    pdir = Path(pair_dir)
-    sentinel = pdir / EMPTY_SENTINEL
-    gpkg = pdir / OVERLAP_GPKG
-    complete = pdir / COMPLETE_JSON
-    if not complete.is_file():
-        return "miss", None
+    lo, hi = _canonical_vds(vd_a, vd_b)
+    p = Path(pair_dir).expanduser().resolve() / COMPLETE_JSON
+    if not p.is_file():
+        return False
     try:
-        raw = json.loads(complete.read_text(encoding="utf-8"))
-        if raw.get("format") != PAIRWISE_GEOMETRY_FORMAT:
-            return "miss", None
-    except (json.JSONDecodeError, OSError):
-        return "miss", None
-    if sentinel.is_file():
-        return "empty", None
-    if not gpkg.is_file():
-        return "miss", None
-    try:
-        gdf = gpd.read_file(gpkg, layer=OVERLAP_LAYER)
-    except Exception:
-        return "miss", None
-    if gdf.empty or not gdf.geometry.notna().any():
-        return "empty", None
-    geo = gdf.geometry.iloc[0]
-    if geo is None:
-        return "empty", None
-    gg = make_valid(geo) if not geo.is_valid else geo
-    if gg.is_empty:
-        return "empty", None
-    return "geometry", gg
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if raw.get("format") != PAIRWISE_GEOMETRY_FORMAT:
+        return False
+    return str(raw.get("vd_lo")) == lo and str(raw.get("vd_hi")) == hi
 
 
 def write_cached_pair_overlap_geometry(
@@ -156,34 +136,6 @@ def _unlink_mesh_pairwise_pair_derived_caches(pdir: Path) -> None:
     _unlink_mesh_pairwise_pair_derived_caches_except_preview(pdir)
 
 
-def try_read_cached_pairwise_flat_kml(
-    *,
-    pair_dir: Path,
-    role: Literal["plain", "eligible"],
-    fingerprint: str,
-    dest_kml: Path,
-) -> bool:
-    """If cache matches ``fingerprint``, copy stitched KML to ``dest_kml``. Returns whether copied."""
-    pdir = Path(pair_dir)
-    if role == "plain":
-        kml_p, meta_p, want_fmt = pdir / PAIRWISE_FLAT_PLAIN_KML, pdir / PAIRWISE_FLAT_PLAIN_META, PAIRWISE_FLAT_KML_CACHE_PLAIN
-    else:
-        kml_p, meta_p = pdir / PAIRWISE_FLAT_ELIG_KML, pdir / PAIRWISE_FLAT_ELIG_META
-        want_fmt = PAIRWISE_FLAT_KML_CACHE_ELIG
-
-    if not kml_p.is_file() or not meta_p.is_file():
-        return False
-    try:
-        meta = json.loads(meta_p.read_text(encoding="utf-8"))
-        if meta.get("format") != want_fmt:
-            return False
-        if meta.get("fingerprint") != fingerprint:
-            return False
-    except (json.JSONDecodeError, OSError):
-        return False
-    dest_kml.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(kml_p, dest_kml)
-    return True
 
 
 def write_cached_pairwise_flat_kml(
@@ -212,40 +164,6 @@ def write_cached_pairwise_flat_kml(
         + "\n",
         encoding="utf-8",
     )
-
-
-def try_read_cached_pairwise_dem_peak(
-    json_path: Path,
-    *,
-    expected_geometry_digest: str | None = None,
-) -> tuple[bool, tuple[float, float, float] | None]:
-    """Return ``(hit, peak_llz)``. ``peak_llz`` ``None`` means cached no-pin.
-
-    For ``dem_peak_eligible.json``, pass ``expected_geometry_digest`` of the clipped polygon; mismatch
-    is a miss (eligible land use changed). For ``dem_peak_plain.json`` omit it.
-    """
-
-    path = Path(json_path)
-    if not path.is_file():
-        return False, None
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return False, None
-    if raw.get("format") != PAIRWISE_DEM_PEAK_FORMAT:
-        return False, None
-    if expected_geometry_digest is not None:
-        if raw.get("geometry_digest") != expected_geometry_digest:
-            return False, None
-    peak = raw.get("peak")
-    if peak is None:
-        return True, None
-    if not isinstance(peak, dict):
-        return False, None
-    try:
-        return True, (float(peak["lon"]), float(peak["lat"]), float(peak["elev_m"]))
-    except (KeyError, TypeError, ValueError):
-        return False, None
 
 
 def write_cached_pairwise_dem_peak(

@@ -1,9 +1,7 @@
-"""Build the AOI / land-use bundle: preset-listed GDB layers → project ``build/clips/`` + job workspace.
+"""Build the AOI / land-use bundle: preset-listed GDB layers → ``build/clips`` + ``build/bundle``.
 
-Per-layer clips and composites (aoi, include, exclude, eligible) live under
-``<preset-dir>/build/clips/``. Each preset job writes ``build/bundles/<job_sha>/resolve.json``
-pointing at those artifacts.
-``bundle.kml_overlay`` is tracked separately so sidecar KML/PNG can refresh without a full GDB rebuild.
+Per-layer clips and composites live under ``<preset>/build/clips``.
+Each preset job writes ``<preset>/build/bundle/resolve.json`` pointing into ``build/clips``.
 """
 
 from __future__ import annotations
@@ -30,7 +28,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from peaky_finders.google_earth_polygon import orient_for_kml
-from peaky_finders.plss_mlrs_fetch import maybe_refresh_plss_mlrs_for_bundle
+from peaky_finders.geometry_preview_png import write_wgs84_geodataframe_preview_png
 from peaky_finders.sites_job import (
     BundleKmlOverlayStyles,
     BundleConfig,
@@ -44,16 +42,13 @@ from peaky_finders.sites_job import (
     load_preset,
     ogr_where_for_layer_spec,
     peaky_home,
-    resolved_bundle_cache_root,
-    resolved_inspect_tmp_parent,
+    resolved_bundle_dir,
     resolved_preset_build_dir,
-    resolved_splat_tile_cache_dir,
+    resolved_preset_bundle_data_dir,
+    resolved_preset_clips_dir,
+    resolved_preset_dem_tile_cache_dir,
 )
 
-from peaky_finders.skadi_dem import (
-    iter_skadi_tile_names_for_wgs84_bounds,
-    prefetch_skadi_hgt_for_bounds_fatal,
-)
 
 def resolve_land_use_gdb_path(data_dir: Path, path_str: str) -> Path:
     """Resolve preset ``path`` relative to ``data_dir`` unless absolute."""
@@ -74,7 +69,7 @@ def require_bundle_config(preset: Preset) -> BundleConfig:
     if not pre.include:
         raise ValueError(
             'Preset needs non-empty "bundle.include". Layer names:'
-            "\n  peaky inspect <path_to.gdb|.gpkg|.kml|.pjson>"
+            "\n  peaky inspect <path_to.gdb>"
             "\nthen edit the preset JSON bundle.include / bundle.exclude arrays."
         )
     return pre
@@ -170,15 +165,10 @@ def bundle_aoi_inputs_digest(pre: BundleConfig, data_dir: Path) -> str:
 
 
 def bundle_aoi_dir_slug(pre: BundleConfig, data_dir: Path) -> str:
-    """Legacy slug (AOI inputs); job dirs use :func:`bundle_job_dir_slug` instead."""
+    """Legacy slug (AOI inputs only); preset bundle workspace uses a stable ``build/bundle/`` dir."""
     dd = Path(data_dir).expanduser().resolve()
     payload = aoi_inputs_fingerprint_body(pre, dd).encode("utf-8")
     return "aoi_" + hashlib.sha256(payload).hexdigest()[:16]
-
-
-def bundle_job_dir_slug(*, preset: Preset, data_dir: Path) -> str:
-    """Filesystem directory name for a preset job workspace under ``bundles/``."""
-    return bundle_cache_digest(preset=preset, data_dir=data_dir)
 
 
 def bundle_land_use_inputs_digest(pre: BundleConfig, data_dir: Path) -> str:
@@ -244,7 +234,7 @@ def bundle_kml_overlay_inputs_digest(pre: BundleConfig) -> str:
 
 
 def bundle_cache_digest(*, preset: Preset, data_dir: Path | None = None) -> str:
-    """SHA-256 hex: AOI (v1) + land-use (v3) fingerprint bodies."""
+    """SHA-256 hex: AOI (v1) + land-use (v3) fingerprint bodies (logging / diagnostics only)."""
     dd = Path(data_dir).expanduser().resolve() if data_dir is not None else peaky_home() / "data"
     pre = require_bundle_config(preset)
     payload = aoi_inputs_fingerprint_body(pre, dd) + land_use_inputs_fingerprint_body(pre, dd)
@@ -269,6 +259,18 @@ def _bundle_progress(verbose: bool, msg: str) -> None:
         print(f"bundle: {msg}", flush=True)
 
 
+def list_gdb_input_files(root: Path) -> tuple[Path, ...]:
+    """Sorted on-disk files that back a bundle vector dataset (``.gpkg`` file or FileGDB tree)."""
+    root = root.expanduser().resolve()
+    if root.is_file():
+        return (root,)
+    return tuple(
+        path
+        for path in sorted(root.rglob("*"), key=lambda p: p.as_posix())
+        if path.is_file()
+    )
+
+
 def _file_tree_mtime_size_fingerprint(root: Path) -> str:
     """Stable multiline fingerprint: one ``relpath<TAB>mtime_ns<TAB>size`` per file under root."""
     root = root.resolve()
@@ -277,9 +279,7 @@ def _file_tree_mtime_size_fingerprint(root: Path) -> str:
         st = root.stat()
         lines.append(f"{root.name}\t{st.st_mtime_ns}\t{st.st_size}")
         return "\n".join(lines) + "\n"
-    for path in sorted(root.rglob("*"), key=lambda p: p.as_posix()):
-        if not path.is_file():
-            continue
+    for path in list_gdb_input_files(root):
         rel = path.relative_to(root).as_posix()
         st = path.stat()
         lines.append(f"{rel}\t{st.st_mtime_ns}\t{st.st_size}")
@@ -323,16 +323,9 @@ def is_polygon_geometry_type(gt: str) -> bool:
 
 
 @contextmanager
-def openfilegdb_dataset_path(
-    gdb_path: Path,
-    *,
-    tmp_parent: Path | None = None,
-) -> Iterator[str]:
-    """Yield a GDAL-readable dataset path (FileGDB folder, unpacked GDB sibling, GeoPackage, or KML file).
+def openfilegdb_dataset_path(gdb_path: Path) -> Iterator[str]:
 
-    OpenFileGDB symlink staging uses ``tmp_parent`` (default: project ``build/tmp`` from path walk, see
-    :func:`peaky_finders.sites_job.resolved_inspect_tmp_parent`).
-    """
+    """Yield a GDAL-readable dataset path (File GDB, unpacked GDB sibling, GeoPackage, or KML)."""
     gdb_path = gdb_path.expanduser().resolve()
     if not gdb_path.exists():
         raise FileNotFoundError(f"GDB path not found: {gdb_path}")
@@ -346,8 +339,7 @@ def openfilegdb_dataset_path(
         yield str(gdb_path)
         return
     if gdb_path.is_dir() and any(gdb_path.glob("*.gdbtable")):
-        parent = tmp_parent if tmp_parent is not None else resolved_inspect_tmp_parent(gdb_path)
-        td = Path(tempfile.mkdtemp(prefix="openfilegdb_", dir=str(parent)))
+        td = Path(tempfile.mkdtemp(prefix="openfilegdb_", dir=None))
         try:
             link = td / f"{gdb_path.name}.gdb"
             link.symlink_to(gdb_path, target_is_directory=True)
@@ -356,7 +348,8 @@ def openfilegdb_dataset_path(
             shutil.rmtree(td, ignore_errors=True)
         return
     raise FileNotFoundError(
-        f"Not a supported bundle vector dataset (File Geodatabase directory, .gpkg, or .kml): {gdb_path}"
+        "Not a supported bundle vector dataset (File Geodatabase directory, .gpkg, or .kml): "
+        f"{gdb_path}"
     )
 
 
@@ -505,18 +498,12 @@ def _kml_inject_ge_polygon_render_hints(kml_path: Path, *, layer_label: str) -> 
 
 
 def _disk_path_under_clip_eligible_composite(kml_path: Path) -> bool:
-    """Detect ``.../eligible/<composite_sha>/...`` clip-cache layout (eligible union or per-include slices).
-
-    Paths use the same preset ``layer_label`` as include GDB clips — classify by filesystem location before
-    ``include/…`` GDB path prefixes on the label.
-    """
+    """True for eligible slice KML paths under ``clips/eligible/layers``."""
     parts_lower = [p.lower() for p in kml_path.parts]
-    hex16 = frozenset("0123456789abcdef")
     for i in range(len(parts_lower) - 1):
         if parts_lower[i] != "eligible":
             continue
-        seg = parts_lower[i + 1]
-        if len(seg) == 16 and all(ch in hex16 for ch in seg):
+        if parts_lower[i + 1] == "layers":
             return True
     return False
 
@@ -758,18 +745,6 @@ def _kml_inject_filled_overlay_style(
     tree.write(kml_path, encoding="utf-8", xml_declaration=True)
 
 
-def _aabbggrr_to_rgba_mpl(hex8: str) -> tuple[float, float, float, float]:
-    """KML ``aabbggrr`` → matplotlib ``(r, g, b, a)`` in 0..1."""
-    s = hex8.strip().lower()
-    if len(s) != 8:
-        raise ValueError(f"Expected 8 hex digits (aabbggrr); got {hex8!r}")
-    aa = int(s[0:2], 16) / 255.0
-    bb = int(s[2:4], 16) / 255.0
-    gg = int(s[4:6], 16) / 255.0
-    rr = int(s[6:8], 16) / 255.0
-    return (rr, gg, bb, aa)
-
-
 def _write_geodataframe_preview_png(
     gdf_wgs84: gpd.GeoDataFrame,
     png_path: Path,
@@ -779,56 +754,27 @@ def _write_geodataframe_preview_png(
     kml_overlay: BundleKmlOverlayStyles | None,
 ) -> None:
     """Flat-map PNG using the same fill/line semantics as ``bundle.kml_overlay`` (EPSG:3857 axes)."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    g = gdf_wgs84.to_crs("EPSG:3857")
     role = _kml_overlay_role(kml_path, layer_label)
     if kml_overlay is None:
-        face = _aabbggrr_to_rgba_mpl("66888888")
-        edge = _aabbggrr_to_rgba_mpl("ff666666")
+        face_aabbggrr = "66888888"
+        line_aabbggrr = "ff666666"
         fill_polys = True
         line_w = 2.0
     else:
         spec = getattr(kml_overlay, role, None) or kml_overlay.default
-        face = _aabbggrr_to_rgba_mpl(spec.fill)
-        edge = _aabbggrr_to_rgba_mpl(spec.line)
+        face_aabbggrr = spec.fill
+        line_aabbggrr = spec.line
         fill_polys = spec.fill_polygons
         line_w = spec.line_width
 
-    types = set(g.geom_type.astype(str))
-    point_only = types <= {"Point"}
-    png_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(11, 11), dpi=120)
-
-    try:
-        if point_only:
-            g.plot(ax=ax, color=edge[:3], alpha=max(edge[3], 0.35), markersize=5, linewidth=0)
-        else:
-            if fill_polys and face[3] > 0:
-                fc: tuple[float, float, float, float] | str = face
-            else:
-                fc = (0.0, 0.0, 0.0, 0.0)
-            ec: tuple[float, float, float, float] | str = edge[:4] if line_w > 0 else "none"
-            g.plot(ax=ax, facecolor=fc, edgecolor=ec, linewidth=0.25 if line_w > 0 else 0)
-        xmin, ymin, xmax, ymax = g.total_bounds
-        xpad = max((xmax - xmin) * 0.02, 500.0)
-        ypad = max((ymax - ymin) * 0.02, 500.0)
-        ax.set_xlim(xmin - xpad, xmax + xpad)
-        ax.set_ylim(ymin - ypad, ymax + ypad)
-        ax.set_aspect("equal")
-        ax.axis("off")
-        fig.savefig(
-            png_path,
-            dpi=144,
-            bbox_inches="tight",
-            pad_inches=0.05,
-            facecolor="white",
-        )
-    finally:
-        plt.close(fig)
+    write_wgs84_geodataframe_preview_png(
+        gdf_wgs84,
+        png_path,
+        face_aabbggrr=face_aabbggrr,
+        line_aabbggrr=line_aabbggrr,
+        fill_polygons=fill_polys,
+        line_width=line_w,
+    )
 
 
 def _write_geodataframe_kml(
@@ -912,14 +858,8 @@ def _geom_type_for_layer(ds: str, layer_name: str) -> str | None:
     return None
 
 
-def _clip_stem(
-    preset_path: str, resolved_gdb: Path, layer: str, where: str | None = None
-) -> str:
-    """Basename stem for ``{aoi|include|exclude}_{stem}.gpkg`` (readable source id + short hash).
-
-    ``preset_path`` is the preset's GDB path (e.g. ``include/SMA_WM.gdb``). A short digest keeps
-    stems unique if sanitization collapses different paths or layers.
-    """
+def _clip_stem(preset_path: str, layer: str, where: str | None = None) -> str:
+    """Basename stem for layer-job dirs from preset GDB path, layer name, and optional ``where``."""
     raw = Path(preset_path).as_posix()
     safe_path = _sanitize_path_component(raw.replace("/", "_"))
     safe_layer = _sanitize_path_component(layer)
@@ -928,10 +868,13 @@ def _clip_stem(
         safe_path = safe_path[-max_path:]
     if len(safe_layer) > max_layer:
         safe_layer = safe_layer[-max_layer:]
-    digest = hashlib.sha256(
-        f"{preset_path}\0{layer}\0{resolved_gdb.resolve()!s}\0{where or ''}".encode("utf-8")
-    ).hexdigest()[:8]
-    return f"{safe_path}__{safe_layer}__{digest}"
+    parts = [safe_path, safe_layer]
+    if where:
+        safe_where = _sanitize_path_component(where)
+        if len(safe_where) > 64:
+            safe_where = safe_where[:64]
+        parts.append(f"where_{safe_where}")
+    return "__".join(parts)
 
 
 def _flatten_gdb_layer_jobs(
@@ -1204,12 +1147,12 @@ CLIP_EXCLUDE = ClipFamily(
 def bundle_paths(
     cache_root: Path,
     *,
-    preset: Preset,
-    data_dir: Path,
+    preset: Preset | None = None,
+    data_dir: Path | None = None,
 ) -> tuple[Path, Path]:
-    """``(bundle_job_dir, eligible_land_use_gpkg_path)`` via ``resolve.json`` when present."""
-    job_slug = bundle_job_dir_slug(preset=preset, data_dir=data_dir)
-    bundle_dir = Path(cache_root) / job_slug
+    """``(bundle_workspace_dir, eligible_land_use_gpkg_path)`` via ``resolve.json`` when present."""
+    _ = preset, data_dir
+    bundle_dir = Path(cache_root).expanduser().resolve()
     return bundle_dir, bundle_eligible_land_use_gpkg(bundle_dir)
 
 
@@ -1217,92 +1160,20 @@ def bundle_directory_for_preset(
     *,
     preset_path: Path,
     data_dir: Path,
-    build_root: Path | None = None,
+    cache_root: Path | None = None,
 ) -> Path | None:
-    """Stable bundle job dir under ``build/bundles/`` when ``preset_path`` defines ``bundle.*``; else ``None``.
-
-    Mirrors :func:`ensure_land_use_bundle` layout resolution (does not ensure the bundle exists).
-    """
+    """Stable bundle cache dir for ``preset_path`` when it defines ``bundle.*``; else ``None``."""
     preset_path_resolved = Path(preset_path).expanduser().resolve()
     preset = load_preset(preset_path_resolved)
     if preset.bundle is None:
         return None
     data_dir = Path(data_dir).expanduser().resolve()
-    if build_root is not None:
-        cache_root_final = Path(build_root).expanduser().resolve() / "bundles"
+    if cache_root is not None:
+        cache_root_final = Path(cache_root).expanduser().resolve()
     else:
-        cache_root_final = resolved_bundle_cache_root(preset_path=preset_path_resolved)
+        cache_root_final = resolved_bundle_dir(preset_path=preset_path_resolved)
     bundle_dir, _ = bundle_paths(cache_root_final, preset=preset, data_dir=data_dir)
     return bundle_dir
-
-
-def _remove_family_outputs(bundle_dir: Path, family: ClipFamily) -> None:
-    d = family.dir(bundle_dir)
-    if d.is_dir():
-        for p in d.glob(family.clip_glob_gpkg()):
-            p.unlink(missing_ok=True)
-        for p in d.glob(family.clip_glob_kml()):
-            p.unlink(missing_ok=True)
-        for p in d.glob(family.clip_glob_png()):
-            p.unlink(missing_ok=True)
-        family.manifest_path(bundle_dir).unlink(missing_ok=True)
-        fp = family.final_gpkg_path(bundle_dir)
-        fp.unlink(missing_ok=True)
-        fp.with_suffix(".kml").unlink(missing_ok=True)
-        fp.with_suffix(".png").unlink(missing_ok=True)
-
-
-def _clear_bundle_family_dirs(bundle_dir: Path) -> None:
-    for fam in (CLIP_AOI, CLIP_INCLUDE, CLIP_EXCLUDE):
-        _remove_family_outputs(bundle_dir, fam)
-        d = fam.dir(bundle_dir)
-        if d.is_dir() and not any(d.iterdir()):
-            try:
-                d.rmdir()
-            except OSError:
-                pass
-    elig = bundle_dir / SUBDIR_ELIGIBLE_LAND_USE
-    if elig.is_dir():
-        shutil.rmtree(elig, ignore_errors=True)
-
-
-def _unlink_legacy_bundle_artifacts(bundle_dir: Path) -> None:
-    for name in (
-        "aoi_snap.gpkg",
-        "aoi_clip_manifest.json",
-        "include_clip_manifest.json",
-        "exclude_clip_manifest.json",
-        "aoi_union.gpkg",
-        "include_union.gpkg",
-        "exclude_union.gpkg",
-        "eligible.gpkg",
-        "eligible.kml",
-        "eligible.png",
-        "eligible_land_use.kml",
-    ):
-        (bundle_dir / name).unlink(missing_ok=True)
-    for stem in ("aoi_union", "include_union", "exclude_union", "eligible"):
-        for suf in (".gpkg", ".kml", ".png"):
-            (bundle_dir / f"{stem}{suf}").unlink(missing_ok=True)
-    (bundle_dir / "summits_aoi.gpkg").unlink(missing_ok=True)
-    (bundle_dir / "summits_aoi.kml").unlink(missing_ok=True)
-    (bundle_dir / "summits_aoi.png").unlink(missing_ok=True)
-    (bundle_dir / "summits.gpkg").unlink(missing_ok=True)
-    (bundle_dir / "summits.kml").unlink(missing_ok=True)
-    (bundle_dir / "summits.png").unlink(missing_ok=True)
-
-
-def _unlink_bundle_outputs_for_rebuild(bundle_dir: Path) -> None:
-    """Scrub per-job bundle workspace (clips live under ``<cache>/clips/``, not here)."""
-    _clear_bundle_family_dirs(bundle_dir)
-    _unlink_legacy_bundle_artifacts(bundle_dir)
-    (bundle_dir / KML_OVERLAY_DIGEST_BASENAME).unlink(missing_ok=True)
-    from peaky_finders.bundle_clips import bundle_resolve_path
-
-    bundle_resolve_path(bundle_dir).unlink(missing_ok=True)
-    ref_dir = bundle_dir / SUBDIR_REFERENCE
-    if ref_dir.is_dir():
-        shutil.rmtree(ref_dir, ignore_errors=True)
 
 
 def _sanitize_path_component(name: str) -> str:
@@ -1333,24 +1204,6 @@ def _overlay_for_reference_entry(
     return BundleKmlOverlayStyles(default=st, reference=st)
 
 
-def _union_include_merged(include_dir: Path, clip_entries: list[dict[str, object]]) -> gpd.GeoDataFrame:
-    pieces: list[BaseGeometry] = []
-    for ent in sorted(clip_entries, key=lambda d: str(d.get("file", ""))):
-        fn = ent.get("file")
-        if not isinstance(fn, str):
-            continue
-        p = include_dir / fn
-        if not p.is_file():
-            raise FileNotFoundError(f"Missing clipped include: {p.name}")
-        gdf = gpd.read_file(p)
-        if gdf.empty:
-            continue
-        g3857 = gdf.to_crs("EPSG:3857")
-        pieces.extend(g3857.geometry.tolist())
-    u = _sanitize_collection(pieces)
-    g_union = gpd.GeoDataFrame(geometry=[u], crs="EPSG:3857")
-    return g_union.to_crs("EPSG:4326")
-
 
 def _write_clip_manifest(
     bundle_dir: Path, family: ClipFamily, *, items: list[dict[str, object]]
@@ -1363,629 +1216,36 @@ def _write_clip_manifest(
     )
 
 
-def _read_clip_manifest_item_summaries(bundle_dir: Path, family: ClipFamily) -> list[str]:
-    """Sorted ``file (path::layer)`` lines from a clip manifest, or empty if missing/invalid."""
-    mp = family.manifest_path(bundle_dir)
-    if not mp.is_file():
-        return []
-    try:
-        raw = json.loads(mp.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return []
-    items = raw.get("items") if isinstance(raw, dict) else None
-    if not isinstance(items, list):
-        return []
-    rows: list[str] = []
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        fn = it.get("file")
-        ps = it.get("path")
-        ly = it.get("layer")
-        if isinstance(fn, str) and isinstance(ps, str) and isinstance(ly, str):
-            rows.append(f"{fn}  ({ps}::{ly})")
-    rows.sort()
-    return rows
-
-
-def _verbose_log_clip_merge(
-    verbose: bool,
-    *,
-    op: str,
-    bundle_dir: Path,
-    family: ClipFamily,
-    output_paths: str,
-) -> None:
-    if not verbose:
-        return
-    _bundle_log(verbose, f"{op}: manifest {family.subdir}/{CLIP_MANIFEST_BASENAME}")
-    inputs = _read_clip_manifest_item_summaries(bundle_dir, family)
-    if not inputs:
-        _bundle_log(verbose, f"{op}:   in:  (no rows in manifest)")
-    else:
-        for line in inputs:
-            _bundle_log(verbose, f"{op}:   in:  {line}")
-    _bundle_log(verbose, f"{op}:   out: {output_paths}")
-
-
-def _clear_clip_family_artifacts(bundle_dir: Path, family: ClipFamily) -> None:
-    _remove_family_outputs(bundle_dir, family)
-
-
-def _clip_manifest_ok(bundle_dir: Path, family: ClipFamily, raw: object) -> bool:
-    if not isinstance(raw, dict) or raw.get("format") != family.manifest_format:
-        return False
-    items = raw.get("items")
-    if not isinstance(items, list):
-        return False
-    if family.manifest_requires_non_empty_items and not items:
-        return False
-    prefix = family.clip_filename_prefix
-    fdir = family.dir(bundle_dir)
-    for it in items:
-        if not isinstance(it, dict):
-            return False
-        fn = it.get("file")
-        if not isinstance(fn, str) or not fn.startswith(prefix) or not (fdir / fn).is_file():
-            return False
-        if not isinstance(it.get("path"), str) or not isinstance(it.get("layer"), str):
-            return False
-    return True
-
-
-def _clip_manifest_items_with_stats(
-    bundle_dir: Path,
-    family: ClipFamily,
-    items: list[object],
-    *,
-    kml_overlay: BundleKmlOverlayStyles | None = None,
-) -> list[dict[str, object]]:
-    out: list[dict[str, object]] = []
-    fdir = family.dir(bundle_dir)
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        fn = it.get("file")
-        path_str = it.get("path")
-        layer_str = it.get("layer")
-        if not isinstance(fn, str) or not isinstance(path_str, str) or not isinstance(layer_str, str):
-            continue
-        path = fdir / fn
-        if not path.is_file():
-            raise FileNotFoundError(f"{family.key} clip missing during manifest refresh: {fn}")
-        gdf = gpd.read_file(path)
-        _write_geodataframe_kml(
-            gdf,
-            path.with_suffix(".kml"),
-            layer_label=family.kml_label(path_str, layer_str),
-            kml_overlay=kml_overlay,
-        )
-        out.append(
-            {
-                "file": fn,
-                "path": path_str,
-                "layer": layer_str,
-                "features_clipped": len(gdf),
-                "vertices_clipped": _gdf_coordinate_vertex_count(gdf),
-            }
-        )
-    out.sort(key=lambda d: str(d["file"]))
-    return out
-
-
-def _union_wgs84_from_clip_manifest_items(family_dir: Path, items: list[object]) -> gpd.GeoDataFrame:
-    pieces_ll: list[BaseGeometry] = []
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        fn = it.get("file")
-        if not isinstance(fn, str):
-            continue
-        gdf = gpd.read_file(family_dir / fn)
-        if gdf.empty:
-            continue
-        pieces_ll.extend(gdf.geometry.tolist())
-    u_ll = _sanitize_collection(pieces_ll if pieces_ll else [])
-    return gpd.GeoDataFrame(geometry=[u_ll], crs="EPSG:4326")
-
-
-def _write_family_final_polygon(
-    gdf: gpd.GeoDataFrame,
-    bundle_dir: Path,
-    family: ClipFamily,
-    *,
-    gpkg_layer: str,
-    layer_label: str,
-    kml_overlay: BundleKmlOverlayStyles | None,
-) -> None:
-    family.dir(bundle_dir).mkdir(parents=True, exist_ok=True)
-    fp = family.final_gpkg_path(bundle_dir)
-    _write_geodataframe_gpkg_and_kml(
-        gdf, fp, gpkg_layer=gpkg_layer, layer_label=layer_label, kml_overlay=kml_overlay
-    )
-
-
-def load_or_build_clipped_aoi_union(
-    pre: BundleConfig,
-    data_dir: Path,
-    bundle_dir: Path,
-    *,
-    verbose: bool = False,
-) -> BaseGeometry:
-    """Build ``aoi/aoi_*.gpkg`` + ``aoi/clip_manifest.json``; write ``aoi/aoi.gpkg``; return AOI (EPSG:4326)."""
-    bundle_dir.mkdir(parents=True, exist_ok=True)
-    aoi_dir = CLIP_AOI.dir(bundle_dir)
-    manifest_path = CLIP_AOI.manifest_path(bundle_dir)
-    if manifest_path.is_file():
-        try:
-            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            raw = None
-        if _clip_manifest_ok(bundle_dir, CLIP_AOI, raw) and isinstance(raw, dict):
-            items_obj = raw["items"]
-            if not isinstance(items_obj, list):
-                items_obj = []
-            refreshed = _clip_manifest_items_with_stats(
-                bundle_dir, CLIP_AOI, items_obj, kml_overlay=pre.kml_overlay
-            )
-            _write_clip_manifest(bundle_dir, CLIP_AOI, items=refreshed)
-            _bundle_log(
-                verbose,
-                f"aoi: updated clip manifest ({len(refreshed)} file(s), {SUBDIR_AOI}/{CLIP_MANIFEST_BASENAME})",
-            )
-            g_union = _union_wgs84_from_clip_manifest_items(aoi_dir, refreshed)
-            if g_union.empty or g_union.geometry.is_empty.iloc[0]:
-                raise ValueError("AOI union from clip manifest is empty")
-            geom = make_valid(g_union.geometry.iloc[0])
-            if geom.is_empty:
-                raise ValueError("AOI union geometry is empty")
-            _write_family_final_polygon(
-                gpd.GeoDataFrame(geometry=[geom], crs="EPSG:4326"),
-                bundle_dir,
-                CLIP_AOI,
-                gpkg_layer="aoi",
-                layer_label="aoi",
-                kml_overlay=pre.kml_overlay,
-            )
-            return geom
-
-    _bundle_log(verbose, "aoi: rebuilding clip GeoPackages from bundle.aoi …")
-    _clear_clip_family_artifacts(bundle_dir, CLIP_AOI)
-    aoi_poly = load_composite_aoi_polygon(pre, data_dir)
-    aoi_poly = make_valid(aoi_poly)
-    if aoi_poly.is_empty:
-        raise ValueError("AOI union from bundle.aoi is empty")
-
-    jobs = _flatten_gdb_layer_jobs(pre.aoi, data_dir)
-    clip_entries: list[dict[str, object]] = []
-    n_aoi = len(jobs)
-    for aidx, (preset_path, resolved, layer_name, where) in enumerate(jobs, start=1):
-        if not resolved.exists():
-            raise FileNotFoundError(f"AOI GDB not found: {resolved} (preset path {preset_path!r})")
-        _bundle_progress(verbose, f"aoi [{aidx}/{n_aoi}] read+clip {preset_path}::{layer_name} …")
-        gdf, clipped = _read_and_clip_gdb_layer_to_aoi(
-            preset_path, resolved, layer_name, aoi_poly, kind="aoi", where=where
-        )
-        clipped_ll = clipped.to_crs("EPSG:4326")
-        stem = _clip_stem(preset_path, resolved, layer_name, where)
-        fname = f"aoi_{stem}.gpkg"
-        out = aoi_dir / fname
-        _bundle_progress(
-            verbose,
-            f"aoi [{aidx}/{n_aoi}] write {fname} (gpkg+kml, {len(clipped_ll):,} features) …",
-        )
-        _write_geodataframe_gpkg_and_kml(
-            clipped_ll,
-            out,
-            gpkg_layer="features",
-            layer_label=CLIP_AOI.kml_label(preset_path, layer_name),
-            kml_overlay=pre.kml_overlay,
-        )
-        _bundle_log(
-            verbose,
-            f"aoi {preset_path}::{layer_name}: {len(gdf):,} features → {len(clipped):,} clipped → {fname}",
-        )
-        clip_entries.append(
-            {
-                "file": fname,
-                "path": preset_path,
-                "layer": layer_name,
-                "features_clipped": len(clipped_ll),
-                "vertices_clipped": _gdf_coordinate_vertex_count(clipped_ll),
-                **({"where": where} if where else {}),
-            }
-        )
-
-    clip_entries.sort(key=lambda d: str(d["file"]))
-    _write_clip_manifest(bundle_dir, CLIP_AOI, items=clip_entries)
-    _bundle_log(
-        verbose,
-        f"aoi: wrote {SUBDIR_AOI}/{CLIP_MANIFEST_BASENAME} ({len(clip_entries)} layer(s))",
-    )
-    _bundle_progress(verbose, "aoi: merging clip GeoPackages to AOI union …")
-    g_out = _union_wgs84_from_clip_manifest_items(aoi_dir, clip_entries)
-    if g_out.empty or g_out.geometry.is_empty.iloc[0]:
-        raise ValueError("AOI union after clip is empty")
-    geom_final = make_valid(g_out.geometry.iloc[0])
-    _bundle_progress(verbose, "aoi: writing final aoi.gpkg + kml …")
-    _write_family_final_polygon(
-        gpd.GeoDataFrame(geometry=[geom_final], crs="EPSG:4326"),
-        bundle_dir,
-        CLIP_AOI,
-        gpkg_layer="aoi",
-        layer_label="aoi",
-        kml_overlay=pre.kml_overlay,
-    )
-    return geom_final
-
-
-def load_or_build_clipped_include_union(
-    include_groups: list[GdbLayerGroup],
-    data_dir: Path,
-    aoi_poly_4326: BaseGeometry,
-    bundle_dir: Path,
-    *,
-    kml_overlay: BundleKmlOverlayStyles | None = None,
-    verbose: bool = False,
-) -> gpd.GeoDataFrame:
-    bundle_dir.mkdir(parents=True, exist_ok=True)
-    inc_dir = CLIP_INCLUDE.dir(bundle_dir)
-    jobs = _flatten_gdb_layer_jobs(include_groups, data_dir)
-    clip_entries: list[dict[str, object]] = []
-    n_inc = len(jobs)
-    for iidx, (preset_path, resolved, layer, where) in enumerate(jobs, start=1):
-        if not resolved.exists():
-            raise FileNotFoundError(f"Include GDB not found: {resolved} (preset path {preset_path!r})")
-        stem = _clip_stem(preset_path, resolved, layer, where)
-        out = inc_dir / f"include_{stem}.gpkg"
-        if out.is_file():
-            gchk = gpd.read_file(out)
-            _bundle_log(verbose, f"include reuse {preset_path}::{layer} → {out.name}")
-            clip_entries.append(
-                {
-                    "file": out.name,
-                    "layer": layer,
-                    "path": preset_path,
-                    "features_clipped": len(gchk),
-                    "vertices_clipped": _gdf_coordinate_vertex_count(gchk),
-                    **({"where": where} if where else {}),
-                }
-            )
-            _write_geodataframe_kml(
-                gchk,
-                out.with_suffix(".kml"),
-                layer_label=CLIP_INCLUDE.kml_label(preset_path, layer),
-                kml_overlay=kml_overlay,
-            )
-            continue
-        _bundle_log(verbose, f"include clip {preset_path}::{layer} from {resolved} …")
-        _bundle_progress(verbose, f"include [{iidx}/{n_inc}] read+clip {preset_path}::{layer} …")
-        gdf, clipped = _read_and_clip_gdb_layer_to_aoi(
-            preset_path, resolved, layer, aoi_poly_4326, kind="include", where=where
-        )
-        clipped_3857 = clipped.to_crs("EPSG:3857")
-        _bundle_log(
-            verbose,
-            f"include {preset_path}::{layer}: {len(gdf):,} features → {len(clipped):,} clipped → {out.name}",
-        )
-        _bundle_progress(
-            verbose,
-            f"include [{iidx}/{n_inc}] write {out.name} (gpkg+kml, {len(clipped_3857):,} features) …",
-        )
-        _write_geodataframe_gpkg_and_kml(
-            clipped_3857,
-            out,
-            gpkg_layer="features",
-            layer_label=CLIP_INCLUDE.kml_label(preset_path, layer),
-            kml_overlay=kml_overlay,
-        )
-        clip_entries.append(
-            {
-                "file": out.name,
-                "layer": layer,
-                "path": preset_path,
-                "features_clipped": len(clipped_3857),
-                "vertices_clipped": _gdf_coordinate_vertex_count(clipped_3857),
-                **({"where": where} if where else {}),
-            }
-        )
-
-    clip_entries.sort(key=lambda d: str(d["file"]))
-    _bundle_progress(verbose, f"include: merge union from {len(clip_entries)} clip file(s) …")
-    include_union = _union_include_merged(inc_dir, clip_entries)
-    _write_clip_manifest(bundle_dir, CLIP_INCLUDE, items=clip_entries)
-    _bundle_log(
-        verbose,
-        f"include: wrote {SUBDIR_INCLUDE}/{CLIP_MANIFEST_BASENAME} ({len(clip_entries)} layer(s))",
-    )
-    if not include_union.empty and not include_union.geometry.is_empty.iloc[0]:
-        g0 = include_union.geometry.iloc[0]
-        _bundle_log(
-            verbose,
-            f"include union (4326): valid={g0.is_valid} empty={g0.is_empty} geom_type={g0.geom_type}",
-        )
-    else:
-        _bundle_log(verbose, "include union (4326): empty")
-    _bundle_progress(verbose, "include: writing final include.gpkg + kml …")
-    _write_family_final_polygon(
-        include_union,
-        bundle_dir,
-        CLIP_INCLUDE,
-        gpkg_layer="include",
-        layer_label="include",
-        kml_overlay=kml_overlay,
-    )
-    return include_union
-
-
-def load_or_build_clipped_exclude_union(
-    exclude_groups: list[GdbLayerGroup],
-    data_dir: Path,
-    aoi_poly_4326: BaseGeometry,
-    bundle_dir: Path,
-    *,
-    kml_overlay: BundleKmlOverlayStyles | None = None,
-    verbose: bool = False,
-) -> gpd.GeoDataFrame:
-    bundle_dir.mkdir(parents=True, exist_ok=True)
-    exc_dir = CLIP_EXCLUDE.dir(bundle_dir)
-    manifest_path = CLIP_EXCLUDE.manifest_path(bundle_dir)
-    if manifest_path.is_file():
-        try:
-            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            raw = None
-        if _clip_manifest_ok(bundle_dir, CLIP_EXCLUDE, raw) and isinstance(raw, dict):
-            items_obj = raw["items"]
-            if not isinstance(items_obj, list):
-                items_obj = []
-            refreshed = _clip_manifest_items_with_stats(
-                bundle_dir, CLIP_EXCLUDE, items_obj, kml_overlay=kml_overlay
-            )
-            _write_clip_manifest(bundle_dir, CLIP_EXCLUDE, items=refreshed)
-            _bundle_log(
-                verbose,
-                f"exclude: updated clip manifest ({len(refreshed)} file(s), {SUBDIR_EXCLUDE}/{CLIP_MANIFEST_BASENAME})",
-            )
-            out = _union_wgs84_from_clip_manifest_items(exc_dir, refreshed)
-            if not out.empty and not out.geometry.is_empty.iloc[0]:
-                ex = out.geometry.iloc[0]
-                _bundle_log(
-                    verbose,
-                    f"exclude union (4326): valid={ex.is_valid} empty={ex.is_empty} geom_type={ex.geom_type}",
-                )
-            else:
-                _bundle_log(verbose, "exclude union (4326): empty")
-            _write_family_final_polygon(
-                out,
-                bundle_dir,
-                CLIP_EXCLUDE,
-                gpkg_layer="exclude",
-                layer_label="exclude",
-                kml_overlay=kml_overlay,
-            )
-            return out
-
-    _bundle_log(verbose, "exclude: rebuilding AOI clips from preset-listed GDB layers…")
-    _clear_clip_family_artifacts(bundle_dir, CLIP_EXCLUDE)
-    items: list[dict[str, object]] = []
-    pieces_ll: list[BaseGeometry] = []
-
-    if not exclude_groups:
-        _write_clip_manifest(bundle_dir, CLIP_EXCLUDE, items=[])
-        _bundle_log(verbose, "exclude: empty list (no exclusions)")
-        empty_ex = gpd.GeoDataFrame(geometry=[Polygon()], crs="EPSG:4326")
-        _write_family_final_polygon(
-            empty_ex,
-            bundle_dir,
-            CLIP_EXCLUDE,
-            gpkg_layer="exclude",
-            layer_label="exclude",
-            kml_overlay=kml_overlay,
-        )
-        return empty_ex
-
-    jobs = _flatten_gdb_layer_jobs(exclude_groups, data_dir)
-    n_exc = len(jobs)
-    for jidx, (preset_path, resolved, layer_name, where) in enumerate(jobs, start=1):
-        if not resolved.exists():
-            raise FileNotFoundError(f"Exclude GDB not found: {resolved} (preset path {preset_path!r})")
-        _bundle_progress(verbose, f"exclude [{jidx}/{n_exc}] read+clip {preset_path}::{layer_name} …")
-        gdf, clipped = _read_and_clip_gdb_layer_to_aoi(
-            preset_path, resolved, layer_name, aoi_poly_4326, kind="exclude", where=where
-        )
-        if clipped.empty:
-            _bundle_log(
-                verbose,
-                f"exclude {preset_path}::{layer_name}: {len(gdf):,} features → clip empty (skip file)",
-            )
-            continue
-        clipped_ll = clipped.to_crs("EPSG:4326")
-        stem = _clip_stem(preset_path, resolved, layer_name, where)
-        fname = f"exclude_{stem}.gpkg"
-        out = exc_dir / fname
-        _bundle_progress(
-            verbose,
-            f"exclude [{jidx}/{n_exc}] write {fname} (gpkg+kml, {len(clipped_ll):,} features) …",
-        )
-        _write_geodataframe_gpkg_and_kml(
-            clipped_ll,
-            out,
-            gpkg_layer="features",
-            layer_label=CLIP_EXCLUDE.kml_label(preset_path, layer_name),
-            kml_overlay=kml_overlay,
-        )
-        items.append(
-            {
-                "file": fname,
-                "path": preset_path,
-                "layer": layer_name,
-                "features_clipped": len(clipped),
-                "vertices_clipped": _gdf_coordinate_vertex_count(clipped_ll),
-                **({"where": where} if where else {}),
-            }
-        )
-        pieces_ll.extend(clipped_ll.geometry.tolist())
-        _bundle_log(
-            verbose,
-            f"exclude {preset_path}::{layer_name}: {len(gdf):,} native → {len(clipped):,} clipped → {fname}",
-        )
-
-    items.sort(key=lambda d: str(d["file"]))
-    _write_clip_manifest(bundle_dir, CLIP_EXCLUDE, items=items)
-    _bundle_log(verbose, f"exclude: wrote manifest with {len(items)} non-empty clip file(s)")
-    _bundle_progress(verbose, f"exclude: unary_union of {len(pieces_ll):,} clipped part(s) …")
-    u_ll = _sanitize_collection(pieces_ll if pieces_ll else [])
-    g_out = gpd.GeoDataFrame(geometry=[u_ll], crs="EPSG:4326")
-    if not g_out.empty and not g_out.geometry.is_empty.iloc[0]:
-        ex = g_out.geometry.iloc[0]
-        _bundle_log(
-            verbose,
-            f"exclude union (4326): valid={ex.is_valid} empty={ex.is_empty} geom_type={ex.geom_type}",
-        )
-    _bundle_progress(verbose, "exclude: writing final exclude.gpkg + kml …")
-    _write_family_final_polygon(
-        g_out,
-        bundle_dir,
-        CLIP_EXCLUDE,
-        gpkg_layer="exclude",
-        layer_label="exclude",
-        kml_overlay=kml_overlay,
-    )
-    return g_out
-
-
-def aoi_polygon_for_bundle_job(
-    plc: BundleConfig,
-    data_dir: Path,
-    bundle_dir: Path,
-    *,
-    verbose: bool = False,
-) -> BaseGeometry:
-    """AOI polygon (EPSG:4326) from clips composite when ``resolve.json`` exists."""
-    from peaky_finders.bundle_clips import (
-        bundle_resolve_path,
-        composite_union_gpkg,
-        read_bundle_resolve,
-    )
-
-    if bundle_resolve_path(bundle_dir).is_file():
-        resolve = read_bundle_resolve(bundle_dir)
-        clips_root = Path(str(resolve["clips_root"])).resolve()
-        gpkg = composite_union_gpkg(clips_root, "aoi", str(resolve["aoi"]))
-        gdf = gpd.read_file(gpkg, layer="aoi")
-        if gdf.empty or gdf.geometry.is_empty.iloc[0]:
-            raise ValueError("AOI composite geometry is empty")
-        return make_valid(gdf.geometry.iloc[0])
-    return load_or_build_clipped_aoi_union(plc, data_dir, bundle_dir, verbose=verbose)
-
-
-def refresh_bundle_kml_sidecars(
-    *,
-    plc: BundleConfig,
-    data_dir: Path,
-    bundle_dir: Path,
-    eligible_gpkg: Path,
-    verbose: bool = False,
-) -> None:
-    """Rewrite clip/composite KML/PNG after ``bundle.kml_overlay`` change."""
-    from peaky_finders.bundle_clips import (
-        bundle_resolve_path,
-        plan_clip_build_result,
-        read_bundle_resolve,
-        refresh_clip_kml_sidecars,
-        resolved_clips_cache_root,
-    )
-
-    data_dir = Path(data_dir).expanduser().resolve()
-    bundle_dir = Path(bundle_dir).expanduser().resolve()
-    rp = bundle_resolve_path(bundle_dir)
-    ref_map_raw: dict[str, Any] | None = None
-    if rp.is_file():
-        resolve = read_bundle_resolve(bundle_dir)
-        clips_root = Path(str(resolve["clips_root"])).resolve()
-        raw_ref = resolve.get("reference")
-        ref_map_raw = raw_ref if isinstance(raw_ref, dict) else None
-    else:
-        # Without ``resolve.json`` (deleted / interrupted write): derive sibling ``clips/`` like ``ensure_land_use_bundle``.
-        cache_base = bundle_dir.parent.parent
-        clips_root = resolved_clips_cache_root(cache_base)
-
-    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
-    result = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips_root)
-    refresh_clip_kml_sidecars(
-        plc=plc,
-        data_dir=data_dir,
-        clips_root=clips_root,
-        mask_body=mask_body,
-        kml_overlay=plc.kml_overlay,
-        result=result,
-        verbose_log=((lambda m: _bundle_log(verbose, m)) if verbose else None),
-    )
-    if isinstance(ref_map_raw, dict) and ref_map_raw:
-        from peaky_finders.bundle_clips import refresh_reference_clip_kml_sidecars
-
-        refresh_reference_clip_kml_sidecars(
-            plc=plc,
-            clips_root=clips_root,
-            reference_shas={str(k): str(v) for k, v in ref_map_raw.items()},
-            verbose_log=((lambda m: _bundle_log(verbose, m)) if verbose else None),
-        )
-
-
-def ensure_reference_bundle_layers(
-    *,
-    plc: BundleConfig,
-    data_dir: Path,
-    clips_root: Path,
-    aoi_sha: str,
-    force: bool,
-    verbose: bool = False,
-) -> dict[str, str]:
-    """Build or reuse ``clips/reference/<sha>/`` entries; return id → sha map."""
-    from peaky_finders.bundle_clips import ensure_reference_clip_cache
-
-    vlog = (lambda m: _bundle_log(verbose, m)) if verbose else None
-    plog = (lambda m: _bundle_progress(verbose, m)) if verbose else None
-    return ensure_reference_clip_cache(
-        plc=plc,
-        data_dir=data_dir,
-        clips_root=clips_root,
-        aoi_sha=aoi_sha,
-        kml_overlay=plc.kml_overlay,
-        force=force,
-        verbose_log=vlog,
-        progress_log=plog,
-    )
-
 
 def cached_gpkg_path_from_preset(
     *,
     preset_path: Path,
-    build_root: Path | None = None,
+    cache_root: Path | None = None,
     data_dir: Path | None = None,
 ) -> Path:
-    """Return planned eligible GPKG path for ``preset_path`` (``clips/eligible/<sha>/…``)."""
+    """Return planned eligible GPKG path for ``preset_path`` (``clips/eligible/eligible_land_use.gpkg``)."""
     p = Path(preset_path).expanduser().resolve()
     preset = load_preset(p)
-    dd = Path(data_dir).expanduser().resolve() if data_dir is not None else peaky_home() / "data"
-    if build_root is not None:
-        bundles_root = Path(build_root).expanduser().resolve() / "bundles"
+    dd = (
+        Path(data_dir).expanduser().resolve()
+        if data_dir is not None
+        else resolved_preset_bundle_data_dir(preset_path=p, preset=preset)
+    )
+    if cache_root is not None:
+        bundles_root = Path(cache_root).expanduser().resolve()
     else:
-        bundles_root = resolved_bundle_cache_root(preset_path=p)
+        bundles_root = resolved_bundle_dir(preset_path=p)
     bundle_dir, gpkg = bundle_paths(bundles_root, preset=preset, data_dir=dd)
     from peaky_finders.bundle_clips import (
         bundle_resolve_path,
         plan_clip_build_result,
-        resolved_clips_cache_root,
     )
 
     if bundle_resolve_path(bundle_dir).is_file():
         return bundle_eligible_land_use_gpkg(bundle_dir)
-    cache_base = bundles_root.parent
     plc = require_bundle_config(preset)
     planned = plan_clip_build_result(
-        plc=plc, data_dir=dd, clips_root=resolved_clips_cache_root(cache_base)
+        plc=plc, data_dir=dd, clips_root=resolved_preset_clips_dir(p)
     )
     return planned.eligible_gpkg
 
@@ -1993,16 +1253,16 @@ def cached_gpkg_path_from_preset(
 def require_cached_gpkg(
     *,
     preset_path: Path,
-    build_root: Path | None = None,
+    cache_root: Path | None = None,
     data_dir: Path | None = None,
 ) -> Path:
     """Resolve cached ``eligible_land_use/eligible_land_use.gpkg`` or raise ``FileNotFoundError`` with a fix hint."""
     gpkg = cached_gpkg_path_from_preset(
-        preset_path=preset_path, build_root=build_root, data_dir=data_dir
+        preset_path=preset_path, cache_root=cache_root, data_dir=data_dir
     )
     if not gpkg.is_file():
         hint = (
-            f'  poetry run peaky render "{Path(preset_path).expanduser().resolve()}"'
+            f'  poetry run peaky build "{Path(preset_path).expanduser().resolve()}"'
         )
         raise FileNotFoundError(
             "No AOI bundle cache for this preset's inputs. Run:\n" + hint
@@ -2120,165 +1380,3 @@ def _ogr2ogr_to_libkml(
             f"ogr2ogr failed writing {human_name}\n" + (proc.stderr or proc.stdout or "").strip()
         )
 
-
-def ensure_land_use_bundle(
-    *,
-    preset_path: Path,
-    data_dir: Path,
-    force: bool,
-    verbose: bool = False,
-    prefetch_dem: bool = True,
-    dem_workers: int | None = None,
-    no_plss_fetch: bool = False,
-    build_root: Path | None = None,
-) -> tuple[Path, bool]:
-    """Build or reuse land-use bundle. Returns ``(eligible_land_use_gpkg_path, reused_cache)``."""
-    data_dir = Path(data_dir).expanduser().resolve()
-
-    preset_path_resolved = Path(preset_path).expanduser().resolve()
-    preset = load_preset(preset_path_resolved)
-    plc = require_bundle_config(preset)
-    digest = bundle_cache_digest(preset=preset, data_dir=data_dir)
-    if build_root is not None:
-        cache_base = Path(build_root).expanduser().resolve()
-        cache_root_final = cache_base / "bundles"
-    else:
-        cache_base = resolved_preset_build_dir(preset_path_resolved)
-        cache_root_final = resolved_bundle_cache_root(preset_path=preset_path_resolved)
-    from peaky_finders.bundle_clips import (
-        ensure_bundle_clip_cache,
-        plan_clip_build_result,
-        resolved_clips_cache_root,
-        write_bundle_resolve,
-    )
-
-    clips_root = resolved_clips_cache_root(cache_base)
-    bundle_dir, gpkg_path = bundle_paths(cache_root_final, preset=preset, data_dir=data_dir)
-    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
-
-    _bundle_log(verbose, f"preset={Path(preset_path).name} data_dir={data_dir}")
-    _bundle_log(verbose, f"bundles_root={cache_root_final}")
-    _bundle_log(verbose, f"clips_root={clips_root}")
-    _bundle_log(verbose, f"bundle_dir={bundle_dir}")
-    _bundle_log(verbose, f"digest combined_sha256={digest}")
-    kml_overlay_digest = bundle_kml_overlay_inputs_digest(plc)
-    _bundle_log(verbose, f"kml_overlay_sha256={kml_overlay_digest}")
-
-    bundle_dir.mkdir(parents=True, exist_ok=True)
-
-    maybe_refresh_plss_mlrs_for_bundle(
-        preset_path=preset_path_resolved,
-        cache_base=cache_base,
-        preset=preset,
-        force_all=force,
-        skip_network=no_plss_fetch,
-        verbose_log=((lambda m: _bundle_log(verbose, m)) if verbose else None),
-    )
-    preset = load_preset(preset_path_resolved)
-
-    planned = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips_root)
-    reused_cache = planned.eligible_gpkg.is_file() and not force
-    eligible_bounds: tuple[float, float, float, float] | None = None
-    eligible_gpkg: Path
-
-    vlog = (lambda m: _bundle_log(verbose, m)) if verbose else None
-    plog = (lambda m: _bundle_progress(verbose, m)) if verbose else None
-
-    if reused_cache:
-        overlay_path = bundle_dir / KML_OVERLAY_DIGEST_BASENAME
-        stored = overlay_path.read_text(encoding="utf-8").strip() if overlay_path.is_file() else ""
-        if stored != kml_overlay_digest:
-            _bundle_log(
-                verbose,
-                "cache hit (eligible GPKG unchanged): bundle.kml_overlay changed — refreshing sidecar KML and PNG …",
-            )
-            refresh_bundle_kml_sidecars(
-                plc=plc,
-                data_dir=data_dir,
-                bundle_dir=bundle_dir,
-                eligible_gpkg=planned.eligible_gpkg,
-                verbose=verbose,
-            )
-            overlay_path.write_text(kml_overlay_digest + "\n", encoding="utf-8")
-        else:
-            _bundle_log(verbose, f"cache hit: reuse {planned.eligible_gpkg} (use --force to rebuild bundle)")
-        eligible_gpkg = planned.eligible_gpkg
-        clip_meta = planned
-    else:
-        _bundle_log(verbose, "building bundle: clips/composites missing or --force set …")
-        if force:
-            _bundle_log(verbose, "--force: clearing per-job bundle workspace …")
-            _unlink_bundle_outputs_for_rebuild(bundle_dir)
-
-        clip_result = ensure_bundle_clip_cache(
-            plc=plc,
-            data_dir=data_dir,
-            clips_root=clips_root,
-            mask_body=mask_body,
-            kml_overlay=plc.kml_overlay,
-            force=force,
-            verbose_log=vlog,
-            progress_log=plog,
-        )
-        eligible_gpkg = clip_result.eligible_gpkg
-        clip_meta = clip_result
-        _bundle_log(verbose, f"done: {eligible_gpkg}")
-
-    ref_shas = ensure_reference_bundle_layers(
-        plc=plc,
-        data_dir=data_dir,
-        clips_root=clips_root,
-        aoi_sha=clip_meta.aoi_sha,
-        force=force,
-        verbose=verbose,
-    )
-    write_bundle_resolve(
-        bundle_dir,
-        clips_root=clips_root,
-        aoi_sha=clip_meta.aoi_sha,
-        include_sha=clip_meta.include_sha,
-        exclude_sha=clip_meta.exclude_sha,
-        eligible_sha=clip_meta.eligible_sha,
-        reference=ref_shas,
-    )
-    (bundle_dir / KML_OVERLAY_DIGEST_BASENAME).write_text(kml_overlay_digest + "\n", encoding="utf-8")
-    loaded = gpd.read_file(eligible_gpkg, layer=ELIGIBLE_LAND_USE_LAYER)
-    if not loaded.empty and not loaded.geometry.is_empty.iloc[0]:
-        eligible_bounds = tuple(map(float, loaded.total_bounds))
-        if not reused_cache:
-            _bundle_log(
-                verbose,
-                f"eligible WGS84 bounds (minx,miny,maxx,maxy): {eligible_bounds}",
-            )
-
-    splat_tile_dir = resolved_splat_tile_cache_dir(preset_path_resolved)
-
-    if prefetch_dem:
-        if eligible_bounds is None:
-            print("bundle: dem prefetch skipped (empty eligible land geometry)", flush=True)
-            _bundle_log(verbose, "dem prefetch skipped — empty geometry")
-        else:
-            prefetch_workers = effective_skadi_prefetch_workers(dem_workers)
-            minx, miny, maxx, maxy = eligible_bounds
-            bbox_tiles = iter_skadi_tile_names_for_wgs84_bounds(minx, miny, maxx, maxy)
-            n_cover = len(bbox_tiles)
-            _bundle_log(
-                verbose,
-                f"dem prefetch Skadi: bbox={(minx, miny, maxx, maxy)} bbox_tiles={n_cover} workers={prefetch_workers}",
-            )
-            skipped, dl = prefetch_skadi_hgt_for_bounds_fatal(
-                minx=minx,
-                miny=miny,
-                maxx=maxx,
-                maxy=maxy,
-                splat_tile_cache_dir=splat_tile_dir,
-                max_workers=prefetch_workers,
-                verbose_log=(lambda msg: _bundle_log(verbose, msg)) if verbose else None,
-            )
-            print(
-                "bundle: dem prefetch finished "
-                f"(bbox_tiles={n_cover} fetched={dl} skipped_present={skipped} mirror_dir={splat_tile_dir})",
-                flush=True,
-            )
-
-    return eligible_gpkg, reused_cache
