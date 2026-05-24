@@ -170,8 +170,11 @@ def build_coverage_depth_grid(
     aoi_ll: BaseGeometry,
     footprint_gpkg_paths: Sequence[Path],
     max_raster_dimension: int,
+    verbose: bool = False,
 ) -> CoverageDepthGrid:
     """Sum footprint overlap counts over ``aoi_ll`` bounds on EPSG:3857."""
+    from peaky_finders.site_suggestions.log import suggest_log, suggest_progress
+
     aoi0 = make_valid(aoi_ll) if not aoi_ll.is_valid else aoi_ll
     if aoi0.is_empty:
         raise ValueError("AOI geometry is empty")
@@ -180,6 +183,11 @@ def build_coverage_depth_grid(
     minx, miny, maxx, maxy = aoi_m.bounds
     cols, rows = _grid_shape_for_bounds(minx, miny, maxx, maxy, max_raster_dimension=max_raster_dimension)
     transform = from_bounds(minx, miny, maxx, maxy, cols, rows)
+    if verbose:
+        suggest_log(
+            verbose,
+            f"site suggest:     planner grid {cols}×{rows} px (max_dim={max_raster_dimension})",
+        )
 
     aoi_mask = features.rasterize(
         [(aoi_m, 1)],
@@ -190,12 +198,22 @@ def build_coverage_depth_grid(
     ).astype(bool)
 
     depth = np.zeros((rows, cols), dtype=np.uint32)
-    for p in footprint_gpkg_paths:
-        fp_ll = read_coverage_footprint(Path(p))
+    paths = [Path(p) for p in footprint_gpkg_paths]
+    n_paths = len(paths)
+    if verbose and n_paths:
+        suggest_log(verbose, f"site suggest:     rasterizing {n_paths} seed footprint(s)…")
+    for i, p in enumerate(paths, start=1):
+        if verbose:
+            suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}…")
+        fp_ll = read_coverage_footprint(p)
         if fp_ll is None or fp_ll.is_empty:
+            if verbose:
+                suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}: empty, skipped")
             continue
-        fp_m = _read_coverage_footprint_epsg3857(Path(p))
+        fp_m = _read_coverage_footprint_epsg3857(p)
         if fp_m is None or fp_m.is_empty:
+            if verbose:
+                suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}: empty EPSG:3857, skipped")
             continue
         layer = features.rasterize(
             [(fp_m, 1)],
@@ -205,6 +223,14 @@ def build_coverage_depth_grid(
             dtype=np.uint16,
         )
         depth += layer.astype(np.uint32, copy=False)
+        if verbose:
+            suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}: merged")
+
+    if verbose:
+        suggest_log(
+            verbose,
+            f"site suggest:     initial depth grid: {int(np.count_nonzero(aoi_mask))} AOI cell(s)",
+        )
 
     return CoverageDepthGrid(
         depth=depth,
