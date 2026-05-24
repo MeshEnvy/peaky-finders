@@ -14,9 +14,13 @@ Default to **parallel or multi-core** approaches when work is embarrassingly par
 - **CPU-bound, release-the-GIL** — NumPy/raster/GDAL-heavy loops; threads or process pools depending on workload and GIL behavior.
 - **Existing knobs** — wire through preset/CLI parallelism (`max_workers`, `jobs`, `parallelism`) rather than hard-coding serial execution.
 
+## Splatter viewshed cost
+
+**Viewsheds using splatter are cheap** — often **<0.5s** per run. Do not treat individual splatter viewsheds as a slow bottleneck; pool/thread overhead can dominate small batches. Parallelize at site/tile batch level when there are many independent runs, not via heavy micro-batching of single viewsheds.
+
 ## When to stay serial (or cap workers)
 
-- Small inputs where pool overhead dominates.
+- Small inputs where pool overhead dominates (including a handful of splatter viewsheds).
 - Shared mutable state without a safe aggregation strategy.
 - Memory pressure — each worker duplicates large arrays; cap `max_workers` or process in waves.
 - Ordering requirements — parallelize units, then **sort/merge** deterministically (see peak scan tie-break patterns).
