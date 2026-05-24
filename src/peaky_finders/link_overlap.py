@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import threading
 import time
@@ -324,10 +325,85 @@ def _intersection_metric_geometries(ga: BaseGeometry | None, gb: BaseGeometry | 
     return None if inter.is_empty else inter
 
 
+def _metric_bounds_disjoint(ga: BaseGeometry | None, gb: BaseGeometry | None) -> bool:
+    """True when EPSG:3857 footprint envelopes cannot touch."""
+    if ga is None or ga.is_empty or gb is None or gb.is_empty:
+        return True
+    ax0, ay0, ax1, ay1 = ga.bounds
+    bx0, by0, bx1, by1 = gb.bounds
+    return ax1 < bx0 or bx1 < ax0 or ay1 < by0 or by1 < ay0
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6_371_000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _sites_beyond_viewshed_pair_range(
+    *,
+    lat_a: float,
+    lon_a: float,
+    lat_b: float,
+    lon_b: float,
+    viewshed_radius_m: float,
+) -> bool:
+    """True when site pins are farther apart than two simulation disks can reach."""
+    if viewshed_radius_m <= 0:
+        return False
+    return _haversine_m(lat_a, lon_a, lat_b, lon_b) > (2.0 * float(viewshed_radius_m))
+
+
+def _pairwise_overlap_prefilter_reason(
+    ga: BaseGeometry | None,
+    gb: BaseGeometry | None,
+    *,
+    lat_a: float | None = None,
+    lon_a: float | None = None,
+    lat_b: float | None = None,
+    lon_b: float | None = None,
+    viewshed_radius_m: float | None = None,
+) -> str | None:
+    """Return a skip reason when polygon intersection cannot produce overlap."""
+    if (
+        viewshed_radius_m is not None
+        and viewshed_radius_m > 0
+        and lat_a is not None
+        and lon_a is not None
+        and lat_b is not None
+        and lon_b is not None
+        and _sites_beyond_viewshed_pair_range(
+            lat_a=lat_a,
+            lon_a=lon_a,
+            lat_b=lat_b,
+            lon_b=lon_b,
+            viewshed_radius_m=viewshed_radius_m,
+        )
+    ):
+        return "skipped (sites beyond 2× viewshed radius)"
+    if _metric_bounds_disjoint(ga, gb):
+        return "skipped (disjoint footprint bboxes)"
+    return None
+
+
+def _metric_overlap_to_wgs84_polygon(ga: BaseGeometry, gb: BaseGeometry) -> BaseGeometry | None:
+    """Intersect two EPSG:3857 footprints and return WGS-84 polygon parts only."""
+    inter_m = _intersection_metric_geometries(ga, gb)
+    if inter_m is None:
+        return None
+    return _metric_intersection_to_kml_polygon(inter_m)
+
+
 def _coverage_pair_intersection_metric(gpkg_a: Path, gpkg_b: Path) -> BaseGeometry | None:
     """EPSG:3857 intersection of two SPLAT footprint polygons."""
     ga = _read_coverage_footprint_epsg3857(gpkg_a)
     gb = _read_coverage_footprint_epsg3857(gpkg_b)
+    if _metric_bounds_disjoint(ga, gb):
+        return None
     return _intersection_metric_geometries(ga, gb)
 
 
@@ -500,6 +576,8 @@ def write_pairwise_link_overlap_kml_pairs(
     slug_to_viewshed_digest: Mapping[str, str] | None = None,
     bundle_kml_overlay_digest: str | None = None,
     bundle_land_use_inputs_digest: str | None = None,
+    site_pins: Mapping[str, tuple[float, float]] | None = None,
+    viewshed_radius_m: float | None = None,
 ) -> tuple[list[tuple[str, Path, str]], list[tuple[str, Path, str]]]:
     """Pairwise link overlap plus optional reuse as plain ∩ eligible. One footprint read and one A∩B per pair.
 
@@ -601,8 +679,8 @@ def write_pairwise_link_overlap_kml_pairs(
         i: int,
         j: int,
     ) -> tuple[tuple[str, Path, str] | None, tuple[str, Path, str] | None]:
-        gpkg_a, slug_a, label_a = usable[i]
-        gpkg_b, slug_b, label_b = usable[j]
+        _, slug_a, label_a = usable[i]
+        _, slug_b, label_b = usable[j]
         log_pair_progress(pair_idx, label_a, label_b)
         notes: list[str] = []
 
@@ -625,6 +703,37 @@ def write_pairwise_link_overlap_kml_pairs(
         pdir: Path | None = None
         pair_lock_key = mesh_pairwise_rel_dir(slug_a, slug_b)
 
+        ga = metrics[i]
+        gb = metrics[j]
+        pin_a = site_pins.get(slug_a) if site_pins is not None else None
+        pin_b = site_pins.get(slug_b) if site_pins is not None else None
+        prefilter = _pairwise_overlap_prefilter_reason(
+            ga,
+            gb,
+            lat_a=pin_a[0] if pin_a is not None else None,
+            lon_a=pin_a[1] if pin_a is not None else None,
+            lat_b=pin_b[0] if pin_b is not None else None,
+            lon_b=pin_b[1] if pin_b is not None else None,
+            viewshed_radius_m=viewshed_radius_m,
+        )
+        if prefilter is not None:
+            if use_geom_cache:
+                assert geometry_cache_root is not None and slug_to_viewshed_digest is not None
+                vd_a_ = slug_to_viewshed_digest[slug_a]
+                vd_b_ = slug_to_viewshed_digest[slug_b]
+                pdir = resolved_mesh_pairwise_pair_dir(
+                    slug_a=slug_a, slug_b=slug_b, cache_root=geometry_cache_root,
+                )
+                with _pairwise_geom_lock(pair_lock_key):
+                    write_cached_pair_overlap_geometry(
+                        pair_dir=pdir,
+                        vd_a=vd_a_,
+                        vd_b=vd_b_,
+                        overlap_wgs84=None,
+                    )
+            notes.append(prefilter)
+            return _finish_pair((None, None))
+
         plain_geom: BaseGeometry | None
         if use_geom_cache:
             assert geometry_cache_root is not None and slug_to_viewshed_digest is not None
@@ -634,7 +743,7 @@ def write_pairwise_link_overlap_kml_pairs(
                 slug_a=slug_a, slug_b=slug_b, cache_root=geometry_cache_root,
             )
             with _pairwise_geom_lock(pair_lock_key):
-                plain_geom = compute_pair_overlap_geometry(gpkg_a, gpkg_b)
+                plain_geom = _metric_overlap_to_wgs84_polygon(ga, gb)
                 write_cached_pair_overlap_geometry(
                     pair_dir=pdir,
                     vd_a=vd_a_,
@@ -643,11 +752,10 @@ def write_pairwise_link_overlap_kml_pairs(
                 )
             notes.append("geom computed")
         else:
-            inter_m = _intersection_metric_geometries(metrics[i], metrics[j])
-            if inter_m is None:
+            plain_geom = _metric_overlap_to_wgs84_polygon(ga, gb)
+            if plain_geom is None:
                 notes.append("no intersection")
                 return _finish_pair((None, None))
-            plain_geom = _metric_intersection_to_kml_polygon(inter_m)
             notes.append("geom computed (no cache)")
 
         if plain_geom is None or plain_geom.is_empty:
@@ -866,6 +974,8 @@ def write_pairwise_link_overlap_layers(
     pairwise_overlap_workers: int | None = None,
     geometry_cache_root: Path | None = None,
     slug_to_viewshed_digest: Mapping[str, str] | None = None,
+    site_pins: Mapping[str, tuple[float, float]] | None = None,
+    viewshed_radius_m: float | None = None,
 ) -> list[tuple[str, Path, str]]:
     """Pairwise footprint ∩ footprint → flat KML under ``sites/mesh/coverage/pairwise/``."""
     emitted, _ = write_pairwise_link_overlap_kml_pairs(
@@ -884,6 +994,8 @@ def write_pairwise_link_overlap_layers(
         pairwise_overlap_workers=pairwise_overlap_workers,
         geometry_cache_root=geometry_cache_root,
         slug_to_viewshed_digest=slug_to_viewshed_digest,
+        site_pins=site_pins,
+        viewshed_radius_m=viewshed_radius_m,
     )
     return emitted
 
@@ -900,6 +1012,8 @@ def write_pairwise_eligible_link_overlap_layers(
     pairwise_overlap_workers: int | None = None,
     geometry_cache_root: Path | None = None,
     slug_to_viewshed_digest: Mapping[str, str] | None = None,
+    site_pins: Mapping[str, tuple[float, float]] | None = None,
+    viewshed_radius_m: float | None = None,
 ) -> list[tuple[str, Path, str]]:
     """Plain link ∩ eligible (same geometry as pairwise link overlap clipped in WGS-84)."""
 
@@ -922,5 +1036,7 @@ def write_pairwise_eligible_link_overlap_layers(
         pairwise_overlap_workers=pairwise_overlap_workers,
         geometry_cache_root=geometry_cache_root,
         slug_to_viewshed_digest=slug_to_viewshed_digest,
+        site_pins=site_pins,
+        viewshed_radius_m=viewshed_radius_m,
     )
     return emitted

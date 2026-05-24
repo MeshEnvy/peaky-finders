@@ -61,6 +61,87 @@ def test_compute_pair_overlap_disjoint_returns_none(tmp_path: Path) -> None:
     assert compute_pair_overlap_geometry(a, b) is None
 
 
+def test_pairwise_disjoint_bboxes_skip_intersection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a = tmp_path / "a.gpkg"
+    b = tmp_path / "b.gpkg"
+    _write_coverage_gpkg(a, box(-116.0, 39.0, -115.9, 39.1))
+    _write_coverage_gpkg(b, box(-114.0, 39.0, -113.9, 39.1))
+    n_intersect = {"n": 0}
+    orig = link_overlap_module._intersection_metric_geometries
+
+    def wrap(ga: object, gb: object):
+        n_intersect["n"] += 1
+        return orig(ga, gb)
+
+    monkeypatch.setattr(link_overlap_module, "_intersection_metric_geometries", wrap)
+    got = write_pairwise_link_overlap_layers(
+        footprints=[(a, "sa", "Site A"), (b, "sb", "Site B")],
+        scratch_dir=tmp_path / "lo",
+        polygon_style=DEFAULT_MESH_PAIRWISE_KML_STYLE,
+    )
+    assert got == []
+    assert n_intersect["n"] == 0
+
+
+def test_pairwise_viewshed_radius_prefilter_skips_intersection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a = tmp_path / "a.gpkg"
+    b = tmp_path / "b.gpkg"
+    _write_coverage_gpkg(a, box(-115.02, 39.01, -115.00, 39.03))
+    _write_coverage_gpkg(b, box(-115.01, 39.00, -114.99, 39.02))
+    n_intersect = {"n": 0}
+    orig = link_overlap_module._intersection_metric_geometries
+
+    def wrap(ga: object, gb: object):
+        n_intersect["n"] += 1
+        return orig(ga, gb)
+
+    monkeypatch.setattr(link_overlap_module, "_intersection_metric_geometries", wrap)
+    got = write_pairwise_link_overlap_layers(
+        footprints=[(a, "sa", "Site A"), (b, "sb", "Site B")],
+        scratch_dir=tmp_path / "lo",
+        polygon_style=DEFAULT_MESH_PAIRWISE_KML_STYLE,
+        site_pins={"sa": (39.02, -115.01), "sb": (39.01, -115.0)},
+        viewshed_radius_m=1.0,
+    )
+    assert got == []
+    assert n_intersect["n"] == 0
+
+
+def test_pairwise_disjoint_bboxes_write_empty_geom_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from peaky_finders.mesh_pairwise_store import EMPTY_SENTINEL
+
+    a = tmp_path / "a.gpkg"
+    b = tmp_path / "b.gpkg"
+    _write_coverage_gpkg(a, box(-116.0, 39.0, -115.9, 39.1))
+    _write_coverage_gpkg(b, box(-114.0, 39.0, -113.9, 39.1))
+    geom_root = tmp_path / "geomcache"
+    slugs_digest = {"sa": "vdA", "sb": "vdB"}
+    n_intersect = {"n": 0}
+    orig = link_overlap_module._intersection_metric_geometries
+
+    def wrap(ga: object, gb: object):
+        n_intersect["n"] += 1
+        return orig(ga, gb)
+
+    monkeypatch.setattr(link_overlap_module, "_intersection_metric_geometries", wrap)
+    write_pairwise_link_overlap_layers(
+        footprints=[(a, "sa", "Site A"), (b, "sb", "Site B")],
+        scratch_dir=tmp_path / "lo",
+        polygon_style=DEFAULT_MESH_PAIRWISE_KML_STYLE,
+        geometry_cache_root=geom_root,
+        slug_to_viewshed_digest=slugs_digest,
+    )
+    pd = geom_root / mesh_pairwise_rel_dir("sa", "sb")
+    assert (pd / EMPTY_SENTINEL).is_file()
+    assert n_intersect["n"] == 0
+
+
 def test_compute_pair_overlap_bad_path_returns_none(tmp_path: Path) -> None:
     a = tmp_path / "a.gpkg"
     _write_coverage_gpkg(a, box(-115.0, 39.0, -114.9, 39.1))
@@ -106,13 +187,13 @@ def test_plain_pairwise_overlap_geometry_computed_each_render(
     footprints = [(a, "sa", "Site A"), (b, "sb", "Site B")]
 
     n_compute = {"n": 0}
-    orig_geom = link_overlap_module.compute_pair_overlap_geometry
+    orig_overlap = link_overlap_module._metric_overlap_to_wgs84_polygon
 
-    def wrap_geom(pa: Path, pb: Path):
+    def wrap_overlap(ga: object, gb: object):
         n_compute["n"] += 1
-        return orig_geom(pa, pb)
+        return orig_overlap(ga, gb)
 
-    monkeypatch.setattr(link_overlap_module, "compute_pair_overlap_geometry", wrap_geom)
+    monkeypatch.setattr(link_overlap_module, "_metric_overlap_to_wgs84_polygon", wrap_overlap)
 
     write_pairwise_link_overlap_layers(
         footprints=footprints,

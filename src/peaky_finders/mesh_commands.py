@@ -45,6 +45,14 @@ def _slug_digest_map(job) -> dict[str, str]:
     return mapping
 
 
+def _mesh_pairwise_site_pins(job, slugs: tuple[str, ...]) -> dict[str, tuple[float, float]]:
+    return {slug: (float(job.sites[slug].lat), float(job.sites[slug].lon)) for slug in slugs}
+
+
+def _simulation_viewshed_radius_m(job) -> float:
+    return float(job.simulation.radius_km) * 1000.0
+
+
 def run_mesh_links(preset_yaml: Path) -> int:
     preset_path = resolve_preset_yaml_arg(Path(preset_yaml))
     job = load_preset(preset_path)
@@ -166,6 +174,8 @@ def run_mesh_pairwise(slug_a: str, slug_b: str, preset_yaml: Path) -> int:
         slug_to_viewshed_digest=_slug_digest_map(job),
         bundle_kml_overlay_digest=pairwise_overlay,
         bundle_land_use_inputs_digest=pairwise_land if emit_eligible else None,
+        site_pins=_mesh_pairwise_site_pins(job, (slug_a_, slug_b_)),
+        viewshed_radius_m=_simulation_viewshed_radius_m(job),
     )
     print(f"mesh pairwise {slug_a_} ↔ {slug_b_}: wrote pairwise KML under {pdir}", flush=True)
     return 0
