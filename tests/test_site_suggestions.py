@@ -66,6 +66,7 @@ def test_depth_grid_marginal_gain(tmp_path: Path) -> None:
     aoi = box(-115.05, 39.00, -114.98, 39.05)
     grid = build_coverage_depth_grid(
         aoi_ll=aoi,
+        target_ll=aoi,
         footprint_gpkg_paths=[a],
         max_raster_dimension=256,
     )
@@ -83,6 +84,7 @@ def test_uncovered_geometry_wgs84_excludes_covered_aoi(tmp_path: Path) -> None:
     aoi = box(-115.05, 39.00, -114.98, 39.05)
     grid = build_coverage_depth_grid(
         aoi_ll=aoi,
+        target_ll=aoi,
         footprint_gpkg_paths=[a],
         max_raster_dimension=256,
     )
@@ -98,6 +100,7 @@ def test_point_marginal_gain_cells(tmp_path: Path) -> None:
     aoi = box(-115.05, 39.00, -114.98, 39.05)
     grid = build_coverage_depth_grid(
         aoi_ll=aoi,
+        target_ll=aoi,
         footprint_gpkg_paths=[a],
         max_raster_dimension=256,
     )
@@ -112,6 +115,7 @@ def test_filter_peaks_llz_matches_point_lookup(tmp_path: Path) -> None:
     aoi = box(-115.05, 39.00, -114.98, 39.05)
     grid = build_coverage_depth_grid(
         aoi_ll=aoi,
+        target_ll=aoi,
         footprint_gpkg_paths=[a],
         max_raster_dimension=256,
     )
@@ -123,6 +127,22 @@ def test_filter_peaks_llz_matches_point_lookup(tmp_path: Path) -> None:
     batch = grid.filter_peaks_llz_by_uncovered_grid(peaks, goal_depth=1)
     point = [p for p in peaks if grid.point_marginal_gain_cells(p[0], p[1], goal_depth=1) > 0]
     assert batch == point
+
+
+def test_marginal_gain_ignores_ineligible_target_cells(tmp_path: Path) -> None:
+    aoi = box(-115.05, 39.00, -114.98, 39.05)
+    eligible = box(-115.035, 39.01, -114.99, 39.04)
+    grid = build_coverage_depth_grid(
+        aoi_ll=aoi,
+        target_ll=eligible,
+        footprint_gpkg_paths=[],
+        max_raster_dimension=256,
+    )
+    ineligible_only = box(-115.06, 39.00, -115.045, 39.05)
+    eligible_patch = box(-115.03, 39.02, -115.005, 39.035)
+
+    assert grid.marginal_gain_cells(ineligible_only, goal_depth=1) == 0
+    assert grid.marginal_gain_cells(eligible_patch, goal_depth=1) > 0
 
 
 def test_eligible_peak_candidates_use_masked_dem(
@@ -137,6 +157,7 @@ def test_eligible_peak_candidates_use_masked_dem(
     eligible = box(-115.0, 39.0, -114.0, 40.0)
     grid = build_coverage_depth_grid(
         aoi_ll=aoi,
+        target_ll=eligible,
         footprint_gpkg_paths=[],
         max_raster_dimension=256,
     )
@@ -333,6 +354,7 @@ def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
     )
     out = capsys.readouterr().out
     assert "planner configuration" in out
+    assert "coverage_target: eligible" in out
     assert "candidate shortlist" in out
     assert "viewshed trials" in out
     assert "selection" in out
