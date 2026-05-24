@@ -1,0 +1,36 @@
+---
+description: Prefer parallel and multi-core execution where feasible and prudent
+alwaysApply: true
+---
+
+# Parallel execution
+
+Default to **parallel or multi-core** approaches when work is embarrassingly parallel, I/O-bound, or CPU-heavy with independent units — unless simplicity, memory, or correctness clearly wins with serial code.
+
+## When to parallelize
+
+- **Independent units** — tiles, sites, footprints, build targets, file fetches, raster slices.
+- **I/O-bound** — DEM/cache/network reads; prefer `ThreadPoolExecutor`.
+- **CPU-bound, release-the-GIL** — NumPy/raster/GDAL-heavy loops; threads or process pools depending on workload and GIL behavior.
+- **Existing knobs** — wire through preset/CLI parallelism (`max_workers`, `jobs`, `parallelism`) rather than hard-coding serial execution.
+
+## When to stay serial (or cap workers)
+
+- Small inputs where pool overhead dominates.
+- Shared mutable state without a safe aggregation strategy.
+- Memory pressure — each worker duplicates large arrays; cap `max_workers` or process in waves.
+- Ordering requirements — parallelize units, then **sort/merge** deterministically (see peak scan tie-break patterns).
+- External rate limits or fragile backends — use modest caps and reuse existing executor patterns.
+
+## Patterns in this repo
+
+- `ThreadPoolExecutor` + `as_completed` for tile/site/raster fan-out (`skadi_dem`, `pairwise_dem_peak`, `mesh_coverage_depth`, `build_executor`).
+- **Wave scheduling** when dependencies exist (`build_executor` runnable waves).
+- Expose **`max_workers` / `jobs`** on hot paths; default to `1` only when parallelism is opt-in via preset or CLI.
+
+## Implementation checklist
+
+- Bound workers: `mx = min(max_workers, len(units))`.
+- Collect results safely; avoid mutating shared structures from workers.
+- Under `--verbose`, log worker count at start and per-unit progress as units finish.
+- Preserve deterministic output order after parallel collection when callers depend on it.
