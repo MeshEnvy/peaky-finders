@@ -655,16 +655,27 @@ class BundleMeshKmlStyles(BaseModel):
     )
 
 
+class SiteSuggestionCoverageTarget(StrEnum):
+    """Which land the greedy planner scores marginal gain against."""
+
+    ELIGIBLE = "eligible"
+    AOI = "aoi"
+
+
 class BundleSiteSuggestionsConfig(BaseModel):
-    """Greedy AOI coverage planner (``peaky build --suggest``)."""
+    """Greedy coverage planner (``peaky build --suggest``)."""
 
     model_config = ConfigDict(extra="ignore")
 
+    coverage_target: SiteSuggestionCoverageTarget = Field(
+        default=SiteSuggestionCoverageTarget.ELIGIBLE,
+        description="Land mask for uncovered % and marginal gain (eligible deployable land vs full AOI).",
+    )
     coverage_goal_depth: int = Field(
         default=1,
         ge=1,
         le=32,
-        description="Target footprint overlap count across AOI (depth ≥ N).",
+        description="Target footprint overlap count across coverage_target (depth ≥ N).",
     )
     planner_raster_dimension: int = Field(
         default=1024,
@@ -687,7 +698,7 @@ class BundleSiteSuggestionsConfig(BaseModel):
         default=0.5,
         ge=0.0,
         le=100.0,
-        description="Stop early when uncovered AOI fraction falls below this percent.",
+        description="Stop early when uncovered coverage_target fraction falls below this percent.",
     )
 
 

@@ -19,7 +19,7 @@ from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_si
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_coverage_depth_grid
 from peaky_finders.site_suggestions.ephemeral_viewshed import candidate_viewshed_workdir, run_ephemeral_viewshed_footprint
 from peaky_finders.site_suggestions.log import suggest_log, suggest_step
-from peaky_finders.sites_job import Preset, resolved_site_suggestions_config
+from peaky_finders.sites_job import Preset, SiteSuggestionCoverageTarget, resolved_site_suggestions_config
 
 
 @dataclass(frozen=True)
@@ -101,6 +101,23 @@ def _format_candidate_brief(c: SiteCandidate) -> str:
     return f"{c.strategy}{elev} @ {_format_loc(c.lat, c.lon)}"
 
 
+def _coverage_target_label(target: SiteSuggestionCoverageTarget) -> str:
+    if target == SiteSuggestionCoverageTarget.ELIGIBLE:
+        return "eligible"
+    return "AOI"
+
+
+def _coverage_target_geometry(
+    target: SiteSuggestionCoverageTarget,
+    *,
+    aoi_ll: BaseGeometry,
+    eligible_ll: BaseGeometry,
+) -> BaseGeometry:
+    if target == SiteSuggestionCoverageTarget.ELIGIBLE:
+        return eligible_ll
+    return aoi_ll
+
+
 def _log_planner_config(
     *,
     verbose: bool,
@@ -120,6 +137,7 @@ def _log_planner_config(
         by_type[ent.type.value] = by_type.get(ent.type.value, 0) + 1
 
     suggest_log(verbose, "site suggest: ── planner configuration ──")
+    suggest_log(verbose, f"  coverage_target: {cfg.coverage_target.value}")
     suggest_log(verbose, f"  coverage_goal_depth: {goal}")
     suggest_log(verbose, f"  planner_raster_dimension: {cfg.planner_raster_dimension}")
     suggest_log(verbose, f"  max_candidates_per_round: {cfg.max_candidates_per_round}")
@@ -133,8 +151,9 @@ def _log_planner_config(
             f"  {slug}: type={ent.type.value} {_format_loc(ent.lat, ent.lon)}",
         )
     suggest_log(verbose, f"  totals: {by_type}")
+    target_label = _coverage_target_label(cfg.coverage_target)
     suggest_log(verbose, "site suggest: ── initial coverage grid ──")
-    suggest_log(verbose, f"  grid: {grid.cols}×{grid.rows} px  AOI cells: {grid.aoi_cell_count}")
+    suggest_log(verbose, f"  grid: {grid.cols}×{grid.rows} px  {target_label} cells: {grid.target_cell_count}")
     suggest_log(
         verbose,
         f"  uncovered vs depth≥{goal}: {100.0 * uncovered:.2f}% ({uncovered_cells} cells)",
@@ -155,6 +174,7 @@ def _log_trial_results(
     verbose: bool,
     iteration: int,
     goal: int,
+    target_label: str,
     trials: list[CandidateTrial],
     best: PlannedSuggestion | None,
 ) -> None:
@@ -198,7 +218,7 @@ def _log_trial_results(
         verbose,
         f"  chosen: {_format_candidate_brief(winners[0].candidate) if winners else _format_loc(best.lat, best.lon)}",
     )
-    suggest_log(verbose, f"  marginal_gain: {best.gain_cells} AOI cells toward depth≥{goal}")
+    suggest_log(verbose, f"  marginal_gain: {best.gain_cells} {target_label} cells toward depth≥{goal}")
     if runners:
         top_run = max(runners, key=lambda t: t.footprint_gain_cells or 0)
         margin = best.gain_cells - (top_run.footprint_gain_cells or 0)
@@ -239,6 +259,7 @@ def _evaluate_candidate_trial(
     iteration: int,
     goal: int,
     grid: CoverageDepthGrid,
+    target_label: str,
     preset: Preset,
     preset_path: Path,
     plan: BuildConfigurePlan,
@@ -305,15 +326,15 @@ def _evaluate_candidate_trial(
                 footprint_area_km2=area_km2,
                 workdir=wd,
                 detail=(
-                    f"footprint covers {area_km2:.1f} km² but adds 0 new AOI cells "
-                    f"toward depth≥{goal} (already covered or outside AOI need)"
+                    f"footprint covers {area_km2:.1f} km² but adds 0 new {target_label} cells "
+                    f"toward depth≥{goal} (already covered or outside coverage target)"
                 ),
             ),
             pick=None,
         )
 
     rationale = (
-        f"Greedy suggest #{iteration}: +{gain} AOI cells toward depth≥{goal} "
+        f"Greedy suggest #{iteration}: +{gain} {target_label} cells toward depth≥{goal} "
         f"({cand.strategy} candidate)"
     )
     pick = PlannedSuggestion(
@@ -357,6 +378,7 @@ def _run_candidate_trials(
     iteration: int,
     goal: int,
     grid: CoverageDepthGrid,
+    target_label: str,
     preset: Preset,
     preset_path: Path,
     plan: BuildConfigurePlan,
@@ -384,6 +406,7 @@ def _run_candidate_trials(
                     iteration=iteration,
                     goal=goal,
                     grid=grid,
+                    target_label=target_label,
                     preset=preset,
                     preset_path=preset_path,
                     plan=plan,
@@ -403,6 +426,7 @@ def _run_candidate_trials(
                         iteration=iteration,
                         goal=goal,
                         grid=grid,
+                        target_label=target_label,
                         preset=preset,
                         preset_path=preset_path,
                         plan=plan,
@@ -450,7 +474,7 @@ def plan_greedy_site_suggestions(
     verbose: bool = False,
     jobs: int = 1,
 ) -> list[PlannedSuggestion]:
-    """Pick ``n_suggestions`` sites maximizing marginal AOI depth coverage."""
+    """Pick ``n_suggestions`` sites maximizing marginal depth coverage on ``coverage_target``."""
     if preset.bundle is None:
         raise ValueError("site suggestions require preset bundle.*")
     if n_suggestions <= 0:
@@ -458,6 +482,7 @@ def plan_greedy_site_suggestions(
 
     cfg = resolved_site_suggestions_config(preset.bundle)
     goal = int(cfg.coverage_goal_depth)
+    target_label = _coverage_target_label(cfg.coverage_target)
 
     suggest_log(verbose, "site suggest: ── planner setup ──")
     with suggest_step(verbose, "load AOI and eligible geometries"):
@@ -465,14 +490,21 @@ def plan_greedy_site_suggestions(
         elig_gpkg = _composite_by_role(plan, "eligible").union_gpkg
         aoi_ll = _read_union_geometry(aoi_gpkg, "aoi")
         eligible_ll = _read_union_geometry(elig_gpkg, ELIGIBLE_LAYER)
+        target_ll = _coverage_target_geometry(
+            cfg.coverage_target,
+            aoi_ll=aoi_ll,
+            eligible_ll=eligible_ll,
+        )
 
     seed_paths = _footprint_paths_for_seed_sites(plan, preset)
     with suggest_step(verbose, f"build initial coverage grid ({len(seed_paths)} seed footprint(s))"):
         grid = build_coverage_depth_grid(
             aoi_ll=aoi_ll,
+            target_ll=target_ll,
             footprint_gpkg_paths=seed_paths,
             max_raster_dimension=int(cfg.planner_raster_dimension),
             verbose=verbose,
+            target_label=target_label,
         )
 
     _log_planner_config(
@@ -488,7 +520,7 @@ def plan_greedy_site_suggestions(
     stop_frac = float(cfg.uncovered_stop_pct) / 100.0
     if grid.uncovered_fraction(goal_depth=goal) <= stop_frac:
         msg = (
-            f"site suggest: AOI already ≥{goal} depth "
+            f"site suggest: {target_label} land already ≥{goal} depth "
             f"(uncovered {100.0 * grid.uncovered_fraction(goal_depth=goal):.2f}% ≤ {cfg.uncovered_stop_pct}%)"
         )
         print(msg, flush=True)
@@ -502,7 +534,7 @@ def plan_greedy_site_suggestions(
     for iteration in range(1, n_suggestions + 1):
         uncovered_before = grid.uncovered_fraction(goal_depth=goal)
         if uncovered_before <= stop_frac:
-            print(f"site suggest: stopping at iter {iteration - 1} — AOI goal met", flush=True)
+            print(f"site suggest: stopping at iter {iteration - 1} — {target_label} goal met", flush=True)
             break
 
         suggest_log(
@@ -535,6 +567,7 @@ def plan_greedy_site_suggestions(
             iteration=iteration,
             goal=goal,
             grid=grid,
+            target_label=target_label,
             preset=preset,
             preset_path=preset_path,
             plan=plan,
@@ -545,10 +578,24 @@ def plan_greedy_site_suggestions(
 
         if best is None or best_footprint is None:
             print(f"site suggest: no improving candidate at iteration {iteration}", flush=True)
-            _log_trial_results(verbose=verbose, iteration=iteration, goal=goal, trials=trials, best=None)
+            _log_trial_results(
+                verbose=verbose,
+                iteration=iteration,
+                goal=goal,
+                target_label=target_label,
+                trials=trials,
+                best=None,
+            )
             break
 
-        _log_trial_results(verbose=verbose, iteration=iteration, goal=goal, trials=trials, best=best)
+        _log_trial_results(
+            verbose=verbose,
+            iteration=iteration,
+            goal=goal,
+            target_label=target_label,
+            trials=trials,
+            best=best,
+        )
 
         grid.add_footprint(best_footprint)
         winners.append(best)
