@@ -63,7 +63,6 @@ from peaky_finders.sites_job import (
 from peaky_finders.skadi_dem import iter_skadi_tile_names_for_wgs84_bounds, skadi_mirror_tile_gz_path
 from peaky_finders.splat_polygonize import COVERAGE_GPKG_NAME, SPLAT_OUTPUT_PPM_BASENAME
 from peaky_finders.viewshed_workspace import (
-    propagation_digest_to_workspace_master_slug,
     resolved_viewshed_workdir,
     viewshed_workspace_digest,
 )
@@ -97,7 +96,6 @@ class PlannedViewshedWorkspace:
     coverage_gpkg: Path
     request_json: Path
     site_slugs: tuple[str, ...]
-    rep_slug: str
 
 
 @dataclass(frozen=True)
