@@ -79,18 +79,17 @@ def _viewshed_deps(plan: BuildConfigurePlan, ws: PlannedViewshedWorkspace) -> tu
 
 def viewshed_mtime_prereqs(plan: BuildConfigurePlan, ws: PlannedViewshedWorkspace) -> tuple[Path, ...]:
     preset_f = Path(plan.preset_path).expanduser().resolve()
-    parts = [preset_f.resolve(), stamp_path(preset_f, "simulation"), stamp_path(preset_f, "display")]
+    parts = [stamp_path(preset_f, "simulation"), stamp_path(preset_f, "display")]
     for slug in ws.site_slugs:
         parts.append(stamp_path(preset_f, f"site__{slug}"))
     if plan.has_bundle:
-        parts.append(plan.bundle_resolve.resolve())
         parts.append(dem_bulk_stamp_path(plan))
     return tuple(sorted(set(parts), key=str))
 
 
 def pairwise_mtime_prereqs(plan: BuildConfigurePlan, slug_a: str, slug_b: str) -> tuple[Path, ...]:
     preset_f = Path(plan.preset_path).expanduser().resolve()
-    parts: list[Path] = [preset_f.resolve(), plan.bundle_resolve.resolve()]
+    parts: list[Path] = []
     for sec in ("bundle_kml_overlay", "bundle_mesh_coverage"):
         parts.append(stamp_path(preset_f, sec).resolve())
     parts.append(dem_bulk_stamp_path(plan))
@@ -122,7 +121,6 @@ def mesh_links_mtime_prereqs(plan: BuildConfigurePlan, preset: Preset) -> tuple[
     for sec in ("sites_sees", "bundle_kml_overlay", "bundle_mesh_coverage"):
         parts.append(stamp_path(preset_f, sec).resolve())
     if plan.has_bundle:
-        parts.append(plan.bundle_resolve.resolve())
         parts.append(dem_bulk_stamp_path(plan))
     return tuple(sorted(set(parts), key=str))
 
@@ -246,7 +244,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
                 id="bundle:resolve",
                 depends_on=tuple(sorted(["bundle:eligible", "stamp:topology", *ref_ids])),
                 outputs=(plan.bundle_resolve.resolve(),),
-                mtime_prereqs=(preset_f.resolve(),),
+                mtime_prereqs=tuple(),
             )
         )
 

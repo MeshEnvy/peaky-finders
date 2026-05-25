@@ -114,7 +114,16 @@ def reference_artefacts_fresh(
     return (directory / REFERENCE_EMPTY_MARKER).is_file()
 
 
-def bundle_resolve_fresh(resolve_path: Path, *, clips_root_expected: Path) -> bool:
+def bundle_resolve_fresh(
+    resolve_path: Path,
+    *,
+    clips_root_expected: Path,
+    aoi_sha: str,
+    include_sha: str,
+    exclude_sha: str,
+    eligible_sha: str,
+    reference: dict[str, str] | None = None,
+) -> bool:
     p = Path(resolve_path).expanduser().resolve()
     raw = _read_manifest(p)
     if raw is None or raw.get("format") != BUNDLE_RESOLVE_FORMAT:
@@ -123,7 +132,22 @@ def bundle_resolve_fresh(resolve_path: Path, *, clips_root_expected: Path) -> bo
         cr = Path(str(raw["clips_root"])).resolve()
     except (KeyError, OSError, TypeError):
         return False
-    return cr == Path(clips_root_expected).expanduser().resolve()
+    if cr != Path(clips_root_expected).expanduser().resolve():
+        return False
+    if str(raw.get("aoi")) != aoi_sha:
+        return False
+    if str(raw.get("include")) != include_sha:
+        return False
+    if str(raw.get("exclude")) != exclude_sha:
+        return False
+    if str(raw.get("eligible")) != eligible_sha:
+        return False
+    want_ref = dict(sorted((reference or {}).items()))
+    got_ref = raw.get("reference") or {}
+    if not isinstance(got_ref, dict):
+        return False
+    got_sorted = {str(k): str(v) for k, v in sorted(got_ref.items())}
+    return got_sorted == want_ref
 
 
 def viewshed_request_digest_matches(workdir: Path, *, expected_workspace_digest: str) -> bool:
