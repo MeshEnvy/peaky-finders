@@ -51,11 +51,15 @@ from peaky_finders.splat_polygonize import (
     inject_peaky_polygon_kml_style,
 )
 from peaky_finders.mesh_depth_store import (
+    BAND_GPKG,
+    read_mesh_depth_grid,
     resolved_mesh_depth_set_dir,
     resolved_mesh_depth_slice_dir,
     write_cached_mesh_depth_bands,
     write_cached_mesh_depth_flat_kml,
+    write_mesh_depth_grid,
     write_cached_mesh_depth_slice,
+    mesh_depth_set_update_kind,
 )
 from peaky_finders.mesh_pairwise_store import pairwise_overlap_geometry_digest_sha256
 from peaky_finders.path_labels import mesh_depth_network_rel_dir
@@ -137,13 +141,7 @@ def _depth_band_from_mask_wgs84(
     return band, u
 
 
-def compute_footprint_depth_bands_wgs84(
-    gpkg_paths: Sequence[Path],
-    *,
-    max_raster_dimension: int,
-    raster_workers: int | None = None,
-) -> dict[str, BaseGeometry]:
-    """Count overlapping footprints on an EPSG:3857 grid; return WGS-84 polygonal bands (may be empty)."""
+def _footprint_geometries_epsg3857(gpkg_paths: Sequence[Path]) -> list[BaseGeometry]:
     metric: list[BaseGeometry] = []
     for p in gpkg_paths:
         g = _read_coverage_footprint_epsg3857(Path(p))
@@ -151,17 +149,17 @@ def compute_footprint_depth_bands_wgs84(
             g = make_valid(g) if not g.is_valid else g
             if not g.is_empty:
                 metric.append(g)
+    return metric
 
-    if len(metric) < 2:
-        return {}
 
-    bounds = unary_union(metric).bounds
+def _depth_grid_shape(
+    bounds: tuple[float, float, float, float],
+    *,
+    max_raster_dimension: int,
+) -> tuple[int, int, object]:
     minx, miny, maxx, maxy = bounds
     width_m = maxx - minx
     height_m = maxy - miny
-    if width_m <= 0 or height_m <= 0:
-        return {}
-
     max_dim = max(1, int(max_raster_dimension))
     if width_m >= height_m:
         cols = max_dim
@@ -169,44 +167,16 @@ def compute_footprint_depth_bands_wgs84(
     else:
         rows = max_dim
         cols = max(1, int(round(max_dim * width_m / height_m)))
-
-    print(f"  depth grid {cols}×{rows} px (~{width_m / 1000.0:.1f}×{height_m / 1000.0:.1f} km extent)…", flush=True)
     transform = from_bounds(minx, miny, maxx, maxy, cols, rows)
-    n_m = len(metric)
-    raster_cap = _pairwise_worker_cap(raster_workers, total_pairs=n_m)
+    return rows, cols, transform
 
-    def _depth_raster_plane(gm: BaseGeometry) -> np.ndarray:
-        return features.rasterize(
-            [(gm, 1)],
-            out_shape=(rows, cols),
-            transform=transform,
-            fill=0,
-            dtype=np.uint16,
-        )
 
-    if raster_cap > 1:
-        print(
-            f"  depth footprint raster parallelism: {raster_cap} threads ({n_m} layers)…",
-            flush=True,
-        )
-        with ThreadPoolExecutor(max_workers=raster_cap) as ex:
-            stacks = list(ex.map(_depth_raster_plane, metric))
-        acc = np.zeros((rows, cols), dtype=np.uint32)
-        for layer in stacks:
-            acc += layer.astype(np.uint32, copy=False)
-    else:
-        acc = np.zeros((rows, cols), dtype=np.uint32)
-        for i, g in enumerate(metric, start=1):
-            print(f"  depth rasterize footprint {i}/{n_m}…", flush=True)
-            layer = features.rasterize(
-                [(g, 1)],
-                out_shape=(rows, cols),
-                transform=transform,
-                fill=0,
-                dtype=np.uint16,
-            )
-            acc += layer.astype(np.uint32, copy=False)
-
+def _bands_wgs84_from_accum(
+    acc: np.ndarray,
+    transform,
+    *,
+    raster_workers: int | None = None,
+) -> dict[str, BaseGeometry]:
     band_masks: list[tuple[str, np.ndarray]] = [
         ("d1_unique", (acc == 1)),
         ("d2_pair", (acc == 2)),
@@ -250,6 +220,146 @@ def compute_footprint_depth_bands_wgs84(
             flush=True,
         )
     return out
+
+
+def _build_depth_accum_grid(
+    gpkg_paths: Sequence[Path],
+    *,
+    max_raster_dimension: int,
+    raster_workers: int | None = None,
+) -> tuple[np.ndarray, object, tuple[float, float, float, float]] | None:
+    metric = _footprint_geometries_epsg3857(gpkg_paths)
+    if len(metric) < 2:
+        return None
+
+    bounds = unary_union(metric).bounds
+    minx, miny, maxx, maxy = bounds
+    width_m = maxx - minx
+    height_m = maxy - miny
+    if width_m <= 0 or height_m <= 0:
+        return None
+
+    rows, cols, transform = _depth_grid_shape(bounds, max_raster_dimension=max_raster_dimension)
+    print(f"  depth grid {cols}×{rows} px (~{width_m / 1000.0:.1f}×{height_m / 1000.0:.1f} km extent)…", flush=True)
+    n_m = len(metric)
+    raster_cap = _pairwise_worker_cap(raster_workers, total_pairs=n_m)
+
+    def _depth_raster_plane(gm: BaseGeometry) -> np.ndarray:
+        return features.rasterize(
+            [(gm, 1)],
+            out_shape=(rows, cols),
+            transform=transform,
+            fill=0,
+            dtype=np.uint16,
+        )
+
+    if raster_cap > 1:
+        print(
+            f"  depth footprint raster parallelism: {raster_cap} threads ({n_m} layers)…",
+            flush=True,
+        )
+        with ThreadPoolExecutor(max_workers=raster_cap) as ex:
+            stacks = list(ex.map(_depth_raster_plane, metric))
+        acc = np.zeros((rows, cols), dtype=np.uint32)
+        for layer in stacks:
+            acc += layer.astype(np.uint32, copy=False)
+    else:
+        acc = np.zeros((rows, cols), dtype=np.uint32)
+        for i, g in enumerate(metric, start=1):
+            print(f"  depth rasterize footprint {i}/{n_m}…", flush=True)
+            layer = features.rasterize(
+                [(g, 1)],
+                out_shape=(rows, cols),
+                transform=transform,
+                fill=0,
+                dtype=np.uint16,
+            )
+            acc += layer.astype(np.uint32, copy=False)
+    return acc, transform, (minx, miny, maxx, maxy)
+
+
+def extend_footprint_depth_bands_wgs84(
+    *,
+    set_dir: Path,
+    new_gpkg_paths: Sequence[Path],
+    max_raster_dimension: int,
+    raster_workers: int | None = None,
+) -> dict[str, BaseGeometry] | None:
+    """Add new footprint layer(s) to a persisted grid; ``None`` when bounds/grid must rebuild."""
+
+    loaded = read_mesh_depth_grid(set_dir)
+    if loaded is None:
+        return None
+    acc, transform, stored_bounds = loaded
+    rows, cols = acc.shape
+    new_metric = _footprint_geometries_epsg3857(new_gpkg_paths)
+    if not new_metric:
+        return _bands_wgs84_from_accum(acc, transform, raster_workers=raster_workers)
+
+    new_bounds = unary_union(new_metric).bounds
+    union_bounds = (
+        min(stored_bounds[0], new_bounds[0]),
+        min(stored_bounds[1], new_bounds[1]),
+        max(stored_bounds[2], new_bounds[2]),
+        max(stored_bounds[3], new_bounds[3]),
+    )
+    if union_bounds != stored_bounds:
+        print("  depth incremental: footprint bounds expanded, full rebuild required", flush=True)
+        return None
+
+    n_new = len(new_metric)
+    raster_cap = _pairwise_worker_cap(raster_workers, total_pairs=n_new)
+
+    def _depth_raster_plane(gm: BaseGeometry) -> np.ndarray:
+        return features.rasterize(
+            [(gm, 1)],
+            out_shape=(rows, cols),
+            transform=transform,
+            fill=0,
+            dtype=np.uint16,
+        )
+
+    print(f"  depth incremental: raster {n_new} new footprint(s)…", flush=True)
+    if raster_cap > 1 and n_new > 1:
+        with ThreadPoolExecutor(max_workers=raster_cap) as ex:
+            stacks = list(ex.map(_depth_raster_plane, new_metric))
+        for layer in stacks:
+            acc = acc + layer.astype(np.uint32, copy=False)
+    else:
+        for i, g in enumerate(new_metric, start=1):
+            print(f"  depth incremental rasterize {i}/{n_new}…", flush=True)
+            layer = features.rasterize(
+                [(g, 1)],
+                out_shape=(rows, cols),
+                transform=transform,
+                fill=0,
+                dtype=np.uint16,
+            )
+            acc = acc + layer.astype(np.uint32, copy=False)
+
+    write_mesh_depth_grid(set_dir=set_dir, acc=acc, transform=transform, bounds=stored_bounds)
+    return _bands_wgs84_from_accum(acc, transform, raster_workers=raster_workers)
+
+
+def compute_footprint_depth_bands_wgs84(
+    gpkg_paths: Sequence[Path],
+    *,
+    max_raster_dimension: int,
+    raster_workers: int | None = None,
+    persist_grid_dir: Path | None = None,
+) -> dict[str, BaseGeometry]:
+    """Count overlapping footprints on an EPSG:3857 grid; return WGS-84 polygonal bands (may be empty)."""
+    built = _build_depth_accum_grid(
+        gpkg_paths,
+        max_raster_dimension=max_raster_dimension,
+        raster_workers=raster_workers,
+    )
+    if built is None:
+        return {}
+    acc, transform, bounds = built
+    if persist_grid_dir is not None:
+        write_mesh_depth_grid(set_dir=persist_grid_dir, acc=acc, transform=transform, bounds=bounds)
+    return _bands_wgs84_from_accum(acc, transform, raster_workers=raster_workers)
 
 
 def _mesh_depth_viewshed_rows_for_cache(
@@ -359,6 +469,7 @@ def write_mesh_depth_kml_layers(
         if Path(p).is_file()
     ]
     vd_row = _mesh_depth_viewshed_rows_for_cache(usable, slug_to_viewshed_digest)
+    site_slugs = tuple(slug for _, slug, _ in usable)
     use_cache = geometry_cache_root is not None and vd_row is not None
     set_dir: Path | None = None
     if use_cache:
@@ -366,17 +477,89 @@ def write_mesh_depth_kml_layers(
         set_dir = resolved_mesh_depth_set_dir(rel_label=rel_label, cache_root=geometry_cache_root)
 
     bands_ll: dict[str, BaseGeometry]
-    if use_cache and set_dir is not None:
+    if use_cache and set_dir is not None and slug_to_viewshed_digest is not None:
+        update_kind = mesh_depth_set_update_kind(
+            set_dir=set_dir,
+            viewshed_digests=vd_row,
+            site_slugs=site_slugs,
+            max_raster_dimension=max_raster_dimension,
+            site_slug_to_digest=slug_to_viewshed_digest,
+        )
+        if update_kind == "extend":
+            try:
+                stored_slugs = json.loads((set_dir / "complete.json").read_text(encoding="utf-8")).get(
+                    "site_slugs", []
+                )
+            except (OSError, json.JSONDecodeError):
+                stored_slugs = []
+            stored_set = {str(x) for x in stored_slugs}
+            new_paths = [
+                gpkg for gpkg, slug, _ in usable if slug not in stored_set
+            ]
+            print(
+                f"Mesh coverage depth: incremental extend {len(new_paths)} footprint(s) "
+                f"({len(stored_set)} → {len(site_slugs)} sites)…",
+                flush=True,
+            )
+            bands_ll = extend_footprint_depth_bands_wgs84(
+                set_dir=set_dir,
+                new_gpkg_paths=new_paths,
+                max_raster_dimension=max_raster_dimension,
+                raster_workers=mesh_depth_workers,
+            )
+            if bands_ll is None:
+                update_kind = "rebuild"
+            else:
+                write_cached_mesh_depth_bands(
+                    set_dir=set_dir,
+                    max_raster_dimension=max_raster_dimension,
+                    viewshed_digests=vd_row,
+                    site_slugs=site_slugs,
+                    bands_wgs84=bands_ll,
+                )
+        if update_kind != "extend":
+            if update_kind == "current":
+                print(
+                    f"Mesh coverage depth: cache current ({len(usable_paths)} footprint(s)), refreshing slices…",
+                    flush=True,
+                )
+                bands_ll = {}
+                for band in MESH_DEPTH_BANDS:
+                    gpkg = set_dir / "bands" / band / BAND_GPKG
+                    if gpkg.is_file():
+                        gdf = gpd.read_file(gpkg)
+                        if not gdf.empty:
+                            geom = gdf.geometry.iloc[0]
+                            if geom is not None and not geom.is_empty:
+                                bands_ll[band] = geom
+            else:
+                print(f"Mesh coverage depth: raster {len(usable_paths)} footprint(s)…", flush=True)
+                bands_ll = compute_footprint_depth_bands_wgs84(
+                    usable_paths,
+                    max_raster_dimension=max_raster_dimension,
+                    raster_workers=mesh_depth_workers,
+                    persist_grid_dir=set_dir,
+                )
+                write_cached_mesh_depth_bands(
+                    set_dir=set_dir,
+                    max_raster_dimension=max_raster_dimension,
+                    viewshed_digests=vd_row,
+                    site_slugs=site_slugs,
+                    bands_wgs84=bands_ll,
+                )
+    elif use_cache and set_dir is not None:
         print(f"Mesh coverage depth: raster {len(usable_paths)} footprint(s)…", flush=True)
         bands_ll = compute_footprint_depth_bands_wgs84(
             usable_paths,
             max_raster_dimension=max_raster_dimension,
             raster_workers=mesh_depth_workers,
+            persist_grid_dir=set_dir,
         )
         write_cached_mesh_depth_bands(
             set_dir=set_dir,
             max_raster_dimension=max_raster_dimension,
             viewshed_digests=vd_row,
+            site_slugs=site_slugs,
             bands_wgs84=bands_ll,
         )
     else:

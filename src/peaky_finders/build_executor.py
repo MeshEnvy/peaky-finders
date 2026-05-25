@@ -48,11 +48,11 @@ from peaky_finders.mesh_commands import (
     run_mesh_links,
     run_mesh_pairwise,
 )
-from peaky_finders.mesh_depth_store import mesh_depth_set_complete_matches
+from peaky_finders.mesh_depth_store import mesh_depth_set_update_kind
 from peaky_finders.mesh_pairwise_store import pairwise_complete_digest_matches
 from peaky_finders.preset_mapping import preset_to_request
 from peaky_finders.plss_mlrs_fetch import plss_bundle_build_stale
-from peaky_finders.preset_stamps import ensure_stamp, stamp_file_is_current
+from peaky_finders.preset_stamps import ensure_stamp, stamp_file_is_current, stamp_path
 from peaky_finders.sites_job import Preset, load_preset, resolved_preset_build_dir, CoverageProvider
 from peaky_finders.skadi_dem import (
     read_dem_prefetch_stamp_fingerprint,
@@ -169,6 +169,24 @@ def _bundle_resolve_content_fresh(plan: BuildConfigurePlan) -> bool:
     )
 
 
+def _site_slug_to_viewshed_digest(job: Preset) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for slug in job.sites.keys():
+        site = job.sites[slug]
+        req = preset_to_request(job, float(site.lat), float(site.lon))
+        out[slug] = viewshed_workspace_digest(request=req)
+    return out
+
+
+def _mesh_depth_stamp_mtime_prereqs(plan: BuildConfigurePlan) -> tuple[Path, ...]:
+    preset_f = Path(plan.preset_path).expanduser().resolve()
+    parts: list[Path] = []
+    if plan.has_bundle:
+        for sec in ("bundle_kml_overlay", "bundle_mesh_coverage"):
+            parts.append(stamp_path(preset_f, sec).resolve())
+    return tuple(p for p in parts if p.is_file())
+
+
 def target_stale(plan: BuildConfigurePlan, preset: Preset, node: PeakyGraphTarget) -> bool:
     tid = node.id
     if tid.startswith("stamp:"):
@@ -276,21 +294,23 @@ def target_stale(plan: BuildConfigurePlan, preset: Preset, node: PeakyGraphTarge
 
         if plan.mesh_depth_complete is None:
             return False
-        mq = tuple(Path(x).expanduser().resolve() for x in node.mtime_prereqs if Path(x).expanduser().is_file())
-
-
-        if artefact_mtime_stale(node.outputs, mq):
-            return True
         mx = 4096
         if preset.bundle and preset.bundle.mesh_coverage is not None:
             mx = preset.bundle.mesh_coverage.max_raster_dimension
         sdir = plan.mesh_depth_complete.parent.expanduser().resolve()
-        return not mesh_depth_set_complete_matches(
+        vds = _sorted_viewshed_digests(preset)
+        slug_to_digest = _site_slug_to_viewshed_digest(preset)
+        kind = mesh_depth_set_update_kind(
             set_dir=sdir,
-            viewshed_digests=_sorted_viewshed_digests(preset),
+            viewshed_digests=vds,
+            site_slugs=sorted(preset.sites.keys()),
             max_raster_dimension=mx,
-
+            site_slug_to_digest=slug_to_digest,
         )
+        if kind == "current":
+            mq = _mesh_depth_stamp_mtime_prereqs(plan)
+            return artefact_mtime_stale(node.outputs, mq)
+        return True
 
 
     if tid == "mesh:links":

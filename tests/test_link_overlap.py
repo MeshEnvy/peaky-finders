@@ -550,7 +550,7 @@ def test_write_mesh_depth_emits_per_site_kmls(tmp_path: Path) -> None:
         assert path.is_file()
 
 
-def test_write_mesh_depth_recomputes_bands_each_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_write_mesh_depth_reuses_bands_when_cache_current(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from peaky_finders import mesh_coverage_depth as mcd
 
     a = tmp_path / "a.gpkg"
@@ -589,7 +589,7 @@ def test_write_mesh_depth_recomputes_bands_each_call(tmp_path: Path, monkeypatch
         }
     )
     assert len(plain2) == len(plain1)
-    assert n_compute["n"] == 2
+    assert n_compute["n"] == 1
 
 
 def test_mesh_depth_flat_kml_rewrites_base_each_plain_render(

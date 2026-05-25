@@ -122,6 +122,46 @@ def test_viewshed_request_fresh_when_preset_yaml_touched(peaky_test_home: Path) 
     assert target_stale(plan, preset, node) is False
 
 
+def test_mesh_depth_fresh_when_preset_yaml_touched(peaky_test_home: Path) -> None:
+    import numpy as np
+    from rasterio.transform import from_bounds
+
+    from peaky_finders.mesh_depth_store import write_cached_mesh_depth_bands, write_mesh_depth_grid
+
+    preset_path = SAMPLE_PROJECT_CONFIG.expanduser().resolve()
+    preset = load_preset(preset_path)
+    plan = configure_preset_build(preset_path=preset_path)
+    if plan.mesh_depth_complete is None:
+        pytest.skip("sample preset has no mesh depth target")
+
+    nodes = build_target_graph(plan, preset)
+    sdir = plan.mesh_depth_complete.parent
+    vds = []
+    slugs = []
+    for slug in sorted(preset.sites.keys()):
+        site = preset.sites[slug]
+        vd = viewshed_workspace_digest(request=preset_to_request(preset, float(site.lat), float(site.lon)))
+        vds.append(vd)
+        slugs.append(slug)
+
+    write_cached_mesh_depth_bands(
+        set_dir=sdir,
+        max_raster_dimension=4096,
+        viewshed_digests=vds,
+        site_slugs=slugs,
+        bands_wgs84={},
+    )
+    write_mesh_depth_grid(
+        set_dir=sdir,
+        acc=np.zeros((8, 8), dtype=np.uint32),
+        transform=from_bounds(-120, 39, -119, 40, 8, 8),
+        bounds=(-120.0, 39.0, -119.0, 40.0),
+    )
+    _touch_future(preset_path)
+
+    assert target_stale(plan, preset, nodes["mesh:depth"]) is False
+
+
 def test_mesh_pair_fresh_when_preset_yaml_touched(peaky_test_home: Path) -> None:
     preset_path = SAMPLE_PROJECT_CONFIG.expanduser().resolve()
     preset = load_preset(preset_path)
