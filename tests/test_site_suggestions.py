@@ -558,18 +558,16 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
                         "site_goal_depth": 1,
                         "link_buffer_m": 8000.0,
                         "sample_spacing_m": 1500.0,
-                        "endpoint_capture_m": 3000.0,
                         "max_candidates_per_round": 8,
                         "refine_enabled": False,
-                        "anchors": {
-                            "a": [39.02, -115.04],
-                            "b": [39.02, -114.99],
-                        },
-                        "links": [{"name": "a-b", "endpoints": ["a", "b"]}],
+                        "links": [{"name": "seed-b", "endpoints": ["seed", "site-b"]}],
                     },
                 }
             },
-            "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.04]}},
+            "sites": {
+                "seed": {"name": "Seed", "loc": [39.02, -115.04]},
+                "site-b": {"name": "B", "loc": [39.02, -114.99]},
+            },
         },
     )
     preset = load_preset(preset_path)

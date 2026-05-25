@@ -12,8 +12,8 @@ from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid
 from peaky_finders.site_suggestions.mesh_backbone_completion import (
     LinkCompletionResult,
-    anchor_capture_slugs,
     all_backbone_sites,
+    endpoint_slugs_in_zone,
     evaluate_mesh_backbone_completion,
     footprints_for_backbone_sites,
     hop_adjacency,
@@ -22,7 +22,7 @@ from peaky_finders.site_suggestions.mesh_backbone_completion import (
 )
 from peaky_finders.site_suggestions.mesh_backbone_geom import (
     AnchorPoint,
-    anchors_from_config,
+    anchors_from_preset,
     link_search_zone,
     resolve_link_leg,
     sample_along_link,
@@ -31,8 +31,8 @@ from peaky_finders.sites_job import MeshBackboneLinkEntry, MeshBackboneStrategyC
 
 
 @dataclass(frozen=True)
-class _OpenAnchorBias:
-    anchor_key: str
+class _OpenEndpointBias:
+    slug: str
     toward_leg_start: bool
 
 
@@ -62,7 +62,7 @@ def _reachable_slugs(
     return seen
 
 
-def open_anchor_bias_for_link(
+def open_endpoint_bias_for_link(
     *,
     link: MeshBackboneLinkEntry,
     leg: LineString,
@@ -70,39 +70,36 @@ def open_anchor_bias_for_link(
     anchors: dict[str, AnchorPoint],
     sites: list,
     footprints: dict[str, BaseGeometry | None],
-    endpoint_capture_m: float,
-) -> _OpenAnchorBias:
-    """Pick the anchor side to extend toward for an incomplete link."""
-    a_key, b_key = link.endpoints
-    start_anchor = anchors[a_key]
-    end_anchor = anchors[b_key]
+) -> _OpenEndpointBias:
+    """Pick the endpoint site slug to extend toward for an incomplete link."""
+    a_slug, b_slug = link.endpoints
     in_zone = sites_in_zone(sites, zone_ll)
     zone_slugs = {s.slug for s in in_zone}
-    start_slugs = anchor_capture_slugs(in_zone, start_anchor, capture_m=endpoint_capture_m)
-    end_slugs = anchor_capture_slugs(in_zone, end_anchor, capture_m=endpoint_capture_m)
+    start_slugs, end_slugs = endpoint_slugs_in_zone(link, zone_slugs)
     if not start_slugs:
-        return _OpenAnchorBias(anchor_key=a_key, toward_leg_start=True)
+        return _OpenEndpointBias(slug=a_slug, toward_leg_start=True)
     if not end_slugs:
-        return _OpenAnchorBias(anchor_key=b_key, toward_leg_start=False)
+        return _OpenEndpointBias(slug=b_slug, toward_leg_start=False)
 
     adjacency = hop_adjacency(in_zone, footprints)
     from_start = _reachable_slugs(start_slugs, adjacency, zone_slugs)
     from_end = _reachable_slugs(end_slugs, adjacency, zone_slugs)
     if from_start & end_slugs or from_end & start_slugs or (from_start & from_end):
-        return _OpenAnchorBias(anchor_key=b_key, toward_leg_start=False)
+        return _OpenEndpointBias(slug=b_slug, toward_leg_start=False)
 
-    near_m = max(float(endpoint_capture_m) * 4.0, 20_000.0)
+    start_anchor = anchors[a_slug]
+    end_anchor = anchors[b_slug]
     start_near = sum(
-        1 for s in in_zone if _distance_m(s.lon, s.lat, start_anchor.lon, start_anchor.lat) <= near_m
+        1 for s in in_zone if _distance_m(s.lon, s.lat, start_anchor.lon, start_anchor.lat) <= 20_000.0
     )
     end_near = sum(
-        1 for s in in_zone if _distance_m(s.lon, s.lat, end_anchor.lon, end_anchor.lat) <= near_m
+        1 for s in in_zone if _distance_m(s.lon, s.lat, end_anchor.lon, end_anchor.lat) <= 20_000.0
     )
     if start_near > end_near:
-        return _OpenAnchorBias(anchor_key=b_key, toward_leg_start=False)
+        return _OpenEndpointBias(slug=b_slug, toward_leg_start=False)
     if end_near > start_near:
-        return _OpenAnchorBias(anchor_key=a_key, toward_leg_start=True)
-    return _OpenAnchorBias(anchor_key=b_key, toward_leg_start=False)
+        return _OpenEndpointBias(slug=a_slug, toward_leg_start=True)
+    return _OpenEndpointBias(slug=b_slug, toward_leg_start=False)
 
 
 def _candidate_passes_edge_filter(
@@ -111,16 +108,12 @@ def _candidate_passes_edge_filter(
     lon: float,
     lat: float,
     goal_depth: int,
-    open_anchor: AnchorPoint,
-    endpoint_capture_m: float,
+    open_endpoint: AnchorPoint,
 ) -> bool:
     depth = grid.depth_at_point(lon, lat)
     edge_depth = max(0, int(goal_depth) - 1)
     gain = grid.point_marginal_gain_cells(lon, lat, goal_depth=goal_depth)
-    near_open = _distance_m(lon, lat, open_anchor.lon, open_anchor.lat) <= max(
-        float(endpoint_capture_m) * 3.0,
-        15_000.0,
-    )
+    near_open = _distance_m(lon, lat, open_endpoint.lon, open_endpoint.lat) <= 15_000.0
     if depth == edge_depth:
         return True
     if depth < edge_depth and gain > 0:
@@ -143,21 +136,19 @@ def candidates_for_incomplete_link(
     goal_depth: int,
     per_link_cap: int,
 ) -> list[SiteCandidate]:
-    """Sample the link strip, keep coverage-edge points biased toward the open anchor."""
+    """Sample the link strip, keep coverage-edge points biased toward the open endpoint."""
     if result.complete or zone_ll.is_empty:
         return []
 
-    in_zone = sites_in_zone(sites, zone_ll)
-    bias = open_anchor_bias_for_link(
+    bias = open_endpoint_bias_for_link(
         link=result.link,
         leg=leg,
         zone_ll=zone_ll,
         anchors=anchors,
         sites=sites,
         footprints=footprints,
-        endpoint_capture_m=float(cfg.endpoint_capture_m),
     )
-    open_anchor = anchors[bias.anchor_key]
+    open_endpoint = anchors[bias.slug]
     label = result.link.name or f"{result.link.endpoints[0]}-{result.link.endpoints[1]}"
     leg_len = max(float(leg.length), 1.0)
 
@@ -173,8 +164,7 @@ def candidates_for_incomplete_link(
             lon=float(lon),
             lat=float(lat),
             goal_depth=goal_depth,
-            open_anchor=open_anchor,
-            endpoint_capture_m=float(cfg.endpoint_capture_m),
+            open_endpoint=open_endpoint,
         ):
             continue
         pos = position_along_leg_m(leg, float(lon), float(lat))
@@ -211,6 +201,7 @@ def incomplete_link_results(ctx: SiteSuggestionContext) -> list[LinkCompletionRe
         r
         for r in evaluate_mesh_backbone_completion(
             cfg=mb,
+            preset_sites=ctx.preset.sites,
             eligible_ll=ctx.eligible_ll,
             sites=all_backbone_sites(ctx),
             footprints=footprints_for_backbone_sites(ctx.plan, ctx.session_footprints),
@@ -230,7 +221,7 @@ def generate_mesh_backbone_candidates(
     if not incomplete:
         return []
 
-    anchors = anchors_from_config(mb)
+    anchors = anchors_from_preset(ctx.preset.sites, mb)
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
     cap = max(1, int(mb.max_candidates_per_round))
