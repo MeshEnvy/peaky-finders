@@ -16,11 +16,14 @@ from shapely.geometry.base import BaseGeometry
 from peaky_finders.geometry_preview_png import write_wgs84_geometry_preview_png
 
 MESH_DEPTH_GEOMETRY_FORMAT = "peaky_mesh_depth_geometry/v1"
+MESH_DEPTH_GRID_FORMAT = "peaky_mesh_depth_grid/v1"
 MESH_DEPTH_FLAT_KML_PLAIN_FMT = "peaky_mesh_depth_flat_kml_plain/v1"
 MESH_DEPTH_FLAT_KML_ELIG_FMT = "peaky_mesh_depth_flat_kml_eligible/v1"
 
 EMPTY_SENTINEL = "empty"
 COMPLETE_JSON = "complete.json"
+ACC_NPY = "accum.npy"
+GRID_META_JSON = "grid_meta.json"
 BAND_GPKG = "band.gpkg"
 BAND_LAYER = "band"
 SLICE_GPKG = "slice.gpkg"
@@ -85,6 +88,122 @@ def mesh_depth_set_complete_matches(
     if [str(x) for x in vd] != [str(x) for x in sorted(viewshed_digests)]:
         return False
     return int(raw.get("max_raster_dimension") or -1) == int(max_raster_dimension)
+
+
+def _mesh_depth_grid_present(set_dir: Path) -> bool:
+    sdir = Path(set_dir).expanduser().resolve()
+    return (sdir / ACC_NPY).is_file() and (sdir / GRID_META_JSON).is_file()
+
+
+def mesh_depth_set_update_kind(
+    *,
+    set_dir: Path,
+    viewshed_digests: Sequence[str],
+    site_slugs: Sequence[str],
+    max_raster_dimension: int,
+    site_slug_to_digest: Mapping[str, str] | None = None,
+) -> Literal["current", "extend", "rebuild"]:
+    """Whether cached depth geometry is current, incrementally extendable, or needs full rebuild."""
+
+    sdir = Path(set_dir).expanduser().resolve()
+    p = sdir / COMPLETE_JSON
+    if not p.is_file():
+        return "rebuild"
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "rebuild"
+    if raw.get("format") != MESH_DEPTH_GEOMETRY_FORMAT:
+        return "rebuild"
+    if int(raw.get("max_raster_dimension") or -1) != int(max_raster_dimension):
+        return "rebuild"
+    vd = raw.get("viewshed_digests")
+    if not isinstance(vd, list):
+        return "rebuild"
+    stored_vds = [str(x) for x in vd]
+    want_vds = [str(x) for x in sorted(viewshed_digests)]
+    stored_slugs_raw = raw.get("site_slugs")
+    if not isinstance(stored_slugs_raw, list):
+        if stored_vds == want_vds and _mesh_depth_grid_present(sdir):
+            return "current"
+        return "rebuild"
+    stored_slugs = sorted(str(x) for x in stored_slugs_raw)
+    want_slugs = sorted(str(x) for x in site_slugs)
+    if stored_slugs == want_slugs:
+        if stored_vds == want_vds and _mesh_depth_grid_present(sdir):
+            return "current"
+        return "rebuild"
+    if not (set(stored_slugs) < set(want_slugs)):
+        return "rebuild"
+    if site_slug_to_digest is not None:
+        for slug in stored_slugs:
+            if site_slug_to_digest.get(slug) is None:
+                return "rebuild"
+        vds_for_stored = sorted(site_slug_to_digest[slug] for slug in stored_slugs)
+        if vds_for_stored != stored_vds:
+            return "rebuild"
+    if not _mesh_depth_grid_present(sdir):
+        return "rebuild"
+    return "extend"
+
+
+def read_mesh_depth_grid(set_dir: Path) -> tuple["np.ndarray", object, tuple[float, float, float, float]] | None:
+    """Load persisted EPSG:3857 accumulation grid and affine transform."""
+
+    import numpy as np
+    from rasterio.transform import Affine
+
+    sdir = Path(set_dir).expanduser().resolve()
+    acc_p = sdir / ACC_NPY
+    meta_p = sdir / GRID_META_JSON
+    if not acc_p.is_file() or not meta_p.is_file():
+        return None
+    try:
+        raw = json.loads(meta_p.read_text(encoding="utf-8"))
+        acc = np.load(acc_p)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if raw.get("format") != MESH_DEPTH_GRID_FORMAT:
+        return None
+    coeffs = raw.get("transform")
+    bounds = raw.get("bounds")
+    if not isinstance(coeffs, list) or len(coeffs) != 6:
+        return None
+    if not isinstance(bounds, list) or len(bounds) != 4:
+        return None
+    transform = Affine(*[float(x) for x in coeffs])
+    bb = tuple(float(x) for x in bounds)
+    if acc.ndim != 2:
+        return None
+    return acc, transform, bb
+
+
+def write_mesh_depth_grid(
+    *,
+    set_dir: Path,
+    acc: "np.ndarray",
+    transform: object,
+    bounds: tuple[float, float, float, float],
+) -> None:
+    import numpy as np
+
+    sdir = Path(set_dir).expanduser().resolve()
+    sdir.mkdir(parents=True, exist_ok=True)
+    acc_arr = np.asarray(acc)
+    np.save(sdir / ACC_NPY, acc_arr)
+    coeffs = [float(x) for x in transform][:6]
+    payload = {
+        "format": MESH_DEPTH_GRID_FORMAT,
+        "rows": int(acc_arr.shape[0]),
+        "cols": int(acc_arr.shape[1]),
+        "bounds": [float(x) for x in bounds],
+        "crs": "EPSG:3857",
+        "transform": coeffs,
+    }
+    (sdir / GRID_META_JSON).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def mesh_depth_flat_kml_slug_id(slug: str) -> str:
@@ -152,6 +271,7 @@ def write_cached_mesh_depth_bands(
     set_dir: Path,
     max_raster_dimension: int,
     viewshed_digests: Sequence[str],
+    site_slugs: Sequence[str],
     bands_wgs84: Mapping[str, BaseGeometry],
 ) -> None:
     """Persist band geometries under ``set_dir/bands/<band>/``."""
@@ -162,6 +282,7 @@ def write_cached_mesh_depth_bands(
         "format": MESH_DEPTH_GEOMETRY_FORMAT,
         "max_raster_dimension": int(max_raster_dimension),
         "viewshed_digests": exp,
+        "site_slugs": sorted(str(x) for x in site_slugs),
     }
     (sdir / COMPLETE_JSON).write_text(
         json.dumps(top, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"

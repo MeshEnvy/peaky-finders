@@ -326,11 +326,8 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
                     mtime_prereqs=(_eligible_main_gpkg(plan).resolve(),),
                 )
             )
-            depth_mq = set(footprints_all(plan, preset))
-            depth_mq.update(mesh_pair_complete_paths)
-            depth_mq.add(eu)
+            depth_mq: set[Path] = set()
             if plan.has_bundle:
-                depth_mq.add(plan.bundle_resolve.resolve())
                 for sec in ("bundle_kml_overlay", "bundle_mesh_coverage"):
                     depth_mq.add(stamp_path(preset_f, sec).resolve())
             mesh_depth_var_present = True
@@ -344,9 +341,10 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
             )
 
         elif plan.mesh_depth_complete is not None:
-            depth_mq = set(footprints_all(plan, preset))
+            depth_mq: set[Path] = set()
             if plan.has_bundle:
-                depth_mq.add(plan.bundle_resolve.resolve())
+                for sec in ("bundle_kml_overlay", "bundle_mesh_coverage"):
+                    depth_mq.add(stamp_path(preset_f, sec).resolve())
             mesh_depth_var_present = True
             put(
                 PeakyGraphTarget(
