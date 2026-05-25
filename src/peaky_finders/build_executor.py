@@ -150,6 +150,25 @@ def _dem_bulk_prefetch_stale(plan: BuildConfigurePlan) -> bool:
     return bool(missing)
 
 
+def _composite_sha(plan: BuildConfigurePlan, role: str) -> str:
+    for c in plan.composites:
+        if c.role == role:
+            return c.sha
+    raise ValueError(f"composite role missing: {role!r}")
+
+
+def _bundle_resolve_content_fresh(plan: BuildConfigurePlan) -> bool:
+    return bundle_resolve_fresh(
+        Path(plan.bundle_resolve).expanduser().resolve(),
+        clips_root_expected=plan.clips_root,
+        aoi_sha=_composite_sha(plan, "aoi"),
+        include_sha=_composite_sha(plan, "include"),
+        exclude_sha=_composite_sha(plan, "exclude"),
+        eligible_sha=_composite_sha(plan, "eligible"),
+        reference={ref.entry_id: ref.sha for ref in plan.references},
+    )
+
+
 def target_stale(plan: BuildConfigurePlan, preset: Preset, node: PeakyGraphTarget) -> bool:
     tid = node.id
     if tid.startswith("stamp:"):
@@ -201,11 +220,9 @@ def target_stale(plan: BuildConfigurePlan, preset: Preset, node: PeakyGraphTarge
 
         raise KeyError(eid)
     if tid == "bundle:resolve":
-        rp = Path(plan.bundle_resolve).expanduser().resolve()
-        if artefact_mtime_stale(node.outputs, node.mtime_prereqs):
+        if any(not Path(o).expanduser().is_file() for o in node.outputs):
             return True
-
-        return not bundle_resolve_fresh(rp, clips_root_expected=plan.clips_root)
+        return not _bundle_resolve_content_fresh(plan)
     if tid.startswith("viewshed:"):
         tail = tid.removeprefix("viewshed:")
         rep, phase = tail.rsplit(":", 1)
@@ -213,11 +230,9 @@ def target_stale(plan: BuildConfigurePlan, preset: Preset, node: PeakyGraphTarge
 
         mq = tuple(Path(x).expanduser().resolve() for x in node.mtime_prereqs if Path(x).expanduser().is_file())
         if phase == "request":
-            if artefact_mtime_stale(node.outputs, mq):
-
+            if not viewshed_request_digest_matches(ws.workdir, expected_workspace_digest=ws.digest):
                 return True
-
-            return not viewshed_request_digest_matches(ws.workdir, expected_workspace_digest=ws.digest)
+            return artefact_mtime_stale(node.outputs, mq)
         return artefact_mtime_stale(node.outputs, mq)
     if tid.startswith("mesh:pair:"):
         s_lo, s_hi = tid.removeprefix("mesh:pair:").split("::", 1)
