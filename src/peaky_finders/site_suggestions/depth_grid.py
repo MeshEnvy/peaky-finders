@@ -49,6 +49,19 @@ class CoverageDepthGrid:
         kept = self.filter_peaks_llz_by_uncovered_grid([(float(lon), float(lat), 0.0)], goal_depth=goal_depth)
         return 1 if kept else 0
 
+    def depth_at_point(self, lon: float, lat: float) -> int:
+        """Footprint overlap count at ``(lon, lat)``; 0 when out of bounds or outside the target mask."""
+        to_m = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+        x, y = to_m.transform(float(lon), float(lat))
+        rows, cols = rowcol(self.transform, x, y)
+        r = int(rows)
+        c = int(cols)
+        if r < 0 or c < 0 or r >= self.rows or c >= self.cols:
+            return 0
+        if not self.target_mask[r, c]:
+            return 0
+        return int(self.depth[r, c])
+
     def filter_peaks_llz_by_uncovered_grid(
         self,
         peaks_llz: Sequence[tuple[float, float, float]],

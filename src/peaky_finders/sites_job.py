@@ -712,6 +712,11 @@ class MeshBackboneStrategyConfig(BaseModel):
         ge=25.0,
         description="Spacing for sampling candidate points along a link leg.",
     )
+    endpoint_capture_m: float = Field(
+        default=5000.0,
+        ge=100.0,
+        description="Max distance from an anchor for a chain node to count as that link endpoint.",
+    )
     anchors: dict[str, tuple[float, float]] = Field(
         default_factory=dict,
         description="Named anchor locations ``key → [lat, lon]`` (hub cities / termini).",
