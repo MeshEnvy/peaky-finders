@@ -1,0 +1,43 @@
+---
+description: Consider cores and parallelism when designing new features and pipelines
+alwaysApply: true
+---
+
+# Parallelism in new designs
+
+When adding or reshaping a pipeline, treat **multi-core use as a design requirement** — not a later optimization pass. If work can fan out, the first sketch should say *what* runs in parallel and *where* the worker count is configured.
+
+Pair with **parallel-execution** for implementation patterns; this rule is for **architecture and API shape**.
+
+## Design checklist
+
+Before locking in a design, answer:
+
+1. **Unit of work** — What is the embarrassingly parallel chunk (tile, site, footprint, build target, file fetch, raster slice)? Prefer designs that expose clear, independent units over one monolithic loop.
+2. **Independence** — Can units run without shared mutable state? If dependencies exist, can phases be **wave-scheduled** (run wave N in parallel, then wave N+1) instead of forcing full serial execution?
+3. **Configuration** — Where does `max_workers` / `jobs` / `parallelism` live? Default: **preset YAML** (`simulation.max_workers`, build fan-out) or a narrow CLI override — not hard-coded `1` with no knob.
+4. **Memory** — Does each worker duplicate large arrays or rasters? Design for **capped workers**, streaming, or batched waves when memory scales with parallelism.
+5. **Determinism** — If output order matters, plan **collect → sort/merge** after parallel work; do not rely on completion order.
+6. **Scale** — Will this run on a laptop with few cores and in CI with one? Serial fallback should be correct; parallel should be opt-in or sensibly defaulted, not accidental.
+
+## Prefer
+
+- **Fan-out at the coarsest natural boundary** — e.g. per-site or per-tile batches, not micro-parallelism on work cheaper than pool overhead (see splatter viewshed note in parallel-execution).
+- **Pure worker functions** — inputs in, results out; aggregate in the caller.
+- **Explicit executor boundaries** — one place owns `ThreadPoolExecutor` / `ProcessPoolExecutor`, progress logging, and worker caps (`mx = min(max_workers, len(units))`).
+- **Preset-first parallelism** — extend `Preset` / job YAML when a new phase needs concurrency; keep Python generic.
+
+## Avoid in new designs
+
+- Pipelines that **must** run serially because state is tangled in a single object or global cache with no merge strategy.
+- Hidden sequential bottlenecks (one lock around the whole loop, synchronous I/O inside every unit when batch prefetch would work).
+- **No parallelism hook** on hot paths that will clearly scale with site/tile/build counts.
+- Assuming **“we’ll parallelize later”** when the data model already commits to a single shared accumulator.
+
+## When serial-by-design is fine
+
+- Tiny inputs where pool overhead always wins.
+- Strict ordering or side effects that cannot be isolated.
+- External rate limits or fragile backends — still expose a **cap**, default modest.
+
+If choosing serial, state **why** in the design (one line in code comment or preset rationale is enough).
