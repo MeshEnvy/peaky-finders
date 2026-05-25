@@ -241,7 +241,7 @@ class SimulationMaxWorkers(BaseModel):
     los: int = Field(
         default=1,
         ge=1,
-        description="Unused at runtime today; LOS runs one workspace per ``peaky viewshed`` invocation.",
+        description="Concurrent splatter jobs inside one ``run-batch`` Docker invocation (``PEAKY_SPLATTER_BATCH_JOBS``).",
     )
     splat: int = Field(
         default=8,

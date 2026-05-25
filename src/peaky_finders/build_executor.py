@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock
 
 from peaky_finders.aggregate_kmz_cmd import run_aggregate_kmz
-from peaky_finders.build_configure import BuildConfigurePlan, PlannedClipLayer, configure_preset_build, ConfigureError
+from peaky_finders.build_configure import BuildConfigurePlan, PlannedClipLayer, PlannedViewshedWorkspace, configure_preset_build, ConfigureError
 from peaky_finders.build_fresh_checks import (
     artefact_mtime_stale,
     bundle_resolve_fresh,
@@ -53,13 +53,14 @@ from peaky_finders.mesh_pairwise_store import pairwise_complete_digest_matches
 from peaky_finders.preset_mapping import preset_to_request
 from peaky_finders.plss_mlrs_fetch import plss_bundle_build_stale
 from peaky_finders.preset_stamps import ensure_stamp, stamp_file_is_current
-from peaky_finders.sites_job import Preset, load_preset, resolved_preset_build_dir
+from peaky_finders.sites_job import Preset, load_preset, resolved_preset_build_dir, CoverageProvider
 from peaky_finders.skadi_dem import (
     read_dem_prefetch_stamp_fingerprint,
     skadi_missing_mirror_tiles_for_bounds,
     skadi_tile_set_fingerprint,
     write_dem_prefetch_stamp,
 )
+from peaky_finders.viewshed_batch import resolved_splatter_batch_jobs, run_viewshed_batch_docker
 from peaky_finders.viewshed_workspace import viewshed_workspace_digest
 
 _print_lock = Lock()
@@ -375,6 +376,64 @@ def execute_target(
     raise ValueError(f"execute unsupported for target {tid!r}")
 
 
+def _viewshed_docker_digest(tid: str) -> str | None:
+    if not tid.startswith("viewshed:") or not tid.endswith(":docker"):
+        return None
+    return tid.removeprefix("viewshed:").removesuffix(":docker")
+
+
+def _flush_viewshed_docker_batch(
+    *,
+    plan: BuildConfigurePlan,
+    preset: Preset,
+    pending: set[str],
+    subset: dict[str, PeakyGraphTarget],
+    force: bool,
+    verbose: bool,
+    jobs: int,
+) -> dict[str, int]:
+    """Run one splatter ``run-batch`` for every stale LOS ``viewshed:*:docker`` still pending."""
+    if preset.simulation.provider != CoverageProvider.LOS:
+        return {}
+
+    stale_docker: list[str] = []
+    for tid in sorted(pending):
+        digest = _viewshed_docker_digest(tid)
+        if digest is None:
+            continue
+        node = subset[tid]
+        if any(dep in pending for dep in node.depends_on):
+            continue
+        if force or target_stale(plan, preset, node):
+            stale_docker.append(tid)
+
+    if not stale_docker:
+        return {}
+
+    workspaces: list[PlannedViewshedWorkspace] = []
+    for tid in stale_docker:
+        digest = _viewshed_docker_digest(tid)
+        assert digest is not None
+        workspaces.append(_workspace_by_digest(plan, digest))
+
+    workers = resolved_splatter_batch_jobs(
+        preset=preset,
+        workspace_count=len(workspaces),
+        build_jobs=jobs,
+    )
+    if verbose:
+        _log(f"build: viewshed docker batch ({len(workspaces)} workspace(s), workers={workers})")
+    rc = run_viewshed_batch_docker(
+        preset=preset,
+        preset_path=Path(plan.preset_path),
+        viewshed_root=plan.viewsheds_root,
+        workspaces=workspaces,
+        coverage_verbose=preset.simulation.verbose,
+        build_jobs=jobs,
+    )
+    return dict.fromkeys(stale_docker, rc)
+
+
 def _subgraph_without_target(
     nodes: dict[str, PeakyGraphTarget],
     target_id: str,
@@ -406,12 +465,32 @@ def _run_target_subgraph(
     pending = set(seq)
     parallel = max(1, jobs)
     while pending:
+        batched_codes: dict[str, int] = {}
+        if not dry_run:
+            batched_codes = _flush_viewshed_docker_batch(
+                plan=plan,
+                preset=preset,
+                pending=pending,
+                subset=subset,
+                force=force,
+                verbose=verbose,
+                jobs=parallel,
+            )
+            batch_failures = [(t, rc) for t, rc in batched_codes.items() if rc != 0]
+            if batch_failures:
+                tt, rr = batch_failures[0]
+                print(f"build: viewshed batch target {tt!r} exited {rr}", file=sys.stderr)
+                return rr
+            pending.difference_update(batched_codes)
+
         runnable = sorted(
             (tid for tid in pending if all(d not in pending for d in subset[tid].depends_on)),
         )
-        if not runnable:
+        if not runnable and not batched_codes:
             print("build: internal error — stalled waiting on unresolved nodes", file=sys.stderr)
             return 2
+        if not runnable:
+            continue
 
         wave = runnable if len(runnable) <= parallel else runnable[:parallel]
 
@@ -425,12 +504,12 @@ def _run_target_subgraph(
             rc = execute_target(plan, preset, node_, bundle_data_dir=bundle_data_dir, verbose=verbose)
             return tid_, rc
 
-        codes: dict[str, int] = {}
-        if parallel <= 1 or len(wave) == 1:
+        codes: dict[str, int] = dict(batched_codes)
+        if parallel <= 1 or len(wave) <= 1:
             for tid in wave:
                 nid, rc = runner(tid, subset[tid])
                 codes[nid] = rc
-        else:
+        elif wave:
             mx = min(parallel, len(wave))
             with ThreadPoolExecutor(max_workers=mx) as pool:
                 futs = {pool.submit(runner, tid, subset[tid]): tid for tid in wave}
@@ -438,12 +517,13 @@ def _run_target_subgraph(
                     tid_, rc = fut.result()
                     codes[tid_] = rc
 
-        failures = [(t, codes[t]) for t in wave if codes[t] != 0]
+        wave_done = wave
+        failures = [(t, codes[t]) for t in wave_done if codes.get(t, 0) != 0]
         if failures:
             tt, rr = failures[0]
             print(f"build: target {tt!r} exited {rr}", file=sys.stderr)
             return rr
-        pending.difference_update(wave)
+        pending.difference_update(wave_done)
     return 0
 
 

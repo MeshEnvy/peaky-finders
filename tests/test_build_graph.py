@@ -64,3 +64,18 @@ def test_dem_bulk_stamp_and_topo_order(peaky_test_home: Path) -> None:
     assert dem_like == ["dem:bulk"]
 
 
+def test_viewshed_docker_depends_on_request(peaky_test_home: Path) -> None:
+    preset_path = SAMPLE_PROJECT_CONFIG.expanduser().resolve()
+    preset = load_preset(preset_path)
+    plan = configure_preset_build(preset_path=preset_path)
+    nodes = build_target_graph(plan, preset)
+    for ws in plan.viewshed_workspaces:
+        docker = nodes[f"viewshed:{ws.digest}:docker"]
+        request = nodes[f"viewshed:{ws.digest}:request"]
+        assert docker.depends_on == (f"viewshed:{ws.digest}:request",)
+        assert request.outputs == (ws.request_json.resolve(),)
+    ids = topo_sort(nodes)
+    for ws in plan.viewshed_workspaces:
+        assert ids.index(f"viewshed:{ws.digest}:request") < ids.index(f"viewshed:{ws.digest}:docker")
+
+

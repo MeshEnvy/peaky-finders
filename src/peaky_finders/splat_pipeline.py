@@ -26,35 +26,71 @@ def run_container(
     provider: CoverageProvider,
     coverage_verbose: bool = False,
 ) -> int:
+    cmd = _coverage_docker_cmd(
+        image=image,
+        mount_dir=data_dir,
+        tile_cache_dir=tile_cache_dir,
+        provider=provider,
+        coverage_verbose=coverage_verbose,
+        splatter_subcommand=("run", "--work-dir", "/work"),
+    )
+    print("Running coverage in Docker...", flush=True)
+    return subprocess.run(cmd, check=False).returncode
+
+
+def run_batch_container(
+    *,
+    image: str,
+    viewshed_root: Path,
+    tile_cache_dir: Path,
+    batch_jobs: int = 1,
+    coverage_verbose: bool = False,
+) -> int:
+    """Run ``splatter run-batch`` with array ``request.json`` mounted at ``/work``."""
+    cmd = _coverage_docker_cmd(
+        image=image,
+        mount_dir=viewshed_root,
+        tile_cache_dir=tile_cache_dir,
+        provider=CoverageProvider.LOS,
+        coverage_verbose=coverage_verbose,
+        splatter_subcommand=("run-batch", "--work-dir", "/work"),
+        extra_env=(("PEAKY_SPLATTER_BATCH_JOBS", str(max(1, int(batch_jobs)))),),
+    )
+    print("Running coverage batch in Docker...", flush=True)
+    return subprocess.run(cmd, check=False).returncode
+
+
+def _coverage_docker_cmd(
+    *,
+    image: str,
+    mount_dir: Path,
+    tile_cache_dir: Path,
+    provider: CoverageProvider,
+    coverage_verbose: bool,
+    splatter_subcommand: tuple[str, ...],
+    extra_env: tuple[tuple[str, str], ...] = (),
+) -> list[str]:
     cmd = [
         "docker",
         "run",
         "--rm",
         "-v",
-        f"{data_dir.resolve()}:/work",
+        f"{Path(mount_dir).resolve()}:/work",
         "-v",
-        f"{tile_cache_dir.resolve()}:{TILE_CACHE_CONTAINER_PATH}",
+        f"{Path(tile_cache_dir).resolve()}:{TILE_CACHE_CONTAINER_PATH}",
     ]
     if provider == CoverageProvider.SPLAT:
         cmd.extend(["-e", "SPLAT_PATH=/opt/splat"])
         if coverage_verbose:
             cmd.extend(["-e", "LOG_LEVEL=DEBUG"])
-    cmd.extend(
-        [
-            "-e",
-            f"SPLAT_CACHE={TILE_CACHE_CONTAINER_PATH}",
-            image,
-        ]
-    )
-    # LOS: ``splatter run [--verbose]``; SPLAT: ``docker_entry`` + optional ``LOG_LEVEL`` above.
-    if provider == CoverageProvider.LOS:
-        cmd.extend(["run", "--work-dir", "/work"])
-        if coverage_verbose:
-            cmd.append("--verbose")
-    else:
-        cmd.extend(["--work-dir", "/work"])
-    print("Running coverage in Docker...", flush=True)
-    return subprocess.run(cmd, check=False).returncode
+    cmd.extend(["-e", f"SPLAT_CACHE={TILE_CACHE_CONTAINER_PATH}"])
+    for key, val in extra_env:
+        cmd.extend(["-e", f"{key}={val}"])
+    cmd.append(image)
+    cmd.extend(splatter_subcommand)
+    if coverage_verbose and provider == CoverageProvider.LOS:
+        cmd.append("--verbose")
+    return cmd
 
 
 def load_splat_bbox(data_dir: Path) -> dict[str, float]:
