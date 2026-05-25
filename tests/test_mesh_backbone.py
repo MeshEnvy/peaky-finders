@@ -5,21 +5,23 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from shapely.geometry import Point, box
 
 from peaky_finders.site_suggestions.mesh_backbone_geom import (
     AnchorPoint,
-    anchor_from_site,
-    anchors_from_preset,
+    anchor_from_goal,
+    anchors_from_config,
     build_link_leg,
     distance_to_link_m,
     link_search_zone,
     resolved_link_legs,
     sample_along_link,
-    validate_mesh_backbone_site_slugs,
+    validate_mesh_backbone_goals,
 )
 from peaky_finders.sites_job import (
     BundleSiteSuggestionsConfig,
+    MeshBackboneGoalEntry,
     MeshBackboneLinkEntry,
     MeshBackboneStrategyConfig,
     SiteSuggestionStrategy,
@@ -52,7 +54,7 @@ _PRESET_SIMULATION = {
     "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
 }
 
-_SILVER_TRIANGLE_SITES = {
+_SILVER_TRIANGLE_LOCS = {
     "reno": (39.5296, -119.8138),
     "elko": (40.8324, -115.7631),
     "wells": (41.1116, -114.9647),
@@ -60,12 +62,8 @@ _SILVER_TRIANGLE_SITES = {
 }
 
 
-def _site_entry(lat: float, lon: float) -> object:
-    return type("E", (), {"lat": float(lat), "lon": float(lon)})()
-
-
-def _sites_from_locs(locs: dict[str, tuple[float, float]]) -> dict[str, object]:
-    return {slug: _site_entry(lat, lon) for slug, (lat, lon) in locs.items()}
+def _goals_from_locs(locs: dict[str, tuple[float, float]]) -> dict[str, MeshBackboneGoalEntry]:
+    return {key: MeshBackboneGoalEntry(loc=(lat, lon)) for key, (lat, lon) in locs.items()}
 
 
 def _silver_triangle_links() -> list[MeshBackboneLinkEntry]:
@@ -77,27 +75,27 @@ def _silver_triangle_links() -> list[MeshBackboneLinkEntry]:
     ]
 
 
-def test_build_link_leg_between_sites() -> None:
-    reno = anchor_from_site("reno", lat=39.5296, lon=-119.8138)
-    elko = anchor_from_site("elko", lat=40.8324, lon=-115.7631)
+def test_build_link_leg_between_goals() -> None:
+    reno = anchor_from_goal("reno", lat=39.5296, lon=-119.8138)
+    elko = anchor_from_goal("elko", lat=40.8324, lon=-115.7631)
     leg = build_link_leg(reno, elko)
     assert not leg.is_empty
     assert leg.length > 100_000.0
 
 
 def test_resolved_link_legs_silver_triangle() -> None:
-    sites = _sites_from_locs(_SILVER_TRIANGLE_SITES)
     cfg = MeshBackboneStrategyConfig(
+        goals=_goals_from_locs(_SILVER_TRIANGLE_LOCS),
         links=_silver_triangle_links(),
     )
-    pairs = resolved_link_legs(sites, cfg)
+    pairs = resolved_link_legs(cfg)
     assert len(pairs) == 4
     assert all(not leg.is_empty for _link, leg in pairs)
 
 
 def test_link_search_zone_respects_eligible() -> None:
-    reno = anchor_from_site("reno", lat=_SILVER_TRIANGLE_SITES["reno"][0], lon=_SILVER_TRIANGLE_SITES["reno"][1])
-    elko = anchor_from_site("elko", lat=_SILVER_TRIANGLE_SITES["elko"][0], lon=_SILVER_TRIANGLE_SITES["elko"][1])
+    reno = anchor_from_goal("reno", lat=_SILVER_TRIANGLE_LOCS["reno"][0], lon=_SILVER_TRIANGLE_LOCS["reno"][1])
+    elko = anchor_from_goal("elko", lat=_SILVER_TRIANGLE_LOCS["elko"][0], lon=_SILVER_TRIANGLE_LOCS["elko"][1])
     leg = build_link_leg(reno, elko)
     eligible = box(-121.0, 35.0, -114.0, 42.0)
     zone = link_search_zone(leg, buffer_m=50_000.0, eligible_ll=eligible)
@@ -140,18 +138,18 @@ def test_sample_along_link_inside_zone() -> None:
         assert zone.contains(Point(lon, lat))
 
 
-def test_validate_mesh_backbone_unknown_site_slug() -> None:
-    cfg = MeshBackboneStrategyConfig(
-        links=[MeshBackboneLinkEntry(endpoints=("reno", "elko"))],
-    )
-    sites = _sites_from_locs({"reno": _SILVER_TRIANGLE_SITES["reno"]})
-    with pytest.raises(ValueError, match="unknown site slug 'elko'"):
-        validate_mesh_backbone_site_slugs(sites, cfg)
+def test_validate_mesh_backbone_unknown_goal_key() -> None:
+    with pytest.raises(ValidationError, match="unknown goal key 'elko'"):
+        MeshBackboneStrategyConfig(
+            goals=_goals_from_locs({"reno": _SILVER_TRIANGLE_LOCS["reno"]}),
+            links=[MeshBackboneLinkEntry(endpoints=("reno", "elko"))],
+        )
 
 
 def test_mesh_backbone_config_rejects_same_endpoint() -> None:
     with pytest.raises(ValueError, match="must differ"):
         MeshBackboneStrategyConfig(
+            goals=_goals_from_locs({"reno": _SILVER_TRIANGLE_LOCS["reno"]}),
             links=[MeshBackboneLinkEntry(endpoints=("reno", "reno"))],
         )
 
@@ -160,12 +158,15 @@ def test_mesh_backbone_config_defaults() -> None:
     cfg = MeshBackboneStrategyConfig()
     assert cfg.site_goal_depth == 2
     assert cfg.links == []
+    assert cfg.goals == {}
 
 
-def test_anchors_from_preset() -> None:
-    sites = _sites_from_locs(_SILVER_TRIANGLE_SITES)
-    cfg = MeshBackboneStrategyConfig(links=[MeshBackboneLinkEntry(endpoints=("reno", "elko"))])
-    anchors = anchors_from_preset(sites, cfg)
+def test_anchors_from_config() -> None:
+    cfg = MeshBackboneStrategyConfig(
+        goals=_goals_from_locs(_SILVER_TRIANGLE_LOCS),
+        links=[MeshBackboneLinkEntry(endpoints=("reno", "elko"))],
+    )
+    anchors = anchors_from_config(cfg)
     assert set(anchors) == {"elko", "reno"}
     assert anchors["reno"].lat == pytest.approx(39.5296)
 
@@ -183,17 +184,20 @@ def test_preset_loads_mesh_backbone_block(tmp_path: Path) -> None:
                     "mesh_backbone": {
                         "site_goal_depth": 2,
                         "link_buffer_m": 35000,
+                        "goals": {
+                            "goal-a": {"loc": [39.0, -119.0]},
+                            "goal-b": {"loc": [40.0, -118.0]},
+                            "goal-c": {"loc": [41.0, -117.0]},
+                        },
                         "links": [
-                            {"name": "a-b", "endpoints": ["site-a", "site-b"]},
-                            {"name": "b-c", "endpoints": ["site-b", "site-c"]},
+                            {"name": "a-b", "endpoints": ["goal-a", "goal-b"]},
+                            {"name": "b-c", "endpoints": ["goal-b", "goal-c"]},
                         ],
                     },
                 }
             },
             "sites": {
-                "site-a": {"name": "A", "loc": [39.0, -119.0]},
-                "site-b": {"name": "B", "loc": [40.0, -118.0]},
-                "site-c": {"name": "C", "loc": [41.0, -117.0]},
+                "placeholder": {"name": "Placeholder", "loc": [39.0, -119.0]},
             },
         },
     )

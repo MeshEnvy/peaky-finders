@@ -669,14 +669,37 @@ class SiteSuggestionStrategy(StrEnum):
     MESH_BACKBONE = "mesh-backbone"
 
 
-class MeshBackboneLinkEntry(BaseModel):
-    """One backbone edge between two preset site slugs."""
+class MeshBackboneGoalEntry(BaseModel):
+    """Named geographic terminal for a mesh-backbone link."""
 
     model_config = ConfigDict(extra="ignore")
 
-    name: str | None = Field(default=None, description="Optional label (e.g. ``slpt-south-razorback``).")
+    loc: tuple[float, float] = Field(description="``[lat, lon]`` goal point (viewshed capture target).")
+
+    @field_validator("loc", mode="before")
+    @classmethod
+    def _coerce_loc(cls, v: Any) -> tuple[float, float]:
+        if not isinstance(v, (list, tuple)) or len(v) != 2:
+            raise ValueError("loc must be a length-2 array [lat, lon]")
+        return (float(v[0]), float(v[1]))
+
+    @property
+    def lat(self) -> float:
+        return float(self.loc[0])
+
+    @property
+    def lon(self) -> float:
+        return float(self.loc[1])
+
+
+class MeshBackboneLinkEntry(BaseModel):
+    """One backbone edge between two configured goal keys."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str | None = Field(default=None, description="Optional label (e.g. ``reno-tonopah``).")
     endpoints: tuple[str, str] = Field(
-        description="Two ``sites:`` slugs (order defines leg direction for sampling; links are undirected).",
+        description="Two ``mesh_backbone.goals`` keys (order defines leg direction for sampling; links are undirected).",
     )
 
     @field_validator("endpoints", mode="before")
@@ -686,9 +709,9 @@ class MeshBackboneLinkEntry(BaseModel):
             a = str(v[0]).strip()
             b = str(v[1]).strip()
             if not a or not b:
-                raise ValueError("link endpoints must be non-empty site slugs")
+                raise ValueError("link endpoints must be non-empty goal keys")
             return (a, b)
-        raise ValueError("link endpoints must be a length-2 list of site slugs")
+        raise ValueError("link endpoints must be a length-2 list of goal keys")
 
 
 class MeshBackboneStrategyConfig(BaseModel):
@@ -744,9 +767,13 @@ class MeshBackboneStrategyConfig(BaseModel):
         le=512,
         description="Optional cap on solver picks per ``--suggest`` pass (stop when reached).",
     )
+    goals: dict[str, MeshBackboneGoalEntry] = Field(
+        default_factory=dict,
+        description="Named geographic terminals (``loc: [lat, lon]``); link ``endpoints`` reference these keys.",
+    )
     links: list[MeshBackboneLinkEntry] = Field(
         default_factory=list,
-        description="Site-slug pairs to connect with mutual-hop repeater chains.",
+        description="Goal-key pairs to connect with mutual-hop repeater chains.",
     )
 
     @model_validator(mode="after")
@@ -755,6 +782,10 @@ class MeshBackboneStrategyConfig(BaseModel):
             a, b = link.endpoints
             if a == b:
                 raise ValueError(f"link {link.name or (a, b)!r}: endpoints must differ")
+            label = link.name or f"{a}-{b}"
+            for key in link.endpoints:
+                if key not in self.goals:
+                    raise ValueError(f"mesh_backbone link {label!r}: unknown goal key {key!r}")
         return self
 
 

@@ -1,4 +1,4 @@
-"""Mesh-backbone link completion (mutual-hop connectivity)."""
+"""Mesh-backbone link completion (mutual-hop connectivity + goal capture)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
 from peaky_finders.site_suggestions.mesh_backbone_geom import (
     AnchorPoint,
-    anchors_from_preset,
+    anchors_from_config,
     link_search_zone,
     resolve_link_leg,
 )
@@ -66,16 +66,21 @@ def _distance_m(lon_a: float, lat_a: float, lon_b: float, lat_b: float) -> float
     return float(Point(xa, ya).distance(Point(xb, yb)))
 
 
-def endpoint_slugs_in_zone(
-    link: MeshBackboneLinkEntry,
-    zone_slugs: set[str],
-) -> tuple[set[str], set[str]]:
-    """Endpoint site slugs that lie inside the link search zone."""
-    a_slug, b_slug = link.endpoints
-    return (
-        {a_slug} if a_slug in zone_slugs else set(),
-        {b_slug} if b_slug in zone_slugs else set(),
-    )
+def sites_capturing_goal(
+    goal: AnchorPoint,
+    sites: Sequence[BackboneSite],
+    footprints: Mapping[str, BaseGeometry | None],
+) -> set[str]:
+    """Site slugs whose footprint covers the goal point."""
+    pt = Point(float(goal.lon), float(goal.lat))
+    out: set[str] = set()
+    for site in sites:
+        fp = footprints.get(site.slug)
+        if fp is None or fp.is_empty:
+            continue
+        if fp.covers(pt):
+            out.add(site.slug)
+    return out
 
 
 def hop_adjacency(
@@ -135,12 +140,15 @@ def evaluate_link_completion(
     link: MeshBackboneLinkEntry,
     leg: LineString,
     zone_ll: BaseGeometry,
+    anchors: dict[str, AnchorPoint],
     sites: Sequence[BackboneSite],
     footprints: Mapping[str, BaseGeometry | None],
 ) -> LinkCompletionResult:
-    """True when a mutual-hop path connects endpoint site A to endpoint site B (direct link counts)."""
-    a_slug, b_slug = link.endpoints
-    label = link.name or f"{a_slug}-{b_slug}"
+    """True when a mutual-hop path connects sites that capture both link goals."""
+    a_key, b_key = link.endpoints
+    label = link.name or f"{a_key}-{b_key}"
+    goal_a = anchors[a_key]
+    goal_b = anchors[b_key]
 
     in_zone = sites_in_zone(sites, zone_ll)
     if not in_zone:
@@ -152,20 +160,21 @@ def evaluate_link_completion(
         )
 
     zone_slugs = {s.slug for s in in_zone}
-    start_slugs, end_slugs = endpoint_slugs_in_zone(link, zone_slugs)
+    start_slugs = sites_capturing_goal(goal_a, in_zone, footprints)
+    end_slugs = sites_capturing_goal(goal_b, in_zone, footprints)
     if not start_slugs:
         return LinkCompletionResult(
             link=link,
             complete=False,
             chain_slugs=(),
-            detail=f"{label}: endpoint site {a_slug!r} not in link zone",
+            detail=f"{label}: goal {a_key!r} not captured in link zone",
         )
     if not end_slugs:
         return LinkCompletionResult(
             link=link,
             complete=False,
             chain_slugs=(),
-            detail=f"{label}: endpoint site {b_slug!r} not in link zone",
+            detail=f"{label}: goal {b_key!r} not captured in link zone",
         )
 
     adjacency = hop_adjacency(in_zone, footprints)
@@ -180,7 +189,7 @@ def evaluate_link_completion(
             link=link,
             complete=False,
             chain_slugs=(),
-            detail=f"{label}: no mutual-hop path between endpoint sites",
+            detail=f"{label}: no mutual-hop path between goal capture sets",
         )
 
     hop_label = "direct" if len(chain) == 2 else f"{len(chain)} hops"
@@ -195,13 +204,12 @@ def evaluate_link_completion(
 def evaluate_mesh_backbone_completion(
     *,
     cfg: MeshBackboneStrategyConfig,
-    preset_sites: Mapping[str, object],
     eligible_ll: BaseGeometry,
     sites: Sequence[BackboneSite],
     footprints: Mapping[str, BaseGeometry | None],
 ) -> list[LinkCompletionResult]:
     """Evaluate every configured link; empty when ``cfg.links`` is empty."""
-    anchors = anchors_from_preset(preset_sites, cfg)
+    anchors = anchors_from_config(cfg)
     results: list[LinkCompletionResult] = []
     for link in cfg.links:
         leg = resolve_link_leg(anchors, link)
@@ -221,6 +229,7 @@ def evaluate_mesh_backbone_completion(
                 link=link,
                 leg=leg,
                 zone_ll=zone,
+                anchors=anchors,
                 sites=sites,
                 footprints=footprints,
             )
@@ -262,7 +271,7 @@ def all_backbone_sites(ctx: SiteSuggestionContext) -> list[BackboneSite]:
 
 
 def mesh_backbone_planning_complete(ctx: SiteSuggestionContext) -> bool:
-    """True when every configured mesh-backbone link has a hop path between endpoint sites."""
+    """True when every configured mesh-backbone link has a hop path between goal capture sets."""
     if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
         return False
     mb = ctx.cfg.mesh_backbone
@@ -270,7 +279,6 @@ def mesh_backbone_planning_complete(ctx: SiteSuggestionContext) -> bool:
         return True
     results = evaluate_mesh_backbone_completion(
         cfg=mb,
-        preset_sites=ctx.preset.sites,
         eligible_ll=ctx.eligible_ll,
         sites=all_backbone_sites(ctx),
         footprints=footprints_for_backbone_sites(ctx.plan, ctx.session_footprints),
