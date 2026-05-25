@@ -235,7 +235,7 @@ bundle:
     # Mesh depth rasters + per-site band slices per render phase.
     mesh_depth_workers: 8
 
-  # ``peaky build --suggest``: greedy site planner (strategy-specific knobs under ``land_grab`` / future blocks).
+  # ``peaky build --suggest``: site planner (``land_grab`` / ``mesh_backbone`` strategy blocks).
   site_suggestions:
     strategy: land-grab
     coverage_target: eligible # score marginal gain on deployable land, not full AOI hull
@@ -252,6 +252,25 @@ bundle:
       refine_top_n: 3
       refine_radius_m: 200.0
       refine_spacing_m: 50.0
+    # mesh-backbone (future): redundant repeater chains on explicit anchor↔anchor links
+    # mesh_backbone:
+    #   site_goal_depth: 2
+    #   link_buffer_m: 40000
+    #   sample_spacing_m: 300
+    #   anchors:
+    #     reno: [39.5296, -119.8138]
+    #     elko: [40.8324, -115.7631]
+    #     wells: [41.1116, -114.9647]
+    #     vegas: [36.1699, -115.1398]
+    #   links:
+    #   - name: reno-elko
+    #     endpoints: [reno, elko]
+    #   - name: elko-wells
+    #     endpoints: [elko, wells]
+    #   - name: wells-vegas
+    #     endpoints: [wells, vegas]
+    #   - name: reno-vegas
+    #     endpoints: [reno, vegas]
 
   # doc.kml initial NetworkLink checkbox visibility inside aggregate KMZ
   kmz:
