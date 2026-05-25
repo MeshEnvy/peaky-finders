@@ -529,3 +529,87 @@ def test_resolve_land_grab_strategy() -> None:
     assert provider.goal_depth(BundleSiteSuggestionsConfig()) == 1
     assert provider.resolve_step_budget(BundleSiteSuggestionsConfig(), 3) == 3
     assert provider.resolve_step_budget(BundleSiteSuggestionsConfig(), SOLVE_UNTIL_COMPLETE) is None
+
+
+def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> None:
+    from peaky_finders.build_configure import PlannedComposite, PlannedViewshedWorkspace
+
+    aoi = box(-115.05, 39.00, -114.98, 39.05)
+    eligible = box(-115.04, 39.01, -114.99, 39.04)
+    aoi_gpkg = tmp_path / "aoi.gpkg"
+    elig_gpkg = tmp_path / "eligible.gpkg"
+    _write_gpkg(aoi_gpkg, aoi, layer="aoi")
+    _write_gpkg(elig_gpkg, eligible, layer="eligible_land_use")
+
+    seed_gpkg = tmp_path / "seed.gpkg"
+    _write_gpkg(seed_gpkg, box(-115.04, 39.01, -115.02, 39.03), layer="coverage")
+
+    preset_path = tmp_path / "job.yaml"
+    write_preset_document(
+        preset_path,
+        {
+            "simulation": dict(_SUGGEST_SIMULATION),
+            "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
+            "bundle": {
+                "site_suggestions": {
+                    "strategy": "mesh-backbone",
+                    "planner_raster_dimension": 256,
+                    "mesh_backbone": {
+                        "site_goal_depth": 1,
+                        "link_buffer_m": 8000.0,
+                        "sample_spacing_m": 1500.0,
+                        "endpoint_capture_m": 3000.0,
+                        "max_candidates_per_round": 8,
+                        "refine_enabled": False,
+                        "anchors": {
+                            "a": [39.02, -115.04],
+                            "b": [39.02, -114.99],
+                        },
+                        "links": [{"name": "a-b", "endpoints": ["a", "b"]}],
+                    },
+                }
+            },
+            "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.04]}},
+        },
+    )
+    preset = load_preset(preset_path)
+    plan = type(
+        "Plan",
+        (),
+        {
+            "composites": (
+                PlannedComposite(role="aoi", sha="a", union_gpkg=aoi_gpkg, manifest=tmp_path / "aoi.json"),
+                PlannedComposite(role="eligible", sha="e", union_gpkg=elig_gpkg, manifest=tmp_path / "e.json"),
+            ),
+            "viewshed_workspaces": (
+                PlannedViewshedWorkspace(
+                    digest="d",
+                    workdir=tmp_path / "ws",
+                    output_ppm=tmp_path / "ws/out.ppm",
+                    splat_png=tmp_path / "ws/splat.png",
+                    coverage_gpkg=seed_gpkg,
+                    request_json=tmp_path / "ws/request.json",
+                    site_slugs=("seed",),
+                ),
+            ),
+            "splat_tiles_root": tmp_path / "dem",
+            "viewsheds_root": tmp_path / "viewsheds",
+        },
+    )()
+
+    def _fake_footprint(**kw) -> box:
+        lat = float(kw["lat"])
+        lon = float(kw["lon"])
+        return box(lon - 0.02, lat - 0.01, lon + 0.02, lat + 0.01)
+
+    winners = plan_greedy_site_suggestions(
+        preset=preset,
+        preset_path=preset_path,
+        plan=plan,
+        suggest_cli_n=1,
+        suggest_root=tmp_path / "suggest",
+        footprint_runner=_fake_footprint,
+    )
+    assert len(winners) == 1
+    assert winners[0].lon > -115.02
+    assert "link:" in winners[0].strategy

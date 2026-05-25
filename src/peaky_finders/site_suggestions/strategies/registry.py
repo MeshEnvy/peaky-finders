@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from peaky_finders.site_suggestions.strategies.base import SiteSuggestionStrategyProvider
 from peaky_finders.site_suggestions.strategies.land_grab import LandGrabStrategy
+from peaky_finders.site_suggestions.strategies.mesh_backbone import MeshBackboneStrategy
 from peaky_finders.sites_job import BundleSiteSuggestionsConfig, SiteSuggestionStrategy
 
 _REGISTRY: dict[SiteSuggestionStrategy, SiteSuggestionStrategyProvider] = {
     SiteSuggestionStrategy.LAND_GRAB: LandGrabStrategy(),
+    SiteSuggestionStrategy.MESH_BACKBONE: MeshBackboneStrategy(),
 }
 
 

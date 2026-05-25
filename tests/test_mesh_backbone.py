@@ -196,9 +196,11 @@ def test_preset_loads_mesh_backbone_block(tmp_path: Path) -> None:
     assert preset.bundle.site_suggestions.strategy == SiteSuggestionStrategy.LAND_GRAB
 
 
-def test_mesh_backbone_strategy_not_in_registry_yet() -> None:
+def test_mesh_backbone_strategy_in_registry() -> None:
+    from peaky_finders.site_suggestions.strategies.mesh_backbone import MeshBackboneStrategy
     from peaky_finders.site_suggestions.strategies.registry import resolve_site_suggestion_strategy
 
     cfg = BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE)
-    with pytest.raises(ValueError, match="unsupported"):
-        resolve_site_suggestion_strategy(cfg)
+    provider = resolve_site_suggestion_strategy(cfg)
+    assert isinstance(provider, MeshBackboneStrategy)
+    assert provider.name == "mesh-backbone"

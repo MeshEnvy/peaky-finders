@@ -717,6 +717,32 @@ class MeshBackboneStrategyConfig(BaseModel):
         ge=100.0,
         description="Max distance from an anchor for a chain node to count as that link endpoint.",
     )
+    max_candidates_per_round: int = Field(
+        default=48,
+        ge=1,
+        le=512,
+        description="Link-strip samples viewshed-evaluated per solver step (across incomplete links).",
+    )
+    refine_enabled: bool = Field(
+        default=True,
+        description="Micro-grid viewshed search around top coarse candidates (second batch pass).",
+    )
+    refine_top_n: int = Field(
+        default=3,
+        ge=0,
+        le=32,
+        description="Coarse winners (by marginal gain) to micro-refine when ``refine_enabled``.",
+    )
+    refine_radius_m: float = Field(
+        default=200.0,
+        ge=25.0,
+        description="Radius for micro-refinement grid around each coarse winner.",
+    )
+    refine_spacing_m: float = Field(
+        default=50.0,
+        ge=10.0,
+        description="Grid spacing for micro-refinement viewshed samples.",
+    )
     anchors: dict[str, tuple[float, float]] = Field(
         default_factory=dict,
         description="Named anchor locations ``key → [lat, lon]`` (hub cities / termini).",
