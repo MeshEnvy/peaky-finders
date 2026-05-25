@@ -560,7 +560,7 @@ def run_incremental_build(
 
     nodes_all = build_target_graph(plan, preset)
 
-    if suggest_n is not None and suggest_n > 0:
+    if suggest_n is not None:
         if selection.strip().lower() not in ("all", "kmz"):
             print(
                 "build: --suggest requires --target all (default) or kmz",
@@ -581,14 +581,17 @@ def run_incremental_build(
         )
         if rc != 0:
             return rc
+        from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
+
+        budget_label = "solve" if int(suggest_n) == SOLVE_UNTIL_COMPLETE else str(int(suggest_n))
         if dry_run:
-            print(f"build: would run site suggest pass (n={suggest_n})")
+            print(f"build: would run site suggest pass ({budget_label})")
         else:
             run_site_suggestion_pass(
                 preset=preset,
                 preset_path=preset_path_r,
                 plan=plan,
-                n_suggestions=int(suggest_n),
+                suggest_cli_n=int(suggest_n),
                 replace_suggested=replace_suggested,
                 verbose=verbose,
                 jobs=jobs,

@@ -1,32 +1,28 @@
-"""Mesh-backbone link completion (depth at sites, hop chains)."""
+"""Mesh-backbone link completion (mutual-hop connectivity)."""
 
 from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping, Sequence
 
 from pyproj import Transformer
+from shapely import make_valid
 from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
 
-from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid
+from peaky_finders.coverage_footprint import read_coverage_footprint
+from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
 from peaky_finders.site_suggestions.mesh_backbone_geom import (
     AnchorPoint,
     anchors_from_config,
     link_search_zone,
     resolve_link_leg,
 )
-from peaky_finders.sites_job import MeshBackboneLinkEntry, MeshBackboneStrategyConfig
+from peaky_finders.sites_job import MeshBackboneLinkEntry, MeshBackboneStrategyConfig, SiteSuggestionStrategy
 
 _TO_M = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
-
-
-@dataclass(frozen=True)
-class BackboneSite:
-    slug: str
-    lat: float
-    lon: float
 
 
 @dataclass(frozen=True)
@@ -143,17 +139,14 @@ def evaluate_link_completion(
     zone_ll: BaseGeometry,
     anchors: Mapping[str, AnchorPoint],
     sites: Sequence[BackboneSite],
-    grid: CoverageDepthGrid,
-    site_goal_depth: int,
     footprints: Mapping[str, BaseGeometry | None],
     endpoint_capture_m: float,
 ) -> LinkCompletionResult:
-    """True when a depth-valid mutual-hop chain spans anchor A → anchor B inside the link zone."""
+    """True when a mutual-hop path connects anchor A-side to anchor B-side (direct link counts)."""
     a_key, b_key = link.endpoints
     start_anchor = anchors[a_key]
     end_anchor = anchors[b_key]
     label = link.name or f"{a_key}-{b_key}"
-    need = int(site_goal_depth)
 
     in_zone = sites_in_zone(sites, zone_ll)
     if not in_zone:
@@ -164,19 +157,7 @@ def evaluate_link_completion(
             detail=f"{label}: no sites in link zone",
         )
 
-    depth_ok = {
-        s.slug
-        for s in in_zone
-        if grid.depth_at_point(s.lon, s.lat) >= need
-    }
-    if not depth_ok:
-        return LinkCompletionResult(
-            link=link,
-            complete=False,
-            chain_slugs=(),
-            detail=f"{label}: no sites with depth≥{need} in link zone",
-        )
-
+    zone_slugs = {s.slug for s in in_zone}
     start_slugs = anchor_capture_slugs(in_zone, start_anchor, capture_m=endpoint_capture_m)
     end_slugs = anchor_capture_slugs(in_zone, end_anchor, capture_m=endpoint_capture_m)
     if not start_slugs:
@@ -184,22 +165,21 @@ def evaluate_link_completion(
             link=link,
             complete=False,
             chain_slugs=(),
-            detail=f"{label}: no depth-valid site within {endpoint_capture_m:.0f} m of anchor {a_key!r}",
+            detail=f"{label}: no site within {endpoint_capture_m:.0f} m of anchor {a_key!r}",
         )
     if not end_slugs:
         return LinkCompletionResult(
             link=link,
             complete=False,
             chain_slugs=(),
-            detail=f"{label}: no depth-valid site within {endpoint_capture_m:.0f} m of anchor {b_key!r}",
+            detail=f"{label}: no site within {endpoint_capture_m:.0f} m of anchor {b_key!r}",
         )
 
-    zone_sites = [s for s in in_zone if s.slug in depth_ok]
-    adjacency = hop_adjacency(zone_sites, footprints)
+    adjacency = hop_adjacency(in_zone, footprints)
     chain = _shortest_hop_chain(
-        start_slugs=start_slugs & depth_ok,
-        end_slugs=end_slugs & depth_ok,
-        valid_slugs=depth_ok,
+        start_slugs=start_slugs,
+        end_slugs=end_slugs,
+        valid_slugs=zone_slugs,
         adjacency=adjacency,
     )
     if chain is None:
@@ -207,14 +187,15 @@ def evaluate_link_completion(
             link=link,
             complete=False,
             chain_slugs=(),
-            detail=f"{label}: no mutual-hop chain between anchors with depth≥{need}",
+            detail=f"{label}: no mutual-hop path between anchor sides",
         )
 
+    hop_label = "direct" if len(chain) == 2 else f"{len(chain)} hops"
     return LinkCompletionResult(
         link=link,
         complete=True,
         chain_slugs=tuple(chain),
-        detail=f"{label}: chain {' → '.join(chain)} ({len(chain)} site(s))",
+        detail=f"{label}: connected {' → '.join(chain)} ({hop_label})",
     )
 
 
@@ -223,7 +204,6 @@ def evaluate_mesh_backbone_completion(
     cfg: MeshBackboneStrategyConfig,
     eligible_ll: BaseGeometry,
     sites: Sequence[BackboneSite],
-    grid: CoverageDepthGrid,
     footprints: Mapping[str, BaseGeometry | None],
 ) -> list[LinkCompletionResult]:
     """Evaluate every configured link; empty when ``cfg.links`` is empty."""
@@ -249,8 +229,6 @@ def evaluate_mesh_backbone_completion(
                 zone_ll=zone,
                 anchors=anchors,
                 sites=sites,
-                grid=grid,
-                site_goal_depth=int(cfg.site_goal_depth),
                 footprints=footprints,
                 endpoint_capture_m=float(cfg.endpoint_capture_m),
             )
@@ -260,3 +238,48 @@ def evaluate_mesh_backbone_completion(
 
 def all_links_complete(results: Sequence[LinkCompletionResult]) -> bool:
     return bool(results) and all(r.complete for r in results)
+
+
+def footprints_for_backbone_sites(
+    plan: object,
+    session_footprints: Mapping[str, BaseGeometry],
+) -> dict[str, BaseGeometry | None]:
+    """Seed workspace footprints plus in-session trial commits."""
+    out: dict[str, BaseGeometry | None] = {}
+    for ws in getattr(plan, "viewshed_workspaces", ()):
+        for slug in ws.site_slugs:
+            if slug in out:
+                continue
+            fp = read_coverage_footprint(Path(ws.coverage_gpkg))
+            if fp is not None and not fp.is_empty:
+                fp = fp if fp.is_valid else make_valid(fp)
+            out[str(slug)] = fp
+    for slug, fp in session_footprints.items():
+        out[str(slug)] = fp if fp.is_valid else make_valid(fp)
+    return out
+
+
+def all_backbone_sites(ctx: SiteSuggestionContext) -> list[BackboneSite]:
+    sites = backbone_sites_from_preset(ctx.preset.sites)
+    seen = {s.slug for s in sites}
+    for site in ctx.session_sites:
+        if site.slug not in seen:
+            sites.append(site)
+            seen.add(site.slug)
+    return sites
+
+
+def mesh_backbone_planning_complete(ctx: SiteSuggestionContext) -> bool:
+    """True when every configured mesh-backbone link has a hop path between anchor sides."""
+    if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
+        return False
+    mb = ctx.cfg.mesh_backbone
+    if not mb.links:
+        return True
+    results = evaluate_mesh_backbone_completion(
+        cfg=mb,
+        eligible_ll=ctx.eligible_ll,
+        sites=all_backbone_sites(ctx),
+        footprints=footprints_for_backbone_sites(ctx.plan, ctx.session_footprints),
+    )
+    return all_links_complete(results)

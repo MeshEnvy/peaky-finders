@@ -90,11 +90,16 @@ def build_build_parser() -> argparse.ArgumentParser:
 
     p.add_argument(
         "--suggest",
+        nargs="?",
+        const=-1,
         type=int,
         metavar="N",
         default=None,
         dest="suggest_n",
-        help="After building known sites, append N greedy suggested sites to preset YAML then finish build",
+        help=(
+            "After building known sites, run the site solver and append picks to preset YAML. "
+            "Omit N to solve until the strategy goal is met; N=1 is one step."
+        ),
     )
 
     p.add_argument(

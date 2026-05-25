@@ -420,7 +420,7 @@ def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
         preset=preset,
         preset_path=preset_path,
         plan=plan,
-        n_suggestions=1,
+        suggest_cli_n=1,
         suggest_root=tmp_path / "suggest",
         footprint_runner=_fake_footprint,
     )
@@ -495,7 +495,7 @@ def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
         preset=preset,
         preset_path=preset_path,
         plan=plan,
-        n_suggestions=1,
+        suggest_cli_n=1,
         suggest_root=tmp_path / "suggest",
         footprint_runner=_fake_footprint,
         verbose=True,
@@ -518,6 +518,7 @@ def test_site_suggestions_default_strategy() -> None:
 
 
 def test_resolve_land_grab_strategy() -> None:
+    from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
     from peaky_finders.site_suggestions.strategies.land_grab import LandGrabStrategy
     from peaky_finders.site_suggestions.strategies.registry import resolve_site_suggestion_strategy
     from peaky_finders.sites_job import BundleSiteSuggestionsConfig
@@ -526,3 +527,5 @@ def test_resolve_land_grab_strategy() -> None:
     assert isinstance(provider, LandGrabStrategy)
     assert provider.name == "land-grab"
     assert provider.goal_depth(BundleSiteSuggestionsConfig()) == 1
+    assert provider.resolve_step_budget(BundleSiteSuggestionsConfig(), 3) == 3
+    assert provider.resolve_step_budget(BundleSiteSuggestionsConfig(), SOLVE_UNTIL_COMPLETE) is None
