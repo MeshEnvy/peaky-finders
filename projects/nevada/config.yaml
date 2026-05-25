@@ -377,14 +377,4 @@ sites:
     plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 22 — CadNSDI 
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN220
     mlrs: NV210170N0210E0SN220
-  suggest-01-suggested-1-3487-m:
-    name: Suggested 1 (3487 m)
-    loc:
-    - 39.25305555555554
-    - -117.12628249097538
-    rationale: 'Greedy suggest #1: +10977 eligible cells toward depth≥1 (refine candidate)'
-    elevation_m: 3487.0
-    type: suggested
-    plss: NV; Mount Diablo Meridian; T.16N R.43E; Sec. 15 — CadNSDI 
-      PLSSID=NV210160N0430E0 | FRSTDIVID=NV210160N0430E0UP150
-    mlrs: NV210160N0430E0UP150
+  
