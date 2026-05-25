@@ -268,7 +268,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
         put(
             PeakyGraphTarget(
                 id=f"viewshed:{rep}:docker",
-                depends_on=deps_vs,
+                depends_on=(f"viewshed:{rep}:request",),
                 outputs=(ws.output_ppm.resolve(),),
                 mtime_prereqs=mq_nopreq,
             )

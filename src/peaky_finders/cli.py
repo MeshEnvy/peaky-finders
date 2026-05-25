@@ -321,6 +321,23 @@ def _docker_image_exists(image: str) -> bool:
     return r.returncode == 0
 
 
+def _is_splatter_dockerfile(dockerfile_name: str) -> bool:
+    return Path(dockerfile_name).as_posix().replace("\\", "/").endswith("splatter/Dockerfile")
+
+
+def _splatter_image_has_run_batch(image: str) -> bool:
+    """True when the image CLI exposes ``run-batch`` (required for viewshed batch builds)."""
+    r = subprocess.run(
+        ["docker", "run", "--rm", image, "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0:
+        return False
+    return "run-batch" in r.stdout
+
+
 def ensure_coverage_docker_image(
     repo: Path,
     *,
@@ -328,12 +345,23 @@ def ensure_coverage_docker_image(
     image: str,
     context: str = ".",
 ) -> int:
-    """Build coverage image once per process when missing locally (parallel-safe)."""
+    """Build coverage image once per process when missing or stale locally (parallel-safe)."""
     with _docker_image_lock:
-        if image in _docker_images_ready or _docker_image_exists(image):
+        if image in _docker_images_ready:
+            return 0
+        exists = _docker_image_exists(image)
+        splatter = _is_splatter_dockerfile(dockerfile_name)
+        if exists and ((not splatter) or _splatter_image_has_run_batch(image)):
             _docker_images_ready.add(image)
             return 0
-        print(f"Building Docker image {image!r} ({dockerfile_name})...", flush=True)
+        if exists and splatter:
+            print(
+                f"Rebuilding Docker image {image!r} ({dockerfile_name}): "
+                "local tag lacks splatter run-batch",
+                flush=True,
+            )
+        else:
+            print(f"Building Docker image {image!r} ({dockerfile_name})...", flush=True)
         r = subprocess.run(
             [
                 "docker",
