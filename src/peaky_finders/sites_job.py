@@ -743,6 +743,12 @@ class MeshBackboneStrategyConfig(BaseModel):
         ge=10.0,
         description="Grid spacing for micro-refinement viewshed samples.",
     )
+    max_nodes: int | None = Field(
+        default=None,
+        ge=1,
+        le=512,
+        description="Optional cap on solver picks per ``--suggest`` pass (stop when reached).",
+    )
     anchors: dict[str, tuple[float, float]] = Field(
         default_factory=dict,
         description="Named anchor locations ``key → [lat, lon]`` (hub cities / termini).",

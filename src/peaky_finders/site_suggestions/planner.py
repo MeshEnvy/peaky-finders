@@ -152,6 +152,8 @@ def _log_planner_config(
         suggest_log(verbose, f"  sample_spacing_m: {mb.sample_spacing_m}")
         suggest_log(verbose, f"  endpoint_capture_m: {mb.endpoint_capture_m}")
         suggest_log(verbose, f"  configured links: {len(mb.links)}")
+        if mb.max_nodes is not None:
+            suggest_log(verbose, f"  max_nodes: {mb.max_nodes}")
         suggest_log(verbose, f"  refine_enabled: {mb.refine_enabled}")
         suggest_log(verbose, f"  refine_top_n: {mb.refine_top_n}")
         suggest_log(verbose, f"  refine_radius_m: {mb.refine_radius_m}")

@@ -252,11 +252,18 @@ bundle:
       refine_top_n: 3
       refine_radius_m: 200.0
       refine_spacing_m: 50.0
-    # mesh-backbone (future): redundant repeater chains on explicit anchor↔anchor links
+    # mesh-backbone (future): connect anchor↔anchor links with hop chains
     # mesh_backbone:
     #   site_goal_depth: 2
     #   link_buffer_m: 40000
     #   sample_spacing_m: 300
+    #   endpoint_capture_m: 5000
+    #   max_candidates_per_round: 48
+    #   max_nodes: 64 # optional solver pick cap per --suggest pass
+    #   refine_enabled: true
+    #   refine_top_n: 3
+    #   refine_radius_m: 200.0
+    #   refine_spacing_m: 50.0
     #   anchors:
     #     reno: [39.5296, -119.8138]
     #     elko: [40.8324, -115.7631]

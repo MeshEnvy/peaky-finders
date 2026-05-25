@@ -174,6 +174,39 @@ def test_generate_mesh_backbone_candidates_skips_complete_links() -> None:
     assert generate_mesh_backbone_candidates(ctx, goal_depth=1) == []
 
 
+def test_mesh_backbone_max_nodes_stops_solver() -> None:
+    from peaky_finders.site_suggestions.context import SiteSuggestionContext
+    from peaky_finders.site_suggestions.mesh_backbone_completion import BackboneSite
+
+    ctx = SiteSuggestionContext(
+        preset=type("P", (), {"sites": {}})(),
+        plan=type("Plan", (), {"viewshed_workspaces": ()})(),
+        grid=type("G", (), {"depth_at_point": lambda *a, **k: 0})(),
+        eligible_ll=box(-116.5, 38.5, -114.5, 39.5),
+        aoi_ll=box(-116.5, 38.5, -114.5, 39.5),
+        target_ll=box(-116.5, 38.5, -114.5, 39.5),
+        suggest_root=Path("/tmp/suggest"),
+        cfg=BundleSiteSuggestionsConfig(
+            strategy=SiteSuggestionStrategy.MESH_BACKBONE,
+            mesh_backbone=MeshBackboneStrategyConfig(
+                anchors={"a": (39.0, -115.8), "b": (39.0, -115.2)},
+                links=[MeshBackboneLinkEntry(endpoints=("a", "b"))],
+                max_nodes=2,
+            ),
+        ),
+        dem_mirror_root=Path("/tmp/dem"),
+        eligible_sha="x",
+        jobs=1,
+        verbose=False,
+        session_sites=[
+            BackboneSite(slug="_session_0001", lat=39.0, lon=-115.7),
+            BackboneSite(slug="_session_0002", lat=39.0, lon=-115.6),
+        ],
+    )
+    provider = MeshBackboneStrategy()
+    assert provider.planning_complete(ctx) is True
+
+
 def test_mesh_backbone_strategy_in_registry() -> None:
     provider = resolve_site_suggestion_strategy(
         BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE)
