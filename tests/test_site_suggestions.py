@@ -152,8 +152,9 @@ def test_eligible_peak_candidates_use_masked_dem(
     tmp_path: Path,
 ) -> None:
     from peaky_finders import pairwise_dem_peak as dem_peak
-    from peaky_finders.site_suggestions.candidates import _eligible_peak_candidates, _grid_samples_around_point
-    from peaky_finders.sites_job import BundleSiteSuggestionsConfig
+    from peaky_finders.site_suggestions.strategies.land_grab import _eligible_peak_candidates
+    from peaky_finders.site_suggestions.candidates import _grid_samples_around_point
+    from peaky_finders.sites_job import BundleSiteSuggestionsConfig, LandGrabStrategyConfig
     from rasterio.transform import from_bounds
 
     aoi = box(-115.0, 39.0, -114.0, 40.0)
@@ -186,12 +187,14 @@ def test_eligible_peak_candidates_use_masked_dem(
         suggest_root=tmp_path / "suggest",
         eligible_sha="test-eligible",
         cfg=BundleSiteSuggestionsConfig(
-            max_clusters_per_round=4,
-            max_candidates_per_round=4,
-            peak_cluster_radius_m=1500.0,
-            cluster_sample_spacing_m=250.0,
-            cluster_sample_radius_m=750.0,
-        ),
+            land_grab=LandGrabStrategyConfig(
+                max_clusters_per_round=4,
+                max_candidates_per_round=4,
+                peak_cluster_radius_m=1500.0,
+                cluster_sample_spacing_m=250.0,
+                cluster_sample_radius_m=750.0,
+            ),
+        ).land_grab,
         return_stats=True,
     )
 
@@ -219,7 +222,8 @@ def test_grid_samples_around_point_on_eligible() -> None:
 
 
 def test_spatial_index_cluster_matches_buffer_greedy() -> None:
-    from peaky_finders.site_suggestions.candidates import SiteCandidate, _cluster_points_by_buffer
+    from peaky_finders.site_suggestions.candidates import SiteCandidate
+    from peaky_finders.site_suggestions.strategies.land_grab import _cluster_points_by_buffer
 
     def _brute_cluster(
         points: list[SiteCandidate],
@@ -272,7 +276,8 @@ def test_spatial_index_cluster_matches_buffer_greedy() -> None:
 
 
 def test_spatial_index_cluster_many_peaks_fast() -> None:
-    from peaky_finders.site_suggestions.candidates import SiteCandidate, _cluster_points_by_buffer
+    from peaky_finders.site_suggestions.candidates import SiteCandidate
+    from peaky_finders.site_suggestions.strategies.land_grab import _cluster_points_by_buffer
 
     pts = [
         SiteCandidate(lat=39.0 + i * 0.001, lon=-115.0 + (i % 17) * 0.001, elev_m=float(i), strategy="peak")
@@ -364,14 +369,17 @@ def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "bundle": {
                 "site_suggestions": {
-                    "coverage_goal_depth": 1,
+                    "strategy": "land-grab",
                     "planner_raster_dimension": 256,
-                    "max_candidates_per_round": 4,
-                    "max_clusters_per_round": 2,
-                    "peak_cluster_radius_m": 500.0,
-                    "cluster_sample_spacing_m": 200.0,
-                    "cluster_sample_radius_m": 300.0,
-                    "refine_enabled": False,
+                    "land_grab": {
+                        "coverage_goal_depth": 1,
+                        "max_candidates_per_round": 4,
+                        "max_clusters_per_round": 2,
+                        "peak_cluster_radius_m": 500.0,
+                        "cluster_sample_spacing_m": 200.0,
+                        "cluster_sample_radius_m": 300.0,
+                        "refine_enabled": False,
+                    },
                 }
             },
             "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.03]}},
@@ -442,9 +450,12 @@ def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "bundle": {
                 "site_suggestions": {
+                    "strategy": "land-grab",
                     "planner_raster_dimension": 256,
-                    "max_candidates_per_round": 2,
-                    "refine_enabled": False,
+                    "land_grab": {
+                        "max_candidates_per_round": 2,
+                        "refine_enabled": False,
+                    },
                 }
             },
             "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.03]}},
@@ -491,7 +502,27 @@ def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
     )
     out = capsys.readouterr().out
     assert "planner configuration" in out
+    assert "strategy: land-grab" in out
     assert "coverage_target: eligible" in out
     assert "candidate shortlist" in out
     assert "viewshed trials" in out
     assert "selection" in out
+
+
+def test_site_suggestions_default_strategy() -> None:
+    from peaky_finders.sites_job import BundleSiteSuggestionsConfig, SiteSuggestionStrategy
+
+    cfg = BundleSiteSuggestionsConfig()
+    assert cfg.strategy == SiteSuggestionStrategy.LAND_GRAB
+    assert cfg.land_grab.coverage_goal_depth == 1
+
+
+def test_resolve_land_grab_strategy() -> None:
+    from peaky_finders.site_suggestions.strategies.land_grab import LandGrabStrategy
+    from peaky_finders.site_suggestions.strategies.registry import resolve_site_suggestion_strategy
+    from peaky_finders.sites_job import BundleSiteSuggestionsConfig
+
+    provider = resolve_site_suggestion_strategy(BundleSiteSuggestionsConfig())
+    assert isinstance(provider, LandGrabStrategy)
+    assert provider.name == "land-grab"
+    assert provider.goal_depth(BundleSiteSuggestionsConfig()) == 1

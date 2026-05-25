@@ -235,6 +235,24 @@ bundle:
     # Mesh depth rasters + per-site band slices per render phase.
     mesh_depth_workers: 8
 
+  # ``peaky build --suggest``: greedy site planner (strategy-specific knobs under ``land_grab`` / future blocks).
+  site_suggestions:
+    strategy: land-grab
+    coverage_target: eligible # score marginal gain on deployable land, not full AOI hull
+    planner_raster_dimension: 1024 # EPSG:3857 depth grid longer edge for suggest scoring
+    uncovered_stop_pct: 0.5 # stop when <0.5% eligible land still below goal depth
+    land_grab:
+      coverage_goal_depth: 1 # depth ≥ N on eligible land before a cell counts as covered
+      max_candidates_per_round: 48
+      max_clusters_per_round: 16
+      peak_cluster_radius_m: 1500.0
+      cluster_sample_spacing_m: 250.0
+      cluster_sample_radius_m: 750.0
+      refine_enabled: true
+      refine_top_n: 3
+      refine_radius_m: 200.0
+      refine_spacing_m: 50.0
+
   # doc.kml initial NetworkLink checkbox visibility inside aggregate KMZ
   kmz:
     layers:
