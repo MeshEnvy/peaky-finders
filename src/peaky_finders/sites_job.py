@@ -666,6 +666,91 @@ class SiteSuggestionStrategy(StrEnum):
     """Candidate-generation strategy for ``peaky build --suggest``."""
 
     LAND_GRAB = "land-grab"
+    MESH_BACKBONE = "mesh-backbone"
+
+
+class MeshBackboneLinkEntry(BaseModel):
+    """One backbone edge between two named anchors."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str | None = Field(default=None, description="Optional label (e.g. ``reno-elko``).")
+    endpoints: tuple[str, str] = Field(
+        description="Two anchor keys (order defines leg direction for sampling; links are undirected).",
+    )
+
+    @field_validator("endpoints", mode="before")
+    @classmethod
+    def _coerce_endpoints(cls, v: Any) -> tuple[str, str]:
+        if isinstance(v, (list, tuple)) and len(v) == 2:
+            a = str(v[0]).strip()
+            b = str(v[1]).strip()
+            if not a or not b:
+                raise ValueError("link endpoints must be non-empty anchor keys")
+            return (a, b)
+        raise ValueError("link endpoints must be a length-2 list of anchor keys")
+
+
+class MeshBackboneStrategyConfig(BaseModel):
+    """Redundant repeater chains along explicit anchor↔anchor links."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    site_goal_depth: int = Field(
+        default=2,
+        ge=1,
+        le=32,
+        description="Required footprint overlap depth at each repeater node on a link chain.",
+    )
+    link_buffer_m: float = Field(
+        default=40_000.0,
+        ge=100.0,
+        description="Half-width in meters of the search strip around each link leg.",
+    )
+    sample_spacing_m: float = Field(
+        default=300.0,
+        ge=25.0,
+        description="Spacing for sampling candidate points along a link leg.",
+    )
+    anchors: dict[str, tuple[float, float]] = Field(
+        default_factory=dict,
+        description="Named anchor locations ``key → [lat, lon]`` (hub cities / termini).",
+    )
+    links: list[MeshBackboneLinkEntry] = Field(
+        default_factory=list,
+        description="Explicit anchor pairs to connect with depth≥``site_goal_depth`` repeater chains.",
+    )
+
+    @field_validator("anchors", mode="before")
+    @classmethod
+    def _coerce_anchors(cls, v: Any) -> dict[str, tuple[float, float]]:
+        if v is None:
+            return {}
+        if not isinstance(v, Mapping):
+            raise ValueError("mesh_backbone.anchors must be a mapping of name → [lat, lon]")
+        out: dict[str, tuple[float, float]] = {}
+        for key, loc in v.items():
+            k = str(key).strip()
+            if not k:
+                raise ValueError("anchor keys must be non-empty strings")
+            if not isinstance(loc, (list, tuple)) or len(loc) != 2:
+                raise ValueError(f"anchor {k!r}: loc must be a length-2 [lat, lon] array")
+            out[k] = (float(loc[0]), float(loc[1]))
+        return out
+
+    @model_validator(mode="after")
+    def _validate_links(self) -> MeshBackboneStrategyConfig:
+        if self.links and len(self.anchors) < 2:
+            raise ValueError("mesh_backbone.links requires at least 2 anchors")
+        for link in self.links:
+            a, b = link.endpoints
+            if a == b:
+                raise ValueError(f"link {link.name or (a, b)!r}: endpoints must differ")
+            if a not in self.anchors:
+                raise ValueError(f"link {link.name or (a, b)!r}: unknown anchor {a!r}")
+            if b not in self.anchors:
+                raise ValueError(f"link {link.name or (a, b)!r}: unknown anchor {b!r}")
+        return self
 
 
 class LandGrabStrategyConfig(BaseModel):
@@ -735,7 +820,7 @@ class BundleSiteSuggestionsConfig(BaseModel):
 
     strategy: SiteSuggestionStrategy = Field(
         default=SiteSuggestionStrategy.LAND_GRAB,
-        description="Candidate-generation strategy (``land_grab`` block holds per-strategy knobs).",
+        description="Candidate-generation strategy (``land_grab`` / ``mesh_backbone`` per-strategy knobs).",
     )
     coverage_target: SiteSuggestionCoverageTarget = Field(
         default=SiteSuggestionCoverageTarget.ELIGIBLE,
@@ -756,6 +841,10 @@ class BundleSiteSuggestionsConfig(BaseModel):
     land_grab: LandGrabStrategyConfig = Field(
         default_factory=LandGrabStrategyConfig,
         description="Knobs for ``strategy: land-grab``.",
+    )
+    mesh_backbone: MeshBackboneStrategyConfig = Field(
+        default_factory=MeshBackboneStrategyConfig,
+        description="Knobs for ``strategy: mesh-backbone`` (anchor links + redundant chains).",
     )
 
 
