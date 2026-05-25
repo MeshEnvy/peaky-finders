@@ -1,8 +1,9 @@
-"""Mesh-backbone link geometry (anchor pairs, buffered legs, sampling)."""
+"""Mesh-backbone link geometry (site-slug endpoints, buffered legs, sampling)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 import geopandas as gpd
 import numpy as np
@@ -19,21 +20,50 @@ _FROM_M = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
 
 @dataclass(frozen=True)
 class AnchorPoint:
-    key: str
+    slug: str
     lat: float
     lon: float
 
 
-def anchor_from_loc(key: str, loc: tuple[float, float]) -> AnchorPoint:
-    return AnchorPoint(key=str(key), lat=float(loc[0]), lon=float(loc[1]))
+def anchor_from_site(slug: str, *, lat: float, lon: float) -> AnchorPoint:
+    return AnchorPoint(slug=str(slug), lat=float(lat), lon=float(lon))
 
 
-def anchors_from_config(cfg: MeshBackboneStrategyConfig) -> dict[str, AnchorPoint]:
-    return {k: anchor_from_loc(k, loc) for k, loc in cfg.anchors.items()}
+def endpoint_slugs_for_config(cfg: MeshBackboneStrategyConfig) -> set[str]:
+    slugs: set[str] = set()
+    for link in cfg.links:
+        slugs.add(link.endpoints[0])
+        slugs.add(link.endpoints[1])
+    return slugs
+
+
+def validate_mesh_backbone_site_slugs(
+    sites: Mapping[str, object],
+    cfg: MeshBackboneStrategyConfig,
+) -> None:
+    """Raise when a link endpoint slug is missing from ``preset.sites``."""
+    for link in cfg.links:
+        label = link.name or f"{link.endpoints[0]}-{link.endpoints[1]}"
+        for slug in link.endpoints:
+            if slug not in sites:
+                raise ValueError(f"mesh_backbone link {label!r}: unknown site slug {slug!r}")
+
+
+def anchors_from_preset(
+    sites: Mapping[str, object],
+    cfg: MeshBackboneStrategyConfig,
+) -> dict[str, AnchorPoint]:
+    """Resolve link endpoint slugs to ``AnchorPoint`` locations from ``preset.sites``."""
+    validate_mesh_backbone_site_slugs(sites, cfg)
+    out: dict[str, AnchorPoint] = {}
+    for slug in sorted(endpoint_slugs_for_config(cfg)):
+        ent = sites[slug]
+        out[slug] = anchor_from_site(slug, lat=float(ent.lat), lon=float(ent.lon))
+    return out
 
 
 def build_link_leg(a: AnchorPoint, b: AnchorPoint) -> LineString:
-    """EPSG:3857 line segment between two anchors."""
+    """EPSG:3857 line segment between two endpoint sites."""
     x0, y0 = _TO_M.transform(float(a.lon), float(a.lat))
     x1, y1 = _TO_M.transform(float(b.lon), float(b.lat))
     return LineString([(x0, y0), (x1, y1)])
@@ -43,8 +73,8 @@ def resolve_link_leg(
     anchors: dict[str, AnchorPoint],
     link: MeshBackboneLinkEntry,
 ) -> LineString:
-    a_key, b_key = link.endpoints
-    return build_link_leg(anchors[a_key], anchors[b_key])
+    a_slug, b_slug = link.endpoints
+    return build_link_leg(anchors[a_slug], anchors[b_slug])
 
 
 def link_search_zone(
@@ -121,8 +151,9 @@ def sample_along_link(
 
 
 def resolved_link_legs(
+    sites: Mapping[str, object],
     cfg: MeshBackboneStrategyConfig,
 ) -> list[tuple[MeshBackboneLinkEntry, LineString]]:
     """Each configured link with its EPSG:3857 leg."""
-    anchors = anchors_from_config(cfg)
+    anchors = anchors_from_preset(sites, cfg)
     return [(link, resolve_link_leg(anchors, link)) for link in cfg.links]

@@ -670,13 +670,13 @@ class SiteSuggestionStrategy(StrEnum):
 
 
 class MeshBackboneLinkEntry(BaseModel):
-    """One backbone edge between two named anchors."""
+    """One backbone edge between two preset site slugs."""
 
     model_config = ConfigDict(extra="ignore")
 
-    name: str | None = Field(default=None, description="Optional label (e.g. ``reno-elko``).")
+    name: str | None = Field(default=None, description="Optional label (e.g. ``slpt-south-razorback``).")
     endpoints: tuple[str, str] = Field(
-        description="Two anchor keys (order defines leg direction for sampling; links are undirected).",
+        description="Two ``sites:`` slugs (order defines leg direction for sampling; links are undirected).",
     )
 
     @field_validator("endpoints", mode="before")
@@ -686,9 +686,9 @@ class MeshBackboneLinkEntry(BaseModel):
             a = str(v[0]).strip()
             b = str(v[1]).strip()
             if not a or not b:
-                raise ValueError("link endpoints must be non-empty anchor keys")
+                raise ValueError("link endpoints must be non-empty site slugs")
             return (a, b)
-        raise ValueError("link endpoints must be a length-2 list of anchor keys")
+        raise ValueError("link endpoints must be a length-2 list of site slugs")
 
 
 class MeshBackboneStrategyConfig(BaseModel):
@@ -711,11 +711,6 @@ class MeshBackboneStrategyConfig(BaseModel):
         default=300.0,
         ge=25.0,
         description="Spacing for sampling candidate points along a link leg.",
-    )
-    endpoint_capture_m: float = Field(
-        default=5000.0,
-        ge=100.0,
-        description="Max distance from an anchor for a chain node to count as that link endpoint.",
     )
     max_candidates_per_round: int = Field(
         default=48,
@@ -749,44 +744,17 @@ class MeshBackboneStrategyConfig(BaseModel):
         le=512,
         description="Optional cap on solver picks per ``--suggest`` pass (stop when reached).",
     )
-    anchors: dict[str, tuple[float, float]] = Field(
-        default_factory=dict,
-        description="Named anchor locations ``key → [lat, lon]`` (hub cities / termini).",
-    )
     links: list[MeshBackboneLinkEntry] = Field(
         default_factory=list,
-        description="Explicit anchor pairs to connect with depth≥``site_goal_depth`` repeater chains.",
+        description="Site-slug pairs to connect with mutual-hop repeater chains.",
     )
-
-    @field_validator("anchors", mode="before")
-    @classmethod
-    def _coerce_anchors(cls, v: Any) -> dict[str, tuple[float, float]]:
-        if v is None:
-            return {}
-        if not isinstance(v, Mapping):
-            raise ValueError("mesh_backbone.anchors must be a mapping of name → [lat, lon]")
-        out: dict[str, tuple[float, float]] = {}
-        for key, loc in v.items():
-            k = str(key).strip()
-            if not k:
-                raise ValueError("anchor keys must be non-empty strings")
-            if not isinstance(loc, (list, tuple)) or len(loc) != 2:
-                raise ValueError(f"anchor {k!r}: loc must be a length-2 [lat, lon] array")
-            out[k] = (float(loc[0]), float(loc[1]))
-        return out
 
     @model_validator(mode="after")
     def _validate_links(self) -> MeshBackboneStrategyConfig:
-        if self.links and len(self.anchors) < 2:
-            raise ValueError("mesh_backbone.links requires at least 2 anchors")
         for link in self.links:
             a, b = link.endpoints
             if a == b:
                 raise ValueError(f"link {link.name or (a, b)!r}: endpoints must differ")
-            if a not in self.anchors:
-                raise ValueError(f"link {link.name or (a, b)!r}: unknown anchor {a!r}")
-            if b not in self.anchors:
-                raise ValueError(f"link {link.name or (a, b)!r}: unknown anchor {b!r}")
         return self
 
 
