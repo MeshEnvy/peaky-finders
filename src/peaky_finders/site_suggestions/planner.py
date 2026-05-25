@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -15,9 +14,9 @@ from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.build_configure import BuildConfigurePlan
 from peaky_finders.bundle_clips import ELIGIBLE_LAYER
-from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_site_candidates
+from peaky_finders.site_suggestions.batch_viewshed import run_candidate_batch_viewsheds
+from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_refine_candidates, generate_site_candidates
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_coverage_depth_grid
-from peaky_finders.site_suggestions.ephemeral_viewshed import candidate_viewshed_workdir, run_ephemeral_viewshed_footprint
 from peaky_finders.site_suggestions.log import suggest_log, suggest_step
 from peaky_finders.sites_job import Preset, SiteSuggestionCoverageTarget, resolved_site_suggestions_config
 
@@ -141,7 +140,14 @@ def _log_planner_config(
     suggest_log(verbose, f"  coverage_goal_depth: {goal}")
     suggest_log(verbose, f"  planner_raster_dimension: {cfg.planner_raster_dimension}")
     suggest_log(verbose, f"  max_candidates_per_round: {cfg.max_candidates_per_round}")
+    suggest_log(verbose, f"  max_clusters_per_round: {cfg.max_clusters_per_round}")
     suggest_log(verbose, f"  peak_cluster_radius_m: {cfg.peak_cluster_radius_m}")
+    suggest_log(verbose, f"  cluster_sample_spacing_m: {cfg.cluster_sample_spacing_m}")
+    suggest_log(verbose, f"  cluster_sample_radius_m: {cfg.cluster_sample_radius_m}")
+    suggest_log(verbose, f"  refine_enabled: {cfg.refine_enabled}")
+    suggest_log(verbose, f"  refine_top_n: {cfg.refine_top_n}")
+    suggest_log(verbose, f"  refine_radius_m: {cfg.refine_radius_m}")
+    suggest_log(verbose, f"  refine_spacing_m: {cfg.refine_spacing_m}")
     suggest_log(verbose, f"  uncovered_stop_pct: {cfg.uncovered_stop_pct}")
     suggest_log(verbose, f"  suggest_parallelism: {max(1, int(jobs))}")
     suggest_log(verbose, "site suggest: ── seed sites ──")
@@ -252,7 +258,7 @@ def _log_selection_summary(
         suggest_log(verbose, f"  rationale: {best.rationale}")
 
 
-def _evaluate_candidate_trial(
+def _evaluate_footprint_trial(
     *,
     ci: int,
     cand: SiteCandidate,
@@ -260,30 +266,13 @@ def _evaluate_candidate_trial(
     goal: int,
     grid: CoverageDepthGrid,
     target_label: str,
-    preset: Preset,
-    preset_path: Path,
-    plan: BuildConfigurePlan,
-    footprint_runner,
+    footprint,
+    workdir: Path,
+    error_detail: str | None = None,
 ) -> _CandidateTrialEval:
     point_gain = grid.point_marginal_gain_cells(cand.lon, cand.lat, goal_depth=goal)
-    wd = candidate_viewshed_workdir(
-        preset=preset,
-        viewshed_root=plan.viewsheds_root,
-        lat=cand.lat,
-        lon=cand.lon,
-    )
 
-    try:
-        footprint = footprint_runner(
-            preset=preset,
-            preset_path=preset_path,
-            lat=cand.lat,
-            lon=cand.lon,
-            workdir=wd,
-        )
-    except Exception as exc:
-        msg = f"viewshed failed: {exc}"
-        print(f"site suggest: candidate [{ci}] failed ({cand.lat:.5f},{cand.lon:.5f}): {exc}", flush=True)
+    if error_detail is not None:
         return _CandidateTrialEval(
             trial=CandidateTrial(
                 index=ci,
@@ -292,8 +281,8 @@ def _evaluate_candidate_trial(
                 point_gain_cells=point_gain,
                 footprint_gain_cells=None,
                 footprint_area_km2=None,
-                workdir=wd,
-                detail=msg,
+                workdir=workdir,
+                detail=error_detail,
             ),
             pick=None,
         )
@@ -307,7 +296,7 @@ def _evaluate_candidate_trial(
                 point_gain_cells=point_gain,
                 footprint_gain_cells=None,
                 footprint_area_km2=None,
-                workdir=wd,
+                workdir=workdir,
                 detail="viewshed produced no footprint polygon",
             ),
             pick=None,
@@ -324,7 +313,7 @@ def _evaluate_candidate_trial(
                 point_gain_cells=point_gain,
                 footprint_gain_cells=gain,
                 footprint_area_km2=area_km2,
-                workdir=wd,
+                workdir=workdir,
                 detail=(
                     f"footprint covers {area_km2:.1f} km² but adds 0 new {target_label} cells "
                     f"toward depth≥{goal} (already covered or outside coverage target)"
@@ -354,7 +343,7 @@ def _evaluate_candidate_trial(
             point_gain_cells=point_gain,
             footprint_gain_cells=gain,
             footprint_area_km2=area_km2,
-            workdir=wd,
+            workdir=workdir,
             detail=f"footprint {area_km2:.1f} km²",
             footprint=footprint,
         ),
@@ -362,84 +351,54 @@ def _evaluate_candidate_trial(
     )
 
 
-def _log_trial_completion(*, verbose: bool, ev: _CandidateTrialEval) -> None:
-    t = ev.trial
-    gain_s = "—" if t.footprint_gain_cells is None else str(t.footprint_gain_cells)
-    suggest_log(
-        verbose,
-        f"site suggest:   trial [{t.index}] done outcome={t.outcome.value} "
-        f"footprint_gain={gain_s} cells",
-    )
-
-
-def _run_candidate_trials(
+def _trials_from_batch_results(
     *,
     candidates: list[SiteCandidate],
+    batch_results: dict,
     iteration: int,
     goal: int,
     grid: CoverageDepthGrid,
     target_label: str,
-    preset: Preset,
-    preset_path: Path,
-    plan: BuildConfigurePlan,
-    footprint_runner,
-    jobs: int,
-    verbose: bool,
-) -> tuple[PlannedSuggestion | None, BaseGeometry | None, list[CandidateTrial]]:
-    workers = max(1, int(jobs))
-
-    with suggest_step(verbose, f"viewshed trials ({len(candidates)} candidates, workers={workers})"):
-        for ci, cand in enumerate(candidates, start=1):
-            point_gain = grid.point_marginal_gain_cells(cand.lon, cand.lat, goal_depth=goal)
-            suggest_log(
-                verbose,
-                f"site suggest:     trial [{ci}/{len(candidates)}] {_format_candidate_brief(cand)} "
-                f"point_pre_gain={point_gain} cells → viewshed…",
-            )
-
-        if workers <= 1 or len(candidates) <= 1:
-            evals = []
-            for ci, cand in enumerate(candidates, start=1):
-                ev = _evaluate_candidate_trial(
+    start_index: int = 1,
+) -> list[_CandidateTrialEval]:
+    evals: list[_CandidateTrialEval] = []
+    for offset, cand in enumerate(candidates):
+        ci = start_index + offset
+        key = (int(round(cand.lat * 1e5)), int(round(cand.lon * 1e5)))
+        hit = batch_results.get(key)
+        if hit is None:
+            evals.append(
+                _evaluate_footprint_trial(
                     ci=ci,
                     cand=cand,
                     iteration=iteration,
                     goal=goal,
                     grid=grid,
                     target_label=target_label,
-                    preset=preset,
-                    preset_path=preset_path,
-                    plan=plan,
-                    footprint_runner=footprint_runner,
+                    footprint=None,
+                    workdir=Path("."),
+                    error_detail="missing batch viewshed result",
                 )
-                evals.append(ev)
-                _log_trial_completion(verbose=verbose, ev=ev)
-        else:
-            mx = min(workers, len(candidates))
-            evals = []
-            with ThreadPoolExecutor(max_workers=mx) as pool:
-                futs = {
-                    pool.submit(
-                        _evaluate_candidate_trial,
-                        ci=ci,
-                        cand=cand,
-                        iteration=iteration,
-                        goal=goal,
-                        grid=grid,
-                        target_label=target_label,
-                        preset=preset,
-                        preset_path=preset_path,
-                        plan=plan,
-                        footprint_runner=footprint_runner,
-                    ): ci
-                    for ci, cand in enumerate(candidates, start=1)
-                }
-                for fut in as_completed(futs):
-                    ev = fut.result()
-                    evals.append(ev)
-                    _log_trial_completion(verbose=verbose, ev=ev)
-            evals.sort(key=lambda ev: ev.trial.index)
+            )
+            continue
+        evals.append(
+            _evaluate_footprint_trial(
+                ci=ci,
+                cand=cand,
+                iteration=iteration,
+                goal=goal,
+                grid=grid,
+                target_label=target_label,
+                footprint=hit.footprint,
+                workdir=hit.workdir,
+            )
+        )
+    return evals
 
+
+def _select_best_from_evals(
+    evals: list[_CandidateTrialEval],
+) -> tuple[PlannedSuggestion | None, BaseGeometry | None, list[CandidateTrial]]:
     best: PlannedSuggestion | None = None
     best_footprint: BaseGeometry | None = None
     trials: list[CandidateTrial] = []
@@ -459,8 +418,116 @@ def _run_candidate_trials(
                     f"footprint {trial.footprint_area_km2:.1f} km²"
                 )
         trials.append(trial)
-
     return best, best_footprint, trials
+
+
+def _run_candidate_trials(
+    *,
+    candidates: list[SiteCandidate],
+    iteration: int,
+    goal: int,
+    grid: CoverageDepthGrid,
+    target_label: str,
+    preset: Preset,
+    preset_path: Path,
+    plan: BuildConfigurePlan,
+    cfg,
+    eligible_ll: BaseGeometry,
+    footprint_runner,
+    jobs: int,
+    verbose: bool,
+) -> tuple[PlannedSuggestion | None, BaseGeometry | None, list[CandidateTrial]]:
+    workers = max(1, int(jobs))
+
+    with suggest_step(verbose, f"coarse batch viewshed ({len(candidates)} candidates, workers={workers})"):
+        for ci, cand in enumerate(candidates, start=1):
+            point_gain = grid.point_marginal_gain_cells(cand.lon, cand.lat, goal_depth=goal)
+            suggest_log(
+                verbose,
+                f"site suggest:     trial [{ci}/{len(candidates)}] {_format_candidate_brief(cand)} "
+                f"point_pre_gain={point_gain} cells",
+            )
+        try:
+            coarse_batch = run_candidate_batch_viewsheds(
+                preset=preset,
+                preset_path=preset_path,
+                viewshed_root=plan.viewsheds_root,
+                candidates=candidates,
+                verbose=verbose,
+                jobs=workers,
+                footprint_runner=footprint_runner,
+            )
+        except Exception as exc:
+            print(f"site suggest: batch viewshed failed: {exc}", flush=True)
+            raise
+
+    coarse_evals = _trials_from_batch_results(
+        candidates=candidates,
+        batch_results=coarse_batch,
+        iteration=iteration,
+        goal=goal,
+        grid=grid,
+        target_label=target_label,
+    )
+
+    refine_candidates: list[SiteCandidate] = []
+    if cfg.refine_enabled and int(cfg.refine_top_n) > 0:
+        ranked = sorted(
+            (ev for ev in coarse_evals if ev.pick is not None and ev.trial.footprint_gain_cells),
+            key=lambda ev: int(ev.trial.footprint_gain_cells or 0),
+            reverse=True,
+        )
+        refine_centers = [ev.pick for ev in ranked[: int(cfg.refine_top_n)] if ev.pick is not None]
+        if refine_centers:
+            refine_candidates = generate_refine_candidates(
+                centers=[
+                    SiteCandidate(
+                        lat=p.lat,
+                        lon=p.lon,
+                        elev_m=p.elev_m,
+                        strategy="refine_seed",
+                    )
+                    for p in refine_centers
+                ],
+                eligible_ll=eligible_ll,
+                refine_radius_m=float(cfg.refine_radius_m),
+                refine_spacing_m=float(cfg.refine_spacing_m),
+            )
+            coarse_keys = {
+                (int(round(c.lat * 1e5)), int(round(c.lon * 1e5))) for c in candidates
+            }
+            refine_candidates = [
+                c
+                for c in refine_candidates
+                if (int(round(c.lat * 1e5)), int(round(c.lon * 1e5))) not in coarse_keys
+            ]
+
+    refine_evals: list[_CandidateTrialEval] = []
+    if refine_candidates:
+        with suggest_step(
+            verbose,
+            f"refine batch viewshed ({len(refine_candidates)} samples around top {cfg.refine_top_n})",
+        ):
+            refine_batch = run_candidate_batch_viewsheds(
+                preset=preset,
+                preset_path=preset_path,
+                viewshed_root=plan.viewsheds_root,
+                candidates=refine_candidates,
+                verbose=verbose,
+                jobs=workers,
+                footprint_runner=footprint_runner,
+            )
+        refine_evals = _trials_from_batch_results(
+            candidates=refine_candidates,
+            batch_results=refine_batch,
+            iteration=iteration,
+            goal=goal,
+            grid=grid,
+            target_label=target_label,
+            start_index=len(candidates) + 1,
+        )
+
+    return _select_best_from_evals([*coarse_evals, *refine_evals])
 
 
 def plan_greedy_site_suggestions(
@@ -470,7 +537,7 @@ def plan_greedy_site_suggestions(
     plan: BuildConfigurePlan,
     n_suggestions: int,
     suggest_root: Path,
-    footprint_runner=run_ephemeral_viewshed_footprint,
+    footprint_runner=None,
     verbose: bool = False,
     jobs: int = 1,
 ) -> list[PlannedSuggestion]:
@@ -550,8 +617,7 @@ def plan_greedy_site_suggestions(
             dem_mirror_root=dem_mirror,
             suggest_root=suggest_root,
             eligible_sha=eligible_sha,
-            max_candidates=int(cfg.max_candidates_per_round),
-            cluster_radius_m=float(cfg.peak_cluster_radius_m),
+            cfg=cfg,
             iteration=iteration - 1,
             jobs=jobs,
             verbose=verbose,
@@ -571,6 +637,8 @@ def plan_greedy_site_suggestions(
             preset=preset,
             preset_path=preset_path,
             plan=plan,
+            cfg=cfg,
+            eligible_ll=eligible_ll,
             footprint_runner=footprint_runner,
             jobs=jobs,
             verbose=verbose,

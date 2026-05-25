@@ -684,15 +684,51 @@ class BundleSiteSuggestionsConfig(BaseModel):
         description="EPSG:3857 grid longer edge for suggest marginal-gain raster.",
     )
     max_candidates_per_round: int = Field(
-        default=12,
+        default=48,
         ge=1,
-        le=256,
-        description="Skadi-ranked eligible candidates viewshed-evaluated per greedy pick.",
+        le=512,
+        description="Eligible cluster/grid samples viewshed-evaluated per greedy pick (coarse pass).",
     )
     peak_cluster_radius_m: float = Field(
         default=1500.0,
         ge=50.0,
-        description="Merge nearby eligible peak samples before viewshed trials.",
+        description="Merge nearby eligible peak samples before cluster grid sampling.",
+    )
+    cluster_sample_spacing_m: float = Field(
+        default=250.0,
+        ge=25.0,
+        description="EPSG:3857 grid spacing for viewshed samples within each peak cluster.",
+    )
+    cluster_sample_radius_m: float = Field(
+        default=750.0,
+        ge=50.0,
+        description="Radius around each cluster center for coarse placement grid samples.",
+    )
+    max_clusters_per_round: int = Field(
+        default=16,
+        ge=1,
+        le=128,
+        description="Peak clusters expanded to placement grids per greedy iteration.",
+    )
+    refine_enabled: bool = Field(
+        default=True,
+        description="Micro-grid viewshed search around top coarse candidates (second batch pass).",
+    )
+    refine_top_n: int = Field(
+        default=3,
+        ge=0,
+        le=32,
+        description="Coarse winners (by marginal gain) to micro-refine when ``refine_enabled``.",
+    )
+    refine_radius_m: float = Field(
+        default=200.0,
+        ge=25.0,
+        description="Radius for micro-refinement grid around each coarse winner.",
+    )
+    refine_spacing_m: float = Field(
+        default=50.0,
+        ge=10.0,
+        description="Grid spacing for micro-refinement viewshed samples.",
     )
     uncovered_stop_pct: float = Field(
         default=0.5,

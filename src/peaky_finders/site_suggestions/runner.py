@@ -44,10 +44,8 @@ def run_site_suggestion_pass(
             flush=True,
         )
     runner = footprint_runner
-    if runner is None:
-        from peaky_finders.site_suggestions.ephemeral_viewshed import run_ephemeral_viewshed_footprint
-
-        runner = run_ephemeral_viewshed_footprint
+    if runner is None and verbose:
+        print("site suggest: using splatter run-batch for candidate viewsheds", flush=True)
 
     winners = plan_greedy_site_suggestions(
         preset=preset,

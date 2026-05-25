@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
 import pytest
-from shapely.geometry import box
+from pyproj import Transformer
+from shapely.geometry import Point, box
 
 from peaky_finders.site_suggestions.depth_grid import build_coverage_depth_grid
 from peaky_finders.site_suggestions.planner import plan_greedy_site_suggestions, planned_to_preset_entries
@@ -150,7 +152,8 @@ def test_eligible_peak_candidates_use_masked_dem(
     tmp_path: Path,
 ) -> None:
     from peaky_finders import pairwise_dem_peak as dem_peak
-    from peaky_finders.site_suggestions.candidates import _eligible_peak_candidates
+    from peaky_finders.site_suggestions.candidates import _eligible_peak_candidates, _grid_samples_around_point
+    from peaky_finders.sites_job import BundleSiteSuggestionsConfig
     from rasterio.transform import from_bounds
 
     aoi = box(-115.0, 39.0, -114.0, 40.0)
@@ -182,8 +185,13 @@ def test_eligible_peak_candidates_use_masked_dem(
         dem_mirror_root=mirror,
         suggest_root=tmp_path / "suggest",
         eligible_sha="test-eligible",
-        max_candidates=4,
-        cluster_radius_m=1500.0,
+        cfg=BundleSiteSuggestionsConfig(
+            max_clusters_per_round=4,
+            max_candidates_per_round=4,
+            peak_cluster_radius_m=1500.0,
+            cluster_sample_spacing_m=250.0,
+            cluster_sample_radius_m=750.0,
+        ),
         return_stats=True,
     )
 
@@ -192,6 +200,125 @@ def test_eligible_peak_candidates_use_masked_dem(
     assert stats["uncovered_peaks"] >= 1
     assert peaks
     assert max(c.elev_m or 0.0 for c in peaks) == 3200.0
+
+
+def test_grid_samples_around_point_on_eligible() -> None:
+    from peaky_finders.site_suggestions.candidates import SiteCandidate, _grid_samples_around_point
+
+    eligible = box(-115.0, 39.0, -114.0, 40.0)
+    center = SiteCandidate(lat=39.5, lon=-114.5, elev_m=3000.0, strategy="peak")
+    samples = _grid_samples_around_point(
+        center,
+        spacing_m=100.0,
+        radius_m=150.0,
+        eligible_ll=eligible,
+        strategy="cluster",
+    )
+    assert len(samples) > 1
+    assert all(c.strategy == "cluster" for c in samples)
+
+
+def test_spatial_index_cluster_matches_buffer_greedy() -> None:
+    from peaky_finders.site_suggestions.candidates import SiteCandidate, _cluster_points_by_buffer
+
+    def _brute_cluster(
+        points: list[SiteCandidate],
+        *,
+        cluster_radius_m: float,
+    ) -> list[tuple[tuple[float, float], int]]:
+        if not points:
+            return []
+        half = float(cluster_radius_m) / 2.0
+        to_m = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+        metric = []
+        for c in points:
+            x, y = to_m.transform(c.lon, c.lat)
+            metric.append((c, float(x), float(y)))
+        used = [False] * len(metric)
+        out: list[tuple[tuple[float, float], int]] = []
+        for i, (ci, xi, yi) in enumerate(metric):
+            if used[i]:
+                continue
+            group = [ci]
+            used[i] = True
+            buf_i = Point(xi, yi).buffer(half)
+            for j in range(i + 1, len(metric)):
+                if used[j]:
+                    continue
+                cj, xj, yj = metric[j]
+                if buf_i.intersects(Point(xj, yj).buffer(half)):
+                    used[j] = True
+                    group.append(cj)
+            center = max(group, key=lambda c: (c.elev_m is not None, c.elev_m or -1.0))
+            out.append(((center.lat, center.lon), len(group)))
+        return out
+
+    rng = np.random.default_rng(0)
+    to_m = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    from_m = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+    cx, cy = to_m.transform(-115.0, 39.5)
+    pts: list[SiteCandidate] = []
+    for k in range(120):
+        x = cx + float(rng.uniform(-5000.0, 5000.0))
+        y = cy + float(rng.uniform(-5000.0, 5000.0))
+        lon, lat = from_m.transform(x, y)
+        pts.append(SiteCandidate(lat=float(lat), lon=float(lon), elev_m=float(k), strategy="peak"))
+
+    radius_m = 1500.0
+    got = _cluster_points_by_buffer(pts, cluster_radius_m=radius_m, verbose=False)
+    want = _brute_cluster(pts, cluster_radius_m=radius_m)
+    got_sig = sorted(((c.center.lat, c.center.lon), len(c.members)) for c in got)
+    assert got_sig == sorted(want)
+
+
+def test_spatial_index_cluster_many_peaks_fast() -> None:
+    from peaky_finders.site_suggestions.candidates import SiteCandidate, _cluster_points_by_buffer
+
+    pts = [
+        SiteCandidate(lat=39.0 + i * 0.001, lon=-115.0 + (i % 17) * 0.001, elev_m=float(i), strategy="peak")
+        for i in range(8000)
+    ]
+    t0 = time.perf_counter()
+    clusters = _cluster_points_by_buffer(pts, cluster_radius_m=1500.0, verbose=False)
+    elapsed = time.perf_counter() - t0
+    assert clusters
+    assert elapsed < 3.0
+
+
+def test_run_candidate_batch_viewshed_mock(tmp_path: Path) -> None:
+    from peaky_finders.site_suggestions.batch_viewshed import run_candidate_batch_viewsheds
+    from peaky_finders.site_suggestions.candidates import SiteCandidate
+    from peaky_finders.sites_job import load_preset, write_preset_document
+
+    preset_path = tmp_path / "job.yaml"
+    write_preset_document(
+        preset_path,
+        {
+            "simulation": dict(_SUGGEST_SIMULATION),
+            "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
+            "sites": {"seed": {"name": "Seed", "loc": [39.0, -119.0]}},
+        },
+    )
+    preset = load_preset(preset_path)
+    candidates = [
+        SiteCandidate(lat=39.02, lon=-115.03, elev_m=2500.0, strategy="cluster"),
+        SiteCandidate(lat=39.04, lon=-115.01, elev_m=2600.0, strategy="cluster"),
+    ]
+
+    def _fake(**kw):
+        lat = float(kw["lat"])
+        lon = float(kw["lon"])
+        return box(lon - 0.01, lat - 0.01, lon + 0.01, lat + 0.01)
+
+    results = run_candidate_batch_viewsheds(
+        preset=preset,
+        preset_path=preset_path,
+        viewshed_root=tmp_path / "viewsheds",
+        candidates=candidates,
+        footprint_runner=_fake,
+    )
+    assert len(results) == 2
+    assert all(r.footprint is not None for r in results.values())
 
 
 def test_append_and_remove_suggested_sites(tmp_path: Path) -> None:
@@ -240,7 +367,11 @@ def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
                     "coverage_goal_depth": 1,
                     "planner_raster_dimension": 256,
                     "max_candidates_per_round": 4,
+                    "max_clusters_per_round": 2,
                     "peak_cluster_radius_m": 500.0,
+                    "cluster_sample_spacing_m": 200.0,
+                    "cluster_sample_radius_m": 300.0,
+                    "refine_enabled": False,
                 }
             },
             "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.03]}},
@@ -309,7 +440,13 @@ def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
         {
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
-            "bundle": {"site_suggestions": {"planner_raster_dimension": 256, "max_candidates_per_round": 2}},
+            "bundle": {
+                "site_suggestions": {
+                    "planner_raster_dimension": 256,
+                    "max_candidates_per_round": 2,
+                    "refine_enabled": False,
+                }
+            },
             "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.03]}},
         },
     )
