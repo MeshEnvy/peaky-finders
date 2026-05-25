@@ -21,7 +21,7 @@ from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_c
 from peaky_finders.site_suggestions.log import suggest_log, suggest_step
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
 from peaky_finders.site_suggestions.strategies.registry import resolve_site_suggestion_strategy
-from peaky_finders.site_suggestions.mesh_backbone_geom import validate_mesh_backbone_site_slugs
+from peaky_finders.site_suggestions.mesh_backbone_geom import validate_mesh_backbone_goals
 from peaky_finders.sites_job import Preset, SiteSuggestionCoverageTarget, SiteSuggestionStrategy, resolved_site_suggestions_config
 
 
@@ -569,7 +569,7 @@ def plan_greedy_site_suggestions(
     cfg = resolved_site_suggestions_config(preset.bundle)
     provider = resolve_site_suggestion_strategy(cfg)
     if cfg.strategy == SiteSuggestionStrategy.MESH_BACKBONE and cfg.mesh_backbone.links:
-        validate_mesh_backbone_site_slugs(preset.sites, cfg.mesh_backbone)
+        validate_mesh_backbone_goals(cfg.mesh_backbone)
     max_steps = provider.resolve_step_budget(cfg, suggest_cli_n)
     if max_steps is not None and max_steps <= 0:
         return []

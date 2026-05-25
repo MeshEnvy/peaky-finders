@@ -11,22 +11,20 @@ from peaky_finders.site_suggestions.mesh_backbone_completion import (
     evaluate_mesh_backbone_completion,
     hop_adjacency,
     order_sites_along_leg,
+    sites_capturing_goal,
 )
 from peaky_finders.site_suggestions.mesh_backbone_geom import (
     AnchorPoint,
     build_link_leg,
     link_search_zone,
 )
-from peaky_finders.sites_job import MeshBackboneLinkEntry, MeshBackboneStrategyConfig
-
-
-def _site_entry(lat: float, lon: float) -> object:
-    return type("E", (), {"lat": float(lat), "lon": float(lon)})()
+from peaky_finders.sites_job import MeshBackboneGoalEntry, MeshBackboneLinkEntry, MeshBackboneStrategyConfig
 
 
 def _chain_fixtures():
-    a = AnchorPoint(slug="s0", lat=39.0, lon=-115.8)
-    b = AnchorPoint(slug="s2", lat=39.0, lon=-115.2)
+    a = AnchorPoint(slug="g0", lat=39.0, lon=-115.85)
+    b = AnchorPoint(slug="g2", lat=39.0, lon=-115.15)
+    anchors = {"g0": a, "g2": b}
     leg = build_link_leg(a, b)
     eligible = box(-116.5, 38.5, -114.5, 39.5)
     zone = link_search_zone(leg, buffer_m=20_000.0, eligible_ll=eligible)
@@ -37,16 +35,20 @@ def _chain_fixtures():
         BackboneSite(slug="s2", lat=39.0, lon=-115.2),
     ]
     footprints = {
-        "s0": box(-115.9, 38.9, -115.4, 39.1),
-        "s1": box(-115.85, 38.9, -115.15, 39.1),
-        "s2": box(-115.6, 38.9, -115.1, 39.1),
+        "s0": box(-115.9, 38.9, -115.47, 39.1),
+        "s1": box(-115.82, 38.95, -115.18, 39.05),
+        "s2": box(-115.58, 38.9, -115.08, 39.1),
     }
-    link = MeshBackboneLinkEntry(name="s0-s2", endpoints=("s0", "s2"))
-    preset_sites = {
-        "s0": _site_entry(39.0, -115.8),
-        "s2": _site_entry(39.0, -115.2),
-    }
-    return link, leg, zone, sites, footprints, preset_sites
+    link = MeshBackboneLinkEntry(name="g0-g2", endpoints=("g0", "g2"))
+    cfg = MeshBackboneStrategyConfig(
+        goals={
+            "g0": MeshBackboneGoalEntry(loc=(39.0, -115.85)),
+            "g2": MeshBackboneGoalEntry(loc=(39.0, -115.15)),
+        },
+        links=[link],
+        link_buffer_m=20_000.0,
+    )
+    return link, leg, zone, sites, footprints, anchors, cfg
 
 
 def test_order_sites_along_leg() -> None:
@@ -76,12 +78,26 @@ def test_hop_adjacency_mutual_footprint() -> None:
     assert "s0" in adj["s1"]
 
 
+def test_sites_capturing_goal() -> None:
+    goal = AnchorPoint(slug="g0", lat=39.0, lon=-115.8)
+    sites = [
+        BackboneSite(slug="near", lat=39.0, lon=-115.75),
+        BackboneSite(slug="far", lat=39.0, lon=-115.2),
+    ]
+    footprints = {
+        "near": box(-115.9, 38.9, -115.4, 39.1),
+        "far": box(-115.35, 38.9, -115.1, 39.1),
+    }
+    assert sites_capturing_goal(goal, sites, footprints) == {"near"}
+
+
 def test_evaluate_link_completion_multihop() -> None:
-    link, leg, zone, sites, footprints, _preset_sites = _chain_fixtures()
+    link, leg, zone, sites, footprints, anchors, _cfg = _chain_fixtures()
     result = evaluate_link_completion(
         link=link,
         leg=leg,
         zone_ll=zone,
+        anchors=anchors,
         sites=sites,
         footprints=footprints,
     )
@@ -90,8 +106,9 @@ def test_evaluate_link_completion_multihop() -> None:
 
 
 def test_evaluate_link_completion_direct_hop() -> None:
-    a = AnchorPoint(slug="s0", lat=39.0, lon=-115.8)
-    b = AnchorPoint(slug="s2", lat=39.0, lon=-115.2)
+    a = AnchorPoint(slug="g0", lat=39.0, lon=-115.85)
+    b = AnchorPoint(slug="g2", lat=39.0, lon=-115.15)
+    anchors = {"g0": a, "g2": b}
     leg = build_link_leg(a, b)
     eligible = box(-116.5, 38.5, -114.5, 39.5)
     zone = link_search_zone(leg, buffer_m=20_000.0, eligible_ll=eligible)
@@ -101,14 +118,15 @@ def test_evaluate_link_completion_direct_hop() -> None:
         BackboneSite(slug="s2", lat=39.0, lon=-115.2),
     ]
     footprints = {
-        "s0": box(-115.9, 38.9, -115.1, 39.1),
-        "s2": box(-115.9, 38.9, -115.1, 39.1),
+        "s0": box(-115.9, 38.9, -115.18, 39.1),
+        "s2": box(-115.82, 38.9, -115.08, 39.1),
     }
-    link = MeshBackboneLinkEntry(name="s0-s2", endpoints=("s0", "s2"))
+    link = MeshBackboneLinkEntry(name="g0-g2", endpoints=("g0", "g2"))
     result = evaluate_link_completion(
         link=link,
         leg=leg,
         zone_ll=zone,
+        anchors=anchors,
         sites=sites,
         footprints=footprints,
     )
@@ -117,17 +135,35 @@ def test_evaluate_link_completion_direct_hop() -> None:
     assert "direct" in result.detail
 
 
-def test_evaluate_link_completion_fails_broken_hop() -> None:
-    link, leg, zone, sites, footprints, _preset_sites = _chain_fixtures()
+def test_evaluate_link_completion_fails_when_goal_not_captured() -> None:
+    link, leg, zone, sites, _footprints, anchors, _cfg = _chain_fixtures()
     footprints = {
-        "s0": box(-115.85, 38.95, -115.70, 39.05),
         "s1": box(-115.40, 38.95, -115.25, 39.05),
-        "s2": box(-115.35, 38.95, -115.15, 39.05),
     }
     result = evaluate_link_completion(
         link=link,
         leg=leg,
         zone_ll=zone,
+        anchors=anchors,
+        sites=sites,
+        footprints=footprints,
+    )
+    assert not result.complete
+    assert "not captured" in result.detail
+
+
+def test_evaluate_link_completion_fails_broken_hop() -> None:
+    link, leg, zone, sites, footprints, anchors, _cfg = _chain_fixtures()
+    footprints = {
+        "s0": box(-115.9, 38.9, -115.75, 39.1),
+        "s1": box(-115.40, 38.95, -115.25, 39.05),
+        "s2": box(-115.6, 38.9, -115.1, 39.1),
+    }
+    result = evaluate_link_completion(
+        link=link,
+        leg=leg,
+        zone_ll=zone,
+        anchors=anchors,
         sites=sites,
         footprints=footprints,
     )
@@ -136,15 +172,10 @@ def test_evaluate_link_completion_fails_broken_hop() -> None:
 
 
 def test_evaluate_mesh_backbone_all_links() -> None:
-    link, _leg, _zone, sites, footprints, preset_sites = _chain_fixtures()
-    cfg = MeshBackboneStrategyConfig(
-        link_buffer_m=20_000.0,
-        links=[link],
-    )
+    _link, _leg, _zone, sites, footprints, _anchors, cfg = _chain_fixtures()
     eligible = box(-116.5, 38.5, -114.5, 39.5)
     results = evaluate_mesh_backbone_completion(
         cfg=cfg,
-        preset_sites=preset_sites,
         eligible_ll=eligible,
         sites=sites,
         footprints=footprints,

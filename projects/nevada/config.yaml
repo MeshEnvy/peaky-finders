@@ -252,7 +252,7 @@ bundle:
       refine_top_n: 3
       refine_radius_m: 200.0
       refine_spacing_m: 50.0
-    # mesh-backbone: connect anchor↔anchor links with hop chains
+    # mesh-backbone: connect goal↔goal links with hop chains (+ goal viewshed capture)
     mesh_backbone:
       site_goal_depth: 2
       link_buffer_m: 40000
@@ -263,15 +263,32 @@ bundle:
       refine_top_n: 3
       refine_radius_m: 200.0
       refine_spacing_m: 50.0
+      goals:
+        reno:
+          loc: [39.5296, -119.8138]
+        tonopah:
+          loc: [38.0678, -117.2301]
+        vegas:
+          loc: [36.1699, -115.1398]
+        ely:
+          loc: [39.2477, -114.8886]
+        wells:
+          loc: [41.1116, -114.9647]
+        elko:
+          loc: [40.8324, -115.7631]
       links:
-      - name: flowery-razorback
-        endpoints: [flowery-peak, razorback-mountain]
-      - name: flowery-slpt-south
-        endpoints: [flowery-peak, slpt-south]
-      - name: poito-russell
-        endpoints: [poito, russell-peak]
-      - name: slpt-south-razorback
-        endpoints: [slpt-south, razorback-mountain]
+      - name: reno-tonopah
+        endpoints: [reno, tonopah]
+      - name: tonopah-vegas
+        endpoints: [tonopah, vegas]
+      - name: vegas-ely
+        endpoints: [vegas, ely]
+      - name: ely-wells
+        endpoints: [ely, wells]
+      - name: wells-elko
+        endpoints: [wells, elko]
+      - name: elko-reno
+        endpoints: [elko, reno]
 
   # doc.kml initial NetworkLink checkbox visibility inside aggregate KMZ
   kmz:
@@ -415,12 +432,4 @@ sites:
     plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 22 — CadNSDI 
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN220
     mlrs: NV210170N0210E0SN220
-  razorback-mountain:
-    type: planned
-    name: Razorback Mountain
-    loc:
-    - 40.74468
-    - -119.14266
-    elevation_m: 1724.0
-    rationale: BLM surface management; mesh backbone goal terminus north of Reno.
-
+  

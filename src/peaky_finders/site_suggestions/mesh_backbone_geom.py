@@ -1,9 +1,8 @@
-"""Mesh-backbone link geometry (site-slug endpoints, buffered legs, sampling)."""
+"""Mesh-backbone link geometry (goal anchors, buffered legs, sampling)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
 
 import geopandas as gpd
 import numpy as np
@@ -25,45 +24,39 @@ class AnchorPoint:
     lon: float
 
 
-def anchor_from_site(slug: str, *, lat: float, lon: float) -> AnchorPoint:
-    return AnchorPoint(slug=str(slug), lat=float(lat), lon=float(lon))
+def anchor_from_goal(key: str, *, lat: float, lon: float) -> AnchorPoint:
+    return AnchorPoint(slug=str(key), lat=float(lat), lon=float(lon))
 
 
-def endpoint_slugs_for_config(cfg: MeshBackboneStrategyConfig) -> set[str]:
-    slugs: set[str] = set()
+def endpoint_goal_keys_for_config(cfg: MeshBackboneStrategyConfig) -> set[str]:
+    keys: set[str] = set()
     for link in cfg.links:
-        slugs.add(link.endpoints[0])
-        slugs.add(link.endpoints[1])
-    return slugs
+        keys.add(link.endpoints[0])
+        keys.add(link.endpoints[1])
+    return keys
 
 
-def validate_mesh_backbone_site_slugs(
-    sites: Mapping[str, object],
-    cfg: MeshBackboneStrategyConfig,
-) -> None:
-    """Raise when a link endpoint slug is missing from ``preset.sites``."""
+def validate_mesh_backbone_goals(cfg: MeshBackboneStrategyConfig) -> None:
+    """Raise when a link endpoint references a missing ``mesh_backbone.goals`` key."""
     for link in cfg.links:
         label = link.name or f"{link.endpoints[0]}-{link.endpoints[1]}"
-        for slug in link.endpoints:
-            if slug not in sites:
-                raise ValueError(f"mesh_backbone link {label!r}: unknown site slug {slug!r}")
+        for key in link.endpoints:
+            if key not in cfg.goals:
+                raise ValueError(f"mesh_backbone link {label!r}: unknown goal key {key!r}")
 
 
-def anchors_from_preset(
-    sites: Mapping[str, object],
-    cfg: MeshBackboneStrategyConfig,
-) -> dict[str, AnchorPoint]:
-    """Resolve link endpoint slugs to ``AnchorPoint`` locations from ``preset.sites``."""
-    validate_mesh_backbone_site_slugs(sites, cfg)
+def anchors_from_config(cfg: MeshBackboneStrategyConfig) -> dict[str, AnchorPoint]:
+    """Resolve link endpoint goal keys to ``AnchorPoint`` locations from ``mesh_backbone.goals``."""
+    validate_mesh_backbone_goals(cfg)
     out: dict[str, AnchorPoint] = {}
-    for slug in sorted(endpoint_slugs_for_config(cfg)):
-        ent = sites[slug]
-        out[slug] = anchor_from_site(slug, lat=float(ent.lat), lon=float(ent.lon))
+    for key in sorted(endpoint_goal_keys_for_config(cfg)):
+        goal = cfg.goals[key]
+        out[key] = anchor_from_goal(key, lat=float(goal.lat), lon=float(goal.lon))
     return out
 
 
 def build_link_leg(a: AnchorPoint, b: AnchorPoint) -> LineString:
-    """EPSG:3857 line segment between two endpoint sites."""
+    """EPSG:3857 line segment between two goal anchors."""
     x0, y0 = _TO_M.transform(float(a.lon), float(a.lat))
     x1, y1 = _TO_M.transform(float(b.lon), float(b.lat))
     return LineString([(x0, y0), (x1, y1)])
@@ -73,8 +66,8 @@ def resolve_link_leg(
     anchors: dict[str, AnchorPoint],
     link: MeshBackboneLinkEntry,
 ) -> LineString:
-    a_slug, b_slug = link.endpoints
-    return build_link_leg(anchors[a_slug], anchors[b_slug])
+    a_key, b_key = link.endpoints
+    return build_link_leg(anchors[a_key], anchors[b_key])
 
 
 def link_search_zone(
@@ -150,10 +143,7 @@ def sample_along_link(
     return out
 
 
-def resolved_link_legs(
-    sites: Mapping[str, object],
-    cfg: MeshBackboneStrategyConfig,
-) -> list[tuple[MeshBackboneLinkEntry, LineString]]:
+def resolved_link_legs(cfg: MeshBackboneStrategyConfig) -> list[tuple[MeshBackboneLinkEntry, LineString]]:
     """Each configured link with its EPSG:3857 leg."""
-    anchors = anchors_from_preset(sites, cfg)
+    anchors = anchors_from_config(cfg)
     return [(link, resolve_link_leg(anchors, link)) for link in cfg.links]

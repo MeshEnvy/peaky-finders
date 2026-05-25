@@ -560,7 +560,11 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
                         "sample_spacing_m": 1500.0,
                         "max_candidates_per_round": 8,
                         "refine_enabled": False,
-                        "links": [{"name": "seed-b", "endpoints": ["seed", "site-b"]}],
+                        "goals": {
+                            "goal-seed": {"loc": [39.02, -115.04]},
+                            "goal-b": {"loc": [39.02, -114.99]},
+                        },
+                        "links": [{"name": "seed-b", "endpoints": ["goal-seed", "goal-b"]}],
                     },
                 }
             },

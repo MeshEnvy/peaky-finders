@@ -23,6 +23,7 @@ from peaky_finders.site_suggestions.mesh_backbone_geom import (
 )
 from peaky_finders.sites_job import (
     BundleSiteSuggestionsConfig,
+    MeshBackboneGoalEntry,
     MeshBackboneLinkEntry,
     MeshBackboneStrategyConfig,
     SiteSuggestionStrategy,
@@ -33,6 +34,13 @@ from peaky_finders.site_suggestions.strategies.registry import resolve_site_sugg
 
 def _site_entry(lat: float, lon: float) -> object:
     return type("E", (), {"lat": float(lat), "lon": float(lon)})()
+
+
+def _link_goals() -> dict[str, MeshBackboneGoalEntry]:
+    return {
+        "s0": MeshBackboneGoalEntry(loc=(39.0, -115.8)),
+        "s2": MeshBackboneGoalEntry(loc=(39.0, -115.2)),
+    }
 
 
 def _link_fixture():
@@ -95,6 +103,7 @@ def test_candidates_for_incomplete_link_biased_toward_open_end() -> None:
         link=link,
         leg=leg,
         zone_ll=zone,
+        anchors=anchors,
         sites=sites,
         footprints=footprints,
     )
@@ -145,6 +154,7 @@ def test_generate_mesh_backbone_candidates_skips_complete_links() -> None:
         cfg=BundleSiteSuggestionsConfig(
             strategy=SiteSuggestionStrategy.MESH_BACKBONE,
             mesh_backbone=MeshBackboneStrategyConfig(
+                goals=_link_goals(),
                 link_buffer_m=20_000.0,
                 sample_spacing_m=10_000.0,
                 links=[link],
@@ -170,10 +180,7 @@ def test_mesh_backbone_max_nodes_stops_solver() -> None:
         suggest_root=Path("/tmp/suggest"),
         cfg=BundleSiteSuggestionsConfig(
             strategy=SiteSuggestionStrategy.MESH_BACKBONE,
-            mesh_backbone=MeshBackboneStrategyConfig(
-                links=[MeshBackboneLinkEntry(endpoints=("s0", "s2"))],
-                max_nodes=2,
-            ),
+            mesh_backbone=MeshBackboneStrategyConfig(max_nodes=2),
         ),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
