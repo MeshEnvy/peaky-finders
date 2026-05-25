@@ -38,6 +38,10 @@ class MeshBackboneStrategy:
         return max(1, int(cli_n))
 
     def planning_complete(self, ctx: SiteSuggestionContext) -> bool:
+        mb = ctx.cfg.mesh_backbone
+        cap = mb.max_nodes
+        if cap is not None and len(ctx.session_sites) >= int(cap):
+            return True
         return mesh_backbone_planning_complete(ctx)
 
     def generate_candidates(
