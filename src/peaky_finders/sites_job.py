@@ -662,26 +662,22 @@ class SiteSuggestionCoverageTarget(StrEnum):
     AOI = "aoi"
 
 
-class BundleSiteSuggestionsConfig(BaseModel):
-    """Greedy coverage planner (``peaky build --suggest``)."""
+class SiteSuggestionStrategy(StrEnum):
+    """Candidate-generation strategy for ``peaky build --suggest``."""
+
+    LAND_GRAB = "land-grab"
+
+
+class LandGrabStrategyConfig(BaseModel):
+    """Peak-cluster + gap-fill greedy expansion on eligible land."""
 
     model_config = ConfigDict(extra="ignore")
 
-    coverage_target: SiteSuggestionCoverageTarget = Field(
-        default=SiteSuggestionCoverageTarget.ELIGIBLE,
-        description="Land mask for uncovered % and marginal gain (eligible deployable land vs full AOI).",
-    )
     coverage_goal_depth: int = Field(
         default=1,
         ge=1,
         le=32,
         description="Target footprint overlap count across coverage_target (depth ≥ N).",
-    )
-    planner_raster_dimension: int = Field(
-        default=1024,
-        ge=64,
-        le=8192,
-        description="EPSG:3857 grid longer edge for suggest marginal-gain raster.",
     )
     max_candidates_per_round: int = Field(
         default=48,
@@ -730,11 +726,36 @@ class BundleSiteSuggestionsConfig(BaseModel):
         ge=10.0,
         description="Grid spacing for micro-refinement viewshed samples.",
     )
+
+
+class BundleSiteSuggestionsConfig(BaseModel):
+    """Site suggestion planner (``peaky build --suggest``)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    strategy: SiteSuggestionStrategy = Field(
+        default=SiteSuggestionStrategy.LAND_GRAB,
+        description="Candidate-generation strategy (``land_grab`` block holds per-strategy knobs).",
+    )
+    coverage_target: SiteSuggestionCoverageTarget = Field(
+        default=SiteSuggestionCoverageTarget.ELIGIBLE,
+        description="Land mask for uncovered % and marginal gain (eligible deployable land vs full AOI).",
+    )
+    planner_raster_dimension: int = Field(
+        default=1024,
+        ge=64,
+        le=8192,
+        description="EPSG:3857 grid longer edge for suggest marginal-gain raster.",
+    )
     uncovered_stop_pct: float = Field(
         default=0.5,
         ge=0.0,
         le=100.0,
         description="Stop early when uncovered coverage_target fraction falls below this percent.",
+    )
+    land_grab: LandGrabStrategyConfig = Field(
+        default_factory=LandGrabStrategyConfig,
+        description="Knobs for ``strategy: land-grab``.",
     )
 
 

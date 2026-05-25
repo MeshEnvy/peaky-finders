@@ -15,9 +15,12 @@ from shapely.geometry.base import BaseGeometry
 from peaky_finders.build_configure import BuildConfigurePlan
 from peaky_finders.bundle_clips import ELIGIBLE_LAYER
 from peaky_finders.site_suggestions.batch_viewshed import run_candidate_batch_viewsheds
-from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_refine_candidates, generate_site_candidates
+from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_refine_candidates
+from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_coverage_depth_grid
 from peaky_finders.site_suggestions.log import suggest_log, suggest_step
+from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
+from peaky_finders.site_suggestions.strategies.registry import resolve_site_suggestion_strategy
 from peaky_finders.sites_job import Preset, SiteSuggestionCoverageTarget, resolved_site_suggestions_config
 
 
@@ -121,6 +124,7 @@ def _log_planner_config(
     *,
     verbose: bool,
     cfg,
+    strategy_name: str,
     goal: int,
     grid: CoverageDepthGrid,
     seed_paths: list[Path],
@@ -135,19 +139,21 @@ def _log_planner_config(
     for ent in preset.sites.values():
         by_type[ent.type.value] = by_type.get(ent.type.value, 0) + 1
 
+    lg = cfg.land_grab
     suggest_log(verbose, "site suggest: ── planner configuration ──")
+    suggest_log(verbose, f"  strategy: {strategy_name}")
     suggest_log(verbose, f"  coverage_target: {cfg.coverage_target.value}")
     suggest_log(verbose, f"  coverage_goal_depth: {goal}")
     suggest_log(verbose, f"  planner_raster_dimension: {cfg.planner_raster_dimension}")
-    suggest_log(verbose, f"  max_candidates_per_round: {cfg.max_candidates_per_round}")
-    suggest_log(verbose, f"  max_clusters_per_round: {cfg.max_clusters_per_round}")
-    suggest_log(verbose, f"  peak_cluster_radius_m: {cfg.peak_cluster_radius_m}")
-    suggest_log(verbose, f"  cluster_sample_spacing_m: {cfg.cluster_sample_spacing_m}")
-    suggest_log(verbose, f"  cluster_sample_radius_m: {cfg.cluster_sample_radius_m}")
-    suggest_log(verbose, f"  refine_enabled: {cfg.refine_enabled}")
-    suggest_log(verbose, f"  refine_top_n: {cfg.refine_top_n}")
-    suggest_log(verbose, f"  refine_radius_m: {cfg.refine_radius_m}")
-    suggest_log(verbose, f"  refine_spacing_m: {cfg.refine_spacing_m}")
+    suggest_log(verbose, f"  max_candidates_per_round: {lg.max_candidates_per_round}")
+    suggest_log(verbose, f"  max_clusters_per_round: {lg.max_clusters_per_round}")
+    suggest_log(verbose, f"  peak_cluster_radius_m: {lg.peak_cluster_radius_m}")
+    suggest_log(verbose, f"  cluster_sample_spacing_m: {lg.cluster_sample_spacing_m}")
+    suggest_log(verbose, f"  cluster_sample_radius_m: {lg.cluster_sample_radius_m}")
+    suggest_log(verbose, f"  refine_enabled: {lg.refine_enabled}")
+    suggest_log(verbose, f"  refine_top_n: {lg.refine_top_n}")
+    suggest_log(verbose, f"  refine_radius_m: {lg.refine_radius_m}")
+    suggest_log(verbose, f"  refine_spacing_m: {lg.refine_spacing_m}")
     suggest_log(verbose, f"  uncovered_stop_pct: {cfg.uncovered_stop_pct}")
     suggest_log(verbose, f"  suggest_parallelism: {max(1, int(jobs))}")
     suggest_log(verbose, "site suggest: ── seed sites ──")
@@ -431,7 +437,7 @@ def _run_candidate_trials(
     preset: Preset,
     preset_path: Path,
     plan: BuildConfigurePlan,
-    cfg,
+    refine: StrategyRefineSettings,
     eligible_ll: BaseGeometry,
     footprint_runner,
     jobs: int,
@@ -471,13 +477,13 @@ def _run_candidate_trials(
     )
 
     refine_candidates: list[SiteCandidate] = []
-    if cfg.refine_enabled and int(cfg.refine_top_n) > 0:
+    if refine.refine_enabled and int(refine.refine_top_n) > 0:
         ranked = sorted(
             (ev for ev in coarse_evals if ev.pick is not None and ev.trial.footprint_gain_cells),
             key=lambda ev: int(ev.trial.footprint_gain_cells or 0),
             reverse=True,
         )
-        refine_centers = [ev.pick for ev in ranked[: int(cfg.refine_top_n)] if ev.pick is not None]
+        refine_centers = [ev.pick for ev in ranked[: int(refine.refine_top_n)] if ev.pick is not None]
         if refine_centers:
             refine_candidates = generate_refine_candidates(
                 centers=[
@@ -490,8 +496,8 @@ def _run_candidate_trials(
                     for p in refine_centers
                 ],
                 eligible_ll=eligible_ll,
-                refine_radius_m=float(cfg.refine_radius_m),
-                refine_spacing_m=float(cfg.refine_spacing_m),
+                refine_radius_m=float(refine.refine_radius_m),
+                refine_spacing_m=float(refine.refine_spacing_m),
             )
             coarse_keys = {
                 (int(round(c.lat * 1e5)), int(round(c.lon * 1e5))) for c in candidates
@@ -506,7 +512,7 @@ def _run_candidate_trials(
     if refine_candidates:
         with suggest_step(
             verbose,
-            f"refine batch viewshed ({len(refine_candidates)} samples around top {cfg.refine_top_n})",
+            f"refine batch viewshed ({len(refine_candidates)} samples around top {refine.refine_top_n})",
         ):
             refine_batch = run_candidate_batch_viewsheds(
                 preset=preset,
@@ -548,7 +554,9 @@ def plan_greedy_site_suggestions(
         return []
 
     cfg = resolved_site_suggestions_config(preset.bundle)
-    goal = int(cfg.coverage_goal_depth)
+    provider = resolve_site_suggestion_strategy(cfg)
+    goal = provider.goal_depth(cfg)
+    refine = provider.refine_settings(cfg)
     target_label = _coverage_target_label(cfg.coverage_target)
 
     suggest_log(verbose, "site suggest: ── planner setup ──")
@@ -577,6 +585,7 @@ def plan_greedy_site_suggestions(
     _log_planner_config(
         verbose=verbose,
         cfg=cfg,
+        strategy_name=provider.name,
         goal=goal,
         grid=grid,
         seed_paths=seed_paths,
@@ -594,9 +603,23 @@ def plan_greedy_site_suggestions(
         suggest_log(verbose, msg)
         return []
 
-    dem_mirror = plan.splat_tiles_root
     eligible_sha = _composite_by_role(plan, "eligible").sha
+    dem_mirror = plan.splat_tiles_root
     winners: list[PlannedSuggestion] = []
+    suggest_ctx = SiteSuggestionContext(
+        preset=preset,
+        plan=plan,
+        grid=grid,
+        eligible_ll=eligible_ll,
+        aoi_ll=aoi_ll,
+        target_ll=target_ll,
+        suggest_root=suggest_root,
+        cfg=cfg,
+        dem_mirror_root=dem_mirror,
+        eligible_sha=eligible_sha,
+        jobs=jobs,
+        verbose=verbose,
+    )
 
     for iteration in range(1, n_suggestions + 1):
         uncovered_before = grid.uncovered_fraction(goal_depth=goal)
@@ -610,18 +633,7 @@ def plan_greedy_site_suggestions(
             f"(uncovered {100.0 * uncovered_before:.2f}% below depth≥{goal}) ══",
         )
 
-        candidates = generate_site_candidates(
-            eligible_ll=eligible_ll,
-            grid=grid,
-            goal_depth=goal,
-            dem_mirror_root=dem_mirror,
-            suggest_root=suggest_root,
-            eligible_sha=eligible_sha,
-            cfg=cfg,
-            iteration=iteration - 1,
-            jobs=jobs,
-            verbose=verbose,
-        )
+        candidates = provider.generate_candidates(suggest_ctx, iteration=iteration - 1)
         _log_candidate_shortlist(verbose=verbose, iteration=iteration, candidates=candidates)
 
         if not candidates:
@@ -637,7 +649,7 @@ def plan_greedy_site_suggestions(
             preset=preset,
             preset_path=preset_path,
             plan=plan,
-            cfg=cfg,
+            refine=refine,
             eligible_ll=eligible_ll,
             footprint_runner=footprint_runner,
             jobs=jobs,
