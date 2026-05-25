@@ -6,6 +6,7 @@ import hashlib
 import json
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Sequence
@@ -96,6 +97,46 @@ def mesh_depth_visibility_field(band: str, *, eligible: bool) -> str:
     return f"mesh_depth_{band}"
 
 
+def _depth_band_from_mask_wgs84(
+    band: str,
+    sel: np.ndarray,
+    transform,
+    *,
+    log: Callable[[str], None],
+) -> tuple[str, BaseGeometry | None]:
+    """Polygonize one depth-band mask (EPSG:3857 grid) and return WGS-84 geometry."""
+    m = sel.astype(np.uint8)
+    if not np.any(m):
+        log(f"  depth band {band}: empty, skip")
+        return band, None
+    log(f"  depth polygonize {band}…")
+    pieces: list[BaseGeometry] = []
+    for geom, val in features.shapes(m, mask=m, transform=transform, connectivity=8):
+        if int(val) == 1:
+            pieces.append(shape(geom))
+    if not pieces:
+        return band, None
+    log(f"  depth union {band}: {len(pieces)} piece(s)…")
+    merged = unary_union(pieces)
+    merged = make_valid(merged) if not merged.is_valid else merged
+    if merged.is_empty:
+        return band, None
+    log(f"  depth reproject {band} → WGS84…")
+    ll = gpd.GeoDataFrame(geometry=[merged], crs="EPSG:3857").to_crs("EPSG:4326").geometry.iloc[0]
+    ll = make_valid(ll) if not ll.is_valid else ll
+    if ll.is_empty:
+        return band, None
+    polys = _polygons_flat(orient_for_kml(ll))
+    if not polys:
+        return band, None
+    u = unary_union(polys)
+    u = make_valid(u) if not u.is_valid else u
+    if u.is_empty:
+        return band, None
+    log(f"  depth band {band}: ok")
+    return band, u
+
+
 def compute_footprint_depth_bands_wgs84(
     gpkg_paths: Sequence[Path],
     *,
@@ -166,44 +207,48 @@ def compute_footprint_depth_bands_wgs84(
             )
             acc += layer.astype(np.uint32, copy=False)
 
-    out: dict[str, BaseGeometry] = {}
     band_masks: list[tuple[str, np.ndarray]] = [
         ("d1_unique", (acc == 1)),
         ("d2_pair", (acc == 2)),
         ("d3_quad", (acc >= 3) & (acc <= 4)),
         ("d5_plus", (acc >= 5)),
     ]
-    for band, sel in band_masks:
-        m = sel.astype(np.uint8)
-        if not np.any(m):
-            print(f"  depth band {band}: empty, skip", flush=True)
-            continue
-        print(f"  depth polygonize {band}…", flush=True)
-        pieces: list[BaseGeometry] = []
-        for geom, val in features.shapes(m, mask=m, transform=transform, connectivity=8):
-            if int(val) == 1:
-                pieces.append(shape(geom))
-        if not pieces:
-            continue
-        print(f"  depth union {band}: {len(pieces)} piece(s)…", flush=True)
-        merged = unary_union(pieces)
-        merged = make_valid(merged) if not merged.is_valid else merged
-        if merged.is_empty:
-            continue
-        print(f"  depth reproject {band} → WGS84…", flush=True)
-        ll = gpd.GeoDataFrame(geometry=[merged], crs="EPSG:3857").to_crs("EPSG:4326").geometry.iloc[0]
-        ll = make_valid(ll) if not ll.is_valid else ll
-        if ll.is_empty:
-            continue
-        polys = _polygons_flat(orient_for_kml(ll))
-        if not polys:
-            continue
-        u = unary_union(polys)
-        u = make_valid(u) if not u.is_valid else u
-        if u.is_empty:
-            continue
-        out[band] = u
-        print(f"  depth band {band}: ok", flush=True)
+    n_bands = len(band_masks)
+    band_cap = _pairwise_worker_cap(raster_workers, total_pairs=n_bands)
+    band_log_lock: threading.Lock | None = threading.Lock() if band_cap > 1 else None
+
+    def _band_log(msg: str) -> None:
+        if band_log_lock is not None:
+            with band_log_lock:
+                print(msg, flush=True)
+        else:
+            print(msg, flush=True)
+
+    def _polygonize_band(item: tuple[str, np.ndarray]) -> tuple[str, BaseGeometry | None]:
+        band_key, sel = item
+        return _depth_band_from_mask_wgs84(band_key, sel, transform, log=_band_log)
+
+    out: dict[str, BaseGeometry] = {}
+    if band_cap <= 1:
+        for item in band_masks:
+            band_key, geom = _polygonize_band(item)
+            if geom is not None:
+                out[band_key] = geom
+    else:
+        print(
+            f"  depth band polygonize parallelism: {band_cap} threads ({n_bands} bands)…",
+            flush=True,
+        )
+        band_t0 = time.perf_counter()
+        with ThreadPoolExecutor(max_workers=band_cap) as ex:
+            for band_key, geom in ex.map(_polygonize_band, band_masks):
+                if geom is not None:
+                    out[band_key] = geom
+        band_elapsed = time.perf_counter() - band_t0
+        print(
+            f"  depth band polygonize done: {len(out)} non-empty band(s) ({band_elapsed:.1f}s)",
+            flush=True,
+        )
     return out
 
 
