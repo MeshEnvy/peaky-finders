@@ -158,6 +158,25 @@ def test_compute_footprint_depth_bands_two_overlapping_squares(tmp_path: Path) -
     assert "d1_unique" in bands and not bands["d1_unique"].is_empty
 
 
+def test_compute_footprint_depth_bands_parallel_matches_serial(tmp_path: Path) -> None:
+    a = tmp_path / "a.gpkg"
+    b = tmp_path / "b.gpkg"
+    c = tmp_path / "c.gpkg"
+    _write_coverage_gpkg(a, box(-115.02, 39.01, -115.00, 39.03))
+    _write_coverage_gpkg(b, box(-115.01, 39.00, -114.99, 39.02))
+    _write_coverage_gpkg(c, box(-115.015, 39.005, -114.995, 39.025))
+    paths = [a, b, c]
+    serial = compute_footprint_depth_bands_wgs84(
+        paths, max_raster_dimension=512, raster_workers=1,
+    )
+    parallel = compute_footprint_depth_bands_wgs84(
+        paths, max_raster_dimension=512, raster_workers=4,
+    )
+    assert serial.keys() == parallel.keys()
+    for band in serial:
+        assert serial[band].equals(parallel[band])
+
+
 def test_compute_footprint_depth_bands_fewer_than_two_returns_empty(tmp_path: Path) -> None:
     a = tmp_path / "a.gpkg"
     _write_coverage_gpkg(a, box(-115.02, 39.01, -115.00, 39.03))
