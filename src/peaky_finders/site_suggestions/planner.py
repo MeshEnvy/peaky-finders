@@ -140,21 +140,33 @@ def _log_planner_config(
         by_type[ent.type.value] = by_type.get(ent.type.value, 0) + 1
 
     lg = cfg.land_grab
+    mb = cfg.mesh_backbone
     suggest_log(verbose, "site suggest: ── planner configuration ──")
     suggest_log(verbose, f"  strategy: {strategy_name}")
     suggest_log(verbose, f"  coverage_target: {cfg.coverage_target.value}")
     suggest_log(verbose, f"  coverage_goal_depth: {goal}")
     suggest_log(verbose, f"  planner_raster_dimension: {cfg.planner_raster_dimension}")
-    suggest_log(verbose, f"  max_candidates_per_round: {lg.max_candidates_per_round}")
-    suggest_log(verbose, f"  max_clusters_per_round: {lg.max_clusters_per_round}")
-    suggest_log(verbose, f"  peak_cluster_radius_m: {lg.peak_cluster_radius_m}")
-    suggest_log(verbose, f"  cluster_sample_spacing_m: {lg.cluster_sample_spacing_m}")
-    suggest_log(verbose, f"  cluster_sample_radius_m: {lg.cluster_sample_radius_m}")
-    suggest_log(verbose, f"  refine_enabled: {lg.refine_enabled}")
-    suggest_log(verbose, f"  refine_top_n: {lg.refine_top_n}")
-    suggest_log(verbose, f"  refine_radius_m: {lg.refine_radius_m}")
-    suggest_log(verbose, f"  refine_spacing_m: {lg.refine_spacing_m}")
-    suggest_log(verbose, f"  uncovered_stop_pct: {cfg.uncovered_stop_pct}")
+    if strategy_name == "mesh-backbone":
+        suggest_log(verbose, f"  max_candidates_per_round: {mb.max_candidates_per_round}")
+        suggest_log(verbose, f"  link_buffer_m: {mb.link_buffer_m}")
+        suggest_log(verbose, f"  sample_spacing_m: {mb.sample_spacing_m}")
+        suggest_log(verbose, f"  endpoint_capture_m: {mb.endpoint_capture_m}")
+        suggest_log(verbose, f"  configured links: {len(mb.links)}")
+        suggest_log(verbose, f"  refine_enabled: {mb.refine_enabled}")
+        suggest_log(verbose, f"  refine_top_n: {mb.refine_top_n}")
+        suggest_log(verbose, f"  refine_radius_m: {mb.refine_radius_m}")
+        suggest_log(verbose, f"  refine_spacing_m: {mb.refine_spacing_m}")
+    else:
+        suggest_log(verbose, f"  max_candidates_per_round: {lg.max_candidates_per_round}")
+        suggest_log(verbose, f"  max_clusters_per_round: {lg.max_clusters_per_round}")
+        suggest_log(verbose, f"  peak_cluster_radius_m: {lg.peak_cluster_radius_m}")
+        suggest_log(verbose, f"  cluster_sample_spacing_m: {lg.cluster_sample_spacing_m}")
+        suggest_log(verbose, f"  cluster_sample_radius_m: {lg.cluster_sample_radius_m}")
+        suggest_log(verbose, f"  refine_enabled: {lg.refine_enabled}")
+        suggest_log(verbose, f"  refine_top_n: {lg.refine_top_n}")
+        suggest_log(verbose, f"  refine_radius_m: {lg.refine_radius_m}")
+        suggest_log(verbose, f"  refine_spacing_m: {lg.refine_spacing_m}")
+        suggest_log(verbose, f"  uncovered_stop_pct: {cfg.uncovered_stop_pct}")
     suggest_log(verbose, f"  suggest_parallelism: {max(1, int(jobs))}")
     suggest_log(verbose, "site suggest: ── seed sites ──")
     for slug, ent in sorted(preset.sites.items()):
