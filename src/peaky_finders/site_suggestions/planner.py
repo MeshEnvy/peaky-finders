@@ -16,7 +16,7 @@ from peaky_finders.build_configure import BuildConfigurePlan
 from peaky_finders.bundle_clips import ELIGIBLE_LAYER
 from peaky_finders.site_suggestions.batch_viewshed import run_candidate_batch_viewsheds
 from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_refine_candidates
-from peaky_finders.site_suggestions.context import SiteSuggestionContext
+from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_coverage_depth_grid
 from peaky_finders.site_suggestions.log import suggest_log, suggest_step
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
@@ -252,11 +252,12 @@ def _log_selection_summary(
     iteration: int,
     best: PlannedSuggestion,
     uncovered_pct: float,
-    n_requested: int,
+    max_steps: int | None,
 ) -> None:
+    budget_s = "solve" if max_steps is None else str(max_steps)
     suggest_log(
         verbose,
-        f"site suggest: ✓ pick {iteration}/{n_requested}  "
+        f"site suggest: ✓ pick {iteration}/{budget_s}  "
         f"gain={best.gain_cells} cells  uncovered={uncovered_pct:.2f}%  "
         f"{_format_loc(best.lat, best.lon)}  strategy={best.strategy}",
     )
@@ -541,20 +542,22 @@ def plan_greedy_site_suggestions(
     preset: Preset,
     preset_path: Path,
     plan: BuildConfigurePlan,
-    n_suggestions: int,
+    suggest_cli_n: int,
     suggest_root: Path,
     footprint_runner=None,
     verbose: bool = False,
     jobs: int = 1,
 ) -> list[PlannedSuggestion]:
-    """Pick ``n_suggestions`` sites maximizing marginal depth coverage on ``coverage_target``."""
+    """Run the site-suggestion solver for ``suggest_cli_n`` steps or until ``planning_complete``."""
     if preset.bundle is None:
         raise ValueError("site suggestions require preset bundle.*")
-    if n_suggestions <= 0:
-        return []
 
     cfg = resolved_site_suggestions_config(preset.bundle)
     provider = resolve_site_suggestion_strategy(cfg)
+    max_steps = provider.resolve_step_budget(cfg, suggest_cli_n)
+    if max_steps is not None and max_steps <= 0:
+        return []
+
     goal = provider.goal_depth(cfg)
     refine = provider.refine_settings(cfg)
     target_label = _coverage_target_label(cfg.coverage_target)
@@ -593,19 +596,8 @@ def plan_greedy_site_suggestions(
         jobs=jobs,
     )
 
-    stop_frac = float(cfg.uncovered_stop_pct) / 100.0
-    if grid.uncovered_fraction(goal_depth=goal) <= stop_frac:
-        msg = (
-            f"site suggest: {target_label} land already ≥{goal} depth "
-            f"(uncovered {100.0 * grid.uncovered_fraction(goal_depth=goal):.2f}% ≤ {cfg.uncovered_stop_pct}%)"
-        )
-        print(msg, flush=True)
-        suggest_log(verbose, msg)
-        return []
-
     eligible_sha = _composite_by_role(plan, "eligible").sha
     dem_mirror = plan.splat_tiles_root
-    winners: list[PlannedSuggestion] = []
     suggest_ctx = SiteSuggestionContext(
         preset=preset,
         plan=plan,
@@ -621,15 +613,31 @@ def plan_greedy_site_suggestions(
         verbose=verbose,
     )
 
-    for iteration in range(1, n_suggestions + 1):
-        uncovered_before = grid.uncovered_fraction(goal_depth=goal)
-        if uncovered_before <= stop_frac:
-            print(f"site suggest: stopping at iter {iteration - 1} — {target_label} goal met", flush=True)
+    if provider.planning_complete(suggest_ctx):
+        msg = f"site suggest: {provider.name} goal already met — no picks needed"
+        print(msg, flush=True)
+        suggest_log(verbose, msg)
+        return []
+
+    winners: list[PlannedSuggestion] = []
+    steps_done = 0
+    budget_label = "solve" if max_steps is None else str(max_steps)
+
+    while True:
+        if provider.planning_complete(suggest_ctx):
+            if steps_done > 0:
+                print(f"site suggest: stopping — {provider.name} goal met after {steps_done} pick(s)", flush=True)
             break
+        if max_steps is not None and steps_done >= max_steps:
+            break
+
+        steps_done += 1
+        iteration = steps_done
+        uncovered_before = grid.uncovered_fraction(goal_depth=goal)
 
         suggest_log(
             verbose,
-            f"site suggest: ══ iteration {iteration}/{n_suggestions} "
+            f"site suggest: ══ iteration {iteration}/{budget_label} "
             f"(uncovered {100.0 * uncovered_before:.2f}% below depth≥{goal}) ══",
         )
 
@@ -678,10 +686,15 @@ def plan_greedy_site_suggestions(
         )
 
         grid.add_footprint(best_footprint)
+        session_slug = f"_session_{iteration:04d}"
+        suggest_ctx.session_sites.append(
+            BackboneSite(slug=session_slug, lat=best.lat, lon=best.lon)
+        )
+        suggest_ctx.session_footprints[session_slug] = best_footprint
         winners.append(best)
         uncovered_after = 100.0 * grid.uncovered_fraction(goal_depth=goal)
         print(
-            f"site suggest: pick {iteration}/{n_suggestions} "
+            f"site suggest: pick {iteration}/{budget_label} "
             f"gain={best.gain_cells} cells uncovered={uncovered_after:.2f}% "
             f"({best.lat:.5f}, {best.lon:.5f})",
             flush=True,
@@ -691,7 +704,7 @@ def plan_greedy_site_suggestions(
             iteration=iteration,
             best=best,
             uncovered_pct=uncovered_after,
-            n_requested=n_suggestions,
+            max_steps=max_steps,
         )
 
     if verbose and winners:
@@ -727,7 +740,7 @@ def write_suggest_run_manifest(
     suggest_root: Path,
     *,
     preset_path: Path,
-    n_requested: int,
+    n_requested: int | None,
     winners: list[PlannedSuggestion],
     new_slugs: list[str],
 ) -> Path:
@@ -738,7 +751,7 @@ def write_suggest_run_manifest(
         "format": "peaky_site_suggest/v1",
         "preset": str(preset_path.resolve()),
         "at": datetime.now(timezone.utc).isoformat(),
-        "n_requested": int(n_requested),
+        "n_requested": n_requested,
         "n_written": len(new_slugs),
         "slugs": new_slugs,
         "picks": [

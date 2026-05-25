@@ -1,14 +1,17 @@
 """Mesh-backbone link geometry and preset config."""
 
+from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
 from peaky_finders.site_suggestions.mesh_backbone_completion import (
-    BackboneSite,
     LinkCompletionResult,
+    all_backbone_sites,
     all_links_complete,
     anchor_capture_slugs,
     backbone_sites_from_preset,
     evaluate_link_completion,
     evaluate_mesh_backbone_completion,
+    footprints_for_backbone_sites,
     hop_adjacency,
+    mesh_backbone_planning_complete,
     order_sites_along_leg,
     position_along_leg_m,
     sites_in_zone,
@@ -29,6 +32,7 @@ __all__ = [
     "AnchorPoint",
     "BackboneSite",
     "LinkCompletionResult",
+    "all_backbone_sites",
     "all_links_complete",
     "anchor_capture_slugs",
     "anchor_from_loc",
@@ -38,8 +42,10 @@ __all__ = [
     "distance_to_link_m",
     "evaluate_link_completion",
     "evaluate_mesh_backbone_completion",
+    "footprints_for_backbone_sites",
     "hop_adjacency",
     "link_search_zone",
+    "mesh_backbone_planning_complete",
     "order_sites_along_leg",
     "position_along_leg_m",
     "resolve_link_leg",

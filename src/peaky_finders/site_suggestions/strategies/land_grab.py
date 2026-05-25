@@ -23,6 +23,7 @@ from peaky_finders.site_suggestions.eligible_peaks_cache import load_or_build_el
 from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
 from peaky_finders.sites_job import BundleSiteSuggestionsConfig, LandGrabStrategyConfig
+from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
 
 
 @dataclass(frozen=True)
@@ -311,6 +312,17 @@ class LandGrabStrategy:
             refine_radius_m=float(lg.refine_radius_m),
             refine_spacing_m=float(lg.refine_spacing_m),
         )
+
+    def resolve_step_budget(self, cfg: BundleSiteSuggestionsConfig, cli_n: int) -> int | None:
+        del cfg
+        if int(cli_n) == SOLVE_UNTIL_COMPLETE:
+            return None
+        return max(1, int(cli_n))
+
+    def planning_complete(self, ctx: SiteSuggestionContext) -> bool:
+        goal = self.goal_depth(ctx.cfg)
+        stop_frac = float(ctx.cfg.uncovered_stop_pct) / 100.0
+        return ctx.grid.uncovered_fraction(goal_depth=goal) <= stop_frac
 
     def generate_candidates(
         self,

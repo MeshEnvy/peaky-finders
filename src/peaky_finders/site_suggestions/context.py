@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from shapely.geometry.base import BaseGeometry
@@ -13,6 +13,13 @@ from peaky_finders.sites_job import BundleSiteSuggestionsConfig, Preset
 
 
 @dataclass(frozen=True)
+class BackboneSite:
+    slug: str
+    lat: float
+    lon: float
+
+
+@dataclass
 class SiteSuggestionContext:
     preset: Preset
     plan: BuildConfigurePlan
@@ -26,3 +33,5 @@ class SiteSuggestionContext:
     eligible_sha: str
     jobs: int
     verbose: bool
+    session_sites: list[BackboneSite] = field(default_factory=list)
+    session_footprints: dict[str, BaseGeometry] = field(default_factory=dict)

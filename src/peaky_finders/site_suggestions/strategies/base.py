@@ -26,6 +26,12 @@ class SiteSuggestionStrategyProvider(Protocol):
 
     def refine_settings(self, cfg: BundleSiteSuggestionsConfig) -> StrategyRefineSettings: ...
 
+    def resolve_step_budget(self, cfg: BundleSiteSuggestionsConfig, cli_n: int) -> int | None:
+        """Max solver steps from CLI ``--suggest[=N]``; ``None`` = until ``planning_complete``."""
+
+    def planning_complete(self, ctx: SiteSuggestionContext) -> bool:
+        """Whether the strategy goal is already satisfied (no further picks needed)."""
+
     def generate_candidates(
         self,
         ctx: SiteSuggestionContext,

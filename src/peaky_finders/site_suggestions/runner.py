@@ -11,6 +11,7 @@ from peaky_finders.site_suggestions.planner import (
     write_suggest_run_manifest,
 )
 from peaky_finders.site_suggestions.preset_io import append_suggested_sites_to_preset, remove_suggested_sites_from_preset
+from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
 from peaky_finders.sites_job import Preset, resolved_preset_build_dir
 
 
@@ -23,7 +24,7 @@ def run_site_suggestion_pass(
     preset: Preset,
     preset_path: Path,
     plan: BuildConfigurePlan,
-    n_suggestions: int,
+    suggest_cli_n: int,
     replace_suggested: bool = False,
     verbose: bool = False,
     jobs: int = 1,
@@ -37,9 +38,10 @@ def run_site_suggestion_pass(
             print(f"site suggest: removed {n_removed} prior suggested site(s)", flush=True)
 
     suggest_root = resolved_site_suggest_dir(preset_path_r)
+    budget_label = "solve" if int(suggest_cli_n) == SOLVE_UNTIL_COMPLETE else str(int(suggest_cli_n))
     if verbose:
         print(
-            f"site suggest: starting greedy pass n={n_suggestions} "
+            f"site suggest: starting {budget_label} pass "
             f"replace_suggested={replace_suggested}",
             flush=True,
         )
@@ -51,7 +53,7 @@ def run_site_suggestion_pass(
         preset=preset,
         preset_path=preset_path_r,
         plan=plan,
-        n_suggestions=n_suggestions,
+        suggest_cli_n=int(suggest_cli_n),
         suggest_root=suggest_root,
         footprint_runner=runner,
         verbose=verbose,
@@ -59,10 +61,11 @@ def run_site_suggestion_pass(
     )
     entries = planned_to_preset_entries(winners)
     new_slugs = append_suggested_sites_to_preset(preset_path_r, entries)
+    n_requested = None if int(suggest_cli_n) == SOLVE_UNTIL_COMPLETE else int(suggest_cli_n)
     write_suggest_run_manifest(
         suggest_root,
         preset_path=preset_path_r,
-        n_requested=n_suggestions,
+        n_requested=n_requested,
         winners=winners,
         new_slugs=new_slugs,
     )
