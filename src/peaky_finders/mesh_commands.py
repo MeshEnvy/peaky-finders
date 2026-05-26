@@ -22,9 +22,11 @@ from peaky_finders.sites_job import (
     load_preset,
     resolved_eligible_union_build_dir,
     resolved_mesh_depth_dir,
+    resolved_mesh_depth_enabled,
+    resolved_mesh_pairwise_dir,
     resolved_mesh_pairwise_eligible_kml_style,
     resolved_mesh_pairwise_eligible_peak_pin_kml_style,
-    resolved_mesh_pairwise_dir,
+    resolved_mesh_pairwise_enabled,
     resolved_mesh_pairwise_kml_style,
     resolved_mesh_pairwise_peak_pin_kml_style,
     resolved_mesh_site_links_kml,
@@ -76,6 +78,8 @@ def run_mesh_links(preset_yaml: Path) -> int:
     ):
         print(f"mesh links: wrote {outp}", flush=True)
         return 0
+    if outp.is_file():
+        outp.unlink()
     print("mesh links: nothing to emit (no mutual links)", flush=True)
     return 0
 
@@ -93,6 +97,10 @@ def run_mesh_pairwise(slug_a: str, slug_b: str, preset_yaml: Path) -> int:
     if job.bundle is None:
         print("mesh pairwise: preset needs bundle.*", file=sys.stderr)
         return 2
+    mesh_cov = job.bundle.mesh_coverage if job.bundle else None
+    if not resolved_mesh_pairwise_enabled(mesh_cov):
+        print("mesh pairwise: disabled (bundle.mesh_coverage.pairwise: false)", flush=True)
+        return 0
     slug_a_, slug_b_ = slug_a.strip(), slug_b.strip()
     if slug_a_ not in job.sites or slug_b_ not in job.sites:
         print("mesh pairwise: unknown site slug(s)", file=sys.stderr)
@@ -187,6 +195,10 @@ def run_mesh_depth(preset_yaml: Path) -> int:
     if job.bundle is None:
         print("mesh depth: preset needs bundle.*", file=sys.stderr)
         return 2
+    mesh_cov = job.bundle.mesh_coverage if job.bundle else None
+    if not resolved_mesh_depth_enabled(mesh_cov):
+        print("mesh depth: disabled (bundle.mesh_coverage.depth: false)", flush=True)
+        return 0
 
     job_path_r, bundle_cache_root, bb_dd = standard_bundle_roots(preset_path, job)
     bundle_dir = bundle_directory_for_preset(preset_path=job_path_r, data_dir=bb_dd, cache_root=bundle_cache_root)

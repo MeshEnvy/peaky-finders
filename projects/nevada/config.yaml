@@ -226,6 +226,8 @@ bundle:
 
   # Footprint overlap-count rasters in aggregate KMZ: EPSG:3857 grid longer edge (px). Higher → finer bands, more CPU/RAM (256–16384).
   mesh_coverage:
+    pairwise: false # 70+ sites — skip O(n²) mesh:pair:* (re-enable for small installed-only sets)
+    depth: false # skip mesh:depth build; --suggest scoring uses planner_raster_dimension instead
     max_raster_dimension: 4096
     # Highest Skadi SRTM cell inside each pairwise / pairwise_eligible footprint ∩ (requires splat tile mirror).
     pairwise_dem_peak_pin: true

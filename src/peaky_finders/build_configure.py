@@ -49,6 +49,8 @@ from peaky_finders.sites_job import (
     Preset,
     load_preset,
     resolved_aggregate_kmz_path,
+    resolved_mesh_depth_enabled,
+    resolved_mesh_pairwise_enabled,
     resolved_preset_build_dir,
     resolved_preset_clips_dir,
     resolved_preset_dem_tile_cache_dir,
@@ -292,34 +294,39 @@ def configure_preset_build(
 
     site_slugs = tuple(preset.sites.keys())
     emit_mesh = len(site_slugs) >= 2 and has_bundle
+    mesh_cov = preset.bundle.mesh_coverage if preset.bundle is not None else None
+    pairwise_enabled = resolved_mesh_pairwise_enabled(mesh_cov)
+    depth_enabled = resolved_mesh_depth_enabled(mesh_cov)
     mesh_pairs: tuple[PlannedMeshPair, ...] = ()
     mesh_depth_complete: Path | None = None
     eligible_union_complete: Path | None = None
     mesh_links_kml: Path | None = None
 
     if emit_mesh:
-        mesh_pairs = tuple(
-            PlannedMeshPair(
-                slug_a=a,
-                slug_b=b,
-                complete_json=resolved_mesh_pairwise_pair_dir(
-                    slug_a=a, slug_b=b, cache_root=mesh_pairwise_root
+        if pairwise_enabled:
+            mesh_pairs = tuple(
+                PlannedMeshPair(
+                    slug_a=a,
+                    slug_b=b,
+                    complete_json=resolved_mesh_pairwise_pair_dir(
+                        slug_a=a, slug_b=b, cache_root=mesh_pairwise_root
+                    )
+                    / MESH_PAIRWISE_COMPLETE,
                 )
-                / MESH_PAIRWISE_COMPLETE,
+                for a, b in combinations(site_slugs, 2)
             )
-            for a, b in combinations(site_slugs, 2)
-        )
 
         max_raster = 4096
         if preset.bundle is not None and preset.bundle.mesh_coverage is not None:
             max_raster = preset.bundle.mesh_coverage.max_raster_dimension
-        depth_rel = mesh_depth_network_rel_dir(max_raster_dimension=max_raster)
-        mesh_depth_complete = (
-            resolved_mesh_depth_set_dir(rel_label=depth_rel, cache_root=mesh_depth_root)
-            / MESH_DEPTH_COMPLETE
-        )
+        if depth_enabled:
+            depth_rel = mesh_depth_network_rel_dir(max_raster_dimension=max_raster)
+            mesh_depth_complete = (
+                resolved_mesh_depth_set_dir(rel_label=depth_rel, cache_root=mesh_depth_root)
+                / MESH_DEPTH_COMPLETE
+            )
 
-        if has_bundle and clip_layers:
+        if has_bundle and clip_layers and (pairwise_enabled or depth_enabled):
             eligible_union_complete = (
                 resolved_eligible_union_data_dir(eligible_union_root) / ELIGIBLE_UNION_COMPLETE
             )
