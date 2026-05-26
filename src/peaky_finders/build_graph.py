@@ -118,7 +118,7 @@ def mesh_links_mtime_prereqs(plan: BuildConfigurePlan, preset: Preset) -> tuple[
 
     preset_f = Path(plan.preset_path).expanduser().resolve()
     parts = list(footprints_all(plan, preset))
-    for sec in ("sites_sees", "bundle_kml_overlay", "bundle_mesh_coverage"):
+    for sec in ("topology", "sites_sees", "bundle_kml_overlay", "bundle_mesh_coverage"):
         parts.append(stamp_path(preset_f, sec).resolve())
     if plan.has_bundle:
         parts.append(dem_bulk_stamp_path(plan))
@@ -288,35 +288,36 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
             )
         )
 
-    if plan.emit_mesh and plan.mesh_pairs:
-        mesh_pair_complete_paths: list[Path] = []
-        for pair in plan.mesh_pairs:
-            vid = pairwise_target_id(pair.slug_a, pair.slug_b)
-            mesh_pair_vars.append(vid)
-            mesh_pair_complete_paths.append(pair.complete_json.resolve())
-            put(
-                PeakyGraphTarget(
-                    id=vid,
-                    depends_on=tuple(
-                        sorted(
-                            {
-                                f"viewshed:{site_workspace_digest(plan, pair.slug_a)}:footprint",
-                                f"viewshed:{site_workspace_digest(plan, pair.slug_b)}:footprint",
-                                f"viewshed:{site_workspace_digest(plan, pair.slug_a)}:raster",
-                                f"viewshed:{site_workspace_digest(plan, pair.slug_b)}:raster",
-                                "bundle:resolve",
-                                "stamp:bundle_kml_overlay",
-                                "stamp:bundle_mesh_coverage",
-                                *(_dem_edges(plan) if plan.has_bundle else ()),
-                            }
-                        )
-                    ),
-                    outputs=(pair.complete_json.resolve(),),
-                    mtime_prereqs=pairwise_mtime_prereqs(plan, pair.slug_a, pair.slug_b),
+    if plan.emit_mesh:
+        if plan.mesh_pairs:
+            mesh_pair_complete_paths: list[Path] = []
+            for pair in plan.mesh_pairs:
+                vid = pairwise_target_id(pair.slug_a, pair.slug_b)
+                mesh_pair_vars.append(vid)
+                mesh_pair_complete_paths.append(pair.complete_json.resolve())
+                put(
+                    PeakyGraphTarget(
+                        id=vid,
+                        depends_on=tuple(
+                            sorted(
+                                {
+                                    f"viewshed:{site_workspace_digest(plan, pair.slug_a)}:footprint",
+                                    f"viewshed:{site_workspace_digest(plan, pair.slug_b)}:footprint",
+                                    f"viewshed:{site_workspace_digest(plan, pair.slug_a)}:raster",
+                                    f"viewshed:{site_workspace_digest(plan, pair.slug_b)}:raster",
+                                    "bundle:resolve",
+                                    "stamp:bundle_kml_overlay",
+                                    "stamp:bundle_mesh_coverage",
+                                    *(_dem_edges(plan) if plan.has_bundle else ()),
+                                }
+                            )
+                        ),
+                        outputs=(pair.complete_json.resolve(),),
+                        mtime_prereqs=pairwise_mtime_prereqs(plan, pair.slug_a, pair.slug_b),
+                    )
                 )
-            )
 
-        if plan.mesh_depth_complete is not None and plan.eligible_union_complete is not None:
+        if plan.eligible_union_complete is not None:
             eu = plan.eligible_union_complete.resolve()
             put(
                 PeakyGraphTarget(
@@ -326,21 +327,22 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
                     mtime_prereqs=(_eligible_main_gpkg(plan).resolve(),),
                 )
             )
-            depth_mq: set[Path] = set()
-            if plan.has_bundle:
-                for sec in ("bundle_kml_overlay", "bundle_mesh_coverage"):
-                    depth_mq.add(stamp_path(preset_f, sec).resolve())
-            mesh_depth_var_present = True
-            put(
-                PeakyGraphTarget(
-                    id="mesh:depth",
-                    depends_on=tuple(sorted(set(mesh_pair_vars + ["mesh:eligible_union"]))),
-                    outputs=(plan.mesh_depth_complete.resolve(),),
-                    mtime_prereqs=tuple(sorted(depth_mq, key=str)),
-                )
-            )
 
-        elif plan.mesh_depth_complete is not None:
+        if plan.mesh_depth_complete is not None:
+            depth_deps: set[str] = {
+                f"viewshed:{site_workspace_digest(plan, slug)}:footprint" for slug in site_slugs
+            }
+            if plan.has_bundle:
+                depth_deps.update(
+                    {
+                        "bundle:resolve",
+                        "stamp:bundle_kml_overlay",
+                        "stamp:bundle_mesh_coverage",
+                        *_dem_edges(plan),
+                    }
+                )
+            if plan.eligible_union_complete is not None:
+                depth_deps.add("mesh:eligible_union")
             depth_mq: set[Path] = set()
             if plan.has_bundle:
                 for sec in ("bundle_kml_overlay", "bundle_mesh_coverage"):
@@ -349,7 +351,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
             put(
                 PeakyGraphTarget(
                     id="mesh:depth",
-                    depends_on=tuple(sorted(mesh_pair_vars)),
+                    depends_on=tuple(sorted(depth_deps)),
                     outputs=(plan.mesh_depth_complete.resolve(),),
                     mtime_prereqs=tuple(sorted(depth_mq, key=str)),
                 )
@@ -359,6 +361,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
             footprint_deps = tuple(
                 sorted(
                     {
+                        "stamp:topology",
                         "stamp:sites_sees",
                         *[f"viewshed:{site_workspace_digest(plan, slug)}:footprint" for slug in site_slugs],
                     }
