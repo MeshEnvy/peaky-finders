@@ -61,7 +61,7 @@ from peaky_finders.sites_job import (
     resolved_viewshed_dir,
 )
 from peaky_finders.skadi_dem import iter_skadi_tile_names_for_wgs84_bounds, skadi_mirror_tile_gz_path
-from peaky_finders.splat_polygonize import COVERAGE_GPKG_NAME, SPLAT_OUTPUT_PPM_BASENAME
+from peaky_finders.splat_polygonize import SPLAT_GPKG_NAME, SPLAT_OUTPUT_PPM_BASENAME
 from peaky_finders.viewshed_workspace import (
     resolved_viewshed_workdir,
     viewshed_workspace_digest,
@@ -93,7 +93,7 @@ class PlannedViewshedWorkspace:
     workdir: Path
     output_ppm: Path
     splat_png: Path
-    coverage_gpkg: Path
+    splat_gpkg: Path
     request_json: Path
     site_slugs: tuple[str, ...]
 
@@ -284,7 +284,7 @@ def configure_preset_build(
                 workdir=workdir,
                 output_ppm=workdir / SPLAT_OUTPUT_PPM_BASENAME,
                 splat_png=workdir / "splat.png",
-                coverage_gpkg=workdir / COVERAGE_GPKG_NAME,
+                splat_gpkg=workdir / SPLAT_GPKG_NAME,
                 request_json=workdir / "request.json",
                 site_slugs=slugs_sorted,
             )

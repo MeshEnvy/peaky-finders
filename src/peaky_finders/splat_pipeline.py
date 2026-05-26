@@ -9,8 +9,8 @@ from peaky_finders import kml_bundle
 from peaky_finders.sites_job import BundleKmlLayerStyle, CoverageProvider
 from peaky_finders.splat_ppm_to_png import write_splat_png_from_ppm
 from peaky_finders.splat_polygonize import (
-    COVERAGE_GPKG_NAME,
-    COVERAGE_KML_NAME,
+    SPLAT_GPKG_NAME,
+    SPLAT_KML_NAME,
     SPLAT_OUTPUT_PPM_BASENAME,
     write_coverage_polygons,
 )
@@ -121,7 +121,7 @@ def write_coverage_footprints(
     data_dir: Path,
     polygon_style: BundleKmlLayerStyle,
 ) -> bool:
-    """Write ``coverage_area`` GPKG/KML from ``output.ppm`` and the SPLAT LatLonBox."""
+    """Write ``splat.gpkg`` / ``splat.kml`` from ``output.ppm`` and the SPLAT LatLonBox."""
     ppm = data_dir / SPLAT_OUTPUT_PPM_BASENAME
     if not ppm.is_file():
         raise FileNotFoundError(f"Cannot vectorize footprint: missing {ppm}")
@@ -129,8 +129,8 @@ def write_coverage_footprints(
     return write_coverage_polygons(
         ppm_path=ppm,
         bbox=bounds,
-        out_gpkg=data_dir / COVERAGE_GPKG_NAME,
-        out_kml=data_dir / COVERAGE_KML_NAME,
+        out_gpkg=data_dir / SPLAT_GPKG_NAME,
+        out_kml=data_dir / SPLAT_KML_NAME,
         polygon_style=polygon_style,
     )
 

@@ -98,7 +98,7 @@ def pairwise_mtime_prereqs(plan: BuildConfigurePlan, slug_a: str, slug_b: str) -
         w = _workspace_for_digest(plan, rep)
         if w:
             parts.append(w.splat_png.resolve())
-            parts.append(w.coverage_gpkg.resolve())
+            parts.append(w.splat_gpkg.resolve())
     return tuple(sorted(set(parts), key=str))
 
 
@@ -109,7 +109,7 @@ def footprints_all(plan: BuildConfigurePlan, preset: Preset) -> tuple[Path, ...]
         ws = _workspace_for_digest(plan, rep)
         if ws:
             out.append(ws.splat_png.resolve())
-            out.append(ws.coverage_gpkg.resolve())
+            out.append(ws.splat_gpkg.resolve())
     return tuple(sorted(set(out), key=str))
 
 
@@ -283,7 +283,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
             PeakyGraphTarget(
                 id=f"viewshed:{rep}:footprint",
                 depends_on=(f"viewshed:{rep}:docker",),
-                outputs=(ws.coverage_gpkg.resolve(),),
+                outputs=(ws.splat_gpkg.resolve(),),
                 mtime_prereqs=(ws.output_ppm.resolve(),),
             )
         )

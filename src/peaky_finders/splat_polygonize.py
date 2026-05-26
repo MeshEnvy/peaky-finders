@@ -17,8 +17,8 @@ from peaky_finders.coverage_png import bbox_rotation_normalized, pixel_to_lat_lo
 from peaky_finders.google_earth_polygon import orient_for_kml
 from peaky_finders.sites_job import BundleKmlLayerStyle, DEFAULT_VIEWSHED_COVERAGE_KML_STYLE
 
-COVERAGE_GPKG_NAME = "coverage_area.gpkg"
-COVERAGE_KML_NAME = "coverage_area.kml"
+SPLAT_GPKG_NAME = "splat.gpkg"
+SPLAT_KML_NAME = "splat.kml"
 SPLAT_OUTPUT_PPM_BASENAME = "output.ppm"
 
 VIEWSHED_COVERAGE_KML_STYLE_ID = "peaky_viewshed_coverage"

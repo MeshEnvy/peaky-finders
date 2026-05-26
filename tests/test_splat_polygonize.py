@@ -10,8 +10,8 @@ from PIL import Image
 
 from peaky_finders.sites_job import DEFAULT_VIEWSHED_COVERAGE_KML_STYLE
 from peaky_finders.splat_polygonize import (
-    COVERAGE_GPKG_NAME,
-    COVERAGE_KML_NAME,
+    SPLAT_GPKG_NAME,
+    SPLAT_KML_NAME,
     VIEWSHED_COVERAGE_KML_STYLE_ID,
     coverage_mask_from_rgba,
     coverage_mask_from_splat_ppm_rgb,
@@ -61,8 +61,8 @@ def test_write_coverage_polygons_writes_gpkg(tmp_path: Path) -> None:
         "west": -105.2,
         "rotation": 0.0,
     }
-    out_gpkg = tmp_path / COVERAGE_GPKG_NAME
-    out_kml = tmp_path / COVERAGE_KML_NAME
+    out_gpkg = tmp_path / SPLAT_GPKG_NAME
+    out_kml = tmp_path / SPLAT_KML_NAME
     ok = write_coverage_polygons(
         ppm_path=ppm_path,
         bbox=bbox,

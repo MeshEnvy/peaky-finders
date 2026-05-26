@@ -33,7 +33,7 @@ def run_ephemeral_viewshed_footprint(
     verbose: bool = False,
 ) -> BaseGeometry | None:
     """Run request → Docker → footprint in ``workdir``; return WGS-84 footprint union."""
-    from peaky_finders.splat_polygonize import COVERAGE_GPKG_NAME
+    from peaky_finders.splat_polygonize import SPLAT_GPKG_NAME
 
     wd = Path(workdir).expanduser().resolve()
     wd.mkdir(parents=True, exist_ok=True)
@@ -42,7 +42,7 @@ def run_ephemeral_viewshed_footprint(
     digest = viewshed_workspace_digest(request=req)
     (wd / "request.json").write_text(req.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
 
-    cov_gpkg = wd / COVERAGE_GPKG_NAME
+    cov_gpkg = wd / SPLAT_GPKG_NAME
     if cov_gpkg.is_file() and viewshed_request_digest_matches(wd, expected_workspace_digest=digest):
         return read_coverage_footprint(cov_gpkg)
 
