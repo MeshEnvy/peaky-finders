@@ -259,13 +259,6 @@ class SimulationConfig(BaseModel):
     situation_pct: Any = "95.0"
     time_pct: Any = "95.0"
     radius_km: Any = "50.0"
-    verbose: bool = Field(
-        default=False,
-        description=(
-            "Extra coverage stderr logs: ``los`` passes ``--verbose`` to ``splatter run``; "
-            "``splat`` sets ``LOG_LEVEL=DEBUG`` for the legacy Python ``docker_entry``."
-        ),
-    )
     fresnel_clearance_fraction: float = Field(
         default=0.6,
         ge=0.0,

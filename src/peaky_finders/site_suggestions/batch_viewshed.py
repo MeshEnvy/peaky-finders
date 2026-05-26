@@ -316,7 +316,7 @@ def run_candidate_batch_viewsheds(
                 preset_path=preset_path,
                 viewshed_root=viewshed_root_r,
                 workspaces=stale_workspaces,
-                coverage_verbose=preset.simulation.verbose,
+                coverage_verbose=verbose,
                 build_jobs=jobs,
             )
             if rc != 0:

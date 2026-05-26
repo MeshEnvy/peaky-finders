@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Verbose logging
 
-When adding or changing `--verbose` / `verbose_log` / `simulation.verbose` behavior, treat verbose mode as **operation tracing** — not extra debug noise.
+When adding or changing `--verbose` / `verbose_log` behavior, treat verbose mode as **operation tracing** — not extra debug noise.
 
 ## Every operation should log three phases
 

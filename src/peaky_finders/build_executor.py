@@ -380,6 +380,7 @@ def execute_target(
             granular_viewshed_slug=ws.site_slugs[0],
             viewshed_workspace_only=True,
             viewshed_phase=phase,
+            verbose=verbose,
         )
         return run_splat(vs)
 
@@ -463,7 +464,7 @@ def _flush_viewshed_docker_batch(
         preset_path=Path(plan.preset_path),
         viewshed_root=plan.viewsheds_root,
         workspaces=workspaces,
-        coverage_verbose=preset.simulation.verbose,
+        coverage_verbose=verbose,
         build_jobs=jobs,
     )
     return dict.fromkeys(stale_docker, rc)

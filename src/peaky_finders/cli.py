@@ -402,6 +402,12 @@ def build_granular_viewshed_argument_parser() -> argparse.ArgumentParser:
         default=None,
         help="Workspace step: request.json, Docker engine, splat.png, or footprint vectors.",
     )
+    p.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Extra coverage stderr (splatter --verbose / SPLAT LOG_LEVEL=DEBUG).",
+    )
     return p
 
 
@@ -460,9 +466,10 @@ def run_splat(args: argparse.Namespace) -> int:
     tile_cache_host = _ensure_tile_cache_dir(job_path)
     image = resolved_coverage_image(job)
     dockerfile_name = resolved_coverage_dockerfile(job)
+    cov_verbose = bool(getattr(args, "verbose", False))
     print(
         f"Coverage provider: {job.simulation.provider.value}  image={image!r}  "
-        f"dockerfile={dockerfile_name}  simulation.verbose={job.simulation.verbose}",
+        f"dockerfile={dockerfile_name}  verbose={cov_verbose}",
         flush=True,
     )
 
@@ -501,7 +508,6 @@ def run_splat(args: argparse.Namespace) -> int:
     kml_ov = job.bundle.kml_overlay if job.bundle else None
     viewshed_cov_style = resolved_viewshed_coverage_kml_style(kml_ov)
     provider = job.simulation.provider
-    cov_verbose = job.simulation.verbose
 
     if phase_opt == "request":
         return 0
