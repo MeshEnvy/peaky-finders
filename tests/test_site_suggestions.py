@@ -611,3 +611,105 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
     assert len(winners) == 1
     assert winners[0].lon > -115.04
     assert winners[0].strategy.startswith("goal:")
+
+
+def test_suggest_cli_n_counts_successful_site_writes(monkeypatch, tmp_path: Path) -> None:
+    from peaky_finders.build_configure import PlannedComposite, PlannedViewshedWorkspace
+    from peaky_finders.site_suggestions import planner as planner_mod
+    from peaky_finders.site_suggestions.candidates import SiteCandidate
+    from peaky_finders.site_suggestions.planner import PlannedSuggestion
+    from peaky_finders.site_suggestions.strategies.mesh_backbone import MeshBackboneStrategy
+
+    aoi = box(-115.05, 39.00, -114.98, 39.05)
+    eligible = box(-115.04, 39.01, -114.99, 39.04)
+    aoi_gpkg = tmp_path / "aoi.gpkg"
+    elig_gpkg = tmp_path / "eligible.gpkg"
+    _write_gpkg(aoi_gpkg, aoi, layer="aoi")
+    _write_gpkg(elig_gpkg, eligible, layer="eligible_land_use")
+
+    seed_gpkg = tmp_path / "seed.gpkg"
+    _write_gpkg(seed_gpkg, box(-115.04, 39.01, -115.02, 39.03), layer="coverage")
+
+    preset_path = tmp_path / "job.yaml"
+    write_preset_document(
+        preset_path,
+        {
+            "simulation": dict(_SUGGEST_SIMULATION),
+            "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
+            "bundle": {
+                "site_suggestions": {
+                    "strategy": "mesh-backbone",
+                    "planner_raster_dimension": 256,
+                    "mesh_backbone": {
+                        "max_candidates_per_round": 4,
+                        "refine_enabled": False,
+                        "goals": {"goal-b": {"loc": [39.02, -114.99]}},
+                    },
+                }
+            },
+            "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.04]}},
+        },
+    )
+    preset = load_preset(preset_path)
+    plan = type(
+        "Plan",
+        (),
+        {
+            "composites": (
+                PlannedComposite(role="aoi", sha="a", union_gpkg=aoi_gpkg, manifest=tmp_path / "aoi.json"),
+                PlannedComposite(role="eligible", sha="e", union_gpkg=elig_gpkg, manifest=tmp_path / "e.json"),
+            ),
+            "viewshed_workspaces": (
+                PlannedViewshedWorkspace(
+                    digest="d",
+                    workdir=tmp_path / "ws",
+                    output_ppm=tmp_path / "ws/out.ppm",
+                    splat_png=tmp_path / "ws/splat.png",
+                    coverage_gpkg=seed_gpkg,
+                    request_json=tmp_path / "ws/request.json",
+                    site_slugs=("seed",),
+                ),
+            ),
+            "splat_tiles_root": tmp_path / "dem",
+            "viewsheds_root": tmp_path / "viewsheds",
+        },
+    )()
+
+    def _always_candidates(self, ctx, *, iteration: int) -> list[SiteCandidate]:
+        del self, ctx, iteration
+        return [SiteCandidate(lat=39.02, lon=-115.02, elev_m=None, strategy="goal:goal-b")]
+
+    def _fake_trials(*, iteration: int, **kwargs) -> tuple[PlannedSuggestion | None, box | None, list]:
+        del kwargs
+        lat = 39.02 + 0.001 * iteration
+        lon = -115.02 + 0.001 * iteration
+        fp = box(lon - 0.02, lat - 0.01, lon + 0.02, lat + 0.01)
+        pick = PlannedSuggestion(
+            lat=lat,
+            lon=lon,
+            elev_m=None,
+            gain_cells=100,
+            strategy="goal:goal-b",
+            iteration=iteration,
+            rationale=f"Mesh-grow #{iteration}: fake",
+        )
+        return pick, fp, []
+
+    monkeypatch.setattr(MeshBackboneStrategy, "generate_candidates", _always_candidates)
+    monkeypatch.setattr(
+        MeshBackboneStrategy,
+        "planning_complete",
+        lambda self, ctx: len(ctx.session_sites) >= 3,
+    )
+    monkeypatch.setattr(planner_mod, "_run_candidate_trials", _fake_trials)
+
+    winners = plan_greedy_site_suggestions(
+        preset=preset,
+        preset_path=preset_path,
+        plan=plan,
+        suggest_cli_n=5,
+        suggest_root=tmp_path / "suggest",
+        footprint_runner=lambda **kw: box(-115.04, 39.01, -115.02, 39.03),
+    )
+    assert len(winners) == 3
+    assert [w.iteration for w in winners] == [1, 2, 3]

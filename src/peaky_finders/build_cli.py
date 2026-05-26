@@ -98,7 +98,7 @@ def build_build_parser() -> argparse.ArgumentParser:
         dest="suggest_n",
         help=(
             "After building known sites, run the site solver and append picks to preset YAML. "
-            "Omit N to solve until the strategy goal is met; N=1 is one step."
+            "Omit N to solve until the strategy goal is met; N is the max new sites to write."
         ),
     )
 
