@@ -138,7 +138,7 @@ def footprints_for_backbone_sites(
         for slug in ws.site_slugs:
             if slug in out:
                 continue
-            fp = read_coverage_footprint(Path(ws.coverage_gpkg))
+            fp = read_coverage_footprint(Path(ws.splat_gpkg))
             if fp is not None and not fp.is_empty:
                 fp = fp if fp.is_valid else make_valid(fp)
             out[str(slug)] = fp

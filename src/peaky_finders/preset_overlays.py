@@ -14,7 +14,7 @@ from peaky_finders.sites_job import (
     resolved_preset_bundle_data_dir,
     resolved_viewshed_dir,
 )
-from peaky_finders.splat_polygonize import COVERAGE_GPKG_NAME, COVERAGE_KML_NAME
+from peaky_finders.splat_polygonize import SPLAT_GPKG_NAME, SPLAT_KML_NAME
 from peaky_finders.viewshed_workspace import (
     resolved_viewshed_workdir,
     viewshed_workspace_digest,
@@ -84,9 +84,9 @@ def collect_site_workspace_assets(
         elev_f = float(site.elevation_m) if site.elevation_m is not None else None
         folder_name = site.name.strip()
 
-        polygons_written = (data_dir / COVERAGE_GPKG_NAME).is_file()
+        polygons_written = (data_dir / SPLAT_GPKG_NAME).is_file()
         cov_href = viewshed_polygon_coverage_kml_arcname(site_slug) if polygons_written else None
-        cov_disk = (data_dir / COVERAGE_KML_NAME) if polygons_written else None
+        cov_disk = (data_dir / SPLAT_KML_NAME) if polygons_written else None
 
         overlays.append(
             kml_bundle.AggregateSiteOverlay(
@@ -111,7 +111,7 @@ def collect_site_workspace_assets(
         )
         png_paths.append(png_disk.resolve())
         coverage_kml_paths.append(cov_disk)
-        gp = data_dir / COVERAGE_GPKG_NAME
+        gp = data_dir / SPLAT_GPKG_NAME
         coverage_gpkg_by_slug[site_slug] = gp
         if polygons_written and gp.is_file():
             coverage_gpkg_paths.append(gp.resolve())

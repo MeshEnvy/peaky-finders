@@ -1,4 +1,4 @@
-"""Read unioned SPLAT ``coverage_area`` footprint geometry from GeoPackage."""
+"""Read unioned SPLAT ``splat.gpkg`` footprint geometry from GeoPackage."""
 
 from __future__ import annotations
 

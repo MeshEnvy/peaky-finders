@@ -22,7 +22,7 @@ from peaky_finders.sites_job import (
     Preset,
     resolved_viewshed_coverage_kml_style,
 )
-from peaky_finders.splat_polygonize import COVERAGE_GPKG_NAME, SPLAT_OUTPUT_PPM_BASENAME
+from peaky_finders.splat_polygonize import SPLAT_GPKG_NAME, SPLAT_OUTPUT_PPM_BASENAME
 from peaky_finders.splat_pipeline import write_coverage_footprints
 from peaky_finders.viewshed_batch import run_viewshed_batch_docker
 from peaky_finders.viewshed_workspace import (
@@ -62,7 +62,7 @@ def _planned_workspace(
             workdir=workdir,
             output_ppm=workdir / SPLAT_OUTPUT_PPM_BASENAME,
             splat_png=workdir / "splat.png",
-            coverage_gpkg=workdir / COVERAGE_GPKG_NAME,
+            splat_gpkg=workdir / SPLAT_GPKG_NAME,
             request_json=workdir / "request.json",
             site_slugs=(),
         ),
@@ -112,7 +112,7 @@ def _ensure_footprint_worker(workdir: str, style_dict: dict) -> BaseGeometry | N
     polygon_style = BundleKmlLayerStyle.model_validate(style_dict)
     if not (wd / SPLAT_OUTPUT_PPM_BASENAME).is_file():
         return None
-    gpkg = wd / COVERAGE_GPKG_NAME
+    gpkg = wd / SPLAT_GPKG_NAME
     if not gpkg.is_file():
         if not write_coverage_footprints(data_dir=wd, polygon_style=polygon_style):
             return None
@@ -126,12 +126,12 @@ def _ensure_footprint(
 ) -> BaseGeometry | None:
     if not ws.output_ppm.is_file():
         return None
-    if not ws.coverage_gpkg.is_file():
+    if not ws.splat_gpkg.is_file():
         kml_ov = preset.bundle.kml_overlay if preset.bundle else None
         style = resolved_viewshed_coverage_kml_style(kml_ov)
         if not write_coverage_footprints(data_dir=ws.workdir, polygon_style=style):
             return None
-    return read_coverage_footprint(ws.coverage_gpkg)
+    return read_coverage_footprint(ws.splat_gpkg)
 
 
 def _footprint_status(footprint: BaseGeometry | None) -> str:

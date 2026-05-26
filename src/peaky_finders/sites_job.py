@@ -1229,7 +1229,7 @@ def viewshed_raster_png_arcname(site_slug: str) -> str:
 def viewshed_polygon_coverage_kml_arcname(site_slug: str) -> str:
     """Path inside KMZ for footprint KML (NetworkLink href under ``sites/viewsheds/polygon``)."""
     base = _slugify_files_segment(site_slug)
-    return f"sites/viewsheds/polygon/{base}/coverage_area.kml"
+    return f"sites/viewsheds/polygon/{base}/splat.kml"
 
 
 def mesh_edges_site_to_site_kml_arcname() -> str:

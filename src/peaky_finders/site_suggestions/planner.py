@@ -91,7 +91,7 @@ def _footprint_paths_for_seed_sites(plan: BuildConfigurePlan, preset: Preset) ->
     del preset
     paths: list[Path] = []
     for ws in plan.viewshed_workspaces:
-        p = ws.coverage_gpkg.expanduser().resolve()
+        p = ws.splat_gpkg.expanduser().resolve()
         if p.is_file():
             paths.append(p)
     return paths
