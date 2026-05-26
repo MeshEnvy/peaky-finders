@@ -30,6 +30,7 @@ def run_ephemeral_viewshed_footprint(
     lat: float,
     lon: float,
     workdir: Path,
+    verbose: bool = False,
 ) -> BaseGeometry | None:
     """Run request → Docker → footprint in ``workdir``; return WGS-84 footprint union."""
     from peaky_finders.splat_polygonize import COVERAGE_GPKG_NAME
@@ -65,7 +66,7 @@ def run_ephemeral_viewshed_footprint(
         provider=preset.simulation.provider,
         data_dir=wd,
         tile_cache_dir=tile_cache,
-        coverage_verbose=preset.simulation.verbose,
+        coverage_verbose=verbose,
     )
     if rc != 0:
         raise RuntimeError(f"Ephemeral viewshed docker failed with exit code {rc}")
