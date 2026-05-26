@@ -555,16 +555,12 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
                     "strategy": "mesh-backbone",
                     "planner_raster_dimension": 256,
                     "mesh_backbone": {
-                        "site_goal_depth": 1,
-                        "link_buffer_m": 8000.0,
-                        "sample_spacing_m": 1500.0,
                         "max_candidates_per_round": 8,
+                        "frontier_sample_spacing_m": 1500.0,
                         "refine_enabled": False,
                         "goals": {
-                            "goal-seed": {"loc": [39.02, -115.04]},
                             "goal-b": {"loc": [39.02, -114.99]},
                         },
-                        "links": [{"name": "seed-b", "endpoints": ["goal-seed", "goal-b"]}],
                     },
                 }
             },
@@ -613,5 +609,5 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
         footprint_runner=_fake_footprint,
     )
     assert len(winners) == 1
-    assert winners[0].lon > -115.02
-    assert "link:" in winners[0].strategy
+    assert winners[0].lon > -115.04
+    assert winners[0].strategy.startswith("goal:")

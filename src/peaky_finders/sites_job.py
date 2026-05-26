@@ -670,7 +670,7 @@ class SiteSuggestionStrategy(StrEnum):
 
 
 class MeshBackboneGoalEntry(BaseModel):
-    """Named geographic terminal for a mesh-backbone link."""
+    """Named geographic target for mesh-grow site suggestions."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -692,54 +692,21 @@ class MeshBackboneGoalEntry(BaseModel):
         return float(self.loc[1])
 
 
-class MeshBackboneLinkEntry(BaseModel):
-    """One backbone edge between two configured goal keys."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    name: str | None = Field(default=None, description="Optional label (e.g. ``reno-tonopah``).")
-    endpoints: tuple[str, str] = Field(
-        description="Two ``mesh_backbone.goals`` keys (order defines leg direction for sampling; links are undirected).",
-    )
-
-    @field_validator("endpoints", mode="before")
-    @classmethod
-    def _coerce_endpoints(cls, v: Any) -> tuple[str, str]:
-        if isinstance(v, (list, tuple)) and len(v) == 2:
-            a = str(v[0]).strip()
-            b = str(v[1]).strip()
-            if not a or not b:
-                raise ValueError("link endpoints must be non-empty goal keys")
-            return (a, b)
-        raise ValueError("link endpoints must be a length-2 list of goal keys")
-
-
 class MeshBackboneStrategyConfig(BaseModel):
-    """Redundant repeater chains along explicit anchor↔anchor links."""
+    """Grow the seed mesh outward until configured goals are captured and hop-connected."""
 
     model_config = ConfigDict(extra="ignore")
 
-    site_goal_depth: int = Field(
-        default=2,
-        ge=1,
-        le=32,
-        description="Required footprint overlap depth at each repeater node on a link chain.",
-    )
-    link_buffer_m: float = Field(
-        default=40_000.0,
-        ge=100.0,
-        description="Half-width in meters of the search strip around each link leg.",
-    )
-    sample_spacing_m: float = Field(
-        default=300.0,
-        ge=25.0,
-        description="Spacing for sampling candidate points along a link leg.",
-    )
     max_candidates_per_round: int = Field(
         default=48,
         ge=1,
         le=512,
-        description="Link-strip samples viewshed-evaluated per solver step (across incomplete links).",
+        description="Frontier samples viewshed-evaluated per solver step.",
+    )
+    frontier_sample_spacing_m: float = Field(
+        default=500.0,
+        ge=50.0,
+        description="Minimum spacing when deduplicating frontier candidate points.",
     )
     refine_enabled: bool = Field(
         default=True,
@@ -749,7 +716,7 @@ class MeshBackboneStrategyConfig(BaseModel):
         default=3,
         ge=0,
         le=32,
-        description="Coarse winners (by marginal gain) to micro-refine when ``refine_enabled``.",
+        description="Coarse winners (by goal progress) to micro-refine when ``refine_enabled``.",
     )
     refine_radius_m: float = Field(
         default=200.0,
@@ -769,24 +736,8 @@ class MeshBackboneStrategyConfig(BaseModel):
     )
     goals: dict[str, MeshBackboneGoalEntry] = Field(
         default_factory=dict,
-        description="Named geographic terminals (``loc: [lat, lon]``); link ``endpoints`` reference these keys.",
+        description="Named geographic targets (``loc: [lat, lon]``) to grow the mesh toward.",
     )
-    links: list[MeshBackboneLinkEntry] = Field(
-        default_factory=list,
-        description="Goal-key pairs to connect with mutual-hop repeater chains.",
-    )
-
-    @model_validator(mode="after")
-    def _validate_links(self) -> MeshBackboneStrategyConfig:
-        for link in self.links:
-            a, b = link.endpoints
-            if a == b:
-                raise ValueError(f"link {link.name or (a, b)!r}: endpoints must differ")
-            label = link.name or f"{a}-{b}"
-            for key in link.endpoints:
-                if key not in self.goals:
-                    raise ValueError(f"mesh_backbone link {label!r}: unknown goal key {key!r}")
-        return self
 
 
 class LandGrabStrategyConfig(BaseModel):
@@ -880,7 +831,7 @@ class BundleSiteSuggestionsConfig(BaseModel):
     )
     mesh_backbone: MeshBackboneStrategyConfig = Field(
         default_factory=MeshBackboneStrategyConfig,
-        description="Knobs for ``strategy: mesh-backbone`` (anchor links + redundant chains).",
+        description="Knobs for ``strategy: mesh-backbone`` (grow mesh toward configured goals).",
     )
 
 

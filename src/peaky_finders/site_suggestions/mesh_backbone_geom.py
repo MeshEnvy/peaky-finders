@@ -1,149 +1,22 @@
-"""Mesh-backbone link geometry (goal anchors, buffered legs, sampling)."""
+"""Mesh-grow goal geometry."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-import geopandas as gpd
-import numpy as np
-from pyproj import Transformer
-from shapely import make_valid
-from shapely.geometry import LineString, Point
-from shapely.geometry.base import BaseGeometry
-
-from peaky_finders.sites_job import MeshBackboneLinkEntry, MeshBackboneStrategyConfig
-
-_TO_M = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
-_FROM_M = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+from peaky_finders.sites_job import MeshBackboneStrategyConfig
 
 
 @dataclass(frozen=True)
-class AnchorPoint:
-    slug: str
+class GoalPoint:
+    key: str
     lat: float
     lon: float
 
 
-def anchor_from_goal(key: str, *, lat: float, lon: float) -> AnchorPoint:
-    return AnchorPoint(slug=str(key), lat=float(lat), lon=float(lon))
-
-
-def endpoint_goal_keys_for_config(cfg: MeshBackboneStrategyConfig) -> set[str]:
-    keys: set[str] = set()
-    for link in cfg.links:
-        keys.add(link.endpoints[0])
-        keys.add(link.endpoints[1])
-    return keys
-
-
-def validate_mesh_backbone_goals(cfg: MeshBackboneStrategyConfig) -> None:
-    """Raise when a link endpoint references a missing ``mesh_backbone.goals`` key."""
-    for link in cfg.links:
-        label = link.name or f"{link.endpoints[0]}-{link.endpoints[1]}"
-        for key in link.endpoints:
-            if key not in cfg.goals:
-                raise ValueError(f"mesh_backbone link {label!r}: unknown goal key {key!r}")
-
-
-def anchors_from_config(cfg: MeshBackboneStrategyConfig) -> dict[str, AnchorPoint]:
-    """Resolve link endpoint goal keys to ``AnchorPoint`` locations from ``mesh_backbone.goals``."""
-    validate_mesh_backbone_goals(cfg)
-    out: dict[str, AnchorPoint] = {}
-    for key in sorted(endpoint_goal_keys_for_config(cfg)):
-        goal = cfg.goals[key]
-        out[key] = anchor_from_goal(key, lat=float(goal.lat), lon=float(goal.lon))
-    return out
-
-
-def build_link_leg(a: AnchorPoint, b: AnchorPoint) -> LineString:
-    """EPSG:3857 line segment between two goal anchors."""
-    x0, y0 = _TO_M.transform(float(a.lon), float(a.lat))
-    x1, y1 = _TO_M.transform(float(b.lon), float(b.lat))
-    return LineString([(x0, y0), (x1, y1)])
-
-
-def resolve_link_leg(
-    anchors: dict[str, AnchorPoint],
-    link: MeshBackboneLinkEntry,
-) -> LineString:
-    a_key, b_key = link.endpoints
-    return build_link_leg(anchors[a_key], anchors[b_key])
-
-
-def link_search_zone(
-    leg: LineString,
-    *,
-    buffer_m: float,
-    eligible_ll: BaseGeometry,
-) -> BaseGeometry | None:
-    """Buffered link leg clipped to eligible land (EPSG:4326)."""
-    if leg.is_empty:
-        return None
-    buf = max(1.0, float(buffer_m))
-    zone_m = leg.buffer(buf)
-    if zone_m is None or zone_m.is_empty:
-        return None
-    zone_m = make_valid(zone_m) if not zone_m.is_valid else zone_m
-
-    elig = make_valid(eligible_ll) if not eligible_ll.is_valid else eligible_ll
-    if elig.is_empty:
-        return None
-    elig_m = gpd.GeoDataFrame(geometry=[elig], crs="EPSG:4326").to_crs("EPSG:3857").geometry.iloc[0]
-    clipped = zone_m.intersection(elig_m)
-    if clipped is None or clipped.is_empty:
-        return None
-
-    out = gpd.GeoDataFrame(geometry=[clipped], crs="EPSG:3857").to_crs("EPSG:4326").geometry.iloc[0]
-    if out is None or out.is_empty:
-        return None
-    return out if out.is_valid else make_valid(out)
-
-
-def distance_to_link_m(lon: float, lat: float, leg: LineString) -> float:
-    """Minimum distance in meters from ``(lon, lat)`` to the link leg."""
-    if leg.is_empty:
-        return float("inf")
-    x, y = _TO_M.transform(float(lon), float(lat))
-    return float(Point(x, y).distance(leg))
-
-
-def sample_along_link(
-    leg: LineString,
-    *,
-    spacing_m: float,
-    zone_ll: BaseGeometry | None = None,
-) -> list[tuple[float, float]]:
-    """Sample ``(lat, lon)`` along a link leg every ``spacing_m`` (optionally clip to ``zone_ll``)."""
-    if leg.is_empty:
-        return []
-    step = max(1.0, float(spacing_m))
-    zone_m = None
-    if zone_ll is not None and not zone_ll.is_empty:
-        g = make_valid(zone_ll) if not zone_ll.is_valid else zone_ll
-        zone_m = gpd.GeoDataFrame(geometry=[g], crs="EPSG:4326").to_crs("EPSG:3857").geometry.iloc[0]
-
-    length = float(leg.length)
-    if length <= 0:
-        return []
-
-    out: list[tuple[float, float]] = []
-    seen: set[tuple[int, int]] = set()
-    n = max(1, int(np.ceil(length / step)))
-    for i in range(n + 1):
-        dist = min(length, i * step)
-        pt_m = leg.interpolate(dist)
-        if zone_m is not None and not zone_m.intersects(pt_m):
-            continue
-        lon, lat = _FROM_M.transform(pt_m.x, pt_m.y)
-        key = (int(round(lat * 1e5)), int(round(lon * 1e5)))
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append((float(lat), float(lon)))
-    return out
-
-
-def resolved_link_legs(cfg: MeshBackboneStrategyConfig) -> list[tuple[MeshBackboneLinkEntry, LineString]]:
-    """Each configured link with its EPSG:3857 leg."""
-    anchors = anchors_from_config(cfg)
-    return [(link, resolve_link_leg(anchors, link)) for link in cfg.links]
+def goals_from_config(cfg: MeshBackboneStrategyConfig) -> dict[str, GoalPoint]:
+    """Resolve ``mesh_backbone.goals`` to ``GoalPoint`` locations."""
+    return {
+        key: GoalPoint(key=str(key), lat=float(goal.lat), lon=float(goal.lon))
+        for key, goal in cfg.goals.items()
+    }

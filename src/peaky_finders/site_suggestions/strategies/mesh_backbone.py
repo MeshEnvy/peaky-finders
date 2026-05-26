@@ -1,14 +1,12 @@
-"""Mesh-backbone strategy: connect anchor↔anchor links via hop chains."""
+"""Mesh-backbone strategy: grow mesh toward configured goals (mycelium)."""
 
 from __future__ import annotations
 
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.log import suggest_log
-from peaky_finders.site_suggestions.mesh_backbone_candidates import (
-    generate_mesh_backbone_candidates,
-    incomplete_link_results,
-)
-from peaky_finders.site_suggestions.mesh_backbone_completion import mesh_backbone_planning_complete
+from peaky_finders.site_suggestions.mesh_backbone_candidates import generate_mesh_grow_candidates
+from peaky_finders.site_suggestions.mesh_backbone_completion import mesh_grow_planning_complete
+from peaky_finders.site_suggestions.mesh_grow import active_attractor_goal
 from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
 from peaky_finders.sites_job import BundleSiteSuggestionsConfig
@@ -20,7 +18,8 @@ class MeshBackboneStrategy:
         return "mesh-backbone"
 
     def goal_depth(self, cfg: BundleSiteSuggestionsConfig) -> int:
-        return int(cfg.mesh_backbone.site_goal_depth)
+        del cfg
+        return 1
 
     def refine_settings(self, cfg: BundleSiteSuggestionsConfig) -> StrategyRefineSettings:
         mb = cfg.mesh_backbone
@@ -42,7 +41,7 @@ class MeshBackboneStrategy:
         cap = mb.max_nodes
         if cap is not None and len(ctx.session_sites) >= int(cap):
             return True
-        return mesh_backbone_planning_complete(ctx)
+        return mesh_grow_planning_complete(ctx)
 
     def generate_candidates(
         self,
@@ -51,17 +50,17 @@ class MeshBackboneStrategy:
         iteration: int,
     ) -> list:
         del iteration
-        incomplete = incomplete_link_results(ctx)
+        attractor = active_attractor_goal(ctx)
         if ctx.verbose:
-            suggest_log(ctx.verbose, "site suggest: ── mesh-backbone link status ──")
-            if not incomplete:
-                suggest_log(ctx.verbose, "     all configured links complete")
+            suggest_log(ctx.verbose, "site suggest: ── mesh-grow status ──")
+            if attractor is None:
+                suggest_log(ctx.verbose, "     all configured goals captured and connected")
             else:
-                for result in incomplete:
-                    suggest_log(ctx.verbose, f"     incomplete: {result.detail}")
+                dist_m = ctx.grid.min_distance_coverage_to_point_m(
+                    attractor.lon, attractor.lat, min_depth=1
+                )
                 suggest_log(
                     ctx.verbose,
-                    f"     sampling incomplete link strip(s): {len(incomplete)} link(s)",
+                    f"     attractor: {attractor.key} ({dist_m / 1000.0:.1f} km from composite)",
                 )
-        goal = self.goal_depth(ctx.cfg)
-        return generate_mesh_backbone_candidates(ctx, goal_depth=goal)
+        return generate_mesh_grow_candidates(ctx)

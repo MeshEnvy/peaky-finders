@@ -12,7 +12,7 @@ from pyproj import Transformer
 from rasterio import features
 from rasterio.transform import from_bounds, rowcol
 from shapely import make_valid
-from shapely.geometry import shape
+from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
@@ -156,6 +156,116 @@ class CoverageDepthGrid:
             dtype=np.uint16,
         )
         self.depth += layer.astype(np.uint32, copy=False)
+
+    def covered_mask(self, *, min_depth: int = 1) -> np.ndarray:
+        need = max(1, int(min_depth))
+        return self.target_mask & (self.depth.astype(np.uint32) >= need)
+
+    def coverage_geometry_wgs84(self, *, min_depth: int = 1) -> BaseGeometry | None:
+        """EPSG:4326 union of target cells with overlap depth ≥ ``min_depth``."""
+        mask = self.covered_mask(min_depth=min_depth).astype(np.uint8)
+        if not np.any(mask):
+            return None
+        pieces: list[BaseGeometry] = []
+        for geom, val in features.shapes(mask, mask=mask.astype(bool), transform=self.transform, connectivity=8):
+            if int(val) == 1:
+                pieces.append(shape(geom))
+        if not pieces:
+            return None
+        union_m = unary_union(pieces)
+        if union_m is None or union_m.is_empty:
+            return None
+        out = gpd.GeoDataFrame(geometry=[union_m], crs="EPSG:3857").to_crs("EPSG:4326").geometry.iloc[0]
+        if out is None or out.is_empty:
+            return None
+        return out if out.is_valid else make_valid(out)
+
+    def min_distance_coverage_to_point_m(
+        self,
+        lon: float,
+        lat: float,
+        *,
+        min_depth: int = 1,
+    ) -> float:
+        """Minimum EPSG:3857 distance from composite coverage (depth≥``min_depth``) to ``(lon, lat)``."""
+        from pyproj import Transformer
+
+        geom = self.coverage_geometry_wgs84(min_depth=min_depth)
+        if geom is None or geom.is_empty:
+            return float("inf")
+        to_m = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+        x, y = to_m.transform(float(lon), float(lat))
+        gm = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:4326").to_crs("EPSG:3857").geometry.iloc[0]
+        return float(Point(x, y).distance(gm))
+
+    def frontier_sample_points_toward_goal(
+        self,
+        *,
+        goal_lon: float,
+        goal_lat: float,
+        eligible_ll: BaseGeometry,
+        min_depth: int = 1,
+        spacing_m: float = 500.0,
+        max_points: int = 48,
+    ) -> list[tuple[float, float]]:
+        """Sample ``(lat, lon)`` on depth≥``min_depth`` frontier biased toward ``goal``."""
+        from pyproj import Transformer
+
+        covered = self.covered_mask(min_depth=min_depth)
+        if not np.any(covered):
+            return []
+
+        to_m = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+        from_m = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+        gx, gy = to_m.transform(float(goal_lon), float(goal_lat))
+
+        rows, cols = np.where(covered)
+        if rows.size == 0:
+            return []
+
+        scored: list[tuple[float, float, float]] = []
+        for r, c in zip(rows, cols, strict=True):
+            x, y = self.transform * (c + 0.5, r + 0.5)
+            dist_goal = float(np.hypot(x - gx, y - gy))
+            is_frontier = False
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)):
+                nr, nc = int(r) + dr, int(c) + dc
+                if nr < 0 or nc < 0 or nr >= self.rows or nc >= self.cols:
+                    is_frontier = True
+                    break
+                if not covered[nr, nc]:
+                    is_frontier = True
+                    break
+            if not is_frontier:
+                continue
+            lon, lat = from_m.transform(x, y)
+            if not eligible_ll.intersects(Point(float(lon), float(lat))):
+                continue
+            scored.append((dist_goal, float(lat), float(lon)))
+
+        if not scored:
+            for r, c in zip(rows, cols, strict=True):
+                x, y = self.transform * (c + 0.5, r + 0.5)
+                dist_goal = float(np.hypot(x - gx, y - gy))
+                lon, lat = from_m.transform(x, y)
+                if not eligible_ll.intersects(Point(float(lon), float(lat))):
+                    continue
+                scored.append((dist_goal, float(lat), float(lon)))
+
+        scored.sort(key=lambda item: (item[0], item[1], item[2]))
+        step = max(50.0, float(spacing_m))
+        out: list[tuple[float, float]] = []
+        seen: set[tuple[int, int]] = set()
+        for _dist, lat, lon in scored:
+            x, y = to_m.transform(lon, lat)
+            key = (int(round(x / step)), int(round(y / step)))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((lat, lon))
+            if len(out) >= max(1, int(max_points)):
+                break
+        return out
 
 
 def _grid_shape_for_bounds(
