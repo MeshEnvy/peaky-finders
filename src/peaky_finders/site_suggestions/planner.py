@@ -721,7 +721,7 @@ def plan_greedy_site_suggestions(
     verbose: bool = False,
     jobs: int = 1,
 ) -> list[PlannedSuggestion]:
-    """Run the site-suggestion solver for ``suggest_cli_n`` steps or until ``planning_complete``."""
+    """Run the site-suggestion solver until ``planning_complete`` or ``suggest_cli_n`` sites are written."""
     if preset.bundle is None:
         raise ValueError("site suggestions require preset bundle.*")
 
@@ -796,37 +796,44 @@ def plan_greedy_site_suggestions(
         return []
 
     winners: list[PlannedSuggestion] = []
-    steps_done = 0
+    attempt = 0
     budget_label = "solve" if max_steps is None else str(max_steps)
 
     while True:
         if provider.planning_complete(suggest_ctx):
-            if steps_done > 0:
-                print(f"site suggest: stopping — {provider.name} goal met after {steps_done} pick(s)", flush=True)
+            if winners:
+                print(
+                    f"site suggest: stopping — {provider.name} goal met after {len(winners)} site(s)",
+                    flush=True,
+                )
             break
-        if max_steps is not None and steps_done >= max_steps:
+        if max_steps is not None and len(winners) >= max_steps:
             break
 
-        steps_done += 1
-        iteration = steps_done
+        attempt += 1
+        site_n = len(winners) + 1
         uncovered_before = grid.uncovered_fraction(goal_depth=goal)
+        budget_progress = f"{len(winners)}/{budget_label}"
 
         suggest_log(
             verbose,
-            f"site suggest: ══ iteration {iteration}/{budget_label} "
+            f"site suggest: ══ attempt {attempt} (site {site_n}/{budget_label}) "
             f"(uncovered {100.0 * uncovered_before:.2f}% below depth≥{goal}) ══",
         )
 
-        candidates = provider.generate_candidates(suggest_ctx, iteration=iteration - 1)
-        _log_candidate_shortlist(verbose=verbose, iteration=iteration, candidates=candidates)
+        candidates = provider.generate_candidates(suggest_ctx, iteration=site_n - 1)
+        _log_candidate_shortlist(verbose=verbose, iteration=site_n, candidates=candidates)
 
         if not candidates:
-            print(f"site suggest: no candidates at iteration {iteration}", flush=True)
+            print(
+                f"site suggest: no candidates at attempt {attempt} (sites written {budget_progress})",
+                flush=True,
+            )
             break
 
         best, best_footprint, trials = _run_candidate_trials(
             candidates=candidates,
-            iteration=iteration,
+            iteration=site_n,
             goal=goal,
             grid=grid,
             target_label=target_label,
@@ -843,10 +850,14 @@ def plan_greedy_site_suggestions(
         )
 
         if best is None or best_footprint is None:
-            print(f"site suggest: no improving candidate at iteration {iteration}", flush=True)
+            print(
+                f"site suggest: no improving candidate at attempt {attempt} "
+                f"(sites written {budget_progress})",
+                flush=True,
+            )
             _log_trial_results(
                 verbose=verbose,
-                iteration=iteration,
+                iteration=site_n,
                 goal=goal,
                 target_label=target_label,
                 trials=trials,
@@ -856,7 +867,7 @@ def plan_greedy_site_suggestions(
 
         _log_trial_results(
             verbose=verbose,
-            iteration=iteration,
+            iteration=site_n,
             goal=goal,
             target_label=target_label,
             trials=trials,
@@ -864,7 +875,7 @@ def plan_greedy_site_suggestions(
         )
 
         grid.add_footprint(best_footprint)
-        session_slug = f"_session_{iteration:04d}"
+        session_slug = f"_session_{site_n:04d}"
         suggest_ctx.session_sites.append(
             BackboneSite(slug=session_slug, lat=best.lat, lon=best.lon)
         )
@@ -872,14 +883,14 @@ def plan_greedy_site_suggestions(
         winners.append(best)
         uncovered_after = 100.0 * grid.uncovered_fraction(goal_depth=goal)
         print(
-            f"site suggest: pick {iteration}/{budget_label} "
+            f"site suggest: wrote site {len(winners)}/{budget_label} "
             f"gain={best.gain_cells} cells uncovered={uncovered_after:.2f}% "
             f"({best.lat:.5f}, {best.lon:.5f})",
             flush=True,
         )
         _log_selection_summary(
             verbose=verbose,
-            iteration=iteration,
+            iteration=len(winners),
             best=best,
             uncovered_pct=uncovered_after,
             max_steps=max_steps,
