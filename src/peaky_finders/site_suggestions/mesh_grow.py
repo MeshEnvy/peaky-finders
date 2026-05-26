@@ -19,6 +19,7 @@ from peaky_finders.site_suggestions.mesh_backbone_completion import (
     captured_goal_keys,
     footprints_for_backbone_sites,
     mutual_hop_neighbors,
+    site_location_key,
 )
 from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint, goals_from_config
 
@@ -42,6 +43,25 @@ class MeshGrowScoreContext:
     before_dist_m: float
     sites: tuple[BackboneSite, ...]
     footprints: Mapping[str, BaseGeometry | None]
+
+
+def composite_coverage_geometry(ctx: SiteSuggestionContext) -> BaseGeometry | None:
+    """Union of committed footprint polygons plus rasterized composite coverage."""
+    footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
+    parts: list[BaseGeometry] = []
+    grid_cov = ctx.grid.coverage_geometry_wgs84(min_depth=1)
+    if grid_cov is not None and not grid_cov.is_empty:
+        parts.append(grid_cov if grid_cov.is_valid else make_valid(grid_cov))
+    for fp in footprints.values():
+        if fp is None or fp.is_empty:
+            continue
+        parts.append(fp if fp.is_valid else make_valid(fp))
+    if not parts:
+        return None
+    union = unary_union(parts)
+    if union is None or union.is_empty:
+        return None
+    return union if union.is_valid else make_valid(union)
 
 
 def _min_distance_geometry_to_point_m(
@@ -71,7 +91,7 @@ def active_attractor_goal(ctx: SiteSuggestionContext) -> GoalPoint | None:
     if not uncaptured:
         return None
 
-    coverage = ctx.grid.coverage_geometry_wgs84(min_depth=1)
+    coverage = composite_coverage_geometry(ctx)
     best_key: str | None = None
     best_dist = float("inf")
     for key in uncaptured:
@@ -88,7 +108,7 @@ def build_mesh_grow_score_context(ctx: SiteSuggestionContext) -> MeshGrowScoreCo
     attractor = active_attractor_goal(ctx)
     if attractor is None:
         return None
-    coverage = ctx.grid.coverage_geometry_wgs84(min_depth=1)
+    coverage = composite_coverage_geometry(ctx)
     return MeshGrowScoreContext(
         attractor=attractor,
         coverage=coverage,

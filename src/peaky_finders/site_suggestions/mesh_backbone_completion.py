@@ -147,6 +147,11 @@ def footprints_for_backbone_sites(
     return out
 
 
+def site_location_key(lat: float, lon: float) -> tuple[int, int]:
+    """Stable location key for duplicate site detection (≈1 m)."""
+    return (int(round(float(lat) * 1e5)), int(round(float(lon) * 1e5)))
+
+
 def all_backbone_sites(ctx: SiteSuggestionContext) -> list[BackboneSite]:
     sites = backbone_sites_from_preset(ctx.preset.sites)
     seen = {s.slug for s in sites}

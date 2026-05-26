@@ -21,6 +21,10 @@ from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_c
 from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
 from peaky_finders.site_suggestions.strategies.registry import resolve_site_suggestion_strategy
+from peaky_finders.site_suggestions.mesh_backbone_completion import (
+    all_backbone_sites,
+    site_location_key,
+)
 from peaky_finders.site_suggestions.mesh_grow import (
     active_attractor_goal,
     build_mesh_grow_score_context,
@@ -802,10 +806,23 @@ def plan_greedy_site_suggestions(
     while True:
         if provider.planning_complete(suggest_ctx):
             if winners:
-                print(
-                    f"site suggest: stopping — {provider.name} goal met after {len(winners)} site(s)",
-                    flush=True,
-                )
+                mb = cfg.mesh_backbone
+                max_nodes = mb.max_nodes if mesh_grow else None
+                if (
+                    mesh_grow
+                    and max_nodes is not None
+                    and len(suggest_ctx.session_sites) >= int(max_nodes)
+                ):
+                    print(
+                        f"site suggest: stopping — {provider.name} max_nodes={max_nodes} "
+                        f"after {len(winners)} site(s)",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"site suggest: stopping — {provider.name} goal met after {len(winners)} site(s)",
+                        flush=True,
+                    )
             break
         if max_steps is not None and len(winners) >= max_steps:
             break
@@ -862,6 +879,25 @@ def plan_greedy_site_suggestions(
                 target_label=target_label,
                 trials=trials,
                 best=None,
+            )
+            break
+
+        placed_keys = {
+            site_location_key(site.lat, site.lon) for site in all_backbone_sites(suggest_ctx)
+        }
+        if site_location_key(best.lat, best.lon) in placed_keys:
+            print(
+                f"site suggest: stopping — selected location already placed "
+                f"({_format_loc(best.lat, best.lon)}, sites written {budget_progress})",
+                flush=True,
+            )
+            _log_trial_results(
+                verbose=verbose,
+                iteration=site_n,
+                goal=goal,
+                target_label=target_label,
+                trials=trials,
+                best=best,
             )
             break
 
