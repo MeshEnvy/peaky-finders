@@ -1,251 +1,96 @@
-"""Mesh-backbone candidate generation on incomplete link strips."""
+"""Mesh-grow candidate generation (frontier extension toward goals)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from shapely.geometry import LineString
-from shapely.geometry.base import BaseGeometry
+from pyproj import Transformer
+from shapely.geometry import LineString, Point
 
 from peaky_finders.site_suggestions.candidates import SiteCandidate, _dedupe_candidates
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
-from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid
-from peaky_finders.site_suggestions.mesh_backbone_completion import (
-    LinkCompletionResult,
-    all_backbone_sites,
-    evaluate_mesh_backbone_completion,
-    footprints_for_backbone_sites,
-    hop_adjacency,
-    position_along_leg_m,
-    sites_capturing_goal,
-    sites_in_zone,
-)
-from peaky_finders.site_suggestions.mesh_backbone_geom import (
-    AnchorPoint,
-    anchors_from_config,
-    link_search_zone,
-    resolve_link_leg,
-    sample_along_link,
-)
-from peaky_finders.sites_job import MeshBackboneLinkEntry, MeshBackboneStrategyConfig
+from peaky_finders.site_suggestions.mesh_backbone_completion import all_backbone_sites
+from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint
+from peaky_finders.site_suggestions.mesh_grow import active_attractor_goal
+from peaky_finders.sites_job import MeshBackboneStrategyConfig
+
+_TO_M = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+_FROM_M = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
 
 
-@dataclass(frozen=True)
-class _OpenEndpointBias:
-    slug: str
-    toward_leg_start: bool
-
-
-def _distance_m(lon_a: float, lat_a: float, lon_b: float, lat_b: float) -> float:
-    from peaky_finders.site_suggestions.mesh_backbone_completion import _distance_m as dist
-
-    return dist(lon_a, lat_a, lon_b, lat_b)
-
-
-def _reachable_slugs(
-    start_slugs: set[str],
-    adjacency: dict[str, set[str]],
-    valid_slugs: set[str],
-) -> set[str]:
-    if not start_slugs:
-        return set()
-    seen: set[str] = set()
-    queue = sorted(s for s in start_slugs if s in valid_slugs)
-    while queue:
-        node = queue.pop(0)
-        if node in seen:
-            continue
-        seen.add(node)
-        for nb in sorted(adjacency.get(node, ())):
-            if nb in valid_slugs and nb not in seen:
-                queue.append(nb)
-    return seen
-
-
-def open_endpoint_bias_for_link(
-    *,
-    link: MeshBackboneLinkEntry,
-    leg: LineString,
-    zone_ll: BaseGeometry,
-    anchors: dict[str, AnchorPoint],
-    sites: list,
-    footprints: dict[str, BaseGeometry | None],
-) -> _OpenEndpointBias:
-    """Pick the goal key to extend toward for an incomplete link."""
-    a_key, b_key = link.endpoints
-    goal_a = anchors[a_key]
-    goal_b = anchors[b_key]
-    in_zone = sites_in_zone(sites, zone_ll)
-    zone_slugs = {s.slug for s in in_zone}
-    start_slugs = sites_capturing_goal(goal_a, in_zone, footprints)
-    end_slugs = sites_capturing_goal(goal_b, in_zone, footprints)
-    if not start_slugs:
-        return _OpenEndpointBias(slug=a_key, toward_leg_start=True)
-    if not end_slugs:
-        return _OpenEndpointBias(slug=b_key, toward_leg_start=False)
-
-    adjacency = hop_adjacency(in_zone, footprints)
-    from_start = _reachable_slugs(start_slugs, adjacency, zone_slugs)
-    from_end = _reachable_slugs(end_slugs, adjacency, zone_slugs)
-    if from_start & end_slugs or from_end & start_slugs or (from_start & from_end):
-        return _OpenEndpointBias(slug=b_key, toward_leg_start=False)
-
-    start_near = sum(
-        1 for s in in_zone if _distance_m(s.lon, s.lat, goal_a.lon, goal_a.lat) <= 20_000.0
-    )
-    end_near = sum(
-        1 for s in in_zone if _distance_m(s.lon, s.lat, goal_b.lon, goal_b.lat) <= 20_000.0
-    )
-    if start_near > end_near:
-        return _OpenEndpointBias(slug=b_key, toward_leg_start=False)
-    if end_near > start_near:
-        return _OpenEndpointBias(slug=a_key, toward_leg_start=True)
-    return _OpenEndpointBias(slug=b_key, toward_leg_start=False)
-
-
-def _candidate_passes_edge_filter(
-    *,
-    grid: CoverageDepthGrid,
-    lon: float,
-    lat: float,
-    goal_depth: int,
-    open_endpoint: AnchorPoint,
-) -> bool:
-    depth = grid.depth_at_point(lon, lat)
-    edge_depth = max(0, int(goal_depth) - 1)
-    gain = grid.point_marginal_gain_cells(lon, lat, goal_depth=goal_depth)
-    near_open = _distance_m(lon, lat, open_endpoint.lon, open_endpoint.lat) <= 15_000.0
-    if depth == edge_depth:
-        return True
-    if depth < edge_depth and gain > 0:
-        return True
-    if depth == 0 and near_open:
-        return True
-    return False
-
-
-def candidates_for_incomplete_link(
-    *,
-    result: LinkCompletionResult,
-    leg: LineString,
-    zone_ll: BaseGeometry,
-    anchors: dict[str, AnchorPoint],
-    sites: list,
-    footprints: dict[str, BaseGeometry | None],
-    grid: CoverageDepthGrid,
-    cfg: MeshBackboneStrategyConfig,
-    goal_depth: int,
-    per_link_cap: int,
-) -> list[SiteCandidate]:
-    """Sample the link strip, keep coverage-edge points biased toward the open endpoint."""
-    if result.complete or zone_ll.is_empty:
-        return []
-
-    bias = open_endpoint_bias_for_link(
-        link=result.link,
-        leg=leg,
-        zone_ll=zone_ll,
-        anchors=anchors,
-        sites=sites,
-        footprints=footprints,
-    )
-    open_endpoint = anchors[bias.slug]
-    label = result.link.name or f"{result.link.endpoints[0]}-{result.link.endpoints[1]}"
-    leg_len = max(float(leg.length), 1.0)
-
-    samples = sample_along_link(
-        leg,
-        spacing_m=float(cfg.sample_spacing_m),
-        zone_ll=zone_ll,
-    )
-    scored: list[tuple[tuple[int, float, int], SiteCandidate]] = []
-    for lat, lon in samples:
-        if not _candidate_passes_edge_filter(
-            grid=grid,
-            lon=float(lon),
-            lat=float(lat),
-            goal_depth=goal_depth,
-            open_endpoint=open_endpoint,
-        ):
-            continue
-        pos = position_along_leg_m(leg, float(lon), float(lat))
-        toward_open = pos if bias.toward_leg_start else (leg_len - pos)
-        depth = grid.depth_at_point(float(lon), float(lat))
-        edge_depth = max(0, int(goal_depth) - 1)
-        gain = grid.point_marginal_gain_cells(float(lon), float(lat), goal_depth=goal_depth)
-        sort_key = (
-            0 if depth == edge_depth else 1,
-            toward_open,
-            -gain,
-        )
-        scored.append(
-            (
-                sort_key,
-                SiteCandidate(
-                    lat=float(lat),
-                    lon=float(lon),
-                    elev_m=None,
-                    strategy=f"link:{label}",
-                ),
-            )
-        )
-
-    scored.sort(key=lambda item: item[0])
-    return [c for _, c in scored[: max(1, int(per_link_cap))]]
-
-
-def incomplete_link_results(ctx: SiteSuggestionContext) -> list[LinkCompletionResult]:
-    mb = ctx.cfg.mesh_backbone
-    if not mb.links:
-        return []
-    return [
-        r
-        for r in evaluate_mesh_backbone_completion(
-            cfg=mb,
-            eligible_ll=ctx.eligible_ll,
-            sites=all_backbone_sites(ctx),
-            footprints=footprints_for_backbone_sites(ctx.plan, ctx.session_footprints),
-        )
-        if not r.complete
-    ]
-
-
-def generate_mesh_backbone_candidates(
+def _cold_start_samples(
     ctx: SiteSuggestionContext,
     *,
-    goal_depth: int,
+    goal: GoalPoint,
+    cfg: MeshBackboneStrategyConfig,
+    cap: int,
 ) -> list[SiteCandidate]:
-    """Fan out candidate samples across every incomplete configured link."""
-    mb = ctx.cfg.mesh_backbone
-    incomplete = incomplete_link_results(ctx)
-    if not incomplete:
+    """Sample along seed→goal line on cells already in composite coverage."""
+    sites = all_backbone_sites(ctx)
+    if not sites:
         return []
 
-    anchors = anchors_from_config(mb)
-    sites = all_backbone_sites(ctx)
-    footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
-    cap = max(1, int(mb.max_candidates_per_round))
-    per_link = max(1, cap // len(incomplete))
+    best = min(
+        sites,
+        key=lambda s: ctx.grid.min_distance_coverage_to_point_m(
+            float(s.lon), float(s.lat), min_depth=1
+        ),
+    )
+    gx, gy = _TO_M.transform(float(goal.lon), float(goal.lat))
+    sx, sy = _TO_M.transform(float(best.lon), float(best.lat))
+    leg = LineString([(sx, sy), (gx, gy)])
+    if leg.is_empty or leg.length <= 0:
+        return []
 
+    spacing = max(50.0, float(cfg.frontier_sample_spacing_m))
+    n = max(1, int(leg.length / spacing))
+    label = f"goal:{goal.key}"
     out: list[SiteCandidate] = []
-    for result in incomplete:
-        leg = resolve_link_leg(anchors, result.link)
-        zone = link_search_zone(leg, buffer_m=float(mb.link_buffer_m), eligible_ll=ctx.eligible_ll)
-        if zone is None:
+    for i in range(1, n + 1):
+        dist = min(float(leg.length), i * spacing)
+        pt = leg.interpolate(dist)
+        lon, lat = _FROM_M.transform(pt.x, pt.y)
+        if not ctx.eligible_ll.intersects(Point(float(lon), float(lat))):
             continue
-        out.extend(
-            candidates_for_incomplete_link(
-                result=result,
-                leg=leg,
-                zone_ll=zone,
-                anchors=anchors,
-                sites=sites,
-                footprints=footprints,
-                grid=ctx.grid,
-                cfg=mb,
-                goal_depth=goal_depth,
-                per_link_cap=per_link,
+        if ctx.grid.depth_at_point(float(lon), float(lat)) < 1:
+            continue
+        out.append(
+            SiteCandidate(
+                lat=float(lat),
+                lon=float(lon),
+                elev_m=None,
+                strategy=label,
             )
         )
+    return out[:cap]
 
-    return _dedupe_candidates(out)[:cap]
+
+def generate_mesh_grow_candidates(ctx: SiteSuggestionContext) -> list[SiteCandidate]:
+    """Frontier samples on composite coverage, biased toward the active attractor goal."""
+    mb = ctx.cfg.mesh_backbone
+    if not mb.goals:
+        return []
+
+    attractor = active_attractor_goal(ctx)
+    if attractor is None:
+        return []
+
+    cap = max(1, int(mb.max_candidates_per_round))
+    samples = ctx.grid.frontier_sample_points_toward_goal(
+        goal_lon=float(attractor.lon),
+        goal_lat=float(attractor.lat),
+        eligible_ll=ctx.eligible_ll,
+        min_depth=1,
+        spacing_m=float(mb.frontier_sample_spacing_m),
+        max_points=cap,
+    )
+
+    label = f"goal:{attractor.key}"
+    cands = [
+        SiteCandidate(lat=lat, lon=lon, elev_m=None, strategy=label) for lat, lon in samples
+    ]
+    if not cands:
+        cands = _cold_start_samples(ctx, goal=attractor, cfg=mb, cap=cap)
+
+    return _dedupe_candidates(cands)[:cap]
+
+
+generate_mesh_backbone_candidates = generate_mesh_grow_candidates

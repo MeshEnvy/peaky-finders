@@ -17,6 +17,7 @@ from peaky_finders.sites_job import (
     Preset,
     mesh_coverage_depth_eligible_site_kml_arcname,
     mesh_coverage_depth_site_kml_arcname,
+    mesh_pairwise_eligible_kml_arcname,
     mesh_pairwise_kml_arcname,
 )
 
@@ -77,7 +78,7 @@ def collect_mesh_kml_for_aggregate_kmz(
             pairwise_plain.append((f"{name_a} <-> {name_b}", pp, arc_p))
         pe = pdir / PAIRWISE_FLAT_ELIG_KML
         if pe.is_file():
-            arc_e = mesh_pairwise_kml_arcname(sa, sb)
+            arc_e = mesh_pairwise_eligible_kml_arcname(sa, sb)
             name_a = job.sites[sa].name.strip() or sa
             name_b = job.sites[sb].name.strip() or sb
             pairwise_elig.append((f"{name_a} <-> {name_b}", pe, arc_e))
