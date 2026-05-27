@@ -62,7 +62,9 @@ def resolved_coverage_docker_context(job: Preset) -> str:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    from peaky_finders.sites_job import repo_root
+
+    return repo_root()
 
 
 def _bundle_render_data_dir(args: argparse.Namespace, preset_path: Path, job: Preset) -> Path:

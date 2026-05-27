@@ -20,7 +20,9 @@ from peaky_finders.viewshed_workspace import (
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    from peaky_finders.sites_job import repo_root
+
+    return repo_root()
 
 
 def run_ephemeral_viewshed_footprint(
