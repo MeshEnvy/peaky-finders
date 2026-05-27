@@ -265,270 +265,270 @@ bundle:
       goals:
         alamo:
           loc: [37.3771, -115.1678]
-        amargosa-valley:
-          loc: [36.5424, -116.4877]
-        austin:
-          loc: [39.4976, -117.074]
-        baker:
-          loc: [39.015, -114.1233]
-        battle-mountain:
-          loc: [40.6299, -116.9518]
-        beatty:
-          loc: [36.9474, -116.7337]
-        beaverdam:
-          loc: [37.6898, -114.4491]
-        bennett-springs:
-          loc: [37.7141, -114.4667]
-        blue-diamond:
-          loc: [36.04, -115.4128]
-        boulder-city:
-          loc: [35.8407, -114.9257]
-        bunkerville:
-          loc: [36.7594, -114.1412]
-        cal-nev-ari:
-          loc: [35.2996, -114.8777]
-        caliente:
-          loc: [37.6458, -114.4929]
-        carlin:
-          loc: [40.719, -116.1081]
-        carson-city:
-          loc: [39.1511, -119.7476]
-        carter-springs:
-          loc: [38.8619, -119.6413]
-        cold-springs:
-          loc: [39.6927, -119.9775]
-        crescent-valley:
-          loc: [40.4198, -116.5753]
-        crystal-bay:
-          loc: [39.2314, -120.0019]
-        dayton:
-          loc: [39.2592, -119.5653]
-        denio:
-          loc: [41.9888, -118.6375]
-        double-spring:
-          loc: [38.7788, -119.6154]
-        dry-valley:
-          loc: [37.8843, -114.3051]
-        dyer:
-          loc: [37.6469, -118.0345]
-        east-valley:
-          loc: [38.9452, -119.6993]
-        elko:
-          loc: [40.8381, -115.7678]
-        ely:
-          loc: [39.265, -114.8708]
-        empire:
-          loc: [40.5759, -119.343]
-        enterprise:
-          loc: [36.0091, -115.2278]
-        eureka:
-          loc: [39.5112, -115.9658]
-        fallon:
-          loc: [39.4737, -118.7779]
-        fallon-station:
-          loc: [39.415, -118.7165]
-        fernley:
-          loc: [39.5627, -119.1906]
-        fish-springs:
-          loc: [38.9536, -119.6511]
-        fort-mcdermitt:
-          loc: [41.9655, -117.6394]
-        gabbs:
-          loc: [38.8621, -117.933]
-        gardnerville:
-          loc: [38.939, -119.7369]
-        gardnerville-ranchos:
-          loc: [38.8957, -119.7492]
-        genoa:
-          loc: [39.0256, -119.8309]
-        gerlach:
-          loc: [40.6452, -119.3614]
-        glenbrook:
-          loc: [39.0986, -119.9341]
-        golconda:
-          loc: [40.9522, -117.4997]
-        golden-valley:
-          loc: [39.6178, -119.8231]
-        goldfield:
-          loc: [37.7121, -117.2378]
-        goodsprings:
-          loc: [35.8319, -115.4352]
-        grass-valley:
-          loc: [40.7971, -117.7603]
-        hawthorne:
-          loc: [38.5253, -118.626]
-        henderson:
-          loc: [36.0133, -115.0381]
-        hiko:
-          loc: [37.6063, -115.2018]
-        humboldt-river-ranch:
-          loc: [40.4318, -118.2719]
-        imlay:
-          loc: [40.6581, -118.1441]
-        incline-village:
-          loc: [39.2639, -119.9455]
-        indian-hills:
-          loc: [39.0894, -119.7977]
-        indian-springs:
-          loc: [36.5719, -115.7204]
-        jackpot:
-          loc: [41.9797, -114.6645]
-        johnson-lane:
-          loc: [39.0489, -119.7245]
-        kingsbury:
-          loc: [38.9909, -119.8837]
-        kingston:
-          loc: [39.2101, -117.0679]
-        lakeridge:
-          loc: [39.0382, -119.9397]
-        lamoille:
-          loc: [40.7239, -115.479]
-        laughlin:
-          loc: [35.1401, -114.6206]
-        lemmon-valley:
-          loc: [39.6879, -119.8364]
-        logan-creek:
-          loc: [39.0626, -119.9295]
-        lovelock:
-          loc: [40.1787, -118.4775]
-        lund:
-          loc: [38.8642, -115.0099]
-        mcdermitt:
-          loc: [41.9903, -117.7209]
-        mcgill:
-          loc: [39.4019, -114.7775]
-        mesquite:
-          loc: [36.8032, -114.133]
-        mina:
-          loc: [38.3898, -118.1115]
-        minden:
-          loc: [38.9632, -119.7683]
-        moapa-town:
-          loc: [36.6925, -114.6356]
-        moapa-valley:
-          loc: [36.6078, -114.4566]
-        mogul:
-          loc: [39.5164, -119.923]
-        montello:
-          loc: [41.2671, -114.197]
-        mount-charleston:
-          loc: [36.2625, -115.6138]
-        mount-wilson:
-          loc: [38.235, -114.4504]
-        mountain-city:
-          loc: [41.8374, -115.9633]
-        nellis-afb:
-          loc: [36.2466, -115.0571]
-        nelson:
-          loc: [35.7179, -114.8313]
-        nixon:
-          loc: [39.828, -119.3589]
-        north-las-vegas:
-          loc: [36.2883, -115.0888]
-        oasis:
-          loc: [41.0286, -114.4763]
-        orovada:
-          loc: [41.5492, -117.8235]
-        osino:
-          loc: [40.9409, -115.6607]
-        owyhee:
-          loc: [41.9165, -116.1825]
-        pahrump:
-          loc: [36.2235, -115.9974]
-        panaca:
-          loc: [37.7881, -114.4005]
-        paradise:
-          loc: [36.0872, -115.1355]
-        paradise-valley:
-          loc: [41.4937, -117.547]
-        pioche:
-          loc: [37.9519, -114.4434]
-        preston:
-          loc: [38.915, -115.0637]
-        rachel:
-          loc: [37.6414, -115.7681]
-        reno:
-          loc: [39.5497, -119.8483]
-        round-hill-village:
-          loc: [38.9937, -119.9233]
-        ruhenstroth:
-          loc: [38.8913, -119.6833]
-        ruth:
-          loc: [39.2791, -114.9901]
-        sandy-valley:
-          loc: [35.8423, -115.6304]
-        schurz:
-          loc: [38.9673, -118.824]
-        searchlight:
-          loc: [35.4555, -114.9204]
-        silver-city:
-          loc: [39.2639, -119.6357]
-        silver-peak:
-          loc: [37.7578, -117.6386]
-        silver-springs:
-          loc: [39.3826, -119.2148]
-        skyland:
-          loc: [39.0265, -119.9221]
-        smith-valley:
-          loc: [38.8109, -119.3517]
-        spanish-springs:
-          loc: [39.6568, -119.6694]
-        sparks:
-          loc: [39.5736, -119.7161]
-        spring-creek:
-          loc: [40.745, -115.5983]
-        spring-valley:
-          loc: [36.0952, -115.2636]
-        stagecoach:
-          loc: [39.3656, -119.3832]
-        stateline:
-          loc: [38.9678, -119.944]
-        summerlin-south:
-          loc: [36.1242, -115.3324]
-        sun-valley:
-          loc: [39.6104, -119.777]
-        sunrise-manor:
-          loc: [36.1783, -115.0487]
-        sutcliffe:
-          loc: [39.9461, -119.6305]
-        tonopah:
-          loc: [38.0822, -117.2246]
-        topaz-lake:
-          loc: [38.6976, -119.5427]
-        topaz-ranch-estates:
-          loc: [38.7357, -119.5008]
-        unionville:
-          loc: [40.4467, -118.1229]
-        ursine:
-          loc: [37.9771, -114.2289]
-        valmy:
-          loc: [40.7908, -117.1266]
-        vegas:
-          loc: [36.2333, -115.2654]
-        verdi:
-          loc: [39.5142, -119.9772]
-        virginia-city:
-          loc: [39.3074, -119.6483]
-        wadsworth:
-          loc: [39.6322, -119.2901]
-        walker-lake:
-          loc: [38.6458, -118.7563]
-        washoe-valley:
-          loc: [39.2923, -119.7767]
-        wells:
-          loc: [41.1132, -114.9535]
-        west-wendover:
-          loc: [40.7407, -114.0783]
-        whitney:
-          loc: [36.1008, -115.0379]
-        winchester:
-          loc: [36.1365, -115.137]
-        winnemucca:
-          loc: [40.9645, -117.7247]
-        yerington:
-          loc: [38.9554, -119.1101]
-        zephyr-cove:
-          loc: [39.0082, -119.9307]
+        # amargosa-valley:
+        #   loc: [36.5424, -116.4877]
+        # austin:
+        #   loc: [39.4976, -117.074]
+        # baker:
+        #   loc: [39.015, -114.1233]
+        # battle-mountain:
+        #   loc: [40.6299, -116.9518]
+        # beatty:
+        #   loc: [36.9474, -116.7337]
+        # beaverdam:
+        #   loc: [37.6898, -114.4491]
+        # bennett-springs:
+        #   loc: [37.7141, -114.4667]
+        # blue-diamond:
+        #   loc: [36.04, -115.4128]
+        # boulder-city:
+        #   loc: [35.8407, -114.9257]
+        # bunkerville:
+        #   loc: [36.7594, -114.1412]
+        # cal-nev-ari:
+        #   loc: [35.2996, -114.8777]
+        # caliente:
+        #   loc: [37.6458, -114.4929]
+        # carlin:
+        #   loc: [40.719, -116.1081]
+        # carson-city:
+        #   loc: [39.1511, -119.7476]
+        # carter-springs:
+        #   loc: [38.8619, -119.6413]
+        # cold-springs:
+        #   loc: [39.6927, -119.9775]
+        # crescent-valley:
+        #   loc: [40.4198, -116.5753]
+        # crystal-bay:
+        #   loc: [39.2314, -120.0019]
+        # dayton:
+        #   loc: [39.2592, -119.5653]
+        # denio:
+        #   loc: [41.9888, -118.6375]
+        # double-spring:
+        #   loc: [38.7788, -119.6154]
+        # dry-valley:
+        #   loc: [37.8843, -114.3051]
+        # dyer:
+        #   loc: [37.6469, -118.0345]
+        # east-valley:
+        #   loc: [38.9452, -119.6993]
+        # elko:
+        #   loc: [40.8381, -115.7678]
+        # ely:
+        #   loc: [39.265, -114.8708]
+        # empire:
+        #   loc: [40.5759, -119.343]
+        # enterprise:
+        #   loc: [36.0091, -115.2278]
+        # eureka:
+        #   loc: [39.5112, -115.9658]
+        # fallon:
+        #   loc: [39.4737, -118.7779]
+        # fallon-station:
+        #   loc: [39.415, -118.7165]
+        # fernley:
+        #   loc: [39.5627, -119.1906]
+        # fish-springs:
+        #   loc: [38.9536, -119.6511]
+        # fort-mcdermitt:
+        #   loc: [41.9655, -117.6394]
+        # gabbs:
+        #   loc: [38.8621, -117.933]
+        # gardnerville:
+        #   loc: [38.939, -119.7369]
+        # gardnerville-ranchos:
+        #   loc: [38.8957, -119.7492]
+        # genoa:
+        #   loc: [39.0256, -119.8309]
+        # gerlach:
+        #   loc: [40.6452, -119.3614]
+        # glenbrook:
+        #   loc: [39.0986, -119.9341]
+        # golconda:
+        #   loc: [40.9522, -117.4997]
+        # golden-valley:
+        #   loc: [39.6178, -119.8231]
+        # goldfield:
+        #   loc: [37.7121, -117.2378]
+        # goodsprings:
+        #   loc: [35.8319, -115.4352]
+        # grass-valley:
+        #   loc: [40.7971, -117.7603]
+        # hawthorne:
+        #   loc: [38.5253, -118.626]
+        # henderson:
+        #   loc: [36.0133, -115.0381]
+        # hiko:
+        #   loc: [37.6063, -115.2018]
+        # humboldt-river-ranch:
+        #   loc: [40.4318, -118.2719]
+        # imlay:
+        #   loc: [40.6581, -118.1441]
+        # incline-village:
+        #   loc: [39.2639, -119.9455]
+        # indian-hills:
+        #   loc: [39.0894, -119.7977]
+        # indian-springs:
+        #   loc: [36.5719, -115.7204]
+        # jackpot:
+        #   loc: [41.9797, -114.6645]
+        # johnson-lane:
+        #   loc: [39.0489, -119.7245]
+        # kingsbury:
+        #   loc: [38.9909, -119.8837]
+        # kingston:
+        #   loc: [39.2101, -117.0679]
+        # lakeridge:
+        #   loc: [39.0382, -119.9397]
+        # lamoille:
+        #   loc: [40.7239, -115.479]
+        # laughlin:
+        #   loc: [35.1401, -114.6206]
+        # lemmon-valley:
+        #   loc: [39.6879, -119.8364]
+        # logan-creek:
+        #   loc: [39.0626, -119.9295]
+        # lovelock:
+        #   loc: [40.1787, -118.4775]
+        # lund:
+        #   loc: [38.8642, -115.0099]
+        # mcdermitt:
+        #   loc: [41.9903, -117.7209]
+        # mcgill:
+        #   loc: [39.4019, -114.7775]
+        # mesquite:
+        #   loc: [36.8032, -114.133]
+        # mina:
+        #   loc: [38.3898, -118.1115]
+        # minden:
+        #   loc: [38.9632, -119.7683]
+        # moapa-town:
+        #   loc: [36.6925, -114.6356]
+        # moapa-valley:
+        #   loc: [36.6078, -114.4566]
+        # mogul:
+        #   loc: [39.5164, -119.923]
+        # montello:
+        #   loc: [41.2671, -114.197]
+        # mount-charleston:
+        #   loc: [36.2625, -115.6138]
+        # mount-wilson:
+        #   loc: [38.235, -114.4504]
+        # mountain-city:
+        #   loc: [41.8374, -115.9633]
+        # nellis-afb:
+        #   loc: [36.2466, -115.0571]
+        # nelson:
+        #   loc: [35.7179, -114.8313]
+        # nixon:
+        #   loc: [39.828, -119.3589]
+        # north-las-vegas:
+        #   loc: [36.2883, -115.0888]
+        # oasis:
+        #   loc: [41.0286, -114.4763]
+        # orovada:
+        #   loc: [41.5492, -117.8235]
+        # osino:
+        #   loc: [40.9409, -115.6607]
+        # owyhee:
+        #   loc: [41.9165, -116.1825]
+        # pahrump:
+        #   loc: [36.2235, -115.9974]
+        # panaca:
+        #   loc: [37.7881, -114.4005]
+        # paradise:
+        #   loc: [36.0872, -115.1355]
+        # paradise-valley:
+        #   loc: [41.4937, -117.547]
+        # pioche:
+        #   loc: [37.9519, -114.4434]
+        # preston:
+        #   loc: [38.915, -115.0637]
+        # rachel:
+        #   loc: [37.6414, -115.7681]
+        # reno:
+        #   loc: [39.5497, -119.8483]
+        # round-hill-village:
+        #   loc: [38.9937, -119.9233]
+        # ruhenstroth:
+        #   loc: [38.8913, -119.6833]
+        # ruth:
+        #   loc: [39.2791, -114.9901]
+        # sandy-valley:
+        #   loc: [35.8423, -115.6304]
+        # schurz:
+        #   loc: [38.9673, -118.824]
+        # searchlight:
+        #   loc: [35.4555, -114.9204]
+        # silver-city:
+        #   loc: [39.2639, -119.6357]
+        # silver-peak:
+        #   loc: [37.7578, -117.6386]
+        # silver-springs:
+        #   loc: [39.3826, -119.2148]
+        # skyland:
+        #   loc: [39.0265, -119.9221]
+        # smith-valley:
+        #   loc: [38.8109, -119.3517]
+        # spanish-springs:
+        #   loc: [39.6568, -119.6694]
+        # sparks:
+        #   loc: [39.5736, -119.7161]
+        # spring-creek:
+        #   loc: [40.745, -115.5983]
+        # spring-valley:
+        #   loc: [36.0952, -115.2636]
+        # stagecoach:
+        #   loc: [39.3656, -119.3832]
+        # stateline:
+        #   loc: [38.9678, -119.944]
+        # summerlin-south:
+        #   loc: [36.1242, -115.3324]
+        # sun-valley:
+        #   loc: [39.6104, -119.777]
+        # sunrise-manor:
+        #   loc: [36.1783, -115.0487]
+        # sutcliffe:
+        #   loc: [39.9461, -119.6305]
+        # tonopah:
+        #   loc: [38.0822, -117.2246]
+        # topaz-lake:
+        #   loc: [38.6976, -119.5427]
+        # topaz-ranch-estates:
+        #   loc: [38.7357, -119.5008]
+        # unionville:
+        #   loc: [40.4467, -118.1229]
+        # ursine:
+        #   loc: [37.9771, -114.2289]
+        # valmy:
+        #   loc: [40.7908, -117.1266]
+        # vegas:
+        #   loc: [36.2333, -115.2654]
+        # verdi:
+        #   loc: [39.5142, -119.9772]
+        # virginia-city:
+        #   loc: [39.3074, -119.6483]
+        # wadsworth:
+        #   loc: [39.6322, -119.2901]
+        # walker-lake:
+        #   loc: [38.6458, -118.7563]
+        # washoe-valley:
+        #   loc: [39.2923, -119.7767]
+        # wells:
+        #   loc: [41.1132, -114.9535]
+        # west-wendover:
+        #   loc: [40.7407, -114.0783]
+        # whitney:
+        #   loc: [36.1008, -115.0379]
+        # winchester:
+        #   loc: [36.1365, -115.137]
+        # winnemucca:
+        #   loc: [40.9645, -117.7247]
+        # yerington:
+        #   loc: [38.9554, -119.1101]
+        # zephyr-cove:
+        #   loc: [39.0082, -119.9307]
 
 
   # doc.kml initial NetworkLink checkbox visibility inside aggregate KMZ
