@@ -31,8 +31,12 @@ def require_preset_yaml_path(path: Path) -> None:
 
 
 def repo_root() -> Path:
-    """Package install / source tree root (parent of ``src/``)."""
-    return Path(__file__).resolve().parents[2]
+    """Workspace root: monorepo parent when ``projects/`` lives there, else package root."""
+    pkg_root = Path(__file__).resolve().parents[2]
+    workspace = pkg_root.parent
+    if (workspace / "projects").is_dir():
+        return workspace
+    return pkg_root
 
 
 def peaky_home() -> Path:

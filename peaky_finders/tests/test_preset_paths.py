@@ -33,7 +33,9 @@ def peaky_env(monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_peaky_home_defaults_to_repo_root(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PEAKY_HOME", raising=False)
-    assert peaky_home() == repo_root()
+    home = peaky_home()
+    assert home == repo_root()
+    assert (home / "projects").is_dir()
 
 
 def test_peaky_home_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

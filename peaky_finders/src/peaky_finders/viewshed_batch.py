@@ -22,7 +22,9 @@ from peaky_finders.splat_pipeline import run_batch_container, vectorize_coverage
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    from peaky_finders.sites_job import repo_root
+
+    return repo_root()
 
 
 def resolved_splatter_batch_jobs(
