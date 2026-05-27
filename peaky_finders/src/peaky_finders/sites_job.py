@@ -245,7 +245,7 @@ class SimulationMaxWorkers(BaseModel):
     los: int = Field(
         default=1,
         ge=1,
-        description="Concurrent splatter jobs inside one ``run-batch`` Docker invocation (``PEAKY_SPLATTER_BATCH_JOBS``).",
+        description="Concurrent splatter jobs inside one ``run-batch`` Docker invocation (``SPLATTER_BATCH_JOBS``).",
     )
     splat: int = Field(
         default=8,

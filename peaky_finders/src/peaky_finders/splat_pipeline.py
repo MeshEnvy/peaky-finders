@@ -123,7 +123,7 @@ def run_batch_container(
         provider=CoverageProvider.LOS,
         coverage_verbose=coverage_verbose,
         splatter_subcommand=("run-batch", "--work-dir", "/work"),
-        extra_env=(("PEAKY_SPLATTER_BATCH_JOBS", str(max(1, int(batch_jobs)))),),
+        extra_env=(("SPLATTER_BATCH_JOBS", str(max(1, int(batch_jobs)))),),
     )
     print("Running coverage batch in Docker...", flush=True)
     return subprocess.run(cmd, check=False).returncode

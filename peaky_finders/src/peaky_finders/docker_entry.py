@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # White no-RF SPLAT pixels → transparent RGBA; large rasters scaled for Earth overlays
-    # (GPU texture caps — see PEAKY_SPLAT_OVERLAY_MAX_EDGE in splat_ppm_to_png.py).
+    # (GPU texture caps — see SPLATTER_OVERLAY_MAX_EDGE in splat_ppm_to_png.py).
     write_splat_png_from_ppm(ppm_path=ppm, png_path=work / "splat.png")
     point_splat_output_kml_at_png(work / "output.kml")
 
