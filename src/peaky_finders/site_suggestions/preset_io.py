@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
-from peaky_finders.sites_job import SiteType, _slugify_files_segment, dump_preset_yaml_document, read_preset_yaml_tree
+from peaky_finders.sites_job import Preset, SiteType, _slugify_files_segment, dump_preset_yaml_document, read_preset_yaml_tree
+
+_SUGGEST_SLUG_ITER_RE = re.compile(r"^suggest-(\d+)-")
 
 
 def remove_suggested_sites_from_preset(preset_path: Path) -> int:
@@ -25,6 +28,23 @@ def remove_suggested_sites_from_preset(preset_path: Path) -> int:
     if removed:
         dump_preset_yaml_document(yaml_rt, root, preset_path)
     return removed
+
+
+def count_suggested_sites(preset: Preset) -> int:
+    """Count ``type: suggested`` entries in a loaded preset."""
+    return sum(1 for ent in preset.sites.values() if ent.type == SiteType.SUGGESTED)
+
+
+def next_suggest_iteration(preset: Preset) -> int:
+    """Next ``suggest-NN-…`` iteration for a new suggested site."""
+    best = 0
+    for slug, ent in preset.sites.items():
+        if ent.type != SiteType.SUGGESTED:
+            continue
+        m = _SUGGEST_SLUG_ITER_RE.match(str(slug))
+        if m:
+            best = max(best, int(m.group(1)))
+    return max(best, count_suggested_sites(preset)) + 1
 
 
 def _unique_suggest_slug(existing: set[str], *, iteration: int, name: str) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -26,13 +27,15 @@ from peaky_finders.site_suggestions.mesh_backbone_completion import (
     site_location_key,
 )
 from peaky_finders.site_suggestions.mesh_grow import (
-    active_attractor_goal,
+    MeshGrowTrialScore,
     build_mesh_grow_score_context,
     mesh_grow_sort_key,
-    score_mesh_grow_trial,
+    mesh_grow_trial_has_progress,
+    score_mesh_grow_trials,
     summarize_mesh_grow_outcomes,
 )
-from peaky_finders.sites_job import Preset, SiteSuggestionCoverageTarget, SiteSuggestionStrategy, resolved_site_suggestions_config
+from peaky_finders.site_suggestions.preset_io import count_suggested_sites, next_suggest_iteration
+from peaky_finders.sites_job import Preset, SiteSuggestionCoverageTarget, SiteSuggestionStrategy, load_preset, resolved_site_suggestions_config
 
 
 @dataclass(frozen=True)
@@ -463,6 +466,8 @@ def _select_mesh_grow_from_evals(
     iteration: int,
     target_label: str,
     verbose: bool = False,
+    jobs: int = 1,
+    score_cache: dict[int, MeshGrowTrialScore | None] | None = None,
 ) -> tuple[PlannedSuggestion | None, BaseGeometry | None, list[CandidateTrial]]:
     score_ctx = build_mesh_grow_score_context(ctx)
     if score_ctx is None:
@@ -471,8 +476,8 @@ def _select_mesh_grow_from_evals(
     suggest_log(verbose, f"site suggest: ── iteration {iteration} mesh-grow scoring ──")
     suggest_log(
         verbose,
-        f"  attractor: {score_ctx.attractor.key}  "
-        f"before_dist={score_ctx.before_dist_m / 1000.0:.1f} km",
+        f"  uncaptured goals: {len(score_ctx.uncaptured_goals)}  "
+        f"(pick best hop-valid Δdist across all)",
     )
 
     best_score = None
@@ -480,10 +485,33 @@ def _select_mesh_grow_from_evals(
     trials: list[CandidateTrial] = []
     scorable = 0
     scored = 0
+    cache = score_cache if score_cache is not None else {}
+
+    pending_ev: list[_CandidateTrialEval] = []
+    for ev in evals:
+        trial = ev.trial
+        if trial.footprint is None or trial.outcome == CandidateOutcome.VIEWSHED_FAILED:
+            continue
+        scorable += 1
+        if trial.index not in cache:
+            pending_ev.append(ev)
+
+    if pending_ev:
+        workers = max(1, int(jobs))
+        batch_scores = score_mesh_grow_trials(
+            score_ctx=score_ctx,
+            trials=[
+                (ev.trial.candidate.lat, ev.trial.candidate.lon, ev.trial.footprint)
+                for ev in pending_ev
+            ],
+            jobs=workers,
+        )
+        for ev, score in zip(pending_ev, batch_scores, strict=True):
+            cache[ev.trial.index] = score
 
     with suggest_step(
         verbose,
-        f"mesh-grow score {len(evals)} trial(s) toward {score_ctx.attractor.key}",
+        f"mesh-grow score {len(evals)} trial(s) across {len(score_ctx.uncaptured_goals)} goal(s)",
     ):
         for ev in evals:
             trial = ev.trial
@@ -491,13 +519,6 @@ def _select_mesh_grow_from_evals(
                 trials.append(trial)
                 continue
 
-            scorable += 1
-            score = score_mesh_grow_trial(
-                score_ctx=score_ctx,
-                lat=trial.candidate.lat,
-                lon=trial.candidate.lon,
-                trial_footprint=trial.footprint,
-            )
             scored += 1
             if scored == 1 or scored % 10 == 0 or scored == scorable:
                 suggest_progress(
@@ -506,38 +527,43 @@ def _select_mesh_grow_from_evals(
                     f"{_format_candidate_brief(trial.candidate)}",
                 )
 
+            score = cache[trial.index] if trial.index in cache else None
+
             if score is None:
                 trial.outcome = CandidateOutcome.NO_HOP
                 trial.detail = "no confirmed mutual hop to an existing site"
                 trials.append(trial)
                 continue
 
-            if score.delta_min_dist_m <= 0 and not score.captures_goal:
+            if not mesh_grow_trial_has_progress(score):
                 trial.outcome = CandidateOutcome.ZERO_GAIN
                 trial.detail = (
-                    f"hop via {','.join(score.hop_neighbors)} but no progress toward "
-                    f"{score_ctx.attractor.key} (Δdist={score.delta_min_dist_m:.0f} m)"
+                    f"hop via {','.join(score.hop_neighbors)} but no progress toward any "
+                    f"uncaptured goal (best Δdist={score.best_delta_m:.0f} m)"
                 )
                 trials.append(trial)
                 continue
 
             sort_key = mesh_grow_sort_key(score)
+            goal_label = score.best_goal_key or "?"
+            capture_label = ",".join(score.captured_goal_keys) or "none"
             trial.outcome = CandidateOutcome.RUNNER_UP
             trial.detail = (
-                f"Δdist={score.delta_min_dist_m:.0f} m toward {score_ctx.attractor.key}  "
-                f"capture={score.captures_goal}  hop={','.join(score.hop_neighbors)}  "
+                f"best={goal_label} Δdist={score.best_delta_m:.0f} m  "
+                f"total Δdist={score.total_delta_m:.0f} m  "
+                f"capture={capture_label}  hop={','.join(score.hop_neighbors)}  "
                 f"area={trial.footprint_area_km2:.1f} km²"
             )
             pick = PlannedSuggestion(
                 lat=trial.candidate.lat,
                 lon=trial.candidate.lon,
                 elev_m=trial.candidate.elev_m,
-                gain_cells=max(0, int(round(score.delta_min_dist_m))),
+                gain_cells=max(0, int(round(score.best_delta_m))),
                 strategy=trial.candidate.strategy,
                 iteration=iteration,
                 rationale=(
-                    f"Mesh-grow #{iteration}: Δ{score.delta_min_dist_m / 1000.0:.1f} km toward "
-                    f"{score_ctx.attractor.key} ({target_label}, capture={score.captures_goal})"
+                    f"Mesh-grow #{iteration}: Δ{score.best_delta_m / 1000.0:.1f} km toward "
+                    f"{goal_label} ({target_label}, capture={capture_label})"
                 ),
             )
             ev_scored = _CandidateTrialEval(trial=trial, pick=pick)
@@ -581,6 +607,27 @@ def _run_candidate_trials(
     mesh_grow: bool = False,
 ) -> tuple[PlannedSuggestion | None, BaseGeometry | None, list[CandidateTrial]]:
     workers = max(1, int(jobs))
+    mesh_score_cache: dict[int, MeshGrowTrialScore | None] = {}
+
+    refine_candidates: list[SiteCandidate] = []
+    if refine.refine_enabled and int(refine.refine_top_n) > 0:
+        if mesh_grow:
+            ranked_point = sorted(
+                candidates,
+                key=lambda c: grid.point_marginal_gain_cells(c.lon, c.lat, goal_depth=goal),
+                reverse=True,
+            )
+            refine_centers = [
+                SiteCandidate(
+                    lat=c.lat,
+                    lon=c.lon,
+                    elev_m=c.elev_m,
+                    strategy="refine_seed",
+                )
+                for c in ranked_point[: int(refine.refine_top_n)]
+            ]
+        else:
+            refine_centers = []
 
     with suggest_step(verbose, f"coarse batch viewshed ({len(candidates)} candidates, workers={workers})"):
         for ci, cand in enumerate(candidates, start=1):
@@ -590,12 +637,31 @@ def _run_candidate_trials(
                 f"site suggest:     trial [{ci}/{len(candidates)}] {_format_candidate_brief(cand)} "
                 f"point_pre_gain={point_gain} cells",
             )
+
+        if mesh_grow and refine.refine_enabled and int(refine.refine_top_n) > 0:
+            if refine_centers:
+                refine_candidates = generate_refine_candidates(
+                    centers=refine_centers,
+                    eligible_ll=eligible_ll,
+                    refine_radius_m=float(refine.refine_radius_m),
+                    refine_spacing_m=float(refine.refine_spacing_m),
+                )
+                coarse_keys = {
+                    (int(round(c.lat * 1e5)), int(round(c.lon * 1e5))) for c in candidates
+                }
+                refine_candidates = [
+                    c
+                    for c in refine_candidates
+                    if (int(round(c.lat * 1e5)), int(round(c.lon * 1e5))) not in coarse_keys
+                ]
+
         try:
             coarse_batch = run_candidate_batch_viewsheds(
                 preset=preset,
                 preset_path=preset_path,
                 viewshed_root=plan.viewsheds_root,
                 candidates=candidates,
+                extra_candidates=refine_candidates if mesh_grow and refine_candidates else None,
                 verbose=verbose,
                 jobs=workers,
                 footprint_runner=footprint_runner,
@@ -614,52 +680,22 @@ def _run_candidate_trials(
         retain_footprint=mesh_grow,
     )
 
-    refine_candidates: list[SiteCandidate] = []
-    if refine.refine_enabled and int(refine.refine_top_n) > 0:
-        if mesh_grow and suggest_ctx is not None:
-            score_ctx = build_mesh_grow_score_context(suggest_ctx)
-            ranked_mesh: list[tuple[tuple, SiteCandidate]] = []
-            if score_ctx is not None:
-                for ev in coarse_evals:
-                    if ev.trial.footprint is None:
-                        continue
-                    score = score_mesh_grow_trial(
-                        score_ctx=score_ctx,
-                        lat=ev.trial.candidate.lat,
-                        lon=ev.trial.candidate.lon,
-                        trial_footprint=ev.trial.footprint,
-                    )
-                    if score is None:
-                        continue
-                    ranked_mesh.append(
-                        (
-                            mesh_grow_sort_key(score),
-                            SiteCandidate(
-                                lat=ev.trial.candidate.lat,
-                                lon=ev.trial.candidate.lon,
-                                elev_m=ev.trial.candidate.elev_m,
-                                strategy="refine_seed",
-                            ),
-                        )
-                    )
-            ranked_mesh.sort(key=lambda item: item[0], reverse=True)
-            refine_centers = [c for _, c in ranked_mesh[: int(refine.refine_top_n)]]
-        else:
-            ranked = sorted(
-                (ev for ev in coarse_evals if ev.pick is not None and ev.trial.footprint_gain_cells),
-                key=lambda ev: int(ev.trial.footprint_gain_cells or 0),
-                reverse=True,
+    if refine.refine_enabled and int(refine.refine_top_n) > 0 and not mesh_grow:
+        ranked = sorted(
+            (ev for ev in coarse_evals if ev.pick is not None and ev.trial.footprint_gain_cells),
+            key=lambda ev: int(ev.trial.footprint_gain_cells or 0),
+            reverse=True,
+        )
+        refine_centers = [
+            SiteCandidate(
+                lat=ev.pick.lat,
+                lon=ev.pick.lon,
+                elev_m=ev.pick.elev_m,
+                strategy="refine_seed",
             )
-            refine_centers = [
-                SiteCandidate(
-                    lat=ev.pick.lat,
-                    lon=ev.pick.lon,
-                    elev_m=ev.pick.elev_m,
-                    strategy="refine_seed",
-                )
-                for ev in ranked[: int(refine.refine_top_n)]
-                if ev.pick is not None
-            ]
+            for ev in ranked[: int(refine.refine_top_n)]
+            if ev.pick is not None
+        ]
         if refine_centers:
             refine_candidates = generate_refine_candidates(
                 centers=refine_centers,
@@ -677,7 +713,18 @@ def _run_candidate_trials(
             ]
 
     refine_evals: list[_CandidateTrialEval] = []
-    if refine_candidates:
+    if refine_candidates and mesh_grow:
+        refine_evals = _trials_from_batch_results(
+            candidates=refine_candidates,
+            batch_results=coarse_batch,
+            iteration=iteration,
+            goal=goal,
+            grid=grid,
+            target_label=target_label,
+            start_index=len(candidates) + 1,
+            retain_footprint=True,
+        )
+    elif refine_candidates and not mesh_grow:
         with suggest_step(
             verbose,
             f"refine batch viewshed ({len(refine_candidates)} samples around top {refine.refine_top_n})",
@@ -710,6 +757,8 @@ def _run_candidate_trials(
             iteration=iteration,
             target_label=target_label,
             verbose=verbose,
+            jobs=workers,
+            score_cache=mesh_score_cache,
         )
     return _select_best_from_evals(all_evals)
 
@@ -724,6 +773,7 @@ def plan_greedy_site_suggestions(
     footprint_runner=None,
     verbose: bool = False,
     jobs: int = 1,
+    on_pick: Callable[[PlannedSuggestion], str] | None = None,
 ) -> list[PlannedSuggestion]:
     """Run the site-suggestion solver until ``planning_complete`` or ``suggest_cli_n`` sites are written."""
     if preset.bundle is None:
@@ -734,8 +784,17 @@ def plan_greedy_site_suggestions(
     mesh_grow = cfg.strategy == SiteSuggestionStrategy.MESH_BACKBONE
     if mesh_grow and not cfg.mesh_backbone.goals:
         raise ValueError("mesh-backbone strategy requires mesh_backbone.goals")
-    max_steps = provider.resolve_step_budget(cfg, suggest_cli_n)
+    existing_suggested = count_suggested_sites(preset)
+    total_budget = provider.resolve_step_budget(cfg, suggest_cli_n)
+    if total_budget is not None:
+        max_steps = max(0, total_budget - existing_suggested)
+    else:
+        max_steps = None
     if max_steps is not None and max_steps <= 0:
+        print(
+            f"site suggest: already at budget ({existing_suggested} suggested site(s))",
+            flush=True,
+        )
         return []
 
     goal = provider.goal_depth(cfg)
@@ -801,7 +860,8 @@ def plan_greedy_site_suggestions(
 
     winners: list[PlannedSuggestion] = []
     attempt = 0
-    budget_label = "solve" if max_steps is None else str(max_steps)
+    budget_label = "solve" if total_budget is None else str(total_budget)
+    first_iteration = next_suggest_iteration(preset)
 
     while True:
         if provider.planning_complete(suggest_ctx):
@@ -811,16 +871,17 @@ def plan_greedy_site_suggestions(
                 if (
                     mesh_grow
                     and max_nodes is not None
-                    and len(suggest_ctx.session_sites) >= int(max_nodes)
+                    and len(all_backbone_sites(suggest_ctx)) >= int(max_nodes)
                 ):
                     print(
                         f"site suggest: stopping — {provider.name} max_nodes={max_nodes} "
-                        f"after {len(winners)} site(s)",
+                        f"after {existing_suggested + len(winners)} suggested site(s)",
                         flush=True,
                     )
                 else:
                     print(
-                        f"site suggest: stopping — {provider.name} goal met after {len(winners)} site(s)",
+                        f"site suggest: stopping — {provider.name} goal met after "
+                        f"{existing_suggested + len(winners)} suggested site(s)",
                         flush=True,
                     )
             break
@@ -828,9 +889,13 @@ def plan_greedy_site_suggestions(
             break
 
         attempt += 1
-        site_n = len(winners) + 1
+        site_n = first_iteration + len(winners)
+        total_written = existing_suggested + len(winners)
         uncovered_before = grid.uncovered_fraction(goal_depth=goal)
-        budget_progress = f"{len(winners)}/{budget_label}"
+        if total_budget is None:
+            budget_progress = f"{total_written}+/solve"
+        else:
+            budget_progress = f"{total_written}/{budget_label}"
 
         suggest_log(
             verbose,
@@ -911,15 +976,25 @@ def plan_greedy_site_suggestions(
         )
 
         grid.add_footprint(best_footprint)
-        session_slug = f"_session_{site_n:04d}"
-        suggest_ctx.session_sites.append(
-            BackboneSite(slug=session_slug, lat=best.lat, lon=best.lon)
-        )
-        suggest_ctx.session_footprints[session_slug] = best_footprint
+        if on_pick is not None:
+            slug = on_pick(best)
+            suggest_ctx.session_footprints[slug] = best_footprint
+            suggest_ctx.preset = load_preset(preset_path)
+        else:
+            session_slug = f"_session_{site_n:04d}"
+            suggest_ctx.session_sites.append(
+                BackboneSite(slug=session_slug, lat=best.lat, lon=best.lon)
+            )
+            suggest_ctx.session_footprints[session_slug] = best_footprint
         winners.append(best)
+        total_after = existing_suggested + len(winners)
         uncovered_after = 100.0 * grid.uncovered_fraction(goal_depth=goal)
+        if total_budget is None:
+            progress_label = f"{total_after}+/solve"
+        else:
+            progress_label = f"{total_after}/{budget_label}"
         print(
-            f"site suggest: wrote site {len(winners)}/{budget_label} "
+            f"site suggest: wrote site {progress_label} "
             f"gain={best.gain_cells} cells uncovered={uncovered_after:.2f}% "
             f"({best.lat:.5f}, {best.lon:.5f})",
             flush=True,

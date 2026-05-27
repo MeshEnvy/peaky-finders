@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from peaky_finders import kml_bundle
@@ -16,6 +18,73 @@ from peaky_finders.splat_polygonize import (
 )
 
 TILE_CACHE_CONTAINER_PATH = "/splat_cache"
+
+
+def _limit_nested_blas_threads() -> None:
+    for key in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ.setdefault(key, "1")
+
+
+def footprint_vectorize_needed(data_dir: Path) -> bool:
+    """True when ``output.ppm`` exists and ``splat.gpkg`` is missing or older than the PPM."""
+    wd = Path(data_dir).expanduser().resolve()
+    ppm = wd / SPLAT_OUTPUT_PPM_BASENAME
+    gpkg = wd / SPLAT_GPKG_NAME
+    if not ppm.is_file():
+        return False
+    if not gpkg.is_file():
+        return True
+    return ppm.stat().st_mtime > gpkg.stat().st_mtime
+
+
+def _vectorize_footprint_worker(args: tuple[str, dict]) -> tuple[str, bool]:
+    """Process-pool worker: vectorize one workspace when ``output.ppm`` is newer than GPKG."""
+    workdir_str, style_dict = args
+    wd = Path(workdir_str)
+    if not footprint_vectorize_needed(wd):
+        return workdir_str, True
+    polygon_style = BundleKmlLayerStyle.model_validate(style_dict)
+    ok = write_coverage_footprints(data_dir=wd, polygon_style=polygon_style)
+    return workdir_str, ok
+
+
+def vectorize_coverage_footprints_parallel(
+    *,
+    workdirs: list[Path] | tuple[Path, ...],
+    polygon_style: BundleKmlLayerStyle,
+    jobs: int = 1,
+) -> None:
+    """Vectorize ``output.ppm`` → ``splat.gpkg`` across independent workspaces (CPU-bound)."""
+    pending = [Path(wd).expanduser().resolve() for wd in workdirs if footprint_vectorize_needed(wd)]
+    if not pending:
+        return
+
+    workers = max(1, int(jobs))
+    mx = min(workers, len(pending))
+    style_dict = polygon_style.model_dump()
+    print(
+        f"footprint vectorize: {len(pending)} workspace(s), workers={mx}",
+        flush=True,
+    )
+    if mx <= 1:
+        for wd in pending:
+            _vectorize_footprint_worker((str(wd), style_dict))
+        return
+
+    with ProcessPoolExecutor(max_workers=mx, initializer=_limit_nested_blas_threads) as pool:
+        futs = {
+            pool.submit(_vectorize_footprint_worker, (str(wd), style_dict)): wd for wd in pending
+        }
+        for fut in as_completed(futs):
+            _wd, ok = fut.result()
+            if not ok:
+                raise RuntimeError(f"footprint vectorize failed under {_wd}")
 
 
 def run_container(

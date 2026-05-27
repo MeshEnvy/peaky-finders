@@ -258,7 +258,6 @@ def write_coverage_polygons(
         rgb = np.asarray(im.convert("RGB"))
 
     h, w = rgb.shape[0], rgb.shape[1]
-    print(f"    vectorize: {ppm_path.name} ({w}×{h}px)...", flush=True)
     mask = coverage_mask_from_splat_ppm_rgb(rgb)
     geom_px = polygonize_mask(mask)
     if geom_px is None:
