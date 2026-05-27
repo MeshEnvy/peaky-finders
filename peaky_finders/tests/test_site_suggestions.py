@@ -744,7 +744,7 @@ def test_suggest_iteration_helpers(tmp_path: Path) -> None:
     assert next_suggest_iteration(preset) == 4
 
 
-def test_suggest_budget_resumes_from_existing_suggested(monkeypatch, tmp_path: Path) -> None:
+def test_suggest_cli_n_adds_new_sites_when_prior_suggested_exist(monkeypatch, tmp_path: Path) -> None:
     from peaky_finders.build_configure import PlannedComposite, PlannedViewshedWorkspace
     from peaky_finders.site_suggestions import planner as planner_mod
     from peaky_finders.site_suggestions.candidates import SiteCandidate
@@ -854,8 +854,8 @@ def test_suggest_budget_resumes_from_existing_suggested(monkeypatch, tmp_path: P
         suggest_root=tmp_path / "suggest",
         footprint_runner=lambda **kw: box(-115.04, 39.01, -115.02, 39.03),
     )
-    assert len(winners) == 2
-    assert [w.iteration for w in winners] == [3, 4]
+    assert len(winners) == 4
+    assert [w.iteration for w in winners] == [3, 4, 5, 6]
 
 
 def test_on_pick_writes_each_site_to_preset(monkeypatch, tmp_path: Path) -> None:

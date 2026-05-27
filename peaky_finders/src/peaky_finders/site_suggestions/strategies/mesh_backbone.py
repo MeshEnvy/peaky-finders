@@ -5,8 +5,18 @@ from __future__ import annotations
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.log import suggest_log
 from peaky_finders.site_suggestions.mesh_backbone_candidates import generate_mesh_grow_candidates
-from peaky_finders.site_suggestions.mesh_backbone_completion import all_backbone_sites, mesh_grow_planning_complete
-from peaky_finders.site_suggestions.mesh_grow import active_attractor_goal, uncaptured_goals
+from peaky_finders.site_suggestions.mesh_backbone_completion import (
+    all_backbone_sites,
+    footprints_for_backbone_sites,
+    hop_adjacency,
+    hop_connected_components,
+    mesh_grow_planning_complete,
+)
+from peaky_finders.site_suggestions.mesh_connectivity import (
+    healing_context,
+    mesh_connectivity_phase,
+)
+from peaky_finders.site_suggestions.mesh_grow import active_attractor_goal, grow_goals
 from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
 from peaky_finders.sites_job import BundleSiteSuggestionsConfig
@@ -50,24 +60,40 @@ class MeshBackboneStrategy:
         iteration: int,
     ) -> list:
         del iteration
-        remaining = uncaptured_goals(ctx)
+        remaining = grow_goals(ctx)
         if ctx.verbose:
-            suggest_log(ctx.verbose, "site suggest: ── mesh-grow status ──")
-            if not remaining:
-                suggest_log(ctx.verbose, "     all configured goals captured and connected")
-            else:
-                nearest = active_attractor_goal(ctx)
-                nearest_label = nearest.key if nearest is not None else "?"
-                dist_m = (
-                    ctx.grid.min_distance_coverage_to_point_m(
-                        nearest.lon, nearest.lat, min_depth=1
-                    )
-                    if nearest is not None
-                    else 0.0
+            phase = mesh_connectivity_phase(ctx)
+            nearest = active_attractor_goal(ctx)
+            nearest_label = nearest.key if nearest is not None else "?"
+            dist_m = (
+                ctx.grid.min_distance_coverage_to_point_m(
+                    nearest.lon, nearest.lat, min_depth=1
                 )
+                if nearest is not None
+                else 0.0
+            )
+            if phase == "heal":
+                healing = healing_context(ctx)
+                sites = all_backbone_sites(ctx)
+                footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
+                adj = hop_adjacency(sites, footprints)
+                n_components = len(hop_connected_components(adj, [s.slug for s in sites]))
+                main_count = len(healing.main_slugs) if healing is not None else 0
+                suggest_log(ctx.verbose, "site suggest: ── mesh-heal status ──")
                 suggest_log(
                     ctx.verbose,
-                    f"     uncaptured: {len(remaining)} goal(s); nearest={nearest_label} "
+                    f"     components={n_components} main={main_count} site(s) "
+                    f"bridge goals={len(remaining)} nearest={nearest_label} "
                     f"({dist_m / 1000.0:.1f} km); selection by best hop-valid Δdist",
                 )
+            else:
+                suggest_log(ctx.verbose, "site suggest: ── mesh-grow status ──")
+                if not remaining:
+                    suggest_log(ctx.verbose, "     all configured goals captured and connected")
+                else:
+                    suggest_log(
+                        ctx.verbose,
+                        f"     uncaptured: {len(remaining)} goal(s); nearest={nearest_label} "
+                        f"({dist_m / 1000.0:.1f} km); selection by best hop-valid Δdist",
+                    )
         return generate_mesh_grow_candidates(ctx)

@@ -775,7 +775,7 @@ def plan_greedy_site_suggestions(
     jobs: int = 1,
     on_pick: Callable[[PlannedSuggestion], str] | None = None,
 ) -> list[PlannedSuggestion]:
-    """Run the site-suggestion solver until ``planning_complete`` or ``suggest_cli_n`` sites are written."""
+    """Run the site-suggestion solver until ``planning_complete`` or ``suggest_cli_n`` new sites are written."""
     if preset.bundle is None:
         raise ValueError("site suggestions require preset bundle.*")
 
@@ -785,17 +785,8 @@ def plan_greedy_site_suggestions(
     if mesh_grow and not cfg.mesh_backbone.goals:
         raise ValueError("mesh-backbone strategy requires mesh_backbone.goals")
     existing_suggested = count_suggested_sites(preset)
-    total_budget = provider.resolve_step_budget(cfg, suggest_cli_n)
-    if total_budget is not None:
-        max_steps = max(0, total_budget - existing_suggested)
-    else:
-        max_steps = None
-    if max_steps is not None and max_steps <= 0:
-        print(
-            f"site suggest: already at budget ({existing_suggested} suggested site(s))",
-            flush=True,
-        )
-        return []
+    max_new = provider.resolve_step_budget(cfg, suggest_cli_n)
+    max_steps = max_new
 
     goal = provider.goal_depth(cfg)
     refine = provider.refine_settings(cfg)
@@ -860,7 +851,7 @@ def plan_greedy_site_suggestions(
 
     winners: list[PlannedSuggestion] = []
     attempt = 0
-    budget_label = "solve" if total_budget is None else str(total_budget)
+    budget_label = "solve" if max_steps is None else str(max_steps)
     first_iteration = next_suggest_iteration(preset)
 
     while True:
@@ -890,16 +881,16 @@ def plan_greedy_site_suggestions(
 
         attempt += 1
         site_n = first_iteration + len(winners)
-        total_written = existing_suggested + len(winners)
+        new_written = len(winners)
         uncovered_before = grid.uncovered_fraction(goal_depth=goal)
-        if total_budget is None:
-            budget_progress = f"{total_written}+/solve"
+        if max_steps is None:
+            budget_progress = f"{new_written}+ new (solve)"
         else:
-            budget_progress = f"{total_written}/{budget_label}"
+            budget_progress = f"{new_written}/{budget_label} new"
 
         suggest_log(
             verbose,
-            f"site suggest: ══ attempt {attempt} (site {site_n}/{budget_label}) "
+            f"site suggest: ══ attempt {attempt} (site #{site_n}, {budget_progress}) "
             f"(uncovered {100.0 * uncovered_before:.2f}% below depth≥{goal}) ══",
         )
 
@@ -987,12 +978,12 @@ def plan_greedy_site_suggestions(
             )
             suggest_ctx.session_footprints[session_slug] = best_footprint
         winners.append(best)
-        total_after = existing_suggested + len(winners)
+        new_after = len(winners)
         uncovered_after = 100.0 * grid.uncovered_fraction(goal_depth=goal)
-        if total_budget is None:
-            progress_label = f"{total_after}+/solve"
+        if max_steps is None:
+            progress_label = f"{new_after}+ new (solve)"
         else:
-            progress_label = f"{total_after}/{budget_label}"
+            progress_label = f"{new_after}/{budget_label} new"
         print(
             f"site suggest: wrote site {progress_label} "
             f"gain={best.gain_cells} cells uncovered={uncovered_after:.2f}% "

@@ -13,7 +13,7 @@ from shapely.geometry.base import BaseGeometry
 from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
 from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint, goals_from_config
-from peaky_finders.sites_job import MeshBackboneStrategyConfig, SiteSuggestionStrategy
+from peaky_finders.sites_job import MeshBackboneStrategyConfig, Preset, SiteSuggestionStrategy, SiteType
 
 
 def backbone_sites_from_preset(sites: Mapping[str, object]) -> list[BackboneSite]:
@@ -83,6 +83,30 @@ def hop_adjacency(
                 adj[sites[i].slug].add(sites[j].slug)
                 adj[sites[j].slug].add(sites[i].slug)
     return adj
+
+
+def hop_connected_components(
+    adjacency: Mapping[str, set[str]],
+    slugs: Sequence[str],
+) -> list[set[str]]:
+    """Connected components of the hop graph (sorted slug sets)."""
+    remaining = set(slugs)
+    components: list[set[str]] = []
+    while remaining:
+        start = min(remaining)
+        seen: set[str] = set()
+        queue = deque([start])
+        while queue:
+            node = queue.popleft()
+            if node in seen:
+                continue
+            seen.add(node)
+            for nb in sorted(adjacency.get(node, ())):
+                if nb not in seen:
+                    queue.append(nb)
+        components.append(seen)
+        remaining -= seen
+    return sorted(components, key=lambda comp: min(comp) if comp else "")
 
 
 def hop_reachable_from(
@@ -162,6 +186,40 @@ def all_backbone_sites(ctx: SiteSuggestionContext) -> list[BackboneSite]:
     return sites
 
 
+def anchor_slugs(preset: Preset) -> set[str]:
+    """Installed preset site slugs (excludes suggested)."""
+    return {
+        str(slug)
+        for slug, ent in preset.sites.items()
+        if ent.type == SiteType.INSTALLED
+    }
+
+
+def mesh_connectivity_complete(ctx: SiteSuggestionContext) -> bool:
+    """True when all backbone sites form a single hop component."""
+    if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
+        return True
+    sites = all_backbone_sites(ctx)
+    if len(sites) <= 1:
+        return True
+    footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
+    adjacency = hop_adjacency(sites, footprints)
+    components = hop_connected_components(adjacency, [s.slug for s in sites])
+    return len(components) <= 1
+
+
+def mesh_grow_goals_complete(ctx: SiteSuggestionContext) -> bool:
+    """True when every preset goal is captured (connectivity ignored)."""
+    if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
+        return False
+    mb = ctx.cfg.mesh_backbone
+    if not mb.goals:
+        return True
+    sites = all_backbone_sites(ctx)
+    footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
+    return not uncaptured_goal_keys(mb, sites, footprints)
+
+
 def mesh_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
     """True when every goal is captured by a site hop-connected to preset seeds."""
     if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
@@ -169,6 +227,9 @@ def mesh_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
     mb = ctx.cfg.mesh_backbone
     if not mb.goals:
         return True
+
+    if not mesh_connectivity_complete(ctx):
+        return False
 
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
