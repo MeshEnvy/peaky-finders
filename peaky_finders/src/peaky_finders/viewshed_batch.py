@@ -33,7 +33,7 @@ def resolved_splatter_batch_jobs(
     workspace_count: int,
     build_jobs: int | None = None,
 ) -> int:
-    """Workers inside one ``run-batch`` Docker run (``PEAKY_SPLATTER_BATCH_JOBS``)."""
+    """Workers inside one ``run-batch`` Docker run (``SPLATTER_BATCH_JOBS``)."""
     cap = build_jobs if build_jobs is not None else preset.simulation.max_workers.los
     return max(1, min(cap, workspace_count))
 

@@ -29,8 +29,8 @@ def overlay_dimensions_capped(width: int, height: int, max_edge_px: int) -> tupl
 
 
 def overlay_max_edge_from_env() -> int | None:
-    """``PEAKY_SPLAT_OVERLAY_MAX_EDGE`` (default ``8192``); ``0`` = no resizing."""
-    raw = os.environ.get("PEAKY_SPLAT_OVERLAY_MAX_EDGE", "8192").strip()
+    """``SPLATTER_OVERLAY_MAX_EDGE`` (default ``8192``); ``0`` = no resizing."""
+    raw = os.environ.get("SPLATTER_OVERLAY_MAX_EDGE", "8192").strip()
     if raw in ("", "none", "None"):
         return 8192
     try:
