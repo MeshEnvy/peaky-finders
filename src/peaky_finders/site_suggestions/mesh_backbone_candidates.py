@@ -9,7 +9,7 @@ from peaky_finders.site_suggestions.candidates import SiteCandidate, _dedupe_can
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.mesh_backbone_completion import all_backbone_sites
 from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint
-from peaky_finders.site_suggestions.mesh_grow import active_attractor_goal
+from peaky_finders.site_suggestions.mesh_grow import uncaptured_goals
 from peaky_finders.sites_job import MeshBackboneStrategyConfig
 
 _TO_M = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
@@ -63,32 +63,46 @@ def _cold_start_samples(
     return out[:cap]
 
 
+def _frontier_candidates_for_goal(
+    ctx: SiteSuggestionContext,
+    *,
+    goal: GoalPoint,
+    cfg: MeshBackboneStrategyConfig,
+    cap: int,
+) -> list[SiteCandidate]:
+    if cap <= 0:
+        return []
+
+    samples = ctx.grid.frontier_sample_points_toward_goal(
+        goal_lon=float(goal.lon),
+        goal_lat=float(goal.lat),
+        eligible_ll=ctx.eligible_ll,
+        min_depth=1,
+        spacing_m=float(cfg.frontier_sample_spacing_m),
+        max_points=cap,
+    )
+    label = f"goal:{goal.key}"
+    cands = [SiteCandidate(lat=lat, lon=lon, elev_m=None, strategy=label) for lat, lon in samples]
+    if not cands:
+        cands = _cold_start_samples(ctx, goal=goal, cfg=cfg, cap=cap)
+    return cands
+
+
 def generate_mesh_grow_candidates(ctx: SiteSuggestionContext) -> list[SiteCandidate]:
-    """Frontier samples on composite coverage, biased toward the active attractor goal."""
+    """Frontier samples on composite coverage, split across all uncaptured goals."""
     mb = ctx.cfg.mesh_backbone
     if not mb.goals:
         return []
 
-    attractor = active_attractor_goal(ctx)
-    if attractor is None:
+    goals = uncaptured_goals(ctx)
+    if not goals:
         return []
 
     cap = max(1, int(mb.max_candidates_per_round))
-    samples = ctx.grid.frontier_sample_points_toward_goal(
-        goal_lon=float(attractor.lon),
-        goal_lat=float(attractor.lat),
-        eligible_ll=ctx.eligible_ll,
-        min_depth=1,
-        spacing_m=float(mb.frontier_sample_spacing_m),
-        max_points=cap,
-    )
-
-    label = f"goal:{attractor.key}"
-    cands = [
-        SiteCandidate(lat=lat, lon=lon, elev_m=None, strategy=label) for lat, lon in samples
-    ]
-    if not cands:
-        cands = _cold_start_samples(ctx, goal=attractor, cfg=mb, cap=cap)
+    per_goal = max(1, cap // len(goals))
+    cands: list[SiteCandidate] = []
+    for goal in goals.values():
+        cands.extend(_frontier_candidates_for_goal(ctx, goal=goal, cfg=mb, cap=per_goal))
 
     return _dedupe_candidates(cands)[:cap]
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.log import suggest_log
 from peaky_finders.site_suggestions.mesh_backbone_candidates import generate_mesh_grow_candidates
-from peaky_finders.site_suggestions.mesh_backbone_completion import mesh_grow_planning_complete
-from peaky_finders.site_suggestions.mesh_grow import active_attractor_goal
+from peaky_finders.site_suggestions.mesh_backbone_completion import all_backbone_sites, mesh_grow_planning_complete
+from peaky_finders.site_suggestions.mesh_grow import active_attractor_goal, uncaptured_goals
 from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
 from peaky_finders.sites_job import BundleSiteSuggestionsConfig
@@ -39,7 +39,7 @@ class MeshBackboneStrategy:
     def planning_complete(self, ctx: SiteSuggestionContext) -> bool:
         mb = ctx.cfg.mesh_backbone
         cap = mb.max_nodes
-        if cap is not None and len(ctx.session_sites) >= int(cap):
+        if cap is not None and len(all_backbone_sites(ctx)) >= int(cap):
             return True
         return mesh_grow_planning_complete(ctx)
 
@@ -50,17 +50,24 @@ class MeshBackboneStrategy:
         iteration: int,
     ) -> list:
         del iteration
-        attractor = active_attractor_goal(ctx)
+        remaining = uncaptured_goals(ctx)
         if ctx.verbose:
             suggest_log(ctx.verbose, "site suggest: ── mesh-grow status ──")
-            if attractor is None:
+            if not remaining:
                 suggest_log(ctx.verbose, "     all configured goals captured and connected")
             else:
-                dist_m = ctx.grid.min_distance_coverage_to_point_m(
-                    attractor.lon, attractor.lat, min_depth=1
+                nearest = active_attractor_goal(ctx)
+                nearest_label = nearest.key if nearest is not None else "?"
+                dist_m = (
+                    ctx.grid.min_distance_coverage_to_point_m(
+                        nearest.lon, nearest.lat, min_depth=1
+                    )
+                    if nearest is not None
+                    else 0.0
                 )
                 suggest_log(
                     ctx.verbose,
-                    f"     attractor: {attractor.key} ({dist_m / 1000.0:.1f} km from composite)",
+                    f"     uncaptured: {len(remaining)} goal(s); nearest={nearest_label} "
+                    f"({dist_m / 1000.0:.1f} km); selection by best hop-valid Δdist",
                 )
         return generate_mesh_grow_candidates(ctx)

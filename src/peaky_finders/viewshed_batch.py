@@ -13,8 +13,12 @@ from peaky_finders.cli import (
     resolved_coverage_image,
 )
 from peaky_finders.models import SplatCoverageRequest
-from peaky_finders.sites_job import Preset, resolved_preset_dem_tile_cache_dir
-from peaky_finders.splat_pipeline import run_batch_container
+from peaky_finders.sites_job import (
+    Preset,
+    resolved_preset_dem_tile_cache_dir,
+    resolved_viewshed_coverage_kml_style,
+)
+from peaky_finders.splat_pipeline import run_batch_container, vectorize_coverage_footprints_parallel
 
 
 def _repo_root() -> Path:
@@ -92,13 +96,22 @@ def run_viewshed_batch_docker(
         flush=True,
     )
     try:
-        return run_batch_container(
+        rc = run_batch_container(
             image=image,
             viewshed_root=viewshed_root_r,
             tile_cache_dir=tile_cache,
             batch_jobs=workers,
             coverage_verbose=coverage_verbose,
         )
+        if rc == 0:
+            kml_ov = preset.bundle.kml_overlay if preset.bundle else None
+            style = resolved_viewshed_coverage_kml_style(kml_ov)
+            vectorize_coverage_footprints_parallel(
+                workdirs=[ws.workdir for ws in workspaces],
+                polygon_style=style,
+                jobs=workers,
+            )
+        return rc
     finally:
         if batch_req.is_file():
             batch_req.unlink()

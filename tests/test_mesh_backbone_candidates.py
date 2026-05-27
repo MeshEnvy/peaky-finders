@@ -13,7 +13,9 @@ from peaky_finders.site_suggestions.mesh_backbone_candidates import generate_mes
 from peaky_finders.site_suggestions.mesh_grow import (
     active_attractor_goal,
     build_mesh_grow_score_context,
+    mesh_grow_sort_key,
     score_mesh_grow_trial,
+    uncaptured_goals,
 )
 from peaky_finders.site_suggestions.strategies.mesh_backbone import MeshBackboneStrategy
 from peaky_finders.sites_job import (
@@ -24,22 +26,18 @@ from peaky_finders.sites_job import (
 )
 
 
-def test_active_attractor_picks_closest_uncaptured_goal() -> None:
-    eligible = box(-116.5, 38.5, -114.5, 39.5)
-    grid = build_coverage_depth_grid(
-        aoi_ll=eligible,
-        target_ll=eligible,
-        footprint_gpkg_paths=[],
-        max_raster_dimension=128,
-    )
-    grid.add_footprint(box(-115.9, 38.9, -115.4, 39.1))
+def _mesh_ctx(
+    *,
+    goals: dict[str, tuple[float, float]],
+    grid,
+    eligible,
+    session_sites: list[BackboneSite] | None = None,
+    session_footprints: dict[str, object] | None = None,
+) -> SiteSuggestionContext:
     cfg = MeshBackboneStrategyConfig(
-        goals={
-            "near": MeshBackboneGoalEntry(loc=(39.0, -115.5)),
-            "far": MeshBackboneGoalEntry(loc=(39.0, -114.5)),
-        }
+        goals={key: MeshBackboneGoalEntry(loc=loc) for key, loc in goals.items()}
     )
-    ctx = SiteSuggestionContext(
+    return SiteSuggestionContext(
         preset=type("P", (), {"sites": {"seed": type("E", (), {"lat": 39.0, "lon": -115.8})()}})(),
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),
         grid=grid,
@@ -52,10 +50,29 @@ def test_active_attractor_picks_closest_uncaptured_goal() -> None:
         eligible_sha="x",
         jobs=1,
         verbose=False,
+        session_sites=session_sites or [],
+        session_footprints=session_footprints or {},
+    )
+
+
+def test_active_attractor_picks_closest_uncaptured_goal() -> None:
+    eligible = box(-116.5, 38.5, -114.5, 39.5)
+    grid = build_coverage_depth_grid(
+        aoi_ll=eligible,
+        target_ll=eligible,
+        footprint_gpkg_paths=[],
+        max_raster_dimension=128,
+    )
+    grid.add_footprint(box(-115.9, 38.9, -115.4, 39.1))
+    ctx = _mesh_ctx(
+        goals={"near": (39.0, -115.5), "far": (39.0, -114.5)},
+        grid=grid,
+        eligible=eligible,
     )
     attractor = active_attractor_goal(ctx)
     assert attractor is not None
     assert attractor.key == "near"
+    assert set(uncaptured_goals(ctx)) == {"near", "far"}
 
 
 def test_generate_mesh_grow_candidates_on_frontier() -> None:
@@ -90,6 +107,28 @@ def test_generate_mesh_grow_candidates_on_frontier() -> None:
     assert all(c.strategy == "goal:g1" for c in cands)
 
 
+def test_generate_mesh_grow_candidates_multi_goal() -> None:
+    eligible = box(-116.5, 38.5, -114.5, 39.5)
+    grid = build_coverage_depth_grid(
+        aoi_ll=eligible,
+        target_ll=eligible,
+        footprint_gpkg_paths=[],
+        max_raster_dimension=128,
+    )
+    grid.add_footprint(box(-115.9, 38.9, -115.4, 39.1))
+    ctx = _mesh_ctx(
+        goals={"north": (39.5, -115.5), "south": (38.5, -115.5)},
+        grid=grid,
+        eligible=eligible,
+    )
+    ctx.cfg.mesh_backbone.max_candidates_per_round = 16
+    cands = generate_mesh_grow_candidates(ctx)
+    assert cands
+    strategies = {c.strategy for c in cands}
+    assert "goal:north" in strategies
+    assert "goal:south" in strategies
+
+
 def test_score_mesh_grow_trial_zero_delta_for_committed_footprint() -> None:
     eligible = box(-116.5, 38.5, -114.5, 39.5)
     seed_fp = box(-115.9, 38.9, -115.4, 39.1)
@@ -100,21 +139,11 @@ def test_score_mesh_grow_trial_zero_delta_for_committed_footprint() -> None:
         max_raster_dimension=128,
     )
     grid.add_footprint(seed_fp)
-    cfg = MeshBackboneStrategyConfig(goals={"g1": MeshBackboneGoalEntry(loc=(39.0, -114.5))})
     relay_fp = box(-115.85, 38.9, -115.15, 39.1)
-    ctx = SiteSuggestionContext(
-        preset=type("P", (), {"sites": {"seed": type("E", (), {"lat": 39.0, "lon": -115.8})()}})(),
-        plan=type("Plan", (), {"viewshed_workspaces": ()})(),
+    ctx = _mesh_ctx(
+        goals={"g1": (39.0, -114.5)},
         grid=grid,
-        eligible_ll=eligible,
-        aoi_ll=eligible,
-        target_ll=eligible,
-        suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
-        dem_mirror_root=Path("/tmp/dem"),
-        eligible_sha="x",
-        jobs=1,
-        verbose=False,
+        eligible=eligible,
         session_sites=[BackboneSite(slug="_session_0001", lat=39.0, lon=-115.65)],
         session_footprints={"_session_0001": relay_fp},
     )
@@ -135,8 +164,51 @@ def test_score_mesh_grow_trial_zero_delta_for_committed_footprint() -> None:
             trial_footprint=relay_fp,
         )
     assert score is not None
-    assert score.delta_min_dist_m <= 0
-    assert score.captures_goal is False
+    assert score.best_delta_m <= 0
+    assert score.captured_goal_keys == ()
+
+
+def test_score_mesh_grow_trial_prefers_best_goal_delta() -> None:
+    eligible = box(-116.5, 38.5, -114.5, 39.5)
+    seed_fp = box(-115.9, 38.9, -115.4, 39.1)
+    grid = build_coverage_depth_grid(
+        aoi_ll=eligible,
+        target_ll=eligible,
+        footprint_gpkg_paths=[],
+        max_raster_dimension=128,
+    )
+    grid.add_footprint(seed_fp)
+    ctx = _mesh_ctx(
+        goals={"near": (39.0, -115.55), "far": (39.0, -114.5)},
+        grid=grid,
+        eligible=eligible,
+    )
+    near_fp = box(-115.82, 38.95, -115.48, 39.05)
+    far_fp = box(-115.82, 38.9, -114.95, 39.1)
+    footprints = {"seed": seed_fp}
+    with patch(
+        "peaky_finders.site_suggestions.mesh_grow.footprints_for_backbone_sites",
+        return_value=footprints,
+    ):
+        score_ctx = build_mesh_grow_score_context(ctx)
+        assert score_ctx is not None
+        near_score = score_mesh_grow_trial(
+            score_ctx=score_ctx,
+            lat=39.0,
+            lon=-115.65,
+            trial_footprint=near_fp,
+        )
+        far_score = score_mesh_grow_trial(
+            score_ctx=score_ctx,
+            lat=39.0,
+            lon=-115.4,
+            trial_footprint=far_fp,
+        )
+    assert near_score is not None
+    assert far_score is not None
+    assert mesh_grow_sort_key(far_score) > mesh_grow_sort_key(near_score)
+    assert far_score.best_goal_key == "far"
+    assert far_score.best_delta_m > near_score.best_delta_m
 
 
 def test_score_mesh_grow_trial_requires_mutual_hop() -> None:
@@ -148,23 +220,11 @@ def test_score_mesh_grow_trial_requires_mutual_hop() -> None:
         max_raster_dimension=128,
     )
     grid.add_footprint(box(-115.9, 38.9, -115.4, 39.1))
-    cfg = MeshBackboneStrategyConfig(goals={"g1": MeshBackboneGoalEntry(loc=(39.0, -115.2))})
-    ctx = SiteSuggestionContext(
-        preset=type("P", (), {"sites": {"seed": type("E", (), {"lat": 39.0, "lon": -115.8})()}})(),
-        plan=type("Plan", (), {"viewshed_workspaces": ()})(),
+    ctx = _mesh_ctx(
+        goals={"g1": (39.0, -115.2)},
         grid=grid,
-        eligible_ll=eligible,
-        aoi_ll=eligible,
-        target_ll=eligible,
-        suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
-        dem_mirror_root=Path("/tmp/dem"),
-        eligible_sha="x",
-        jobs=1,
-        verbose=False,
+        eligible=eligible,
     )
-    attractor = active_attractor_goal(ctx)
-    assert attractor is not None
     score_ctx = build_mesh_grow_score_context(ctx)
     assert score_ctx is not None
     orphan_fp = box(-115.35, 38.95, -115.25, 39.05)
@@ -177,6 +237,37 @@ def test_score_mesh_grow_trial_requires_mutual_hop() -> None:
         )
         is None
     )
+
+
+def test_mesh_backbone_max_nodes_counts_preset_sites() -> None:
+    ctx = SiteSuggestionContext(
+        preset=type(
+            "P",
+            (),
+            {
+                "sites": {
+                    "seed": type("E", (), {"lat": 39.0, "lon": -115.8})(),
+                    "suggest-01-relay": type("E", (), {"lat": 39.0, "lon": -115.7})(),
+                }
+            },
+        )(),
+        plan=type("Plan", (), {"viewshed_workspaces": ()})(),
+        grid=type("G", (), {"depth_at_point": lambda *a, **k: 0})(),
+        eligible_ll=box(-116.5, 38.5, -114.5, 39.5),
+        aoi_ll=box(-116.5, 38.5, -114.5, 39.5),
+        target_ll=box(-116.5, 38.5, -114.5, 39.5),
+        suggest_root=Path("/tmp/suggest"),
+        cfg=BundleSiteSuggestionsConfig(
+            strategy=SiteSuggestionStrategy.MESH_BACKBONE,
+            mesh_backbone=MeshBackboneStrategyConfig(max_nodes=2),
+        ),
+        dem_mirror_root=Path("/tmp/dem"),
+        eligible_sha="x",
+        jobs=1,
+        verbose=False,
+    )
+    provider = MeshBackboneStrategy()
+    assert provider.planning_complete(ctx) is True
 
 
 def test_mesh_backbone_max_nodes_stops_solver() -> None:

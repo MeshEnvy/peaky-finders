@@ -23,7 +23,7 @@ from peaky_finders.sites_job import (
     resolved_viewshed_coverage_kml_style,
 )
 from peaky_finders.splat_polygonize import SPLAT_GPKG_NAME, SPLAT_OUTPUT_PPM_BASENAME
-from peaky_finders.splat_pipeline import write_coverage_footprints
+from peaky_finders.splat_pipeline import footprint_vectorize_needed, write_coverage_footprints
 from peaky_finders.viewshed_batch import run_viewshed_batch_docker
 from peaky_finders.viewshed_workspace import (
     resolved_viewshed_workdir,
@@ -107,15 +107,15 @@ def _polygon_style_dict(preset: Preset) -> dict:
 
 
 def _ensure_footprint_worker(workdir: str, style_dict: dict) -> BaseGeometry | None:
-    """Process-pool worker: vectorize ``output.ppm`` when needed and read footprint GPKG."""
+    """Process-pool worker: read footprint GPKG (vectorize runs after docker batch)."""
     wd = Path(workdir)
-    polygon_style = BundleKmlLayerStyle.model_validate(style_dict)
-    if not (wd / SPLAT_OUTPUT_PPM_BASENAME).is_file():
-        return None
     gpkg = wd / SPLAT_GPKG_NAME
-    if not gpkg.is_file():
+    if not gpkg.is_file() and footprint_vectorize_needed(wd):
+        polygon_style = BundleKmlLayerStyle.model_validate(style_dict)
         if not write_coverage_footprints(data_dir=wd, polygon_style=polygon_style):
             return None
+    if not gpkg.is_file():
+        return None
     return read_coverage_footprint(gpkg)
 
 
@@ -126,11 +126,13 @@ def _ensure_footprint(
 ) -> BaseGeometry | None:
     if not ws.output_ppm.is_file():
         return None
-    if not ws.splat_gpkg.is_file():
+    if footprint_vectorize_needed(ws.workdir):
         kml_ov = preset.bundle.kml_overlay if preset.bundle else None
         style = resolved_viewshed_coverage_kml_style(kml_ov)
         if not write_coverage_footprints(data_dir=ws.workdir, polygon_style=style):
             return None
+    if not ws.splat_gpkg.is_file():
+        return None
     return read_coverage_footprint(ws.splat_gpkg)
 
 
@@ -267,31 +269,62 @@ def run_candidate_batch_viewsheds(
     verbose: bool = False,
     jobs: int = 1,
     footprint_runner: FootprintRunner | None = None,
+    extra_candidates: list[SiteCandidate] | None = None,
 ) -> dict[tuple[int, int], CandidateViewshedResult]:
-    """Evaluate ``candidates`` with one ``splatter run-batch`` when possible."""
-    if not candidates:
+    """Evaluate ``candidates`` with one ``splatter run-batch`` when possible.
+
+    When ``extra_candidates`` is set, plan both lists first and run a single
+    ``run-batch`` for all stale workspaces before collecting footprints.
+    """
+    groups = [candidates]
+    if extra_candidates:
+        groups.append(extra_candidates)
+    return _run_candidate_batch_viewshed_groups(
+        preset=preset,
+        preset_path=preset_path,
+        viewshed_root=viewshed_root,
+        candidate_groups=groups,
+        verbose=verbose,
+        jobs=jobs,
+        footprint_runner=footprint_runner,
+    )
+
+
+def _run_candidate_batch_viewshed_groups(
+    *,
+    preset: Preset,
+    preset_path: Path,
+    viewshed_root: Path,
+    candidate_groups: list[list[SiteCandidate]],
+    verbose: bool = False,
+    jobs: int = 1,
+    footprint_runner: FootprintRunner | None = None,
+) -> dict[tuple[int, int], CandidateViewshedResult]:
+    if not any(candidate_groups):
         return {}
 
     viewshed_root_r = Path(viewshed_root).expanduser().resolve()
     planned: list[tuple[SiteCandidate, PlannedViewshedWorkspace, str, bool]] = []
 
-    with suggest_step(verbose, f"prepare {len(candidates)} candidate workspace(s)"):
-        for cand in candidates:
-            ws, req, digest = _planned_workspace(
-                preset=preset,
-                viewshed_root=viewshed_root_r,
-                lat=cand.lat,
-                lon=cand.lon,
-            )
-            _ensure_request_json(ws.workdir, req)
-            cached = not _needs_docker_run(ws, digest=digest)
-            planned.append((cand, ws, digest, cached))
-            if verbose:
-                tag = "cache" if cached else "stale"
-                suggest_progress(
-                    verbose,
-                    f"workspace {_format_loc(cand.lat, cand.lon)} digest={digest[:8]}… ({tag})",
+    total = sum(len(group) for group in candidate_groups)
+    with suggest_step(verbose, f"prepare {total} candidate workspace(s)"):
+        for group in candidate_groups:
+            for cand in group:
+                ws, req, digest = _planned_workspace(
+                    preset=preset,
+                    viewshed_root=viewshed_root_r,
+                    lat=cand.lat,
+                    lon=cand.lon,
                 )
+                _ensure_request_json(ws.workdir, req)
+                cached = not _needs_docker_run(ws, digest=digest)
+                planned.append((cand, ws, digest, cached))
+                if verbose:
+                    tag = "cache" if cached else "stale"
+                    suggest_progress(
+                        verbose,
+                        f"workspace {_format_loc(cand.lat, cand.lon)} digest={digest[:8]}… ({tag})",
+                    )
 
     if footprint_runner is not None:
         return _collect_candidate_footprints(
