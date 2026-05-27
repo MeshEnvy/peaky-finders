@@ -1,0 +1,23 @@
+---
+description: Run tests via ./peaky-test in Docker; never host poetry/pytest against peaky_finders/.venv
+alwaysApply: true
+---
+
+# Tests via peaky-test
+
+Python tests for `peaky_finders` run **inside the `peaky:dev` Docker image**, not on the macOS host.
+
+## Do this
+
+- Run tests with **`./peaky-test`** from the repo root (same image/build knobs as `./peaky`: `--build`, `PEAKY_DEV_IMAGE`, `PEAKY_CACHE_DIR`).
+- Pass pytest args through: `./peaky-test tests/test_mesh_connectivity.py`, `./peaky-test -k foo`, `./peaky-test --build`.
+- When verifying changes, use `./peaky-test` (or a targeted path) instead of `poetry run pytest` on the host.
+
+## Avoid
+
+- **`poetry install` / `poetry run pytest` on the host** in `peaky_finders/` — it creates or corrupts the bind-mounted `.venv` (Linux vs macOS interpreters and wheels).
+- Assuming `pytest` on PATH is the correct test environment; splatter/GDAL deps live in the container.
+
+## Why
+
+`./peaky` bind-mounts `peaky_finders/` into the container. The in-project `.venv` must stay **Linux-only**. `./peaky-test` keeps test runs on the same contract as `./peaky`.

@@ -19,6 +19,9 @@ shapely = "^2.0"
 matplotlib = "^3.8"
 ruamel-yaml = "^0.18"
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+
 [tool.poetry.scripts]
 peaky = "peaky_finders.peaky_cli:main"
 
