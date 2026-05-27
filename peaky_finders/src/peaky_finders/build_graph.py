@@ -265,7 +265,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
         )
         put(
             PeakyGraphTarget(
-                id=f"viewshed:{rep}:docker",
+                id=f"viewshed:{rep}:coverage",
                 depends_on=(f"viewshed:{rep}:request",),
                 outputs=(ws.output_ppm.resolve(),),
                 mtime_prereqs=mq_nopreq,
@@ -274,7 +274,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
         put(
             PeakyGraphTarget(
                 id=f"viewshed:{rep}:raster",
-                depends_on=(f"viewshed:{rep}:docker",),
+                depends_on=(f"viewshed:{rep}:coverage",),
                 outputs=(ws.splat_png.resolve(),),
                 mtime_prereqs=(ws.output_ppm.resolve(),),
             )
@@ -282,7 +282,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
         put(
             PeakyGraphTarget(
                 id=f"viewshed:{rep}:footprint",
-                depends_on=(f"viewshed:{rep}:docker",),
+                depends_on=(f"viewshed:{rep}:coverage",),
                 outputs=(ws.splat_gpkg.resolve(),),
                 mtime_prereqs=(ws.output_ppm.resolve(),),
             )

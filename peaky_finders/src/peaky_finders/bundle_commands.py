@@ -46,7 +46,8 @@ from peaky_finders.sites_job import (
     resolved_preset_build_dir,
     resolved_preset_bundle_data_dir,
     resolved_preset_clips_dir,
-    resolved_preset_dem_tile_cache_dir,
+    ensure_skadi_mirror_dir,
+    require_cwd_config_yaml,
 )
 
 _ROLES_CLIP: tuple[ClipRole, ...] = ("aoi", "include", "exclude")
@@ -243,8 +244,7 @@ def run_bundle_dem(preset_path: Path, *, tile: str | None = None, verbose: bool 
         )
         return 2
 
-    splat_tile_dir = resolved_preset_dem_tile_cache_dir(_preset_path_r)
-    splat_tile_dir.mkdir(parents=True, exist_ok=True)
+    splat_tile_dir = ensure_skadi_mirror_dir()
 
     loaded = gpd.read_file(eligible_gpkg, layer=ELIGIBLE_LAND_USE_LAYER)
     if loaded.empty or loaded.geometry.is_empty.all():
@@ -289,11 +289,14 @@ def run_bundle_dem(preset_path: Path, *, tile: str | None = None, verbose: bool 
 
 def run_bundle_entry(args: object) -> int:
     cmd = getattr(args, "bundle_cmd", None)
-    preset = getattr(args, "preset_yaml", None)
-    if preset is None or cmd is None:
+    if cmd is None:
         print("internal error: missing bundle_cli fields", file=sys.stderr)
         return 2
-    p = Path(preset)
+    try:
+        p = require_cwd_config_yaml()
+    except FileNotFoundError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     if cmd == "clip":
         return run_bundle_clip(args.role, args.layer, p)
     if cmd == "composite":

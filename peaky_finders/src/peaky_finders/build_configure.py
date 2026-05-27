@@ -53,7 +53,7 @@ from peaky_finders.sites_job import (
     resolved_mesh_pairwise_enabled,
     resolved_preset_build_dir,
     resolved_preset_clips_dir,
-    resolved_preset_dem_tile_cache_dir,
+    resolved_skadi_mirror_dir,
     resolved_bundle_dir,
     resolved_eligible_union_build_dir,
     resolved_mesh_depth_dir,
@@ -178,7 +178,7 @@ def configure_preset_build(
     bundles_root = resolved_bundle_dir(preset_path=resolved_preset)
     clips_root = resolved_preset_clips_dir(resolved_preset)
     viewsheds_root = resolved_viewshed_dir(bundles_root)
-    splat_tiles_root = resolved_preset_dem_tile_cache_dir(resolved_preset)
+    splat_tiles_root = resolved_skadi_mirror_dir()
     mesh_pairwise_root = resolved_mesh_pairwise_dir(bundles_root)
     mesh_depth_root = resolved_mesh_depth_dir(bundles_root)
     eligible_union_root = resolved_eligible_union_build_dir(bundles_root)

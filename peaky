@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Dev-only: build/run peaky:dev with live peaky_finders mount.
+set -euo pipefail
+
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+  DIR="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
+  SCRIPT="$(readlink "$SCRIPT")"
+  [[ "$SCRIPT" != /* ]] && SCRIPT="$DIR/$SCRIPT"
+done
+ROOT="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
+IMAGE="${PEAKY_DEV_IMAGE:-peaky:dev}"
+FORCE_BUILD=0
+
+for arg in "$@"; do
+  if [ "$arg" = "--build" ]; then
+    FORCE_BUILD=1
+  fi
+done
+
+if [ "$FORCE_BUILD" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "peaky: building ${IMAGE}..." >&2
+  PLATFORM="${PEAKY_DOCKER_PLATFORM:-}"
+  if [ -n "$PLATFORM" ]; then
+    docker build --platform "$PLATFORM" --target dev -t "$IMAGE" "$ROOT"
+  else
+    docker build --target dev -t "$IMAGE" "$ROOT"
+  fi
+fi
+
+CACHE_DIR="${PEAKY_CACHE_DIR:-$HOME/.peaky/splat_cache}"
+mkdir -p "$CACHE_DIR"
+
+filtered=()
+if [ $# -gt 0 ]; then
+  for arg in "$@"; do
+    if [ "$arg" != "--build" ]; then
+      filtered+=("$arg")
+    fi
+  done
+fi
+
+DOCKER_FLAGS=(--rm)
+if [ -t 0 ] && [ -t 1 ]; then
+  DOCKER_FLAGS+=(-it)
+fi
+
+run_cmd=(docker run "${DOCKER_FLAGS[@]}" \
+  -v "$PWD:/project" \
+  -v "$ROOT/peaky_finders:/app/peaky_finders" \
+  -v "$CACHE_DIR:/.peaky/splat_cache" \
+  -w /project \
+  --entrypoint bash \
+  "$IMAGE" \
+  -lc 'cd /app/peaky_finders && poetry install --no-interaction && cd /project && exec /app/peaky_finders/.venv/bin/peaky "$@"' \
+  _)
+
+if [ ${#filtered[@]} -gt 0 ]; then
+  exec "${run_cmd[@]}" "${filtered[@]}"
+else
+  exec "${run_cmd[@]}"
+fi

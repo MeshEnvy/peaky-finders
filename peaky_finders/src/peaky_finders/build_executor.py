@@ -60,7 +60,7 @@ from peaky_finders.skadi_dem import (
     skadi_tile_set_fingerprint,
     write_dem_prefetch_stamp,
 )
-from peaky_finders.viewshed_batch import resolved_splatter_batch_jobs, run_viewshed_batch_docker
+from peaky_finders.viewshed_batch import resolved_splatter_batch_jobs, run_viewshed_batch
 from peaky_finders.viewshed_workspace import viewshed_workspace_digest
 
 _print_lock = Lock()
@@ -376,7 +376,6 @@ def execute_target(
         rep, phase = tail.rsplit(":", 1)
         ws = _workspace_by_digest(plan, rep)
         vs = argparse.Namespace(
-            preset_yaml=preset_path_r,
             granular_viewshed_slug=ws.site_slugs[0],
             viewshed_workspace_only=True,
             viewshed_phase=phase,
@@ -403,7 +402,7 @@ def execute_target(
         return run_mesh_links(preset_path_r)
 
     if tid == "kmz:out":
-        ns = argparse.Namespace(preset_yaml=preset_path_r, data_dir=bundle_data_dir)
+        ns = argparse.Namespace(data_dir=bundle_data_dir)
         return run_aggregate_kmz(ns)
 
 
@@ -412,13 +411,13 @@ def execute_target(
     raise ValueError(f"execute unsupported for target {tid!r}")
 
 
-def _viewshed_docker_digest(tid: str) -> str | None:
-    if not tid.startswith("viewshed:") or not tid.endswith(":docker"):
+def _viewshed_coverage_digest(tid: str) -> str | None:
+    if not tid.startswith("viewshed:") or not tid.endswith(":coverage"):
         return None
-    return tid.removeprefix("viewshed:").removesuffix(":docker")
+    return tid.removeprefix("viewshed:").removesuffix(":coverage")
 
 
-def _flush_viewshed_docker_batch(
+def _flush_viewshed_coverage_batch(
     *,
     plan: BuildConfigurePlan,
     preset: Preset,
@@ -428,27 +427,27 @@ def _flush_viewshed_docker_batch(
     verbose: bool,
     jobs: int,
 ) -> dict[str, int]:
-    """Run one splatter ``run-batch`` for every stale LOS ``viewshed:*:docker`` still pending."""
+    """Run one splatter ``run-batch`` for every stale LOS ``viewshed:*:coverage`` still pending."""
     if preset.simulation.provider != CoverageProvider.LOS:
         return {}
 
-    stale_docker: list[str] = []
+    stale_coverage: list[str] = []
     for tid in sorted(pending):
-        digest = _viewshed_docker_digest(tid)
+        digest = _viewshed_coverage_digest(tid)
         if digest is None:
             continue
         node = subset[tid]
         if any(dep in pending for dep in node.depends_on):
             continue
         if force or target_stale(plan, preset, node):
-            stale_docker.append(tid)
+            stale_coverage.append(tid)
 
-    if not stale_docker:
+    if not stale_coverage:
         return {}
 
     workspaces: list[PlannedViewshedWorkspace] = []
-    for tid in stale_docker:
-        digest = _viewshed_docker_digest(tid)
+    for tid in stale_coverage:
+        digest = _viewshed_coverage_digest(tid)
         assert digest is not None
         workspaces.append(_workspace_by_digest(plan, digest))
 
@@ -458,16 +457,15 @@ def _flush_viewshed_docker_batch(
         build_jobs=jobs,
     )
     if verbose:
-        _log(f"build: viewshed docker batch ({len(workspaces)} workspace(s), workers={workers})")
-    rc = run_viewshed_batch_docker(
+        _log(f"build: viewshed coverage batch ({len(workspaces)} workspace(s), workers={workers})")
+    rc = run_viewshed_batch(
         preset=preset,
-        preset_path=Path(plan.preset_path),
         viewshed_root=plan.viewsheds_root,
         workspaces=workspaces,
         coverage_verbose=verbose,
         build_jobs=jobs,
     )
-    return dict.fromkeys(stale_docker, rc)
+    return dict.fromkeys(stale_coverage, rc)
 
 
 def _subgraph_without_target(
@@ -503,7 +501,7 @@ def _run_target_subgraph(
     while pending:
         batched_codes: dict[str, int] = {}
         if not dry_run:
-            batched_codes = _flush_viewshed_docker_batch(
+            batched_codes = _flush_viewshed_coverage_batch(
                 plan=plan,
                 preset=preset,
                 pending=pending,

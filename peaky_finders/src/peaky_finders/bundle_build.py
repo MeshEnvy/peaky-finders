@@ -48,7 +48,7 @@ from peaky_finders.sites_job import (
     resolved_preset_build_dir,
     resolved_preset_bundle_data_dir,
     resolved_preset_clips_dir,
-    resolved_preset_dem_tile_cache_dir,
+    resolved_skadi_mirror_dir,
 )
 
 

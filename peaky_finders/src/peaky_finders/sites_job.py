@@ -30,6 +30,31 @@ def require_preset_yaml_path(path: Path) -> None:
         raise ValueError(f"preset path must end with `.yaml` or `.yml` (got suffix {path.suffix!r}): {path}")
 
 
+def require_cwd_config_yaml(*, cwd: Path | None = None) -> Path:
+    """Return ``./config.yaml`` in *cwd* (default ``Path.cwd()``) or raise ``FileNotFoundError``."""
+    base = Path.cwd() if cwd is None else Path(cwd)
+    path = (base / "config.yaml").resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"config.yaml not found in {base} — run peaky from your project directory")
+    require_preset_yaml_path(path)
+    return path
+
+
+def resolved_skadi_mirror_dir() -> Path:
+    """Global Skadi tile mirror (``SPLAT_CACHE`` env, else ``<peaky_home>/splat_cache``)."""
+    raw = os.environ.get("SPLAT_CACHE", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (peaky_home() / "splat_cache").resolve()
+
+
+def ensure_skadi_mirror_dir() -> Path:
+    """Like :func:`resolved_skadi_mirror_dir`, creating the directory when missing."""
+    root = resolved_skadi_mirror_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def repo_root() -> Path:
     """Workspace root: monorepo parent when ``projects/`` lives there, else package root."""
     pkg_root = Path(__file__).resolve().parents[2]
@@ -58,8 +83,8 @@ def peaky_projects_dir() -> Path:
 def peaky_share_dir() -> Path:
     """Optional shared root (``PEAKY_SHARE``); default ``<peaky_home>/share``.
 
-    Clips/DEM/PLSS locator cache use :func:`resolved_preset_build_dir` subtrees
-    (``<preset>/build/{clips,dem,plss_mlrs}``) — this path is only for ad-hoc tooling.
+    Clips cache use :func:`resolved_preset_build_dir` subtrees
+    (``<preset>/build/clips``) — this path is only for ad-hoc tooling.
     """
     raw = os.environ.get("PEAKY_SHARE", "").strip()
     if raw:
@@ -77,12 +102,6 @@ def resolved_preset_clips_dir(preset_path: Path | str) -> Path:
     """Content-addressed GDB clip + composite cache: ``<preset>/build/clips``."""
     p = Path(preset_path).expanduser().resolve()
     return (resolved_preset_build_dir(p) / "clips").resolve()
-
-
-def resolved_preset_dem_tile_cache_dir(preset_path: Path | str) -> Path:
-    """Skadi ``*.hgt.gz`` mirror under ``<preset>/build/dem``."""
-    p = Path(preset_path).expanduser().resolve()
-    return (resolved_preset_build_dir(p) / "dem").resolve()
 
 
 def resolve_preset_yaml_arg(
@@ -1154,7 +1173,6 @@ class Preset(BaseModel):
     simulation: SimulationConfig
     display: dict[str, Any]
     sites: dict[str, SiteEntry]
-    build_docker: bool = True
     bundle: BundleConfig | None = None
 
     @model_validator(mode="after")

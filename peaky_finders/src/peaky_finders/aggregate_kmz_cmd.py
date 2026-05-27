@@ -1,4 +1,4 @@
-"""``peaky kmz`` — build aggregate KMZ from bundle + persisted viewshed workspaces (no SPLAT/Docker run)."""
+"""``peaky kmz`` — build aggregate KMZ from bundle + persisted viewshed workspaces."""
 
 from __future__ import annotations
 
@@ -18,25 +18,18 @@ from peaky_finders.cli import (
 from peaky_finders.preset_mapping import preset_to_request
 from peaky_finders.preset_overlays import collect_site_workspace_assets
 from peaky_finders.sites_job import (
-    Preset,
     load_preset,
+    require_cwd_config_yaml,
     resolved_mesh_depth_dir,
     resolved_mesh_pairwise_dir,
     resolved_preset_slug,
     resolved_viewshed_coverage_kml_style,
-    resolve_preset_yaml_arg,
 )
 from peaky_finders.viewshed_workspace import viewshed_workspace_digest
 
 
 def build_aggregate_kmz_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(add_help=False)
-    p.add_argument(
-        "preset_yaml",
-        type=Path,
-        metavar="PRESET",
-        help="Preset YAML path or project slug (e.g. nevada → projects/nevada/config.yaml)",
-    )
     p.add_argument(
         "--data-dir",
         type=Path,
@@ -48,11 +41,12 @@ def build_aggregate_kmz_parser() -> argparse.ArgumentParser:
 
 
 def run_aggregate_kmz(args: argparse.Namespace) -> int:
-    job_path = resolve_preset_yaml_arg(Path(args.preset_yaml)).expanduser().resolve()
-    if not job_path.is_file():
-        print(f"Preset file not found: {job_path}", file=sys.stderr)
+    try:
+        job_path = require_cwd_config_yaml()
+    except FileNotFoundError as e:
+        print(str(e), file=sys.stderr)
         return 2
-    job: Preset
+
     try:
         job = load_preset(job_path)
     except Exception as e:
