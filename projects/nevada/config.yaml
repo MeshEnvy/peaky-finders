@@ -493,6 +493,8 @@ bundle:
         #   loc: [39.6104, -119.777]
         # sunrise-manor:
         #   loc: [36.1783, -115.0487]
+        susanville:
+          loc: [40.41628, -120.65301]
         # sutcliffe:
         #   loc: [39.9461, -119.6305]
         tonopah:
