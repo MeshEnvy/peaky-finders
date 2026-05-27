@@ -15,13 +15,18 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
+import peaky_finders.site_suggestions.mesh_backbone_completion as mesh_completion
 from peaky_finders.site_suggestions.mesh_backbone_completion import (
     all_backbone_sites,
     captured_goal_keys,
-    footprints_for_backbone_sites,
     mutual_hop_neighbors,
 )
 from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint, goals_from_config
+from peaky_finders.site_suggestions.mesh_connectivity import (
+    main_footprint_slugs,
+    mesh_healing_needed,
+    uncaptured_healing_goals,
+)
 
 _TO_M = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 
@@ -49,13 +54,33 @@ class MeshGrowScoreContext:
     footprints: Mapping[str, BaseGeometry | None]
 
 
+def analysis_footprints(ctx: SiteSuggestionContext) -> dict[str, BaseGeometry | None]:
+    """Footprints in analysis scope (main mesh only during healing)."""
+    fps = mesh_completion.footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
+    main = main_footprint_slugs(ctx)
+    if main is None:
+        return fps
+    return {slug: fps.get(slug) for slug in main}
+
+
+def analysis_sites(ctx: SiteSuggestionContext) -> tuple[BackboneSite, ...]:
+    """Backbone sites in analysis scope (main mesh only during healing)."""
+    main = main_footprint_slugs(ctx)
+    sites = all_backbone_sites(ctx)
+    if main is None:
+        return tuple(sites)
+    return tuple(s for s in sites if s.slug in main)
+
+
 def composite_coverage_geometry(ctx: SiteSuggestionContext) -> BaseGeometry | None:
-    """Union of committed footprint polygons plus rasterized composite coverage."""
-    footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
+    """Union of analysis-scope footprints plus rasterized composite coverage."""
+    footprints = analysis_footprints(ctx)
     parts: list[BaseGeometry] = []
-    grid_cov = ctx.grid.coverage_geometry_wgs84(min_depth=1)
-    if grid_cov is not None and not grid_cov.is_empty:
-        parts.append(grid_cov if grid_cov.is_valid else make_valid(grid_cov))
+    # During healing, satellite seed footprints must not expand the composite mesh.
+    if not mesh_healing_needed(ctx):
+        grid_cov = ctx.grid.coverage_geometry_wgs84(min_depth=1)
+        if grid_cov is not None and not grid_cov.is_empty:
+            parts.append(grid_cov if grid_cov.is_valid else make_valid(grid_cov))
     for fp in footprints.values():
         if fp is None or fp.is_empty:
             continue
@@ -76,14 +101,21 @@ def uncaptured_goals(ctx: SiteSuggestionContext) -> dict[str, GoalPoint]:
         return {}
 
     sites = all_backbone_sites(ctx)
-    footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
+    footprints = mesh_completion.footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
     missing = set(goals.keys()) - captured_goal_keys(mb, sites, footprints)
     return {key: goals[key] for key in sorted(missing)}
 
 
+def grow_goals(ctx: SiteSuggestionContext) -> dict[str, GoalPoint]:
+    """Active goals for the current phase (heal bridge goals or preset grow goals)."""
+    if mesh_healing_needed(ctx):
+        return uncaptured_healing_goals(ctx)
+    return uncaptured_goals(ctx)
+
+
 def active_attractor_goal(ctx: SiteSuggestionContext) -> GoalPoint | None:
     """Uncaptured goal closest to current composite coverage (status/logging only)."""
-    goals = uncaptured_goals(ctx)
+    goals = grow_goals(ctx)
     if not goals:
         return None
 
@@ -100,7 +132,7 @@ def active_attractor_goal(ctx: SiteSuggestionContext) -> GoalPoint | None:
 
 def build_mesh_grow_score_context(ctx: SiteSuggestionContext) -> MeshGrowScoreContext | None:
     """Precompute coverage geometry and seed footprints once per scoring batch."""
-    goals = uncaptured_goals(ctx)
+    goals = grow_goals(ctx)
     if not goals:
         return None
     coverage = composite_coverage_geometry(ctx)
@@ -114,8 +146,8 @@ def build_mesh_grow_score_context(ctx: SiteSuggestionContext) -> MeshGrowScoreCo
         before_dist_m=before_dist_m,
         coverage=coverage,
         coverage_m3857=coverage_m3857,
-        sites=tuple(all_backbone_sites(ctx)),
-        footprints=footprints_for_backbone_sites(ctx.plan, ctx.session_footprints),
+        sites=analysis_sites(ctx),
+        footprints=analysis_footprints(ctx),
     )
 
 

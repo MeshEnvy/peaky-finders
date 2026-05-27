@@ -207,11 +207,28 @@ class CoverageDepthGrid:
         min_depth: int = 1,
         spacing_m: float = 500.0,
         max_points: int = 48,
+        coverage_geometry_wgs84: BaseGeometry | None = None,
     ) -> list[tuple[float, float]]:
         """Sample ``(lat, lon)`` on depth≥``min_depth`` frontier biased toward ``goal``."""
         from pyproj import Transformer
 
-        covered = self.covered_mask(min_depth=min_depth)
+        if coverage_geometry_wgs84 is not None and not coverage_geometry_wgs84.is_empty:
+            g = (
+                coverage_geometry_wgs84
+                if coverage_geometry_wgs84.is_valid
+                else make_valid(coverage_geometry_wgs84)
+            )
+            gm = gpd.GeoDataFrame(geometry=[g], crs="EPSG:4326").to_crs("EPSG:3857").geometry.iloc[0]
+            layer = features.rasterize(
+                [(gm, 1)],
+                out_shape=(self.rows, self.cols),
+                transform=self.transform,
+                fill=0,
+                dtype=np.uint8,
+            ).astype(bool)
+            covered = self.target_mask & layer
+        else:
+            covered = self.covered_mask(min_depth=min_depth)
         if not np.any(covered):
             return []
 

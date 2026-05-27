@@ -13,6 +13,7 @@ from peaky_finders.site_suggestions.mesh_backbone_candidates import generate_mes
 from peaky_finders.site_suggestions.mesh_grow import (
     active_attractor_goal,
     build_mesh_grow_score_context,
+    grow_goals,
     mesh_grow_sort_key,
     score_mesh_grow_trial,
     uncaptured_goals,
@@ -152,7 +153,7 @@ def test_score_mesh_grow_trial_zero_delta_for_committed_footprint() -> None:
         "_session_0001": relay_fp,
     }
     with patch(
-        "peaky_finders.site_suggestions.mesh_grow.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         score_ctx = build_mesh_grow_score_context(ctx)
@@ -187,7 +188,7 @@ def test_score_mesh_grow_trial_prefers_best_goal_delta() -> None:
     far_fp = box(-115.82, 38.9, -114.95, 39.1)
     footprints = {"seed": seed_fp}
     with patch(
-        "peaky_finders.site_suggestions.mesh_grow.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         score_ctx = build_mesh_grow_score_context(ctx)
@@ -239,38 +240,121 @@ def test_score_mesh_grow_trial_requires_mutual_hop() -> None:
     )
 
 
-def test_mesh_backbone_max_nodes_counts_preset_sites() -> None:
+def test_score_mesh_grow_trial_heal_ignores_satellite_hop() -> None:
+    """During healing, trials must hop to main mesh only (not satellite islands)."""
+    eligible = box(-120.0, 35.0, -114.0, 42.0)
+    main_fp = box(-119.1, 41.4, -118.9, 41.6)
+    sat_fp = box(-115.4, 36.1, -115.2, 36.3)
+    footprints = {"main": main_fp, "sat": sat_fp}
+    grid = build_coverage_depth_grid(
+        aoi_ll=eligible,
+        target_ll=eligible,
+        footprint_gpkg_paths=[],
+        max_raster_dimension=128,
+    )
+    grid.add_footprint(main_fp)
     ctx = SiteSuggestionContext(
         preset=type(
             "P",
             (),
             {
                 "sites": {
-                    "seed": type("E", (), {"lat": 39.0, "lon": -115.8})(),
-                    "suggest-01-relay": type("E", (), {"lat": 39.0, "lon": -115.7})(),
+                    "main": type("E", (), {"lat": 41.5, "lon": -119.0})(),
+                    "sat": type("E", (), {"lat": 36.2, "lon": -115.3})(),
                 }
             },
         )(),
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),
-        grid=type("G", (), {"depth_at_point": lambda *a, **k: 0})(),
-        eligible_ll=box(-116.5, 38.5, -114.5, 39.5),
-        aoi_ll=box(-116.5, 38.5, -114.5, 39.5),
-        target_ll=box(-116.5, 38.5, -114.5, 39.5),
+        grid=grid,
+        eligible_ll=eligible,
+        aoi_ll=eligible,
+        target_ll=eligible,
         suggest_root=Path("/tmp/suggest"),
         cfg=BundleSiteSuggestionsConfig(
             strategy=SiteSuggestionStrategy.MESH_BACKBONE,
-            mesh_backbone=MeshBackboneStrategyConfig(max_nodes=2),
+            mesh_backbone=MeshBackboneStrategyConfig(
+                goals={"g0": MeshBackboneGoalEntry(loc=(39.0, -115.5))},
+            ),
         ),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
         verbose=False,
     )
-    provider = MeshBackboneStrategy()
-    assert provider.planning_complete(ctx) is True
+    with patch(
+        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        return_value=footprints,
+    ):
+        assert set(grow_goals(ctx)) == {"bridge:sat"}
+        score_ctx = build_mesh_grow_score_context(ctx)
+        assert score_ctx is not None
+        assert {s.slug for s in score_ctx.sites} == {"main"}
+        sat_only_fp = box(-115.35, 36.15, -115.25, 36.25)
+        assert (
+            score_mesh_grow_trial(
+                score_ctx=score_ctx,
+                lat=36.2,
+                lon=-115.3,
+                trial_footprint=sat_only_fp,
+            )
+            is None
+        )
 
 
-def test_mesh_backbone_max_nodes_stops_solver() -> None:
+def test_healing_candidates_sample_from_main_mesh_not_satellite_grid() -> None:
+    """Healing frontier must ignore satellite seed coverage on the depth grid."""
+    eligible = box(-120.0, 35.0, -114.0, 42.0)
+    main_fp = box(-119.1, 41.4, -118.9, 41.6)
+    sat_fp = box(-115.4, 36.1, -115.2, 36.3)
+    footprints = {"main": main_fp, "sat": sat_fp}
+    grid = build_coverage_depth_grid(
+        aoi_ll=eligible,
+        target_ll=eligible,
+        footprint_gpkg_paths=[],
+        max_raster_dimension=128,
+    )
+    grid.add_footprint(main_fp)
+    grid.add_footprint(sat_fp)
+    ctx = SiteSuggestionContext(
+        preset=type(
+            "P",
+            (),
+            {
+                "sites": {
+                    "main": type("E", (), {"lat": 41.5, "lon": -119.0})(),
+                    "sat": type("E", (), {"lat": 36.2, "lon": -115.3})(),
+                }
+            },
+        )(),
+        plan=type("Plan", (), {"viewshed_workspaces": ()})(),
+        grid=grid,
+        eligible_ll=eligible,
+        aoi_ll=eligible,
+        target_ll=eligible,
+        suggest_root=Path("/tmp/suggest"),
+        cfg=BundleSiteSuggestionsConfig(
+            strategy=SiteSuggestionStrategy.MESH_BACKBONE,
+            mesh_backbone=MeshBackboneStrategyConfig(
+                goals={"g0": MeshBackboneGoalEntry(loc=(39.0, -115.5))},
+                max_candidates_per_round=16,
+            ),
+        ),
+        dem_mirror_root=Path("/tmp/dem"),
+        eligible_sha="x",
+        jobs=1,
+        verbose=False,
+    )
+    with patch(
+        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        return_value=footprints,
+    ):
+        cands = generate_mesh_grow_candidates(ctx)
+    assert cands
+    assert all(c.strategy == "goal:bridge:sat" for c in cands)
+    assert all(c.lat > 40.0 for c in cands), [c.lat for c in cands]
+
+
+def test_mesh_backbone_max_nodes_counts_preset_sites() -> None:
     ctx = SiteSuggestionContext(
         preset=type("P", (), {"sites": {}})(),
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),
