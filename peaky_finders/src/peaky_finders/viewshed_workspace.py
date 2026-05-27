@@ -3,7 +3,7 @@
 One directory per propagation fingerprint (:func:`viewshed_workspace_digest`). Sites that
 share identical SPLAT inputs reuse the same workspace folder.
 
-Provider / Docker mirror / overlay knobs remain outside ``splat_input_sha256``; delete the workspace
+Provider / overlay knobs remain outside ``splat_input_sha256``; delete the workspace
 when those change materially.
 """
 

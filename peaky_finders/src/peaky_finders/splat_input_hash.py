@@ -5,9 +5,8 @@ and SPLAT metadata. Schema ``v`` bumps when normalization or coverage semantics 
 (e.g. SPLAT ITM vs splatter Fresnel/FSPL).
 Version **6**: mandatory ``modem`` block for splatter; LoRa cutoff + RSS reliability margin hashed; SPLAT ignores ``modem``.
 
-Use Docker image ``splatter:latest`` by default; override with ``PEAKY_SPLAT_IMAGE``.
-Default coverage image: ``docker build -t splatter:latest splatter/``.
-Legacy SPLAT image: ``docker build -f Dockerfile.splat -t peaky-finders-splat:latest``.
+Coverage engines run as native binaries (``splatter`` on PATH, ``SPLAT_PATH`` for legacy SPLAT).
+Skadi tiles use global ``SPLAT_CACHE`` (default ``/.peaky/splat_cache`` in the container).
 """
 
 from __future__ import annotations

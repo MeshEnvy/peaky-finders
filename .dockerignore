@@ -1,0 +1,12 @@
+.git
+.gitmodules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+projects/
+**/.peaky/
+**/.DS_Store
+peaky_finders/tests/
+*.md
+.cursor/

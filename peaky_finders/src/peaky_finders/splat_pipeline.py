@@ -1,14 +1,17 @@
-"""Docker SPLAT run per site plus footprint polygon exports."""
+"""Native SPLAT / splatter coverage runs and footprint polygon exports."""
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from peaky_finders import kml_bundle
-from peaky_finders.sites_job import BundleKmlLayerStyle, CoverageProvider
+from peaky_finders.models import SplatCoverageRequest
+from peaky_finders.sites_job import BundleKmlLayerStyle, CoverageProvider, ensure_skadi_mirror_dir
+from peaky_finders.splat_engine import Splat
 from peaky_finders.splat_ppm_to_png import write_splat_png_from_ppm
 from peaky_finders.splat_polygonize import (
     SPLAT_GPKG_NAME,
@@ -17,7 +20,7 @@ from peaky_finders.splat_polygonize import (
     write_coverage_polygons,
 )
 
-TILE_CACHE_CONTAINER_PATH = "/splat_cache"
+logger = logging.getLogger(__name__)
 
 
 def _limit_nested_blas_threads() -> None:
@@ -29,6 +32,14 @@ def _limit_nested_blas_threads() -> None:
         "NUMEXPR_NUM_THREADS",
     ):
         os.environ.setdefault(key, "1")
+
+
+def _coverage_subprocess_env(*, batch_jobs: int | None = None) -> dict[str, str]:
+    env = os.environ.copy()
+    env["SPLAT_CACHE"] = str(ensure_skadi_mirror_dir())
+    if batch_jobs is not None:
+        env["SPLATTER_BATCH_JOBS"] = str(max(1, int(batch_jobs)))
+    return env
 
 
 def footprint_vectorize_needed(data_dir: Path) -> bool:
@@ -87,79 +98,69 @@ def vectorize_coverage_footprints_parallel(
                 raise RuntimeError(f"footprint vectorize failed under {_wd}")
 
 
-def run_container(
-    *,
-    image: str,
-    data_dir: Path,
-    tile_cache_dir: Path,
-    provider: CoverageProvider,
-    coverage_verbose: bool = False,
-) -> int:
-    cmd = _coverage_docker_cmd(
-        image=image,
-        mount_dir=data_dir,
-        tile_cache_dir=tile_cache_dir,
-        provider=provider,
-        coverage_verbose=coverage_verbose,
-        splatter_subcommand=("run", "--work-dir", "/work"),
-    )
-    print("Running coverage in Docker...", flush=True)
-    return subprocess.run(cmd, check=False).returncode
+def run_splatter_site(*, data_dir: Path, coverage_verbose: bool = False) -> int:
+    """Run ``splatter run`` in *data_dir* (must contain ``request.json``)."""
+    wd = Path(data_dir).expanduser().resolve()
+    cmd = ["splatter", "run", "--work-dir", str(wd)]
+    if coverage_verbose:
+        cmd.append("--verbose")
+    print(f"Coverage: splatter run ({wd.name})", flush=True)
+    result = subprocess.run(cmd, env=_coverage_subprocess_env(), check=False)
+    return int(result.returncode)
 
 
-def run_batch_container(
+def run_splatter_batch(
     *,
-    image: str,
     viewshed_root: Path,
-    tile_cache_dir: Path,
     batch_jobs: int = 1,
     coverage_verbose: bool = False,
 ) -> int:
-    """Run ``splatter run-batch`` with array ``request.json`` mounted at ``/work``."""
-    cmd = _coverage_docker_cmd(
-        image=image,
-        mount_dir=viewshed_root,
-        tile_cache_dir=tile_cache_dir,
-        provider=CoverageProvider.LOS,
-        coverage_verbose=coverage_verbose,
-        splatter_subcommand=("run-batch", "--work-dir", "/work"),
-        extra_env=(("SPLATTER_BATCH_JOBS", str(max(1, int(batch_jobs)))),),
-    )
-    print("Running coverage batch in Docker...", flush=True)
-    return subprocess.run(cmd, check=False).returncode
-
-
-def _coverage_docker_cmd(
-    *,
-    image: str,
-    mount_dir: Path,
-    tile_cache_dir: Path,
-    provider: CoverageProvider,
-    coverage_verbose: bool,
-    splatter_subcommand: tuple[str, ...],
-    extra_env: tuple[tuple[str, str], ...] = (),
-) -> list[str]:
-    cmd = [
-        "docker",
-        "run",
-        "--rm",
-        "-v",
-        f"{Path(mount_dir).resolve()}:/work",
-        "-v",
-        f"{Path(tile_cache_dir).resolve()}:{TILE_CACHE_CONTAINER_PATH}",
-    ]
-    if provider == CoverageProvider.SPLAT:
-        cmd.extend(["-e", "SPLAT_PATH=/opt/splat"])
-        if coverage_verbose:
-            cmd.extend(["-e", "LOG_LEVEL=DEBUG"])
-    cmd.extend(["-e", f"SPLAT_CACHE={TILE_CACHE_CONTAINER_PATH}"])
-    for key, val in extra_env:
-        cmd.extend(["-e", f"{key}={val}"])
-    cmd.append(image)
-    cmd.extend(splatter_subcommand)
-    if coverage_verbose and provider == CoverageProvider.LOS:
+    """Run ``splatter run-batch`` with array ``request.json`` at *viewshed_root*."""
+    root = Path(viewshed_root).expanduser().resolve()
+    cmd = ["splatter", "run-batch", "--work-dir", str(root)]
+    if coverage_verbose:
         cmd.append("--verbose")
-    return cmd
+    print("Coverage batch: splatter run-batch", flush=True)
+    result = subprocess.run(
+        cmd,
+        env=_coverage_subprocess_env(batch_jobs=batch_jobs),
+        check=False,
+    )
+    return int(result.returncode)
+
+
+def run_splat_site(*, data_dir: Path, coverage_verbose: bool = False) -> int:
+    """Run legacy SPLAT ITM coverage in-process for *data_dir*."""
+    wd = Path(data_dir).expanduser().resolve()
+    req_file = wd / "request.json"
+    if not req_file.is_file():
+        raise FileNotFoundError(f"Missing {req_file}")
+    request = SplatCoverageRequest.model_validate_json(req_file.read_text(encoding="utf-8"))
+    splat_path = os.environ.get("SPLAT_PATH", "/opt/splat")
+    if coverage_verbose:
+        logging.getLogger("peaky_finders.splat_engine").setLevel(logging.DEBUG)
+    print(f"Coverage: SPLAT ({wd.name})", flush=True)
+    service = Splat(splat_path, cache_dir=str(ensure_skadi_mirror_dir()))
+    try:
+        service.run_coverage_to_workdir(request, wd)
+    except Exception:
+        logger.exception("SPLAT run failed")
+        return 1
+    return 0
+
+
+def run_viewshed_coverage(
+    *,
+    site_name: str,
+    provider: CoverageProvider,
+    data_dir: Path,
+    coverage_verbose: bool = False,
+) -> int:
+    """Run coverage engine in *data_dir*; leaves ``output.ppm`` (+ sidecars from the engine)."""
+    print(f"Coverage: {site_name.strip()}", flush=True)
+    if provider == CoverageProvider.LOS:
+        return run_splatter_site(data_dir=data_dir, coverage_verbose=coverage_verbose)
+    return run_splat_site(data_dir=data_dir, coverage_verbose=coverage_verbose)
 
 
 def load_splat_bbox(data_dir: Path) -> dict[str, float]:
@@ -201,25 +202,4 @@ def write_coverage_footprints(
         out_gpkg=data_dir / SPLAT_GPKG_NAME,
         out_kml=data_dir / SPLAT_KML_NAME,
         polygon_style=polygon_style,
-    )
-
-
-def run_viewshed_docker_only(
-    *,
-    site_name: str,
-    image: str,
-    provider: CoverageProvider,
-    data_dir: Path,
-    tile_cache_dir: Path,
-    coverage_verbose: bool = False,
-) -> int:
-    """Run coverage Docker/SPLAT in *data_dir*; leaves ``output.ppm`` (+ sidecars from the engine)."""
-
-    print(f"Coverage: {site_name.strip()}", flush=True)
-    return run_container(
-        image=image,
-        data_dir=data_dir,
-        tile_cache_dir=tile_cache_dir,
-        provider=provider,
-        coverage_verbose=coverage_verbose,
     )

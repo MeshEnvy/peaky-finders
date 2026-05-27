@@ -675,3 +675,263 @@ sites:
     plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 22 — CadNSDI 
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN220
     mlrs: NV210170N0210E0SN220
+  suggest-01-suggested-1:
+    name: Suggested 1
+    loc:
+    - 39.127602588343585
+    - -119.01360493412842
+    rationale: 'Mesh-grow #1: Δ74.2 km toward tonopah (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.15N R.26E; Sec. 36 — CadNSDI 
+      PLSSID=NV210150N0260E0 | FRSTDIVID=NV210150N0260E0SN360
+    mlrs: NV210150N0260E0SN360
+  suggest-02-suggested-2:
+    name: Suggested 2
+    loc:
+    - 41.28462981206502
+    - -119.0223526468279
+    rationale: 'Mesh-grow #2: Δ67.2 km toward winnemucca (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.39N R.26E; Sec. 16 — CadNSDI 
+      PLSSID=NV210390N0260E0 | FRSTDIVID=NV210390N0260E0SN160
+    mlrs: NV210390N0260E0SN160
+  suggest-03-suggested-3:
+    name: Suggested 3
+    loc:
+    - 41.291201097104526
+    - -118.39991757223892
+    rationale: 'Mesh-grow #3: Δ77.9 km toward wells (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.39N R.32E; Sec. 04 — CadNSDI 
+      PLSSID=NV210390N0320E0 | FRSTDIVID=NV210390N0320E0UP040
+    mlrs: NV210390N0320E0UP040
+  suggest-04-suggested-4:
+    name: Suggested 4
+    loc:
+    - 41.08718360536904
+    - -117.74338996213616
+    rationale: 'Mesh-grow #4: Δ46.7 km toward winnemucca (eligible, capture=winnemucca)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.37N R.38E; Sec. 18 — CadNSDI 
+      PLSSID=NV210370N0380E0 | FRSTDIVID=NV210370N0380E0SN180
+    mlrs: NV210370N0380E0SN180
+  suggest-05-suggested-5:
+    name: Suggested 5
+    loc:
+    - 41.15964967350845
+    - -117.30600432716234
+    rationale: 'Mesh-grow #5: Δ79.1 km toward wells (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.38N R.41E; Sec. 24 — CadNSDI 
+      PLSSID=NV210380N0410E0 | FRSTDIVID=NV210380N0410E0SN240
+    mlrs: NV210380N0410E0SN240
+  suggest-06-suggested-6:
+    name: Suggested 6
+    loc:
+    - 41.13229273565333
+    - -116.60843309941455
+    rationale: 'Mesh-grow #6: Δ66.1 km toward elko (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.38N R.47E; Sec. 36 — CadNSDI 
+      PLSSID=NV210380N0470E0 | FRSTDIVID=NV210380N0470E0SN360
+    mlrs: NV210380N0470E0SN360
+  suggest-07-suggested-7:
+    name: Suggested 7
+    loc:
+    - 40.73758867579372
+    - -116.26727230413502
+    rationale: 'Mesh-grow #7: Δ67.6 km toward ely (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.33N R.51E; Sec. 20 — CadNSDI 
+      PLSSID=NV210330N0510E0 | FRSTDIVID=NV210330N0510E0SN200
+    mlrs: NV210330N0510E0SN200
+  suggest-08-suggested-8:
+    name: Suggested 8
+    loc:
+    - 40.84284711444801
+    - -115.69867097866906
+    rationale: 'Mesh-grow #8: Δ59.2 km toward elko (eligible, capture=elko)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.34N R.56E; Sec. 08 — CadNSDI 
+      PLSSID=NV210340N0560E0 | FRSTDIVID=NV210340N0560E0SN080
+    mlrs: NV210340N0560E0SN080
+  suggest-09-suggested-9:
+    name: Suggested 9
+    loc:
+    - 40.22540038527066
+    - -116.04813032900606
+    rationale: 'Mesh-grow #9: Δ65.2 km toward ely (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.27N R.53E; Sec. 18 — CadNSDI 
+      PLSSID=NV210270N0530E0 | FRSTDIVID=NV210270N0530E0SN180
+    mlrs: NV210270N0530E0SN180
+  suggest-10-suggested-10:
+    name: Suggested 10
+    loc:
+    - 39.73483406149936
+    - -115.83908353950277
+    rationale: 'Mesh-grow #10: Δ71.3 km toward ely (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.21.5N R.54E; Sec. 36 — CadNSDI 
+      PLSSID=NV210212N0540E0 | FRSTDIVID=NV210212N0540E0SN360
+    mlrs: NV210212N0540E0SN360
+  suggest-11-suggested-11:
+    name: Suggested 11
+    loc:
+    - 39.364994261042895
+    - -115.33821812742234
+    rationale: 'Mesh-grow #11: Δ66.6 km toward vegas (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.17N R.59E; Sec. 04 — CadNSDI 
+      PLSSID=NV210170N0590E0 | FRSTDIVID=NV210170N0590E0SN040
+    mlrs: NV210170N0590E0SN040
+  suggest-12-suggested-12:
+    name: Suggested 12
+    loc:
+    - 39.19506321019907
+    - -114.92887226111516
+    rationale: 'Mesh-grow #12: Δ9.4 km toward ely (eligible, capture=ely)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.15N R.63E; Sec. 05 — CadNSDI 
+      PLSSID=NV210150N0630E0 | FRSTDIVID=NV210150N0630E0SN050
+    mlrs: NV210150N0630E0SN050
+  suggest-13-suggested-13:
+    name: Suggested 13
+    loc:
+    - 38.82951807993876
+    - -118.45330216371988
+    rationale: 'Mesh-grow #13: Δ68.1 km toward tonopah (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.11N R.31E; Sec. 14 — CadNSDI 
+      PLSSID=NV210110N0310E0 | FRSTDIVID=NV210110N0310E0SN140
+    mlrs: NV210110N0310E0SN140
+  suggest-14-suggested-14:
+    name: Suggested 14
+    loc:
+    - 38.91698044027694
+    - -114.9721616669705
+    rationale: 'Mesh-grow #14: Δ67.3 km toward vegas (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.12N R.62E; Sec. 11 — CadNSDI 
+      PLSSID=NV210120N0620E0 | FRSTDIVID=NV210120N0620E0SN110
+    mlrs: NV210120N0620E0SN110
+  suggest-15-suggested-15:
+    name: Suggested 15
+    loc:
+    - 38.45962424153727
+    - -115.1908544844574
+    rationale: 'Mesh-grow #15: Δ61.8 km toward vegas (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.7N R.60E; Sec. 14 — CadNSDI 
+      PLSSID=NV210070N0600E0 | FRSTDIVID=NV210070N0600E0SN140
+    mlrs: NV210070N0600E0SN140
+  suggest-16-suggested-16:
+    name: Suggested 16
+    loc:
+    - 38.13705003543467
+    - -115.5495107051359
+    rationale: 'Mesh-grow #16: Δ47.5 km toward vegas (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.3N R.57E; Sec. 10 — CadNSDI 
+      PLSSID=NV210030N0570E0 | FRSTDIVID=NV210030N0570E0SN100
+    mlrs: NV210030N0570E0SN100
+  suggest-17-suggested-17:
+    name: Suggested 17
+    loc:
+    - 38.67842773500311
+    - -117.85015914509812
+    rationale: 'Mesh-grow #17: Δ22.2 km toward tonopah (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.10N R.37E; Sec. 34 — CadNSDI 
+      PLSSID=NV210100N0370E0 | FRSTDIVID=NV210100N0370E0UP340
+    mlrs: NV210100N0370E0UP340
+  suggest-18-suggested-18:
+    name: Suggested 18
+    loc:
+    - 38.651815292265624
+    - -117.53434317263286
+    rationale: 'Mesh-grow #18: Δ70.9 km toward tonopah (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.9N R.39E; Sec. 12 — CadNSDI 
+      PLSSID=NV210090N0390E0 | FRSTDIVID=NV210090N0390E0UP120
+    mlrs: NV210090N0390E0UP120
+  suggest-19-suggested-19:
+    name: Suggested 19
+    loc:
+    - 38.15732953213391
+    - -117.27191179164856
+    rationale: 'Mesh-grow #19: Δ10.9 km toward tonopah (eligible, capture=tonopah)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.4N R.42E; Sec. 33 — CadNSDI 
+      PLSSID=NV210040N0420E0 | FRSTDIVID=NV210040N0420E0UP330
+    mlrs: NV210040N0420E0UP330
+  suggest-20-suggested-20:
+    name: Suggested 20
+    loc:
+    - 37.69620867849102
+    - -115.46943381791444
+    rationale: 'Mesh-grow #20: Δ19.9 km toward vegas (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.3S R.58E; Sec. 09 — CadNSDI 
+      PLSSID=NV210030S0580E0 | FRSTDIVID=NV210030S0580E0SN090
+    mlrs: NV210030S0580E0SN090
+  suggest-21-suggested-21:
+    name: Suggested 21
+    loc:
+    - 37.59855533903186
+    - -115.45328586544169
+    rationale: 'Mesh-grow #21: Δ54.9 km toward vegas (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.4S R.58E; Sec. 15 — CadNSDI 
+      PLSSID=NV210040S0580E0 | FRSTDIVID=NV210040S0580E0UP150
+    mlrs: NV210040S0580E0UP150
+  suggest-22-suggested-22:
+    name: Suggested 22
+    loc:
+    - 37.11123151377781
+    - -115.52236925175336
+    rationale: 'Mesh-grow #22: Δ70.6 km toward vegas (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.10S R.57E; Sec. 01 — CadNSDI 
+      PLSSID=NV210100S0570E0 | FRSTDIVID=NV210100S0570E0UP010
+    mlrs: NV210100S0570E0UP010
+  suggest-23-suggested-23:
+    name: Suggested 23
+    loc:
+    - 36.59447323807556
+    - -115.34046391563264
+    rationale: 'Mesh-grow #23: Δ50.0 km toward vegas (eligible, capture=vegas)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.16S R.59E; Sec. 04 — CadNSDI 
+      PLSSID=NV210160S0590E0 | FRSTDIVID=NV210160S0590E0UP040
+    mlrs: NV210160S0590E0UP040
+  suggest-24-suggested-24:
+    name: Suggested 24
+    loc:
+    - 40.84284711444801
+    - -115.54076299243644
+    rationale: 'Mesh-grow #24: Δ11.0 km toward wells (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.34N R.57E; Sec. 10 — CadNSDI 
+      PLSSID=NV210340N0570E0 | FRSTDIVID=NV210340N0570E0SN100
+    mlrs: NV210340N0570E0SN100
+  suggest-25-suggested-25:
+    name: Suggested 25
+    loc:
+    - 41.18598112937827
+    - -115.18210677175792
+    rationale: 'Mesh-grow #25: Δ8.9 km toward wells (eligible, capture=none)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.38N R.60E; Sec. 15 — CadNSDI 
+      PLSSID=NV210380N0600E0 | FRSTDIVID=NV210380N0600E0SN150
+    mlrs: NV210380N0600E0SN150
+  suggest-26-suggested-26:
+    name: Suggested 26
+    loc:
+    - 41.15964967350845
+    - -114.9721616669705
+    rationale: 'Mesh-grow #26: Δ0.2 km toward wells (eligible, capture=wells)'
+    type: suggested
+    plss: NV; Mount Diablo Meridian; T.38N R.62E; Sec. 21 — CadNSDI 
+      PLSSID=NV210380N0620E0 | FRSTDIVID=NV210380N0620E0SN210
+    mlrs: NV210380N0620E0SN210

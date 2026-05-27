@@ -30,8 +30,8 @@ from peaky_finders.sites_job import (
     resolved_mesh_pairwise_kml_style,
     resolved_mesh_pairwise_peak_pin_kml_style,
     resolved_mesh_site_links_kml,
-    resolved_preset_dem_tile_cache_dir,
-    resolve_preset_yaml_arg,
+    ensure_skadi_mirror_dir,
+    require_cwd_config_yaml,
 )
 from peaky_finders.mesh_pairwise_store import resolved_mesh_pairwise_pair_dir
 from peaky_finders.viewshed_workspace import viewshed_workspace_digest
@@ -55,8 +55,8 @@ def _simulation_viewshed_radius_m(job) -> float:
     return float(job.simulation.radius_km) * 1000.0
 
 
-def run_mesh_links(preset_yaml: Path) -> int:
-    preset_path = resolve_preset_yaml_arg(Path(preset_yaml))
+def run_mesh_links(preset_path: Path) -> int:
+    preset_path = Path(preset_path).expanduser().resolve()
     job = load_preset(preset_path)
     job_path_r, bundle_cache_root, _bb_dd = standard_bundle_roots(preset_path, job)
 
@@ -91,8 +91,8 @@ def _mesh_roots(bundle_cache_root: Path) -> tuple[Path, Path, Path]:
     return pairwise_root, mesh_depth_root, eligible_union_root
 
 
-def run_mesh_pairwise(slug_a: str, slug_b: str, preset_yaml: Path) -> int:
-    preset_path = resolve_preset_yaml_arg(Path(preset_yaml))
+def run_mesh_pairwise(slug_a: str, slug_b: str, preset_path: Path) -> int:
+    preset_path = Path(preset_path).expanduser().resolve()
     job = load_preset(preset_path)
     if job.bundle is None:
         print("mesh pairwise: preset needs bundle.*", file=sys.stderr)
@@ -148,8 +148,7 @@ def run_mesh_pairwise(slug_a: str, slug_b: str, preset_yaml: Path) -> int:
         pass
 
     geo_root, _md, eu_root = _mesh_roots(bundle_cache_root)
-    tile_host = resolved_preset_dem_tile_cache_dir(job_path_r)
-    tile_host.mkdir(parents=True, exist_ok=True)
+    tile_host = ensure_skadi_mirror_dir()
 
     mesh_cov = job.bundle.mesh_coverage if job.bundle else None
     emit_dem_peak = True if mesh_cov is None else mesh_cov.pairwise_dem_peak_pin
@@ -189,8 +188,8 @@ def run_mesh_pairwise(slug_a: str, slug_b: str, preset_yaml: Path) -> int:
     return 0
 
 
-def run_mesh_depth(preset_yaml: Path) -> int:
-    preset_path = resolve_preset_yaml_arg(Path(preset_yaml))
+def run_mesh_depth(preset_path: Path) -> int:
+    preset_path = Path(preset_path).expanduser().resolve()
     job = load_preset(preset_path)
     if job.bundle is None:
         print("mesh depth: preset needs bundle.*", file=sys.stderr)
@@ -262,8 +261,8 @@ def run_mesh_depth(preset_yaml: Path) -> int:
     return 0
 
 
-def run_mesh_eligible_union(preset_yaml: Path) -> int:
-    preset_path = resolve_preset_yaml_arg(Path(preset_yaml))
+def run_mesh_eligible_union(preset_path: Path) -> int:
+    preset_path = Path(preset_path).expanduser().resolve()
     job = load_preset(preset_path)
     if job.bundle is None:
         print("mesh eligible-union: preset needs bundle.*", file=sys.stderr)
@@ -296,19 +295,22 @@ def run_mesh_eligible_union(preset_yaml: Path) -> int:
 
 
 def run_mesh_entry(args: object) -> int:
-    preset = getattr(args, "preset_yaml", None)
     cmd = getattr(args, "mesh_cmd", None)
-    if preset is None or cmd is None:
+    if cmd is None:
         print("internal error: mesh_cli", file=sys.stderr)
         return 2
-    p = Path(preset)
+    try:
+        preset_path = require_cwd_config_yaml()
+    except FileNotFoundError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     if cmd == "links":
-        return run_mesh_links(p)
+        return run_mesh_links(preset_path)
     if cmd == "pairwise":
-        return run_mesh_pairwise(args.slug_a, args.slug_b, p)
+        return run_mesh_pairwise(args.slug_a, args.slug_b, preset_path)
     if cmd == "depth":
-        return run_mesh_depth(p)
+        return run_mesh_depth(preset_path)
     if cmd == "eligible-union":
-        return run_mesh_eligible_union(p)
+        return run_mesh_eligible_union(preset_path)
     print(f"mesh: unknown {cmd!r}", file=sys.stderr)
     return 2

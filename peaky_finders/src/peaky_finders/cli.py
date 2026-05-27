@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import os
-import subprocess
 import sys
-import threading
 import zipfile
 from pathlib import Path
 
@@ -15,56 +12,23 @@ from peaky_finders.kmz_mesh_collect import collect_mesh_kml_for_aggregate_kmz
 from peaky_finders.preset_mapping import preset_to_request
 from peaky_finders.sites_job import (
     BundleKmlLayerStyle,
-    CoverageProvider,
     Preset,
     load_preset,
     mesh_edges_site_to_site_kml_arcname,
+    require_cwd_config_yaml,
     resolved_aggregate_kmz_path,
     resolved_bundle_dir,
     resolved_kmz_document_layers,
     resolved_mesh_site_links_kml,
     resolved_preset_bundle_data_dir,
-    resolved_preset_dem_tile_cache_dir,
     resolved_viewshed_dir,
     resolved_viewshed_coverage_kml_style,
-    resolve_preset_yaml_arg,
 )
 from peaky_finders.splat_polygonize import (
     GX_DRAW_ORDER_VIEWSHED_COVERAGE_POLYGON,
     VIEWSHED_COVERAGE_KML_STYLE_ID,
     inject_peaky_polygon_kml_style,
 )
-DEFAULT_IMAGE_LOS = "splatter:latest"
-DEFAULT_IMAGE_SPLAT = "peaky-finders-splat:latest"
-IMAGE_ENV = "PEAKY_SPLAT_IMAGE"
-
-
-def resolved_coverage_image(job: Preset) -> str:
-    """Docker tag for coverage runs: ``PEAKY_SPLAT_IMAGE`` overrides preset ``simulation.provider``."""
-    env_tag = os.environ.get(IMAGE_ENV)
-    if env_tag:
-        return env_tag
-    if job.simulation.provider == CoverageProvider.SPLAT:
-        return DEFAULT_IMAGE_SPLAT
-    return DEFAULT_IMAGE_LOS
-
-
-def resolved_coverage_dockerfile(job: Preset) -> str:
-    return (
-        "Dockerfile.splat"
-        if job.simulation.provider == CoverageProvider.SPLAT
-        else "splatter/Dockerfile"
-    )
-
-
-def resolved_coverage_docker_context(job: Preset) -> str:
-    return "." if job.simulation.provider == CoverageProvider.SPLAT else "splatter"
-
-
-def _repo_root() -> Path:
-    from peaky_finders.sites_job import repo_root
-
-    return repo_root()
 
 
 def _bundle_render_data_dir(args: argparse.Namespace, preset_path: Path, job: Preset) -> Path:
@@ -79,12 +43,6 @@ def _bundle_render_data_dir(args: argparse.Namespace, preset_path: Path, job: Pr
 
 def _bundle_render_cache_root(preset_path: Path) -> Path:
     return resolved_bundle_dir(preset_path=preset_path)
-
-
-def _ensure_tile_cache_dir(preset_path: Path) -> Path:
-    d = resolved_preset_dem_tile_cache_dir(preset_path)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
 
 
 def _write_request_json(data_dir: Path, req) -> None:
@@ -161,7 +119,7 @@ def _bundle_land_use_layers_for_kmz(
     if not resolve_path.is_file():
         raise FileNotFoundError(
             f"bundle resolve manifest missing: {resolve_path}. "
-            "Run ``peaky bundle resolve PRESET.yaml`` (or ``peaky build``)."
+            "Run ``peaky bundle resolve`` (or ``peaky build``)."
         )
 
     nets: list[tuple[str, str]] = []
@@ -309,83 +267,6 @@ def package_aggregate_kmz(
     return kmz_path
 
 
-_docker_image_lock = threading.Lock()
-_docker_images_ready: set[str] = set()
-
-
-def _docker_image_exists(image: str) -> bool:
-    r = subprocess.run(
-        ["docker", "image", "inspect", image],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    return r.returncode == 0
-
-
-def _is_splatter_dockerfile(dockerfile_name: str) -> bool:
-    return Path(dockerfile_name).as_posix().replace("\\", "/").endswith("splatter/Dockerfile")
-
-
-def _splatter_image_has_run_batch(image: str) -> bool:
-    """True when the image CLI exposes ``run-batch`` (required for viewshed batch builds)."""
-    r = subprocess.run(
-        ["docker", "run", "--rm", image, "--help"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if r.returncode != 0:
-        return False
-    return "run-batch" in r.stdout
-
-
-def ensure_coverage_docker_image(
-    repo: Path,
-    *,
-    dockerfile_name: str,
-    image: str,
-    context: str = ".",
-) -> int:
-    """Build coverage image once per process when missing or stale locally (parallel-safe)."""
-    with _docker_image_lock:
-        if image in _docker_images_ready:
-            return 0
-        exists = _docker_image_exists(image)
-        splatter = _is_splatter_dockerfile(dockerfile_name)
-        if exists and ((not splatter) or _splatter_image_has_run_batch(image)):
-            _docker_images_ready.add(image)
-            return 0
-        if exists and splatter:
-            print(
-                f"Rebuilding Docker image {image!r} ({dockerfile_name}): "
-                "local tag lacks splatter run-batch",
-                flush=True,
-            )
-        else:
-            print(f"Building Docker image {image!r} ({dockerfile_name})...", flush=True)
-        r = subprocess.run(
-            [
-                "docker",
-                "build",
-                "-t",
-                image,
-                "-f",
-                str(repo / dockerfile_name),
-                str(repo / context),
-            ],
-            check=False,
-        )
-        if r.returncode == 0:
-            _docker_images_ready.add(image)
-        return r.returncode
-
-
-def _resolve_job_path(sites_arg: Path) -> Path:
-    return resolve_preset_yaml_arg(sites_arg)
-
-
-
 def build_granular_viewshed_argument_parser() -> argparse.ArgumentParser:
     """Flags for ``peaky viewshed`` (requires ``--workspace-only --phase``)."""
 
@@ -398,17 +279,17 @@ def build_granular_viewshed_argument_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--phase",
-        choices=("request", "docker", "raster", "footprint"),
+        choices=("request", "coverage", "raster", "footprint"),
         metavar="STEP",
         dest="viewshed_phase",
         default=None,
-        help="Workspace step: request.json, Docker engine, splat.png, or footprint vectors.",
+        help="Workspace step: request.json, coverage engine, splat.png, or footprint vectors.",
     )
     p.add_argument(
         "--verbose",
         "-v",
         action="store_true",
-        help="Extra coverage stderr (splatter --verbose / SPLAT LOG_LEVEL=DEBUG).",
+        help="Extra coverage stderr (splatter --verbose / SPLAT debug logging).",
     )
     return p
 
@@ -425,7 +306,7 @@ def run_splat(args: argparse.Namespace) -> int:
 
     phase_opt = getattr(args, "viewshed_phase", None)
     if phase_opt is None:
-        print("`peaky viewshed` requires --phase request|docker|raster|footprint.", file=sys.stderr)
+        print("`peaky viewshed` requires --phase request|coverage|raster|footprint.", file=sys.stderr)
         return 2
 
     granular_slug = getattr(args, "granular_viewshed_slug", None)
@@ -434,10 +315,10 @@ def run_splat(args: argparse.Namespace) -> int:
         return 2
     slug_key = str(granular_slug).strip()
 
-    repo = _repo_root()
-    job_path = _resolve_job_path(Path(args.preset_yaml)).expanduser().resolve()
-    if not job_path.is_file():
-        print(f"Preset file not found: {job_path}", file=sys.stderr)
+    try:
+        job_path = require_cwd_config_yaml()
+    except FileNotFoundError as e:
+        print(str(e), file=sys.stderr)
         return 2
 
     try:
@@ -465,13 +346,9 @@ def run_splat(args: argparse.Namespace) -> int:
         )
         return 2
 
-    tile_cache_host = _ensure_tile_cache_dir(job_path)
-    image = resolved_coverage_image(job)
-    dockerfile_name = resolved_coverage_dockerfile(job)
     cov_verbose = bool(getattr(args, "verbose", False))
     print(
-        f"Coverage provider: {job.simulation.provider.value}  image={image!r}  "
-        f"dockerfile={dockerfile_name}  verbose={cov_verbose}",
+        f"Coverage provider: {job.simulation.provider.value}  verbose={cov_verbose}",
         flush=True,
     )
 
@@ -514,24 +391,13 @@ def run_splat(args: argparse.Namespace) -> int:
     if phase_opt == "request":
         return 0
 
-    if phase_opt == "docker":
-        if job.build_docker:
-            code_dw = ensure_coverage_docker_image(
-                repo,
-                dockerfile_name=dockerfile_name,
-                image=image,
-                context=resolved_coverage_docker_context(job),
-            )
-            if code_dw != 0:
-                return code_dw
-        from peaky_finders.splat_pipeline import run_viewshed_docker_only
+    if phase_opt == "coverage":
+        from peaky_finders.splat_pipeline import run_viewshed_coverage
 
-        return run_viewshed_docker_only(
+        return run_viewshed_coverage(
             site_name=site_label_ws,
-            image=image,
             provider=provider,
             data_dir=data_dir_ws,
-            tile_cache_dir=tile_cache_host,
             coverage_verbose=cov_verbose,
         )
 

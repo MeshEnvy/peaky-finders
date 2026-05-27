@@ -24,7 +24,7 @@ from peaky_finders.sites_job import (
 )
 from peaky_finders.splat_polygonize import SPLAT_GPKG_NAME, SPLAT_OUTPUT_PPM_BASENAME
 from peaky_finders.splat_pipeline import footprint_vectorize_needed, write_coverage_footprints
-from peaky_finders.viewshed_batch import run_viewshed_batch_docker
+from peaky_finders.viewshed_batch import run_viewshed_batch
 from peaky_finders.viewshed_workspace import (
     resolved_viewshed_workdir,
     viewshed_workspace_digest,
@@ -81,7 +81,7 @@ def _ensure_request_json(workdir: Path, req: SplatCoverageRequest) -> None:
     req_path.write_text(body, encoding="utf-8")
 
 
-def _needs_docker_run(ws: PlannedViewshedWorkspace, *, digest: str) -> bool:
+def _needs_coverage_run(ws: PlannedViewshedWorkspace, *, digest: str) -> bool:
     ppm = ws.output_ppm
     if not ppm.is_file():
         return True
@@ -317,7 +317,7 @@ def _run_candidate_batch_viewshed_groups(
                     lon=cand.lon,
                 )
                 _ensure_request_json(ws.workdir, req)
-                cached = not _needs_docker_run(ws, digest=digest)
+                cached = not _needs_coverage_run(ws, digest=digest)
                 planned.append((cand, ws, digest, cached))
                 if verbose:
                     tag = "cache" if cached else "stale"
@@ -344,9 +344,8 @@ def _run_candidate_batch_viewshed_groups(
                 "site suggest batch viewshed requires simulation.provider=los (splatter run-batch)"
             )
         with suggest_step(verbose, f"splatter run-batch ({len(stale_workspaces)} workspace(s))"):
-            rc = run_viewshed_batch_docker(
+            rc = run_viewshed_batch(
                 preset=preset,
-                preset_path=preset_path,
                 viewshed_root=viewshed_root_r,
                 workspaces=stale_workspaces,
                 coverage_verbose=verbose,

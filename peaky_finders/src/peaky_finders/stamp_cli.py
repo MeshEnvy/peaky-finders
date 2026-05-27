@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from peaky_finders.preset_stamps import list_stamp_sections, write_stamp
-from peaky_finders.sites_job import load_preset
+from peaky_finders.sites_job import load_preset, require_cwd_config_yaml
 
 
 def build_stamp_parser() -> argparse.ArgumentParser:
@@ -15,35 +15,36 @@ def build_stamp_parser() -> argparse.ArgumentParser:
         add_help=False,
         description=(
             "Write one line + header under build/stamps for Make edges. "
-            "Use: peaky stamp <section>|all|site <slug>|list PRESET.yaml"
+            "Use: peaky stamp list | peaky stamp all | peaky stamp <section> | peaky stamp site <slug>"
         ),
     )
     p.add_argument(
         "stamp_args",
         nargs=argparse.REMAINDER,
         metavar="...",
-        help="section [...] PRESET.yaml (try: peaky stamp list PRESET.yaml)",
+        help="stamp command (run from project directory with config.yaml)",
     )
     return p
 
 
-def _usage(p: argparse.ArgumentParser) -> None:
-    p.print_usage()
-
-
 def run_stamp(args: argparse.Namespace) -> int:
     raw = [x for x in getattr(args, "stamp_args", []) if x.strip()]
-    if len(raw) < 2:
-        print("usage: peaky stamp (list|all|<section>|site <slug>) PRESET.yaml", file=sys.stderr)
+    if not raw:
+        print(
+            "usage: peaky stamp (list|all|<section>|site <slug>) — run from project directory",
+            file=sys.stderr,
+        )
         return 2
 
-    preset_path = Path(raw[-1]).expanduser()
-    spec = raw[:-1]
+    try:
+        preset_path = require_cwd_config_yaml()
+    except FileNotFoundError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+
+    spec = raw
 
     if spec == ["list"]:
-        if not preset_path.is_file():
-            print(f"Preset not found: {preset_path}", file=sys.stderr)
-            return 2
         preset = load_preset(preset_path)
         for s in list_stamp_sections(preset):
             print(s, flush=True)
