@@ -21,13 +21,13 @@ from peaky_finders.site_suggestions.log import (
     suggest_progress,
     suggest_step,
 )
-from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint
-from peaky_finders.site_suggestions.mesh_goals import (
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint
+from peaky_finders.site_suggestions.providers.mesh_backbone.goals import (
     is_goal_captured,
     goal_point_for_key,
     ordered_uncaptured_goal_keys,
 )
-from peaky_finders.site_suggestions.mesh_grow import composite_coverage_geometry
+from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import composite_coverage_geometry
 from peaky_finders.site_suggestions.rf_link import (
     ensure_dem_for_points,
     max_hop_range_m,
@@ -527,7 +527,7 @@ def _geodesic_relay_nodes(
 
 
 def _existing_eligible_backbone_nodes(ctx: SiteSuggestionContext) -> list[tuple[float, float]]:
-    from peaky_finders.site_suggestions.mesh_backbone_completion import all_backbone_sites
+    from peaky_finders.site_suggestions.providers.mesh_backbone.completion import all_backbone_sites
 
     elig = ctx.eligible_ll if ctx.eligible_ll.is_valid else make_valid(ctx.eligible_ll)
     out: list[tuple[float, float]] = []
@@ -1203,7 +1203,7 @@ def corridor_stall_recovery(ctx: SiteSuggestionContext) -> bool:
 
 def corridor_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
     """True when all non-blocked goals are captured and hop-connected to seeds."""
-    from peaky_finders.site_suggestions.mesh_backbone_completion import (
+    from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
         all_backbone_sites,
         captured_goal_keys,
         footprints_for_backbone_sites,
@@ -1213,7 +1213,7 @@ def corridor_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
         sites_capturing_goal,
         uncaptured_goal_keys,
     )
-    from peaky_finders.site_suggestions.mesh_backbone_geom import goals_from_config
+    from peaky_finders.site_suggestions.providers.mesh_backbone.geom import goals_from_config
 
     if not mesh_connectivity_complete(ctx):
         return False

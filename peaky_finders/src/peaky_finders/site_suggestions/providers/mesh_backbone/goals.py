@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
-from peaky_finders.site_suggestions.mesh_backbone_completion import (
+from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     all_backbone_sites,
     captured_goal_keys,
     footprints_for_backbone_sites,
     mesh_connectivity_complete,
     uncaptured_goal_keys,
 )
-from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint, goals_from_config
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_config
 from peaky_finders.site_suggestions.mesh_connectivity import (
     healing_goals,
     mesh_connectivity_complete,

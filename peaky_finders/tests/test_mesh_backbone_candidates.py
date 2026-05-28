@@ -9,8 +9,8 @@ from shapely.geometry import box
 
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
 from peaky_finders.site_suggestions.depth_grid import build_coverage_depth_grid
-from peaky_finders.site_suggestions.mesh_backbone_candidates import generate_mesh_grow_candidates
-from peaky_finders.site_suggestions.mesh_grow import (
+from peaky_finders.site_suggestions.providers.mesh_backbone.candidates import generate_mesh_grow_candidates
+from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import (
     active_attractor_goal,
     build_mesh_grow_score_context,
     grow_goals,
@@ -18,7 +18,7 @@ from peaky_finders.site_suggestions.mesh_grow import (
     score_mesh_grow_trial,
     uncaptured_goals,
 )
-from peaky_finders.site_suggestions.strategies.mesh_backbone import MeshBackboneStrategy
+from peaky_finders.site_suggestions.providers.mesh_backbone import MeshBackboneStrategy
 from peaky_finders.sites_job import (
     BundleSiteSuggestionsConfig,
     MeshBackboneGoalEntry,
@@ -155,7 +155,7 @@ def test_score_mesh_grow_trial_zero_delta_for_committed_footprint() -> None:
         "_session_0001": relay_fp,
     }
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         score_ctx = build_mesh_grow_score_context(ctx)
@@ -190,7 +190,7 @@ def test_score_mesh_grow_trial_prefers_best_goal_delta() -> None:
     far_fp = box(-115.82, 38.9, -114.95, 39.1)
     footprints = {"seed": seed_fp}
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         score_ctx = build_mesh_grow_score_context(ctx)
@@ -284,7 +284,7 @@ def test_score_mesh_grow_trial_heal_ignores_satellite_hop() -> None:
         verbose=False,
     )
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         assert set(grow_goals(ctx)) == {"bridge:sat"}
@@ -347,7 +347,7 @@ def test_healing_candidates_sample_from_main_mesh_not_satellite_grid() -> None:
         verbose=False,
     )
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         cands = generate_mesh_grow_candidates(ctx)

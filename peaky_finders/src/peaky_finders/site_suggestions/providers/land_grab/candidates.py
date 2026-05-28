@@ -1,4 +1,4 @@
-"""Land-grab strategy: peak clusters + gap-fill on eligible land."""
+"""Land-grab candidate generation (peak clusters + gap-fill)."""
 
 from __future__ import annotations
 
@@ -16,13 +16,10 @@ from peaky_finders.site_suggestions.candidates import (
     _dedupe_candidates,
     _grid_samples_around_point,
 )
-from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, largest_uncovered_patch_centroid_ll
 from peaky_finders.site_suggestions.eligible_peaks_cache import load_or_build_eligible_peaks
 from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step, SuggestProgressTicker
-from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
-from peaky_finders.sites_job import BundleSiteSuggestionsConfig, LandGrabStrategyConfig
-from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
+from peaky_finders.sites_job import LandGrabStrategyConfig
 
 
 @dataclass(frozen=True)
@@ -277,84 +274,3 @@ def _gap_fill_candidate(
         rep = eligible_ll.representative_point()
         lat, lon = float(rep.y), float(rep.x)
     return SiteCandidate(lat=lat, lon=lon, elev_m=None, strategy="gap")
-
-
-class LandGrabStrategy:
-    @property
-    def name(self) -> str:
-        return "land-grab"
-
-    def goal_depth(self, cfg: BundleSiteSuggestionsConfig) -> int:
-        return int(cfg.land_grab.coverage_goal_depth)
-
-    def refine_settings(self, cfg: BundleSiteSuggestionsConfig) -> StrategyRefineSettings:
-        lg = cfg.land_grab
-        return StrategyRefineSettings(
-            refine_enabled=bool(lg.refine_enabled),
-            refine_top_n=int(lg.refine_top_n),
-            refine_radius_m=float(lg.refine_radius_m),
-            refine_spacing_m=float(lg.refine_spacing_m),
-        )
-
-    def resolve_step_budget(self, cfg: BundleSiteSuggestionsConfig, cli_n: int) -> int | None:
-        del cfg
-        if int(cli_n) == SOLVE_UNTIL_COMPLETE:
-            return None
-        return max(1, int(cli_n))
-
-    def planning_complete(self, ctx: SiteSuggestionContext) -> bool:
-        goal = self.goal_depth(ctx.cfg)
-        stop_frac = float(ctx.cfg.uncovered_stop_pct) / 100.0
-        return ctx.grid.uncovered_fraction(goal_depth=goal) <= stop_frac
-
-    def generate_candidates(
-        self,
-        ctx: SiteSuggestionContext,
-        *,
-        iteration: int,
-    ) -> list[SiteCandidate]:
-        """Peak-cluster grid samples on eligible land, with gap centroid on later iterations."""
-        lg = ctx.cfg.land_grab
-        goal_depth = self.goal_depth(ctx.cfg)
-        out: list[SiteCandidate] = []
-        peaks, peak_stats = _eligible_peak_candidates(
-            eligible_ll=ctx.eligible_ll,
-            grid=ctx.grid,
-            goal_depth=goal_depth,
-            dem_mirror_root=ctx.dem_mirror_root,
-            suggest_root=ctx.suggest_root,
-            eligible_sha=ctx.eligible_sha,
-            cfg=lg,
-            jobs=ctx.jobs,
-            verbose=ctx.verbose,
-            return_stats=ctx.verbose,
-        )
-        if ctx.verbose and peak_stats is not None:
-            suggest_log(ctx.verbose, "site suggest: ── iteration peak shortlist summary ──")
-            suggest_log(ctx.verbose, f"     eligible peaks (cached index): {peak_stats['eligible_peaks_total']}")
-            suggest_log(ctx.verbose, f"     still uncovered on grid: {peak_stats['uncovered_peaks']}")
-            suggest_log(ctx.verbose, f"     elevation prefilter kept: {peak_stats['prefilter_peaks']}")
-            suggest_log(
-                ctx.verbose,
-                f"     after cluster (radius={lg.peak_cluster_radius_m} m): {peak_stats['clustered_count']}",
-            )
-            suggest_log(ctx.verbose, f"     cluster grid samples: {peak_stats['grid_samples']}")
-            suggest_log(ctx.verbose, f"     shortlist cap: {lg.max_candidates_per_round}  kept: {len(peaks)}")
-        out.extend(peaks)
-        if iteration > 0 or not peaks:
-            gap = _gap_fill_candidate(
-                grid=ctx.grid,
-                goal_depth=goal_depth,
-                eligible_ll=ctx.eligible_ll,
-                verbose=ctx.verbose,
-            )
-            if gap is not None:
-                if ctx.verbose:
-                    suggest_log(
-                        ctx.verbose,
-                        f"site suggest:   gap-fill candidate @ {gap.lat:.6f}, {gap.lon:.6f}",
-                    )
-                out.append(gap)
-            elif ctx.verbose:
-                suggest_log(ctx.verbose, "site suggest:   gap-fill: no uncovered patch centroid")
-        return _dedupe_candidates(out)[: max(1, int(lg.max_candidates_per_round))]

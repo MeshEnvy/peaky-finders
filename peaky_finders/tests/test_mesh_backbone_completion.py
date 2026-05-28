@@ -8,14 +8,14 @@ from unittest.mock import patch
 from shapely.geometry import box
 
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
-from peaky_finders.site_suggestions.mesh_backbone_completion import (
+from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     captured_goal_keys,
     hop_adjacency,
     mesh_grow_planning_complete,
     mutual_hop_neighbors,
     sites_capturing_goal,
 )
-from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint
 from peaky_finders.sites_job import (
     BundleSiteSuggestionsConfig,
     MeshBackboneGoalEntry,
@@ -86,7 +86,7 @@ def test_mesh_grow_planning_complete_when_goals_captured_and_connected() -> None
     adj = hop_adjacency(sites, footprints)
     assert "relay" in adj["seed"]
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         assert mesh_grow_planning_complete(ctx)

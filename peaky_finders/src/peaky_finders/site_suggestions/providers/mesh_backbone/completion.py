@@ -12,7 +12,7 @@ from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
-from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint, goals_from_config
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_config
 from peaky_finders.sites_job import MeshBackboneStrategyConfig, Preset, SiteSuggestionStrategy, SiteType
 
 

@@ -17,7 +17,7 @@ from peaky_finders.site_suggestions.batch_viewshed import run_candidate_batch_vi
 from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_refine_candidates
 from peaky_finders.site_suggestions.refine_peaks import generate_mesh_refine_candidates
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
-from peaky_finders.site_suggestions.corridor import CorridorGrowState, corridor_stall_recovery
+from peaky_finders.site_suggestions.corridor import corridor_stall_recovery
 from peaky_finders.site_suggestions.corridor_scoring import (
     CorridorTrialScore,
     build_corridor_score_context,
@@ -27,13 +27,17 @@ from peaky_finders.site_suggestions.corridor_scoring import (
 )
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_coverage_depth_grid
 from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step, SuggestProgressTicker
-from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
-from peaky_finders.site_suggestions.strategies.registry import resolve_site_suggestion_strategy
-from peaky_finders.site_suggestions.mesh_backbone_completion import (
+from peaky_finders.site_suggestions.providers.protocol import (
+    CandidateTrialMode,
+    StrategyPlannerHooks,
+    StrategyRefineSettings,
+)
+from peaky_finders.site_suggestions.providers.registry import resolve_site_suggestion_strategy
+from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     all_backbone_sites,
     site_location_key,
 )
-from peaky_finders.site_suggestions.mesh_grow import (
+from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import (
     MeshGrowTrialScore,
     build_mesh_grow_score_context,
     mesh_grow_sort_key,
@@ -41,17 +45,15 @@ from peaky_finders.site_suggestions.mesh_grow import (
     score_mesh_grow_trials,
     summarize_mesh_grow_outcomes,
 )
-from peaky_finders.site_suggestions.mesh_goals import (
+from peaky_finders.site_suggestions.providers.mesh_backbone.goals import (
     captured_tracked_goals,
     goals_satisfied_since,
     tracked_goal_keys,
 )
 from peaky_finders.site_suggestions.preset_io import count_suggested_sites, next_suggest_iteration
 from peaky_finders.sites_job import (
-    MeshBackboneRouting,
     Preset,
     SiteSuggestionCoverageTarget,
-    SiteSuggestionStrategy,
     load_preset,
     resolved_site_suggestions_config,
 )
@@ -153,89 +155,6 @@ def _coverage_target_geometry(
     if target == SiteSuggestionCoverageTarget.ELIGIBLE:
         return eligible_ll
     return aoi_ll
-
-
-def _log_planner_config(
-    *,
-    verbose: bool,
-    cfg,
-    strategy_name: str,
-    goal: int,
-    grid: CoverageDepthGrid,
-    seed_paths: list[Path],
-    preset: Preset,
-    jobs: int,
-) -> None:
-    if not verbose:
-        return
-    uncovered = grid.uncovered_fraction(goal_depth=goal)
-    uncovered_cells = int(grid.uncovered_mask(goal_depth=goal).sum())
-    by_type: dict[str, int] = {}
-    for ent in preset.sites.values():
-        by_type[ent.type.value] = by_type.get(ent.type.value, 0) + 1
-
-    lg = cfg.land_grab
-    mb = cfg.mesh_backbone
-    suggest_log(verbose, "site suggest: ── planner configuration ──")
-    suggest_log(verbose, f"  strategy: {strategy_name}")
-    suggest_log(verbose, f"  coverage_target: {cfg.coverage_target.value}")
-    suggest_log(verbose, f"  coverage_goal_depth: {goal}")
-    suggest_log(verbose, f"  planner_raster_dimension: {cfg.planner_raster_dimension}")
-    if strategy_name == "mesh-backbone":
-        suggest_log(verbose, f"  max_candidates_per_round: {mb.max_candidates_per_round}")
-        suggest_log(verbose, f"  frontier_sample_spacing_m: {mb.frontier_sample_spacing_m}")
-        suggest_log(verbose, f"  configured goals: {len(mb.goals)}")
-        if mb.max_nodes is not None:
-            suggest_log(verbose, f"  max_nodes: {mb.max_nodes}")
-        suggest_log(verbose, f"  routing: {mb.routing.value}")
-        if mb.routing == MeshBackboneRouting.CORRIDOR:
-            suggest_log(verbose, f"  corridor_k: {mb.corridor_k}")
-            suggest_log(verbose, f"  corridor_grid_cell_m: {mb.corridor_grid_cell_m}")
-            suggest_log(verbose, f"  corridor_buffer_m: {mb.corridor_buffer_m}")
-            suggest_log(verbose, f"  corridor_lookahead_m: {mb.corridor_lookahead_m}")
-            suggest_log(verbose, f"  stall_rounds: {mb.stall_rounds}")
-            if mb.goal_order:
-                suggest_log(verbose, f"  goal_order: {', '.join(mb.goal_order)}")
-        suggest_log(verbose, f"  refine_enabled: {mb.refine_enabled}")
-        suggest_log(verbose, f"  refine_top_n: {mb.refine_top_n}")
-        suggest_log(verbose, f"  refine_radius_m: {mb.refine_radius_m}")
-        suggest_log(verbose, f"  refine_spacing_m: {mb.refine_spacing_m}")
-        suggest_log(verbose, f"  refine_peaks_enabled: {mb.refine_peaks_enabled}")
-        if mb.refine_peaks_enabled:
-            suggest_log(verbose, f"  refine_peak_radius_m: {mb.refine_peak_radius_m}")
-            suggest_log(verbose, f"  refine_peak_bin_size_m: {mb.refine_peak_bin_size_m}")
-            suggest_log(verbose, f"  refine_peaks_per_seed: {mb.refine_peaks_per_seed}")
-        suggest_log(verbose, f"  coarse_peaks_enabled: {mb.coarse_peaks_enabled}")
-        if mb.coarse_peaks_enabled:
-            suggest_log(verbose, f"  coarse_peak_radius_m: {mb.coarse_peak_radius_m}")
-            suggest_log(verbose, f"  coarse_peaks_per_sample: {mb.coarse_peaks_per_sample}")
-    else:
-        suggest_log(verbose, f"  max_candidates_per_round: {lg.max_candidates_per_round}")
-        suggest_log(verbose, f"  max_clusters_per_round: {lg.max_clusters_per_round}")
-        suggest_log(verbose, f"  peak_cluster_radius_m: {lg.peak_cluster_radius_m}")
-        suggest_log(verbose, f"  cluster_sample_spacing_m: {lg.cluster_sample_spacing_m}")
-        suggest_log(verbose, f"  cluster_sample_radius_m: {lg.cluster_sample_radius_m}")
-        suggest_log(verbose, f"  refine_enabled: {lg.refine_enabled}")
-        suggest_log(verbose, f"  refine_top_n: {lg.refine_top_n}")
-        suggest_log(verbose, f"  refine_radius_m: {lg.refine_radius_m}")
-        suggest_log(verbose, f"  refine_spacing_m: {lg.refine_spacing_m}")
-        suggest_log(verbose, f"  uncovered_stop_pct: {cfg.uncovered_stop_pct}")
-    suggest_log(verbose, f"  suggest_parallelism: {max(1, int(jobs))}")
-    suggest_log(verbose, "site suggest: ── seed sites ──")
-    for slug, ent in sorted(preset.sites.items()):
-        suggest_log(
-            verbose,
-            f"  {slug}: type={ent.type.value} {_format_loc(ent.lat, ent.lon)}",
-        )
-    suggest_log(verbose, f"  totals: {by_type}")
-    target_label = _coverage_target_label(cfg.coverage_target)
-    suggest_log(verbose, "site suggest: ── initial coverage grid ──")
-    suggest_log(verbose, f"  grid: {grid.cols}×{grid.rows} px  {target_label} cells: {grid.target_cell_count}")
-    suggest_log(
-        verbose,
-        f"  uncovered vs depth≥{goal}: {100.0 * uncovered:.2f}% ({uncovered_cells} cells)",
-    )
-    suggest_log(verbose, f"  seed footprints loaded: {len(seed_paths)}")
 
 
 def _log_candidate_shortlist(*, verbose: bool, iteration: int, candidates: list[SiteCandidate]) -> None:
@@ -1035,9 +954,15 @@ def _run_candidate_trials(
     jobs: int,
     verbose: bool,
     suggest_ctx: SiteSuggestionContext | None = None,
-    mesh_grow: bool = False,
-    corridor_grow: bool = False,
+    hooks: StrategyPlannerHooks | None = None,
 ) -> tuple[PlannedSuggestion | None, BaseGeometry | None, list[CandidateTrial]]:
+    hooks = hooks or StrategyPlannerHooks(
+        trial_mode=CandidateTrialMode.COVERAGE,
+        retain_trial_footprints=False,
+        corridor_kml=False,
+    )
+    mesh_grow = hooks.trial_mode != CandidateTrialMode.COVERAGE
+    corridor_grow = hooks.trial_mode == CandidateTrialMode.CORRIDOR_GROW
     workers = max(1, int(jobs))
     mesh_score_cache: dict[int, MeshGrowTrialScore | None] = {}
     corridor_score_cache: dict[int, CorridorTrialScore | None] = {}
@@ -1286,10 +1211,8 @@ def plan_greedy_site_suggestions(
 
     cfg = resolved_site_suggestions_config(preset.bundle)
     provider = resolve_site_suggestion_strategy(cfg)
-    mesh_grow = cfg.strategy == SiteSuggestionStrategy.MESH_BACKBONE
-    corridor_grow = mesh_grow and cfg.mesh_backbone.routing == MeshBackboneRouting.CORRIDOR
-    if mesh_grow and not cfg.mesh_backbone.goals:
-        raise ValueError("mesh-backbone strategy requires mesh_backbone.goals")
+    hooks = provider.planner_hooks(cfg)
+    provider.validate_config(cfg)
     existing_suggested = count_suggested_sites(preset)
     max_goals = provider.resolve_step_budget(cfg, suggest_cli_n)
 
@@ -1321,10 +1244,9 @@ def plan_greedy_site_suggestions(
             jobs=jobs,
         )
 
-    _log_planner_config(
+    provider.log_planner_config(
         verbose=verbose,
         cfg=cfg,
-        strategy_name=provider.name,
         goal=goal,
         grid=grid,
         seed_paths=seed_paths,
@@ -1348,11 +1270,7 @@ def plan_greedy_site_suggestions(
         jobs=jobs,
         verbose=verbose,
     )
-    if corridor_grow:
-        suggest_ctx.corridor_state = CorridorGrowState()
-        from peaky_finders.site_suggestions.corridor_kml import corridor_kml_dir
-
-        corridor_kml_dir(suggest_root).mkdir(parents=True, exist_ok=True)
+    provider.prepare_suggest_context(suggest_ctx, suggest_root=suggest_root)
 
     if provider.planning_complete(suggest_ctx):
         msg = f"site suggest: {provider.name} goal already met — no picks needed"
@@ -1380,11 +1298,9 @@ def plan_greedy_site_suggestions(
         )
         if planning_done:
             if winners:
-                mb = cfg.mesh_backbone
-                max_nodes = mb.max_nodes if mesh_grow else None
+                max_nodes = provider.max_suggested_nodes(cfg)
                 if (
-                    mesh_grow
-                    and max_nodes is not None
+                    max_nodes is not None
                     and len(all_backbone_sites(suggest_ctx)) >= int(max_nodes)
                 ):
                     print(
@@ -1429,8 +1345,6 @@ def plan_greedy_site_suggestions(
             candidates = provider.generate_candidates(suggest_ctx, iteration=site_n - 1)
         _log_candidate_shortlist(verbose=verbose, iteration=site_n, candidates=candidates)
 
-        corridor_active = corridor_grow
-
         if not candidates:
             print(
                 f"site suggest: no candidates at attempt {attempt} ({site_progress}, {goal_progress})",
@@ -1453,11 +1367,10 @@ def plan_greedy_site_suggestions(
             jobs=jobs,
             verbose=verbose,
             suggest_ctx=suggest_ctx,
-            mesh_grow=mesh_grow,
-            corridor_grow=corridor_active,
+            hooks=hooks,
         )
 
-        if corridor_active:
+        if hooks.corridor_kml:
             _record_corridor_iteration_kml(
                 ctx=suggest_ctx,
                 iteration=site_n,
@@ -1466,7 +1379,7 @@ def plan_greedy_site_suggestions(
             )
 
         if best is None or best_footprint is None:
-            if corridor_active and corridor_stall_recovery(suggest_ctx):
+            if hooks.corridor_kml and corridor_stall_recovery(suggest_ctx):
                 print(
                     f"site suggest: corridor recovery at attempt {attempt} "
                     f"({site_progress}, {goal_progress})",
@@ -1535,7 +1448,7 @@ def plan_greedy_site_suggestions(
                 BackboneSite(slug=session_slug, lat=best.lat, lon=best.lon)
             )
             suggest_ctx.session_footprints[session_slug] = best_footprint
-        if corridor_active and suggest_ctx.corridor_state is not None:
+        if hooks.corridor_kml and suggest_ctx.corridor_state is not None:
             suggest_ctx.corridor_state.stall_count = 0
             suggest_ctx.corridor_state.recovery_buffer_bonus_m = 0.0
         winners.append(best)
@@ -1573,7 +1486,7 @@ def plan_greedy_site_suggestions(
             max_goals=max_goals,
         )
 
-    if corridor_grow:
+    if hooks.corridor_kml:
         from peaky_finders.site_suggestions.corridor_kml import flush_corridor_kml
 
         flush_corridor_kml(suggest_ctx)

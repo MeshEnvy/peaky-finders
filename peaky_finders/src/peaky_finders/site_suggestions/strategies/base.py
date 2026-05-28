@@ -1,44 +1,8 @@
-"""Strategy provider protocol for site suggestion."""
+"""Deprecated import path — use ``site_suggestions.providers.protocol``."""
 
-from __future__ import annotations
+from peaky_finders.site_suggestions.providers.protocol import (
+    SiteSuggestionStrategyProvider,
+    StrategyRefineSettings,
+)
 
-from dataclasses import dataclass
-from typing import Protocol
-
-from peaky_finders.site_suggestions.candidates import SiteCandidate
-from peaky_finders.site_suggestions.context import SiteSuggestionContext
-from peaky_finders.sites_job import BundleSiteSuggestionsConfig
-
-
-@dataclass(frozen=True)
-class StrategyRefineSettings:
-    refine_enabled: bool
-    refine_top_n: int
-    refine_radius_m: float
-    refine_spacing_m: float
-    refine_peaks_enabled: bool = False
-    refine_peak_radius_m: float = 400.0
-    refine_peak_bin_size_m: float = 150.0
-    refine_peaks_per_seed: int = 8
-
-
-class SiteSuggestionStrategyProvider(Protocol):
-    @property
-    def name(self) -> str: ...
-
-    def goal_depth(self, cfg: BundleSiteSuggestionsConfig) -> int: ...
-
-    def refine_settings(self, cfg: BundleSiteSuggestionsConfig) -> StrategyRefineSettings: ...
-
-    def resolve_step_budget(self, cfg: BundleSiteSuggestionsConfig, cli_n: int) -> int | None:
-        """Max goals to satisfy from CLI ``--suggest[=N]``; ``None`` = until ``planning_complete``."""
-
-    def planning_complete(self, ctx: SiteSuggestionContext) -> bool:
-        """Whether the strategy goal is already satisfied (no further picks needed)."""
-
-    def generate_candidates(
-        self,
-        ctx: SiteSuggestionContext,
-        *,
-        iteration: int,
-    ) -> list[SiteCandidate]: ...
+__all__ = ["SiteSuggestionStrategyProvider", "StrategyRefineSettings"]
