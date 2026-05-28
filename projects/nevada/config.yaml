@@ -255,7 +255,7 @@ bundle:
       refine_spacing_m: 50.0
     # mesh-grow: extend seed mesh toward configured goal locations
     mesh_backbone:
-      routing: corridor
+      mesh_origin: davidson-peak
       corridor_k: 3
       corridor_grid_cell_m: 750
       corridor_buffer_m: 3000
@@ -269,6 +269,10 @@ bundle:
       refine_radius_m: 200.0
       refine_spacing_m: 50.0
       goals:
+        russel-bridge:
+          loc: russell-peak
+        slpt-bridge:
+          loc: slpt-south-entrance
         # alamo:
         #   loc: [37.3771, -115.1678]
         # amargosa-valley:
@@ -319,10 +323,10 @@ bundle:
         #   loc: [37.6469, -118.0345]
         # east-valley:
         #   loc: [38.9452, -119.6993]
-        elko:
-          loc: [40.8381, -115.7678]
-        ely:
-          loc: [39.265, -114.8708]
+        # elko:
+        #   loc: [40.8381, -115.7678]
+        # ely:
+        #   loc: [39.265, -114.8708]
         # empire:
         #   loc: [40.5759, -119.343]
         # enterprise:
@@ -403,8 +407,8 @@ bundle:
         #   loc: [41.9903, -117.7209]
         # mcgill:
         #   loc: [39.4019, -114.7775]
-        mercury:
-          loc: [36.66051, -115.99448]
+        # mercury:
+        #   loc: [36.66051, -115.99448]
         # mesquite:
         #   loc: [36.8032, -114.133]
         # mina:
@@ -453,10 +457,10 @@ bundle:
         #   loc: [37.9519, -114.4434]
         # preston:
         #   loc: [38.915, -115.0637]
-        rachel:
-          loc: [37.6414, -115.7681]
-        reno:
-          loc: [39.5497, -119.8483]
+        # rachel:
+        #   loc: [37.6414, -115.7681]
+        # reno:
+        #   loc: [39.5497, -119.8483]
         # round-hill-village:
         #   loc: [38.9937, -119.9233]
         # ruhenstroth:
@@ -475,8 +479,8 @@ bundle:
         #   loc: [37.7578, -117.6386]
         # silver-springs:
         #   loc: [39.3826, -119.2148]
-        slpt:
-          loc: [41.5241667, -119.0522222] # 41°31′27″N 119°03′08″W
+        # slpt:
+        #   loc: [41.5241667, -119.0522222] # 41°31′27″N 119°03′08″W
         # skyland:
         #   loc: [39.0265, -119.9221]
         # smith-valley:
@@ -499,12 +503,12 @@ bundle:
         #   loc: [39.6104, -119.777]
         # sunrise-manor:
         #   loc: [36.1783, -115.0487]
-        susanville:
-          loc: [40.41628, -120.65301]
+        # susanville:
+        #   loc: [40.41628, -120.65301]
         # sutcliffe:
         #   loc: [39.9461, -119.6305]
-        tonopah:
-          loc: [38.0822, -117.2246]
+        # tonopah:
+        #   loc: [38.0822, -117.2246]
         # topaz-lake:
         #   loc: [38.6976, -119.5427]
         # topaz-ranch-estates:
@@ -515,8 +519,8 @@ bundle:
         #   loc: [37.9771, -114.2289]
         # valmy:
         #   loc: [40.7908, -117.1266]
-        vegas:
-          loc: [36.2333, -115.2654]
+        # vegas:
+        #   loc: [36.2333, -115.2654]
         # verdi:
         #   loc: [39.5142, -119.9772]
         # virginia-city:
@@ -527,16 +531,16 @@ bundle:
         #   loc: [38.6458, -118.7563]
         # washoe-valley:
         #   loc: [39.2923, -119.7767]
-        wells:
-          loc: [41.1132, -114.9535]
+        # wells:
+        #   loc: [41.1132, -114.9535]
         # west-wendover:
         #   loc: [40.7407, -114.0783]
         # whitney:
         #   loc: [36.1008, -115.0379]
         # winchester:
         #   loc: [36.1365, -115.137]
-        winnemucca:
-          loc: [40.9645, -117.7247]
+        # winnemucca:
+        #   loc: [40.9645, -117.7247]
         # yerington:
         #   loc: [38.9554, -119.1101]
         # zephyr-cove:
