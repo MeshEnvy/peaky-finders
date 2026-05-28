@@ -76,8 +76,8 @@ def composite_coverage_geometry(ctx: SiteSuggestionContext) -> BaseGeometry | No
     """Union of analysis-scope footprints plus rasterized composite coverage."""
     footprints = analysis_footprints(ctx)
     parts: list[BaseGeometry] = []
-    # During healing, satellite seed footprints must not expand the composite mesh.
-    if not mesh_healing_needed(ctx):
+    # Main-mesh scope: satellite seed coverage must not expand the composite mesh.
+    if main_footprint_slugs(ctx) is None:
         grid_cov = ctx.grid.coverage_geometry_wgs84(min_depth=1)
         if grid_cov is not None and not grid_cov.is_empty:
             parts.append(grid_cov if grid_cov.is_valid else make_valid(grid_cov))

@@ -255,6 +255,12 @@ bundle:
       refine_spacing_m: 50.0
     # mesh-grow: extend seed mesh toward configured goal locations
     mesh_backbone:
+      routing: corridor
+      corridor_k: 3
+      corridor_grid_cell_m: 750
+      corridor_buffer_m: 3000
+      corridor_lookahead_m: 30000
+      stall_rounds: 2
       max_candidates_per_round: 48
       frontier_sample_spacing_m: 500
       max_nodes: 64 # optional solver pick cap per --suggest pass

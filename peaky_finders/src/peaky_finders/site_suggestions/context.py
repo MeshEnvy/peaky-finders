@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.build_configure import BuildConfigurePlan
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid
 from peaky_finders.sites_job import BundleSiteSuggestionsConfig, Preset
+
+if TYPE_CHECKING:
+    from peaky_finders.site_suggestions.corridor import CorridorGrowState
 
 
 @dataclass(frozen=True)
@@ -35,3 +39,4 @@ class SiteSuggestionContext:
     verbose: bool
     session_sites: list[BackboneSite] = field(default_factory=list)
     session_footprints: dict[str, BaseGeometry] = field(default_factory=dict)
+    corridor_state: CorridorGrowState | None = None

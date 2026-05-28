@@ -9,7 +9,6 @@ from peaky_finders.site_suggestions.planner import (
     PlannedSuggestion,
     plan_greedy_site_suggestions,
     planned_to_preset_entries,
-    write_suggest_run_manifest,
 )
 from peaky_finders.site_suggestions.preset_io import append_suggested_sites_to_preset, remove_suggested_sites_from_preset
 from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
@@ -52,7 +51,6 @@ def run_site_suggestion_pass(
         print("site suggest: using splatter run-batch for candidate viewsheds", flush=True)
 
     new_slugs: list[str] = []
-    winners_accum: list[PlannedSuggestion] = []
 
     def _persist_pick(pick: PlannedSuggestion) -> str:
         slugs = append_suggested_sites_to_preset(
@@ -61,18 +59,9 @@ def run_site_suggestion_pass(
         )
         slug = slugs[0]
         new_slugs.append(slug)
-        winners_accum.append(pick)
-        n_requested = None if int(suggest_cli_n) == SOLVE_UNTIL_COMPLETE else int(suggest_cli_n)
-        write_suggest_run_manifest(
-            suggest_root,
-            preset_path=preset_path_r,
-            n_requested=n_requested,
-            winners=winners_accum,
-            new_slugs=new_slugs,
-        )
         return slug
 
-    winners = plan_greedy_site_suggestions(
+    plan_greedy_site_suggestions(
         preset=preset,
         preset_path=preset_path_r,
         plan=plan,

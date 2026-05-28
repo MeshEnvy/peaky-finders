@@ -685,6 +685,13 @@ class SiteSuggestionStrategy(StrEnum):
     MESH_BACKBONE = "mesh-backbone"
 
 
+class MeshBackboneRouting(StrEnum):
+    """Mesh-backbone grow selection: global greedy vs corridor-guided."""
+
+    GREEDY = "greedy"
+    CORRIDOR = "corridor"
+
+
 class MeshBackboneGoalEntry(BaseModel):
     """Named geographic target for mesh-grow site suggestions."""
 
@@ -713,6 +720,41 @@ class MeshBackboneStrategyConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    routing: MeshBackboneRouting = Field(
+        default=MeshBackboneRouting.GREEDY,
+        description="``greedy``: all goals bid each round; ``corridor``: one goal, eligible corridor spine.",
+    )
+    goal_order: list[str] = Field(
+        default_factory=list,
+        description="Optional goal sequence for corridor routing; remaining goals append sorted.",
+    )
+    corridor_grid_cell_m: float = Field(
+        default=750.0,
+        ge=50.0,
+        description="Eligible-land grid cell size (m) for corridor A* planning.",
+    )
+    corridor_k: int = Field(
+        default=3,
+        ge=1,
+        le=16,
+        description="Alternate eligible corridors to try per goal before blocking.",
+    )
+    corridor_buffer_m: float = Field(
+        default=3000.0,
+        ge=100.0,
+        description="Corridor buffer (m) for candidates and arc-length coverage scoring.",
+    )
+    corridor_lookahead_m: float = Field(
+        default=30000.0,
+        ge=500.0,
+        description="Sample corridor ahead of current covered arc when generating candidates.",
+    )
+    stall_rounds: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Consecutive no-winner rounds before next corridor recovery step.",
+    )
     max_candidates_per_round: int = Field(
         default=48,
         ge=1,
