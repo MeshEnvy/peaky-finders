@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 
@@ -19,6 +17,14 @@ from peaky_finders.site_suggestions.batch_viewshed import run_candidate_batch_vi
 from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_refine_candidates
 from peaky_finders.site_suggestions.refine_peaks import generate_mesh_refine_candidates
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
+from peaky_finders.site_suggestions.corridor import CorridorGrowState, corridor_stall_recovery
+from peaky_finders.site_suggestions.corridor_scoring import (
+    CorridorTrialScore,
+    build_corridor_score_context,
+    corridor_sort_key,
+    corridor_trial_has_progress,
+    score_corridor_trials,
+)
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_coverage_depth_grid
 from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
@@ -36,7 +42,14 @@ from peaky_finders.site_suggestions.mesh_grow import (
     summarize_mesh_grow_outcomes,
 )
 from peaky_finders.site_suggestions.preset_io import count_suggested_sites, next_suggest_iteration
-from peaky_finders.sites_job import Preset, SiteSuggestionCoverageTarget, SiteSuggestionStrategy, load_preset, resolved_site_suggestions_config
+from peaky_finders.sites_job import (
+    MeshBackboneRouting,
+    Preset,
+    SiteSuggestionCoverageTarget,
+    SiteSuggestionStrategy,
+    load_preset,
+    resolved_site_suggestions_config,
+)
 
 
 @dataclass(frozen=True)
@@ -70,6 +83,7 @@ class CandidateTrial:
     workdir: Path | None
     detail: str
     footprint: BaseGeometry | None = None
+    phase: str = "coarse"
 
 
 @dataclass(frozen=True)
@@ -168,6 +182,15 @@ def _log_planner_config(
         suggest_log(verbose, f"  configured goals: {len(mb.goals)}")
         if mb.max_nodes is not None:
             suggest_log(verbose, f"  max_nodes: {mb.max_nodes}")
+        suggest_log(verbose, f"  routing: {mb.routing.value}")
+        if mb.routing == MeshBackboneRouting.CORRIDOR:
+            suggest_log(verbose, f"  corridor_k: {mb.corridor_k}")
+            suggest_log(verbose, f"  corridor_grid_cell_m: {mb.corridor_grid_cell_m}")
+            suggest_log(verbose, f"  corridor_buffer_m: {mb.corridor_buffer_m}")
+            suggest_log(verbose, f"  corridor_lookahead_m: {mb.corridor_lookahead_m}")
+            suggest_log(verbose, f"  stall_rounds: {mb.stall_rounds}")
+            if mb.goal_order:
+                suggest_log(verbose, f"  goal_order: {', '.join(mb.goal_order)}")
         suggest_log(verbose, f"  refine_enabled: {mb.refine_enabled}")
         suggest_log(verbose, f"  refine_top_n: {mb.refine_top_n}")
         suggest_log(verbose, f"  refine_radius_m: {mb.refine_radius_m}")
@@ -314,6 +337,7 @@ def _evaluate_footprint_trial(
     workdir: Path,
     error_detail: str | None = None,
     retain_footprint: bool = False,
+    phase: str = "coarse",
 ) -> _CandidateTrialEval:
     point_gain = grid.point_marginal_gain_cells(cand.lon, cand.lat, goal_depth=goal)
 
@@ -328,6 +352,7 @@ def _evaluate_footprint_trial(
                 footprint_area_km2=None,
                 workdir=workdir,
                 detail=error_detail,
+                phase=phase,
             ),
             pick=None,
         )
@@ -343,6 +368,7 @@ def _evaluate_footprint_trial(
                 footprint_area_km2=None,
                 workdir=workdir,
                 detail="viewshed produced no footprint polygon",
+                phase=phase,
             ),
             pick=None,
         )
@@ -364,6 +390,7 @@ def _evaluate_footprint_trial(
                     f"toward depth≥{goal} (already covered or outside coverage target)"
                 ),
                 footprint=footprint if retain_footprint else None,
+                phase=phase,
             ),
             pick=None,
         )
@@ -392,6 +419,7 @@ def _evaluate_footprint_trial(
             workdir=workdir,
             detail=f"footprint {area_km2:.1f} km²",
             footprint=footprint,
+            phase=phase,
         ),
         pick=pick,
     )
@@ -407,6 +435,7 @@ def _trials_from_batch_results(
     target_label: str,
     start_index: int = 1,
     retain_footprint: bool = False,
+    phase: str = "coarse",
 ) -> list[_CandidateTrialEval]:
     evals: list[_CandidateTrialEval] = []
     for offset, cand in enumerate(candidates):
@@ -425,6 +454,7 @@ def _trials_from_batch_results(
                     footprint=None,
                     workdir=Path("."),
                     error_detail="missing batch viewshed result",
+                    phase=phase,
                 )
             )
             continue
@@ -439,6 +469,7 @@ def _trials_from_batch_results(
                 footprint=hit.footprint,
                 workdir=hit.workdir,
                 retain_footprint=retain_footprint,
+                phase=phase,
             )
         )
     return evals
@@ -598,8 +629,221 @@ def _select_mesh_grow_from_evals(
     return best_eval.pick, best_eval.trial.footprint, trials
 
 
+def _select_corridor_from_evals(
+    *,
+    evals: list[_CandidateTrialEval],
+    ctx: SiteSuggestionContext,
+    iteration: int,
+    target_label: str,
+    verbose: bool = False,
+    score_cache: dict[int, CorridorTrialScore | None] | None = None,
+) -> tuple[PlannedSuggestion | None, BaseGeometry | None, list[CandidateTrial]]:
+    score_ctx = build_corridor_score_context(ctx)
+    if score_ctx is None:
+        return None, None, [ev.trial for ev in evals]
+
+    goal_key = score_ctx.goal.key
+    suggest_log(verbose, f"site suggest: ── iteration {iteration} corridor scoring ──")
+    suggest_log(
+        verbose,
+        f"  goal={goal_key}  corridor variant={score_ctx.corridor.variant}  "
+        f"s_covered={score_ctx.s_before_m / 1000.0:.1f}/{score_ctx.corridor.length_m / 1000.0:.1f} km",
+    )
+
+    best_score = None
+    best_eval: _CandidateTrialEval | None = None
+    trials: list[CandidateTrial] = []
+    scorable = 0
+    scored = 0
+    cache = score_cache if score_cache is not None else {}
+
+    pending_ev: list[_CandidateTrialEval] = []
+    for ev in evals:
+        trial = ev.trial
+        if trial.footprint is None or trial.outcome == CandidateOutcome.VIEWSHED_FAILED:
+            continue
+        scorable += 1
+        if trial.index not in cache:
+            pending_ev.append(ev)
+
+    if pending_ev:
+        batch_scores = score_corridor_trials(
+            score_ctx=score_ctx,
+            trials=[
+                (ev.trial.candidate.lat, ev.trial.candidate.lon, ev.trial.footprint)
+                for ev in pending_ev
+            ],
+        )
+        for ev, score in zip(pending_ev, batch_scores, strict=True):
+            cache[ev.trial.index] = score
+
+    with suggest_step(
+        verbose,
+        f"corridor score {len(evals)} trial(s) toward {goal_key}",
+    ):
+        for ev in evals:
+            trial = ev.trial
+            if trial.footprint is None or trial.outcome == CandidateOutcome.VIEWSHED_FAILED:
+                trials.append(trial)
+                continue
+
+            scored += 1
+            if scored == 1 or scored % 10 == 0 or scored == scorable:
+                suggest_progress(
+                    verbose,
+                    f"corridor score [{scored}/{scorable}] "
+                    f"{_format_candidate_brief(trial.candidate)}",
+                )
+
+            score = cache.get(trial.index)
+            if score is None:
+                trial.outcome = CandidateOutcome.NO_HOP
+                trial.detail = "no confirmed mutual hop to an existing site"
+                trials.append(trial)
+                continue
+
+            if not corridor_trial_has_progress(score):
+                trial.outcome = CandidateOutcome.ZERO_GAIN
+                trial.detail = (
+                    f"hop via {','.join(score.hop_neighbors)} but no corridor progress "
+                    f"(Δs={score.delta_s_m:.0f} m, Δdist={score.delta_dist_to_goal_m:.0f} m)"
+                )
+                trials.append(trial)
+                continue
+
+            capture_label = goal_key if score.captured else "none"
+            trial.outcome = CandidateOutcome.RUNNER_UP
+            trial.detail = (
+                f"Δs={score.delta_s_m:.0f} m  s={score.s_after_m / 1000.0:.1f} km  "
+                f"Δdist={score.delta_dist_to_goal_m:.0f} m  capture={capture_label}  "
+                f"hop={','.join(score.hop_neighbors)}  area={trial.footprint_area_km2:.1f} km²"
+            )
+            sort_key = corridor_sort_key(score)
+            pick = PlannedSuggestion(
+                lat=trial.candidate.lat,
+                lon=trial.candidate.lon,
+                elev_m=trial.candidate.elev_m,
+                gain_cells=max(0, int(round(score.delta_s_m))),
+                strategy=trial.candidate.strategy,
+                iteration=iteration,
+                rationale=(
+                    f"Corridor #{iteration}: +{score.delta_s_m / 1000.0:.1f} km along path toward "
+                    f"{goal_key} ({target_label}, capture={capture_label})"
+                ),
+            )
+            ev_scored = _CandidateTrialEval(trial=trial, pick=pick)
+            if best_score is None or sort_key > best_score:
+                if best_eval is not None:
+                    best_eval.trial.outcome = CandidateOutcome.RUNNER_UP
+                best_score = sort_key
+                best_eval = ev_scored
+                trial.outcome = CandidateOutcome.SELECTED
+            trials.append(trial)
+
+    summary = summarize_mesh_grow_outcomes(t.outcome.value for t in trials)
+    winner = "yes" if best_eval is not None and best_eval.pick is not None else "no"
+    print(
+        f"site suggest: corridor scoring done: {len(evals)} trial(s), "
+        f"scorable={scorable}, winner={winner}, {summary}",
+        flush=True,
+    )
+
+    if best_eval is None or best_eval.pick is None:
+        return None, None, trials
+    return best_eval.pick, best_eval.trial.footprint, trials
+
+
 def _candidate_loc_key(c: SiteCandidate) -> tuple[int, int]:
     return (int(round(c.lat * 1e5)), int(round(c.lon * 1e5)))
+
+
+def _corridor_viewshed_hook(
+    ctx: SiteSuggestionContext | None,
+    *,
+    corridor_grow: bool,
+    iteration: int,
+    phase: str,
+):
+    if not corridor_grow or ctx is None:
+        return None
+    state = ctx.corridor_state
+    if state is None or state.active_goal_key is None:
+        return None
+    goal_key = str(state.active_goal_key)
+
+    def on_ready(
+        trial_index: int,
+        cand: SiteCandidate,
+        workdir: Path,
+        footprint: BaseGeometry | None,
+    ) -> None:
+        from peaky_finders.site_suggestions.corridor_kml import record_corridor_trial_viewshed
+
+        has_fp = footprint is not None and not footprint.is_empty
+        record_corridor_trial_viewshed(
+            ctx,
+            goal_key=goal_key,
+            iteration=iteration,
+            phase=phase,
+            index=trial_index,
+            lat=float(cand.lat),
+            lon=float(cand.lon),
+            elev_m=cand.elev_m,
+            strategy=str(cand.strategy),
+            workdir=workdir,
+            has_footprint=has_fp,
+        )
+
+    return on_ready
+
+
+def _record_corridor_iteration_kml(
+    *,
+    ctx: SiteSuggestionContext,
+    iteration: int,
+    trials: list[CandidateTrial],
+    best: PlannedSuggestion | None,
+) -> None:
+    state = ctx.corridor_state
+    if state is None or state.active_goal_key is None:
+        return
+    from peaky_finders.site_suggestions.corridor_kml import (
+        record_corridor_pick,
+        record_corridor_trials,
+    )
+
+    goal_key = str(state.active_goal_key)
+    record_corridor_trials(ctx, goal_key=goal_key, iteration=iteration, trials=trials)
+    if best is not None:
+        selected = next((t for t in trials if t.outcome == CandidateOutcome.SELECTED), None)
+        record_corridor_pick(
+            ctx,
+            goal_key=goal_key,
+            iteration=best.iteration,
+            lat=best.lat,
+            lon=best.lon,
+            elev_m=best.elev_m,
+            strategy=best.strategy,
+            workdir=selected.workdir if selected is not None else None,
+        )
+
+
+def _record_corridor_trials_kml(
+    *,
+    ctx: SiteSuggestionContext | None,
+    corridor_grow: bool,
+    iteration: int,
+    trials: list[CandidateTrial],
+) -> None:
+    if not corridor_grow or ctx is None:
+        return
+    state = ctx.corridor_state
+    if state is None or state.active_goal_key is None:
+        return
+    from peaky_finders.site_suggestions.corridor_kml import record_corridor_trials
+
+    goal_key = str(state.active_goal_key)
+    record_corridor_trials(ctx, goal_key=goal_key, iteration=iteration, trials=trials)
 
 
 def _mesh_grow_refine_seeds_from_coarse_evals(
@@ -688,6 +932,85 @@ def _mesh_grow_refine_seeds_from_coarse_evals(
     return centers
 
 
+def _corridor_refine_seeds_from_coarse_evals(
+    *,
+    coarse_evals: list[_CandidateTrialEval],
+    ctx: SiteSuggestionContext,
+    refine_top_n: int,
+    verbose: bool,
+    score_cache: dict[int, CorridorTrialScore | None],
+) -> list[SiteCandidate]:
+    top_n = max(0, int(refine_top_n))
+    if top_n <= 0:
+        return []
+
+    score_ctx = build_corridor_score_context(ctx)
+    if score_ctx is None:
+        return []
+
+    pending_ev: list[_CandidateTrialEval] = []
+    for ev in coarse_evals:
+        trial = ev.trial
+        if trial.footprint is None or trial.outcome == CandidateOutcome.VIEWSHED_FAILED:
+            continue
+        if trial.index not in score_cache:
+            pending_ev.append(ev)
+
+    if pending_ev:
+        batch_scores = score_corridor_trials(
+            score_ctx=score_ctx,
+            trials=[
+                (ev.trial.candidate.lat, ev.trial.candidate.lon, ev.trial.footprint)
+                for ev in pending_ev
+            ],
+        )
+        for ev, score in zip(pending_ev, batch_scores, strict=True):
+            score_cache[ev.trial.index] = score
+
+    ranked: list[tuple[tuple, _CandidateTrialEval, CorridorTrialScore]] = []
+    for ev in coarse_evals:
+        trial = ev.trial
+        if trial.footprint is None or trial.outcome == CandidateOutcome.VIEWSHED_FAILED:
+            continue
+        score = score_cache.get(trial.index)
+        if score is None or not corridor_trial_has_progress(score):
+            continue
+        ranked.append((corridor_sort_key(score), ev, score))
+
+    ranked.sort(key=lambda row: row[0], reverse=True)
+
+    centers: list[SiteCandidate] = []
+    seen: set[tuple[int, int]] = set()
+    for sort_key, ev, score in ranked:
+        cand = ev.trial.candidate
+        key = _candidate_loc_key(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        capture_label = score_ctx.goal.key if score.captured else "none"
+        suggest_log(
+            verbose,
+            f"site suggest:     refine seed {_format_candidate_brief(cand)} "
+            f"corridor_score Δs={score.delta_s_m:.0f} m capture={capture_label} sort={sort_key}",
+        )
+        centers.append(
+            SiteCandidate(
+                lat=cand.lat,
+                lon=cand.lon,
+                elev_m=cand.elev_m,
+                strategy="refine_seed",
+            )
+        )
+        if len(centers) >= top_n:
+            break
+
+    if centers:
+        suggest_log(verbose, f"site suggest:     refine seeds from coarse corridor score: {len(centers)}")
+    else:
+        suggest_log(verbose, "site suggest:     refine seeds: no scorable coarse corridor trials")
+    return centers
+
+
 def _run_candidate_trials(
     *,
     candidates: list[SiteCandidate],
@@ -705,9 +1028,11 @@ def _run_candidate_trials(
     verbose: bool,
     suggest_ctx: SiteSuggestionContext | None = None,
     mesh_grow: bool = False,
+    corridor_grow: bool = False,
 ) -> tuple[PlannedSuggestion | None, BaseGeometry | None, list[CandidateTrial]]:
     workers = max(1, int(jobs))
     mesh_score_cache: dict[int, MeshGrowTrialScore | None] = {}
+    corridor_score_cache: dict[int, CorridorTrialScore | None] = {}
 
     refine_candidates: list[SiteCandidate] = []
 
@@ -730,6 +1055,13 @@ def _run_candidate_trials(
                 verbose=verbose,
                 jobs=workers,
                 footprint_runner=footprint_runner,
+                trial_index_start=1,
+                on_viewshed_ready=_corridor_viewshed_hook(
+                    suggest_ctx,
+                    corridor_grow=corridor_grow,
+                    iteration=iteration,
+                    phase="coarse",
+                ),
             )
         except Exception as exc:
             print(f"site suggest: batch viewshed failed: {exc}", flush=True)
@@ -744,8 +1076,39 @@ def _run_candidate_trials(
         target_label=target_label,
         retain_footprint=mesh_grow,
     )
+    if corridor_grow:
+        _record_corridor_trials_kml(
+            ctx=suggest_ctx,
+            corridor_grow=corridor_grow,
+            iteration=iteration,
+            trials=[ev.trial for ev in coarse_evals],
+        )
 
-    if refine.refine_enabled and int(refine.refine_top_n) > 0 and mesh_grow and suggest_ctx is not None:
+    if refine.refine_enabled and int(refine.refine_top_n) > 0 and corridor_grow and suggest_ctx is not None:
+        with suggest_step(
+            verbose,
+            f"pick refine seeds from coarse corridor score (top {refine.refine_top_n})",
+        ):
+            refine_centers = _corridor_refine_seeds_from_coarse_evals(
+                coarse_evals=coarse_evals,
+                ctx=suggest_ctx,
+                refine_top_n=int(refine.refine_top_n),
+                verbose=verbose,
+                score_cache=corridor_score_cache,
+            )
+        if refine_centers:
+            refine_candidates = generate_mesh_refine_candidates(
+                centers=refine_centers,
+                eligible_ll=eligible_ll,
+                refine=refine,
+                ctx=suggest_ctx,
+                verbose=verbose,
+            )
+            coarse_keys = {_candidate_loc_key(c) for c in candidates}
+            refine_candidates = [
+                c for c in refine_candidates if _candidate_loc_key(c) not in coarse_keys
+            ]
+    elif refine.refine_enabled and int(refine.refine_top_n) > 0 and mesh_grow and suggest_ctx is not None:
         with suggest_step(
             verbose,
             f"pick refine seeds from coarse mesh score (top {refine.refine_top_n})",
@@ -799,7 +1162,7 @@ def _run_candidate_trials(
             ]
 
     refine_evals: list[_CandidateTrialEval] = []
-    if refine_candidates and mesh_grow:
+    if refine_candidates and (mesh_grow or corridor_grow):
         with suggest_step(
             verbose,
             f"refine batch viewshed ({len(refine_candidates)} samples around top {refine.refine_top_n})",
@@ -812,6 +1175,13 @@ def _run_candidate_trials(
                 verbose=verbose,
                 jobs=workers,
                 footprint_runner=footprint_runner,
+                trial_index_start=len(candidates) + 1,
+                on_viewshed_ready=_corridor_viewshed_hook(
+                    suggest_ctx,
+                    corridor_grow=corridor_grow,
+                    iteration=iteration,
+                    phase="refine",
+                ),
             )
         refine_evals = _trials_from_batch_results(
             candidates=refine_candidates,
@@ -822,6 +1192,7 @@ def _run_candidate_trials(
             target_label=target_label,
             start_index=len(candidates) + 1,
             retain_footprint=True,
+            phase="refine",
         )
     elif refine_candidates and not mesh_grow:
         with suggest_step(
@@ -836,6 +1207,13 @@ def _run_candidate_trials(
                 verbose=verbose,
                 jobs=workers,
                 footprint_runner=footprint_runner,
+                trial_index_start=len(candidates) + 1,
+                on_viewshed_ready=_corridor_viewshed_hook(
+                    suggest_ctx,
+                    corridor_grow=corridor_grow,
+                    iteration=iteration,
+                    phase="refine",
+                ),
             )
         refine_evals = _trials_from_batch_results(
             candidates=refine_candidates,
@@ -846,9 +1224,27 @@ def _run_candidate_trials(
             target_label=target_label,
             start_index=len(candidates) + 1,
             retain_footprint=mesh_grow,
+            phase="refine",
+        )
+
+    if corridor_grow and refine_evals:
+        _record_corridor_trials_kml(
+            ctx=suggest_ctx,
+            corridor_grow=corridor_grow,
+            iteration=iteration,
+            trials=[ev.trial for ev in refine_evals],
         )
 
     all_evals = [*coarse_evals, *refine_evals]
+    if corridor_grow and suggest_ctx is not None:
+        return _select_corridor_from_evals(
+            evals=all_evals,
+            ctx=suggest_ctx,
+            iteration=iteration,
+            target_label=target_label,
+            verbose=verbose,
+            score_cache=corridor_score_cache,
+        )
     if mesh_grow and suggest_ctx is not None:
         return _select_mesh_grow_from_evals(
             evals=all_evals,
@@ -881,6 +1277,7 @@ def plan_greedy_site_suggestions(
     cfg = resolved_site_suggestions_config(preset.bundle)
     provider = resolve_site_suggestion_strategy(cfg)
     mesh_grow = cfg.strategy == SiteSuggestionStrategy.MESH_BACKBONE
+    corridor_grow = mesh_grow and cfg.mesh_backbone.routing == MeshBackboneRouting.CORRIDOR
     if mesh_grow and not cfg.mesh_backbone.goals:
         raise ValueError("mesh-backbone strategy requires mesh_backbone.goals")
     existing_suggested = count_suggested_sites(preset)
@@ -941,6 +1338,8 @@ def plan_greedy_site_suggestions(
         jobs=jobs,
         verbose=verbose,
     )
+    if corridor_grow:
+        suggest_ctx.corridor_state = CorridorGrowState()
 
     if provider.planning_complete(suggest_ctx):
         msg = f"site suggest: {provider.name} goal already met — no picks needed"
@@ -996,6 +1395,8 @@ def plan_greedy_site_suggestions(
         candidates = provider.generate_candidates(suggest_ctx, iteration=site_n - 1)
         _log_candidate_shortlist(verbose=verbose, iteration=site_n, candidates=candidates)
 
+        corridor_active = corridor_grow
+
         if not candidates:
             print(
                 f"site suggest: no candidates at attempt {attempt} (sites written {budget_progress})",
@@ -1019,9 +1420,33 @@ def plan_greedy_site_suggestions(
             verbose=verbose,
             suggest_ctx=suggest_ctx,
             mesh_grow=mesh_grow,
+            corridor_grow=corridor_active,
         )
 
+        if corridor_active:
+            _record_corridor_iteration_kml(
+                ctx=suggest_ctx,
+                iteration=site_n,
+                trials=trials,
+                best=best,
+            )
+
         if best is None or best_footprint is None:
+            if corridor_active and corridor_stall_recovery(suggest_ctx):
+                print(
+                    f"site suggest: corridor recovery at attempt {attempt} "
+                    f"(sites written {budget_progress})",
+                    flush=True,
+                )
+                _log_trial_results(
+                    verbose=verbose,
+                    iteration=site_n,
+                    goal=goal,
+                    target_label=target_label,
+                    trials=trials,
+                    best=None,
+                )
+                continue
             print(
                 f"site suggest: no improving candidate at attempt {attempt} "
                 f"(sites written {budget_progress})",
@@ -1076,6 +1501,9 @@ def plan_greedy_site_suggestions(
                 BackboneSite(slug=session_slug, lat=best.lat, lon=best.lon)
             )
             suggest_ctx.session_footprints[session_slug] = best_footprint
+        if corridor_active and suggest_ctx.corridor_state is not None:
+            suggest_ctx.corridor_state.stall_count = 0
+            suggest_ctx.corridor_state.recovery_buffer_bonus_m = 0.0
         winners.append(best)
         new_after = len(winners)
         uncovered_after = 100.0 * grid.uncovered_fraction(goal_depth=goal)
@@ -1096,6 +1524,11 @@ def plan_greedy_site_suggestions(
             uncovered_pct=uncovered_after,
             max_steps=max_steps,
         )
+
+    if corridor_grow:
+        from peaky_finders.site_suggestions.corridor_kml import flush_corridor_kml
+
+        flush_corridor_kml(suggest_ctx)
 
     if verbose and winners:
         suggest_log(verbose, "site suggest: ── final summary ──")
@@ -1123,39 +1556,4 @@ def planned_to_preset_entries(winners: list[PlannedSuggestion]) -> list[dict]:
         if w.elev_m is not None:
             ent["elevation_m"] = float(w.elev_m)
         out.append(ent)
-    return out
-
-
-def write_suggest_run_manifest(
-    suggest_root: Path,
-    *,
-    preset_path: Path,
-    n_requested: int | None,
-    winners: list[PlannedSuggestion],
-    new_slugs: list[str],
-) -> Path:
-    root = Path(suggest_root).expanduser().resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    out = root / "last_run.json"
-    body = {
-        "format": "peaky_site_suggest/v1",
-        "preset": str(preset_path.resolve()),
-        "at": datetime.now(timezone.utc).isoformat(),
-        "n_requested": n_requested,
-        "n_written": len(new_slugs),
-        "slugs": new_slugs,
-        "picks": [
-            {
-                "slug": slug,
-                "lat": w.lat,
-                "lon": w.lon,
-                "elev_m": w.elev_m,
-                "gain_cells": w.gain_cells,
-                "strategy": w.strategy,
-                "rationale": w.rationale,
-            }
-            for slug, w in zip(new_slugs, winners, strict=False)
-        ],
-    }
-    out.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return out

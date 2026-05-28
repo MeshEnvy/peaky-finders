@@ -32,6 +32,7 @@ from peaky_finders.viewshed_workspace import (
 
 
 FootprintRunner = Callable[..., BaseGeometry | None]
+ViewshedReadyCallback = Callable[[int, SiteCandidate, Path, BaseGeometry | None], None]
 
 
 @dataclass(frozen=True)
@@ -169,6 +170,19 @@ def _collect_one_candidate_footprint(
     return index, result, _footprint_status(fp)
 
 
+def _notify_viewshed_ready(
+    callback: ViewshedReadyCallback | None,
+    *,
+    trial_index: int,
+    cand: SiteCandidate,
+    workdir: Path,
+    footprint: BaseGeometry | None,
+) -> None:
+    if callback is None:
+        return
+    callback(trial_index, cand, workdir, footprint)
+
+
 def _collect_candidate_footprints(
     *,
     planned: list[tuple[SiteCandidate, PlannedViewshedWorkspace, str, bool]],
@@ -177,6 +191,8 @@ def _collect_candidate_footprints(
     verbose: bool,
     jobs: int,
     footprint_runner: FootprintRunner | None = None,
+    trial_index_start: int = 1,
+    on_viewshed_ready: ViewshedReadyCallback | None = None,
 ) -> dict[tuple[int, int], CandidateViewshedResult]:
     n = len(planned)
     workers = max(1, int(jobs))
@@ -188,14 +204,16 @@ def _collect_candidate_footprints(
 
     with suggest_step(verbose, label):
         if mx <= 1 or n <= 1:
-            for i, (cand, ws, _digest, was_cached) in enumerate(planned, start=1):
+            for offset, (cand, ws, _digest, was_cached) in enumerate(planned):
+                trial_index = trial_index_start + offset
                 if footprint_runner is not None and verbose:
                     suggest_progress(
                         verbose,
-                        f"mock viewshed [{i}/{n}] {_format_loc(cand.lat, cand.lon)}…",
+                        f"mock viewshed [{trial_index}/{trial_index_start + n - 1}] "
+                        f"{_format_loc(cand.lat, cand.lon)}…",
                     )
                 _index, result, area_s = _collect_one_candidate_footprint(
-                    index=i,
+                    index=trial_index,
                     cand=cand,
                     ws=ws,
                     was_cached=was_cached,
@@ -204,9 +222,16 @@ def _collect_candidate_footprints(
                     footprint_runner=footprint_runner,
                 )
                 out[_candidate_key(cand)] = result
+                _notify_viewshed_ready(
+                    on_viewshed_ready,
+                    trial_index=trial_index,
+                    cand=cand,
+                    workdir=ws.workdir,
+                    footprint=result.footprint,
+                )
                 if verbose:
                     tag = "footprint" if footprint_runner is None else "mock viewshed"
-                    suggest_progress(verbose, f"{tag} [{i}/{n}] {area_s}")
+                    suggest_progress(verbose, f"{tag} [{trial_index}/{trial_index_start + n - 1}] {area_s}")
             return out
 
         done = 0
@@ -215,14 +240,15 @@ def _collect_candidate_footprints(
             with ProcessPoolExecutor(max_workers=mx, initializer=_limit_nested_blas_threads) as pool:
                 futs = {
                     pool.submit(_ensure_footprint_worker, str(ws.workdir.resolve()), style_dict): (
+                        trial_index_start + offset,
                         cand,
                         ws,
                         was_cached,
                     )
-                    for _i, (cand, ws, _digest, was_cached) in enumerate(planned, start=1)
+                    for offset, (cand, ws, _digest, was_cached) in enumerate(planned)
                 }
                 for fut in as_completed(futs):
-                    cand, ws, was_cached = futs[fut]
+                    trial_index, cand, ws, was_cached = futs[fut]
                     fp = fut.result()
                     result = CandidateViewshedResult(
                         candidate=cand,
@@ -231,6 +257,13 @@ def _collect_candidate_footprints(
                         from_cache=was_cached and fp is not None,
                     )
                     out[_candidate_key(cand)] = result
+                    _notify_viewshed_ready(
+                        on_viewshed_ready,
+                        trial_index=trial_index,
+                        cand=cand,
+                        workdir=ws.workdir,
+                        footprint=fp,
+                    )
                     done += 1
                     if verbose:
                         suggest_progress(verbose, f"footprint [{done}/{n}] {_footprint_status(fp)}")
@@ -240,19 +273,26 @@ def _collect_candidate_footprints(
             futs = {
                 pool.submit(
                     _collect_one_candidate_footprint,
-                    index=i,
+                    index=trial_index_start + offset,
                     cand=cand,
                     ws=ws,
                     was_cached=was_cached,
                     preset=preset,
                     preset_path=preset_path,
                     footprint_runner=footprint_runner,
-                ): i
-                for i, (cand, ws, _digest, was_cached) in enumerate(planned, start=1)
+                ): trial_index_start + offset
+                for offset, (cand, ws, _digest, was_cached) in enumerate(planned)
             }
             for fut in as_completed(futs):
                 index, result, area_s = fut.result()
                 out[_candidate_key(result.candidate)] = result
+                _notify_viewshed_ready(
+                    on_viewshed_ready,
+                    trial_index=index,
+                    cand=result.candidate,
+                    workdir=result.workdir,
+                    footprint=result.footprint,
+                )
                 done += 1
                 if verbose:
                     tag = "footprint" if footprint_runner is None else "mock viewshed"
@@ -270,6 +310,8 @@ def run_candidate_batch_viewsheds(
     jobs: int = 1,
     footprint_runner: FootprintRunner | None = None,
     extra_candidates: list[SiteCandidate] | None = None,
+    trial_index_start: int = 1,
+    on_viewshed_ready: ViewshedReadyCallback | None = None,
 ) -> dict[tuple[int, int], CandidateViewshedResult]:
     """Evaluate ``candidates`` with one ``splatter run-batch`` when possible.
 
@@ -287,6 +329,8 @@ def run_candidate_batch_viewsheds(
         verbose=verbose,
         jobs=jobs,
         footprint_runner=footprint_runner,
+        trial_index_start=trial_index_start,
+        on_viewshed_ready=on_viewshed_ready,
     )
 
 
@@ -299,6 +343,8 @@ def _run_candidate_batch_viewshed_groups(
     verbose: bool = False,
     jobs: int = 1,
     footprint_runner: FootprintRunner | None = None,
+    trial_index_start: int = 1,
+    on_viewshed_ready: ViewshedReadyCallback | None = None,
 ) -> dict[tuple[int, int], CandidateViewshedResult]:
     if not any(candidate_groups):
         return {}
@@ -334,6 +380,8 @@ def _run_candidate_batch_viewshed_groups(
             verbose=verbose,
             jobs=jobs,
             footprint_runner=footprint_runner,
+            trial_index_start=trial_index_start,
+            on_viewshed_ready=on_viewshed_ready,
         )
 
     stale_workspaces = [ws for _c, ws, _digest, cached in planned if not cached]
@@ -360,6 +408,8 @@ def _run_candidate_batch_viewshed_groups(
         preset_path=preset_path,
         verbose=verbose,
         jobs=jobs,
+        trial_index_start=trial_index_start,
+        on_viewshed_ready=on_viewshed_ready,
     )
 
 

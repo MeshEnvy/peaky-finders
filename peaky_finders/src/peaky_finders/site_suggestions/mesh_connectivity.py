@@ -258,8 +258,16 @@ def minimum_component_gap(
 
 
 def main_footprint_slugs(ctx: SiteSuggestionContext) -> frozenset[str] | None:
-    """Main-component slugs during healing; ``None`` during normal grow."""
-    healing = healing_context(ctx)
-    if healing is None:
-        return None
-    return healing.main_slugs
+    """Main-component slugs when attaching from main mesh (bridge goals or greedy heal)."""
+    from peaky_finders.site_suggestions.mesh_goals import is_bridge_goal_key
+
+    active: str | None = None
+    if ctx.corridor_state is not None:
+        active = ctx.corridor_state.active_goal_key
+    if active is not None and is_bridge_goal_key(active):
+        healing = healing_context(ctx)
+        return healing.main_slugs if healing is not None else None
+    if mesh_healing_needed(ctx):
+        healing = healing_context(ctx)
+        return healing.main_slugs if healing is not None else None
+    return None
