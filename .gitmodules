@@ -1,6 +1,3 @@
 [submodule "splatter"]
 	path = splatter
 	url = git@github.com:MeshEnvy/splatter.git
-[submodule "splat"]
-	path = splat
-	url = git@github.com:jmcmellen/splat.git

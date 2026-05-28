@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "peaky-finders"
 version = "0.1.0"
-description = "LoRa viewshed CLI (native splatter/SPLAT, KML output)"
+description = "LoRa viewshed CLI (splatter, KML output)"
 authors = []
 packages = [{ include = "peaky_finders", from = "src" }]
 

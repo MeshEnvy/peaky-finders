@@ -289,7 +289,7 @@ def build_granular_viewshed_argument_parser() -> argparse.ArgumentParser:
         "--verbose",
         "-v",
         action="store_true",
-        help="Extra coverage stderr (splatter --verbose / SPLAT debug logging).",
+        help="Extra coverage stderr (splatter --verbose).",
     )
     return p
 
@@ -386,7 +386,6 @@ def run_splat(args: argparse.Namespace) -> int:
 
     kml_ov = job.bundle.kml_overlay if job.bundle else None
     viewshed_cov_style = resolved_viewshed_coverage_kml_style(kml_ov)
-    provider = job.simulation.provider
 
     if phase_opt == "request":
         return 0
@@ -396,7 +395,6 @@ def run_splat(args: argparse.Namespace) -> int:
 
         return run_viewshed_coverage(
             site_name=site_label_ws,
-            provider=provider,
             data_dir=data_dir_ws,
             coverage_verbose=cov_verbose,
         )

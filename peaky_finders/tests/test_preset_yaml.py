@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from peaky_finders.sites_job import (
-    CoverageProvider,
     dump_preset_yaml_document,
     load_preset,
     read_preset_yaml_tree,
@@ -35,17 +34,10 @@ def test_require_preset_yaml_path_wrong_suffix() -> None:
         require_preset_yaml_path(Path("preset.txt"))
 
 
-def test_resolved_coverage_dispatcher_max_workers_per_provider_defaults() -> None:
+def test_resolved_coverage_dispatcher_max_workers_defaults() -> None:
     preset = load_preset(FIXTURE_MINIMAL)
     assert preset.simulation.max_workers.los == 1
-    assert preset.simulation.max_workers.splat == 8
     assert resolved_coverage_dispatcher_max_workers(preset) == 1
-    splat = preset.model_copy(
-        update={
-            "simulation": preset.simulation.model_copy(update={"provider": CoverageProvider.SPLAT})
-        }
-    )
-    assert resolved_coverage_dispatcher_max_workers(splat) == 8
 
 
 def test_preset_yaml_roundtrip_preserves_comments(tmp_path: Path) -> None:

@@ -53,7 +53,7 @@ from peaky_finders.mesh_pairwise_store import pairwise_complete_digest_matches
 from peaky_finders.preset_mapping import preset_to_request
 from peaky_finders.plss_mlrs_fetch import plss_bundle_build_stale
 from peaky_finders.preset_stamps import ensure_stamp, stamp_file_is_current, stamp_path
-from peaky_finders.sites_job import Preset, load_preset, resolved_preset_build_dir, CoverageProvider
+from peaky_finders.sites_job import Preset, load_preset, resolved_preset_build_dir
 from peaky_finders.skadi_dem import (
     read_dem_prefetch_stamp_fingerprint,
     skadi_missing_mirror_tiles_for_bounds,
@@ -427,10 +427,7 @@ def _flush_viewshed_coverage_batch(
     verbose: bool,
     jobs: int,
 ) -> dict[str, int]:
-    """Run one splatter ``run-batch`` for every stale LOS ``viewshed:*:coverage`` still pending."""
-    if preset.simulation.provider != CoverageProvider.LOS:
-        return {}
-
+    """Run one splatter ``run-batch`` for every stale ``viewshed:*:coverage`` still pending."""
     stale_coverage: list[str] = []
     for tid in sorted(pending):
         digest = _viewshed_coverage_digest(tid)

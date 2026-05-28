@@ -4,7 +4,7 @@
 
 # --- Propagation simulation (RF catalogs, antenna chains, coverage engine) ---
 simulation:
-  provider: los # los | splat — splatter (Fresnel/FSPL) vs legacy SPLAT binary
+  provider: los # splatter Fresnel/FSPL engine
   situation_pct: 95.0 # reliability margin on decode threshold (planned splatter wire)
   time_pct: 95.0
   radius_km: 60.0 # search disk / overlay frame, not expected range
@@ -24,7 +24,7 @@ simulation:
   environment_presets:
     nevada-desert:
       description: Great Basin arid open terrain — minimal foliage clutter
-      climate: desert # SPLAT ITM/ITWOM only; ignored by splatter
+      climate: desert # preset metadata only; ignored by splatter
       polarization: vertical
       clutter_height_m: 1.0 # splatter: added to terrain for knife-edge loss
       ground_dielectric_v_m: 15.0
