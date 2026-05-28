@@ -132,7 +132,15 @@ def generate_mesh_grow_candidates(ctx: SiteSuggestionContext) -> list[SiteCandid
     for goal in goals.values():
         cands.extend(_frontier_candidates_for_goal(ctx, goal=goal, cfg=mb, cap=per_goal))
 
-    return _dedupe_candidates(cands)[:cap]
+    cands = _dedupe_candidates(cands)[:cap]
+    from peaky_finders.site_suggestions.refine_peaks import attach_frontier_peak_candidates
+
+    return attach_frontier_peak_candidates(
+        ctx=ctx,
+        candidates=cands,
+        eligible_ll=ctx.eligible_ll,
+        verbose=ctx.verbose,
+    )
 
 
 generate_mesh_backbone_candidates = generate_mesh_grow_candidates

@@ -16,6 +16,10 @@ class StrategyRefineSettings:
     refine_top_n: int
     refine_radius_m: float
     refine_spacing_m: float
+    refine_peaks_enabled: bool = False
+    refine_peak_radius_m: float = 400.0
+    refine_peak_bin_size_m: float = 150.0
+    refine_peaks_per_seed: int = 8
 
 
 class SiteSuggestionStrategyProvider(Protocol):

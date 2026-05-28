@@ -17,6 +17,7 @@ from peaky_finders.build_configure import BuildConfigurePlan
 from peaky_finders.bundle_clips import ELIGIBLE_LAYER
 from peaky_finders.site_suggestions.batch_viewshed import run_candidate_batch_viewsheds
 from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_refine_candidates
+from peaky_finders.site_suggestions.refine_peaks import generate_mesh_refine_candidates
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_coverage_depth_grid
 from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step
@@ -171,6 +172,15 @@ def _log_planner_config(
         suggest_log(verbose, f"  refine_top_n: {mb.refine_top_n}")
         suggest_log(verbose, f"  refine_radius_m: {mb.refine_radius_m}")
         suggest_log(verbose, f"  refine_spacing_m: {mb.refine_spacing_m}")
+        suggest_log(verbose, f"  refine_peaks_enabled: {mb.refine_peaks_enabled}")
+        if mb.refine_peaks_enabled:
+            suggest_log(verbose, f"  refine_peak_radius_m: {mb.refine_peak_radius_m}")
+            suggest_log(verbose, f"  refine_peak_bin_size_m: {mb.refine_peak_bin_size_m}")
+            suggest_log(verbose, f"  refine_peaks_per_seed: {mb.refine_peaks_per_seed}")
+        suggest_log(verbose, f"  coarse_peaks_enabled: {mb.coarse_peaks_enabled}")
+        if mb.coarse_peaks_enabled:
+            suggest_log(verbose, f"  coarse_peak_radius_m: {mb.coarse_peak_radius_m}")
+            suggest_log(verbose, f"  coarse_peaks_per_sample: {mb.coarse_peaks_per_sample}")
     else:
         suggest_log(verbose, f"  max_candidates_per_round: {lg.max_candidates_per_round}")
         suggest_log(verbose, f"  max_clusters_per_round: {lg.max_clusters_per_round}")
@@ -588,6 +598,96 @@ def _select_mesh_grow_from_evals(
     return best_eval.pick, best_eval.trial.footprint, trials
 
 
+def _candidate_loc_key(c: SiteCandidate) -> tuple[int, int]:
+    return (int(round(c.lat * 1e5)), int(round(c.lon * 1e5)))
+
+
+def _mesh_grow_refine_seeds_from_coarse_evals(
+    *,
+    coarse_evals: list[_CandidateTrialEval],
+    ctx: SiteSuggestionContext,
+    refine_top_n: int,
+    jobs: int,
+    verbose: bool,
+    score_cache: dict[int, MeshGrowTrialScore | None],
+) -> list[SiteCandidate]:
+    """Pick refine centers from coarse trials ranked by mesh-grow score."""
+    top_n = max(0, int(refine_top_n))
+    if top_n <= 0:
+        return []
+
+    score_ctx = build_mesh_grow_score_context(ctx)
+    if score_ctx is None:
+        return []
+
+    pending_ev: list[_CandidateTrialEval] = []
+    for ev in coarse_evals:
+        trial = ev.trial
+        if trial.footprint is None or trial.outcome == CandidateOutcome.VIEWSHED_FAILED:
+            continue
+        if trial.index not in score_cache:
+            pending_ev.append(ev)
+
+    if pending_ev:
+        workers = max(1, int(jobs))
+        batch_scores = score_mesh_grow_trials(
+            score_ctx=score_ctx,
+            trials=[
+                (ev.trial.candidate.lat, ev.trial.candidate.lon, ev.trial.footprint)
+                for ev in pending_ev
+            ],
+            jobs=workers,
+        )
+        for ev, score in zip(pending_ev, batch_scores, strict=True):
+            score_cache[ev.trial.index] = score
+
+    ranked: list[tuple[tuple, _CandidateTrialEval, MeshGrowTrialScore]] = []
+    for ev in coarse_evals:
+        trial = ev.trial
+        if trial.footprint is None or trial.outcome == CandidateOutcome.VIEWSHED_FAILED:
+            continue
+        score = score_cache.get(trial.index)
+        if score is None or not mesh_grow_trial_has_progress(score):
+            continue
+        ranked.append((mesh_grow_sort_key(score), ev, score))
+
+    ranked.sort(key=lambda row: row[0], reverse=True)
+
+    centers: list[SiteCandidate] = []
+    seen: set[tuple[int, int]] = set()
+    for sort_key, ev, score in ranked:
+        cand = ev.trial.candidate
+        key = _candidate_loc_key(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        goal_label = score.best_goal_key or "?"
+        capture_label = ",".join(score.captured_goal_keys) or "none"
+        suggest_log(
+            verbose,
+            f"site suggest:     refine seed {_format_candidate_brief(cand)} "
+            f"mesh_score captures={len(score.captured_goal_keys)} "
+            f"best={goal_label} Δdist={score.best_delta_m:.0f} m capture={capture_label} "
+            f"sort={sort_key}",
+        )
+        centers.append(
+            SiteCandidate(
+                lat=cand.lat,
+                lon=cand.lon,
+                elev_m=cand.elev_m,
+                strategy="refine_seed",
+            )
+        )
+        if len(centers) >= top_n:
+            break
+
+    if centers:
+        suggest_log(verbose, f"site suggest:     refine seeds from coarse mesh score: {len(centers)}")
+    else:
+        suggest_log(verbose, "site suggest:     refine seeds: no scorable coarse mesh-grow trials")
+    return centers
+
+
 def _run_candidate_trials(
     *,
     candidates: list[SiteCandidate],
@@ -610,24 +710,6 @@ def _run_candidate_trials(
     mesh_score_cache: dict[int, MeshGrowTrialScore | None] = {}
 
     refine_candidates: list[SiteCandidate] = []
-    if refine.refine_enabled and int(refine.refine_top_n) > 0:
-        if mesh_grow:
-            ranked_point = sorted(
-                candidates,
-                key=lambda c: grid.point_marginal_gain_cells(c.lon, c.lat, goal_depth=goal),
-                reverse=True,
-            )
-            refine_centers = [
-                SiteCandidate(
-                    lat=c.lat,
-                    lon=c.lon,
-                    elev_m=c.elev_m,
-                    strategy="refine_seed",
-                )
-                for c in ranked_point[: int(refine.refine_top_n)]
-            ]
-        else:
-            refine_centers = []
 
     with suggest_step(verbose, f"coarse batch viewshed ({len(candidates)} candidates, workers={workers})"):
         for ci, cand in enumerate(candidates, start=1):
@@ -638,30 +720,13 @@ def _run_candidate_trials(
                 f"point_pre_gain={point_gain} cells",
             )
 
-        if mesh_grow and refine.refine_enabled and int(refine.refine_top_n) > 0:
-            if refine_centers:
-                refine_candidates = generate_refine_candidates(
-                    centers=refine_centers,
-                    eligible_ll=eligible_ll,
-                    refine_radius_m=float(refine.refine_radius_m),
-                    refine_spacing_m=float(refine.refine_spacing_m),
-                )
-                coarse_keys = {
-                    (int(round(c.lat * 1e5)), int(round(c.lon * 1e5))) for c in candidates
-                }
-                refine_candidates = [
-                    c
-                    for c in refine_candidates
-                    if (int(round(c.lat * 1e5)), int(round(c.lon * 1e5))) not in coarse_keys
-                ]
-
         try:
             coarse_batch = run_candidate_batch_viewsheds(
                 preset=preset,
                 preset_path=preset_path,
                 viewshed_root=plan.viewsheds_root,
                 candidates=candidates,
-                extra_candidates=refine_candidates if mesh_grow and refine_candidates else None,
+                extra_candidates=None,
                 verbose=verbose,
                 jobs=workers,
                 footprint_runner=footprint_runner,
@@ -680,7 +745,32 @@ def _run_candidate_trials(
         retain_footprint=mesh_grow,
     )
 
-    if refine.refine_enabled and int(refine.refine_top_n) > 0 and not mesh_grow:
+    if refine.refine_enabled and int(refine.refine_top_n) > 0 and mesh_grow and suggest_ctx is not None:
+        with suggest_step(
+            verbose,
+            f"pick refine seeds from coarse mesh score (top {refine.refine_top_n})",
+        ):
+            refine_centers = _mesh_grow_refine_seeds_from_coarse_evals(
+                coarse_evals=coarse_evals,
+                ctx=suggest_ctx,
+                refine_top_n=int(refine.refine_top_n),
+                jobs=workers,
+                verbose=verbose,
+                score_cache=mesh_score_cache,
+            )
+        if refine_centers:
+            refine_candidates = generate_mesh_refine_candidates(
+                centers=refine_centers,
+                eligible_ll=eligible_ll,
+                refine=refine,
+                ctx=suggest_ctx,
+                verbose=verbose,
+            )
+            coarse_keys = {_candidate_loc_key(c) for c in candidates}
+            refine_candidates = [
+                c for c in refine_candidates if _candidate_loc_key(c) not in coarse_keys
+            ]
+    elif refine.refine_enabled and int(refine.refine_top_n) > 0 and not mesh_grow:
         ranked = sorted(
             (ev for ev in coarse_evals if ev.pick is not None and ev.trial.footprint_gain_cells),
             key=lambda ev: int(ev.trial.footprint_gain_cells or 0),
@@ -703,20 +793,29 @@ def _run_candidate_trials(
                 refine_radius_m=float(refine.refine_radius_m),
                 refine_spacing_m=float(refine.refine_spacing_m),
             )
-            coarse_keys = {
-                (int(round(c.lat * 1e5)), int(round(c.lon * 1e5))) for c in candidates
-            }
+            coarse_keys = {_candidate_loc_key(c) for c in candidates}
             refine_candidates = [
-                c
-                for c in refine_candidates
-                if (int(round(c.lat * 1e5)), int(round(c.lon * 1e5))) not in coarse_keys
+                c for c in refine_candidates if _candidate_loc_key(c) not in coarse_keys
             ]
 
     refine_evals: list[_CandidateTrialEval] = []
     if refine_candidates and mesh_grow:
+        with suggest_step(
+            verbose,
+            f"refine batch viewshed ({len(refine_candidates)} samples around top {refine.refine_top_n})",
+        ):
+            refine_batch = run_candidate_batch_viewsheds(
+                preset=preset,
+                preset_path=preset_path,
+                viewshed_root=plan.viewsheds_root,
+                candidates=refine_candidates,
+                verbose=verbose,
+                jobs=workers,
+                footprint_runner=footprint_runner,
+            )
         refine_evals = _trials_from_batch_results(
             candidates=refine_candidates,
-            batch_results=coarse_batch,
+            batch_results=refine_batch,
             iteration=iteration,
             goal=goal,
             grid=grid,

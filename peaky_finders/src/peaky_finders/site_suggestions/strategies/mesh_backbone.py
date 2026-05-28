@@ -38,6 +38,10 @@ class MeshBackboneStrategy:
             refine_top_n=int(mb.refine_top_n),
             refine_radius_m=float(mb.refine_radius_m),
             refine_spacing_m=float(mb.refine_spacing_m),
+            refine_peaks_enabled=bool(mb.refine_peaks_enabled),
+            refine_peak_radius_m=float(mb.refine_peak_radius_m),
+            refine_peak_bin_size_m=float(mb.refine_peak_bin_size_m),
+            refine_peaks_per_seed=int(mb.refine_peaks_per_seed),
         )
 
     def resolve_step_budget(self, cfg: BundleSiteSuggestionsConfig, cli_n: int) -> int | None:
