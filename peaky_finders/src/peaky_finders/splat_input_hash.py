@@ -1,11 +1,10 @@
-"""Host-safe SPLAT input fingerprint (no SPLAT / AWS / raster deps).
+"""Host-safe coverage input fingerprint (no AWS / raster deps).
 
 Stable digest of propagation parameters for workspace grouping (``viewshed_workspace_digest``)
-and SPLAT metadata. Schema ``v`` bumps when normalization or coverage semantics change
-(e.g. SPLAT ITM vs splatter Fresnel/FSPL).
-Version **6**: mandatory ``modem`` block for splatter; LoRa cutoff + RSS reliability margin hashed; SPLAT ignores ``modem``.
+and viewshed metadata. Schema ``v`` bumps when normalization or coverage semantics change.
+Version **6**: mandatory ``modem`` block; LoRa cutoff + RSS reliability margin hashed.
 
-Coverage engines run as native binaries (``splatter`` on PATH, ``SPLAT_PATH`` for legacy SPLAT).
+Coverage runs via native ``splatter`` on PATH.
 Skadi tiles use global ``SPLAT_CACHE`` (default ``/.peaky/splat_cache`` in the container).
 """
 
@@ -21,7 +20,7 @@ SPLAT_CACHE_SCHEMA_VERSION = 6
 
 
 def normalize_splat_request(request: SplatCoverageRequest) -> SplatCoverageRequest:
-    """Match ``Splat.run_coverage_to_workdir`` input shaping (radius cap, always SPLAT-HD terrain)."""
+    """Normalize request fields that affect splatter output (radius cap, terrain resolution)."""
     r = request.model_copy()
     r.high_resolution = True
     if r.radius > 100000:
@@ -31,7 +30,7 @@ def normalize_splat_request(request: SplatCoverageRequest) -> SplatCoverageReque
 
 
 def splat_input_sha256(request: SplatCoverageRequest) -> str:
-    """Stable hash of inputs that determine SPLAT output (terrain aside)."""
+    """Stable hash of inputs that determine coverage output (terrain aside)."""
     r = normalize_splat_request(request)
     blob = json.dumps(
         {"v": SPLAT_CACHE_SCHEMA_VERSION, "req": r.model_dump(mode="json")},

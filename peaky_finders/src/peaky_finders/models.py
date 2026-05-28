@@ -17,7 +17,7 @@ RadioClimate = Literal[
 
 
 class LoRaModemParams(BaseModel):
-    """LoRa modem / air-interface parameters (splatter decodes cutoff from here; SPLAT ignores this block)."""
+    """LoRa modem / air-interface parameters (splatter decodes cutoff from here)."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -29,7 +29,7 @@ class LoRaModemParams(BaseModel):
 
 
 class SplatCoverageRequest(BaseModel):
-    """SPLAT/Meshtastic-compatible coverage request (tx_power in dBm)."""
+    """Splatter-compatible coverage request (tx_power in dBm)."""
 
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)
@@ -55,8 +55,7 @@ class SplatCoverageRequest(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Peaky LoS only: defines the Fresnel clearance floor used with knife-edge diffraction "
-            "(fraction of F₁ below LOS); SPLAT ignores."
+            "Fresnel clearance floor used with knife-edge diffraction (fraction of F₁ below LOS)."
         ),
     )
     colormap: str = "rainbow"
@@ -65,5 +64,5 @@ class SplatCoverageRequest(BaseModel):
     high_resolution: bool = True
     modem: LoRaModemParams | None = Field(
         default=None,
-        description="Peaky/populated preset: required for splatter; ignored by SPLAT (flat fields only).",
+        description="Populated preset: required for splatter decode cutoff.",
     )

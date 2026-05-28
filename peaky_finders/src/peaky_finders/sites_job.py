@@ -250,10 +250,9 @@ def write_preset_document(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 class CoverageProvider(StrEnum):
-    """Which coverage Docker stack ``simulation.provider`` selects."""
+    """Coverage engine selected by ``simulation.provider`` (splatter Fresnel/FSPL)."""
 
     LOS = "los"
-    SPLAT = "splat"
 
 
 class SimulationMaxWorkers(BaseModel):
@@ -265,11 +264,6 @@ class SimulationMaxWorkers(BaseModel):
         default=1,
         ge=1,
         description="Concurrent splatter jobs inside one ``run-batch`` Docker invocation (``SPLATTER_BATCH_JOBS``).",
-    )
-    splat: int = Field(
-        default=8,
-        ge=1,
-        description="Unused at runtime today; SPLAT runs one workspace per ``peaky viewshed`` invocation.",
     )
 
 
@@ -287,8 +281,7 @@ class SimulationConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Peaky LoS only: Fresnel clearance floor (fraction of F₁); obstruction depth feeds knife-edge loss; "
-            "ignored by legacy SPLAT."
+            "Fresnel clearance floor (fraction of F₁); obstruction depth feeds knife-edge loss."
         ),
     )
     coverage_pessimism_db: float = Field(
@@ -296,7 +289,7 @@ class SimulationConfig(BaseModel):
         ge=0.0,
         description=(
             "Extra decode margin (dB) for conservative coverage: added to ``implementation_margin_db`` only in "
-            "emitted ``request.json`` (splatter + SPLAT thresholds). ``modem_presets`` stay datasheet-spec."
+            "emitted ``request.json``. ``modem_presets`` stay datasheet-spec."
         ),
     )
     max_workers: SimulationMaxWorkers = Field(
@@ -309,7 +302,7 @@ class SimulationConfig(BaseModel):
     )
     environment_presets: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
-        description="Named RF environment profiles (climate, ground, clutter — SPLAT-oriented; clutter used by splatter).",
+        description="Named RF environment profiles (clutter height and ground parameters for splatter).",
     )
     modem: str | dict[str, Any] | None = Field(
         default=None,
@@ -1005,7 +998,7 @@ class BundleKmlOverlayStyles(BaseModel):
     )
     viewshed_coverage: BundleKmlLayerStyle | None = Field(
         default=None,
-        description="SPLAT coverage footprint KML under sites/viewsheds/polygon (fills only when SPLAT polygonizes).",
+        description="Coverage footprint KML under sites/viewsheds/polygon (fills only when polygonized).",
     )
     mesh: BundleMeshKmlStyles | None = Field(
         default=None,
@@ -1270,11 +1263,8 @@ class Preset(BaseModel):
 
 
 def resolved_coverage_dispatcher_max_workers(job: Preset) -> int:
-    """Resolve ``simulation.max_workers.{los|splat}`` (kept for preset schema/tests)."""
-    mw = job.simulation.max_workers
-    if job.simulation.provider == CoverageProvider.LOS:
-        return mw.los
-    return mw.splat
+    """Resolve ``simulation.max_workers.los`` for splatter batch fan-out."""
+    return job.simulation.max_workers.los
 
 
 def resolved_bundle_dir(*, preset_path: Path) -> Path:
@@ -1285,7 +1275,7 @@ def resolved_bundle_dir(*, preset_path: Path) -> Path:
 
 
 def resolved_viewshed_dir(bundle_cache_root: Path) -> Path:
-    """SPLAT workdirs sibling to ``bundle``: ``<build>/viewsheds``."""
+    """Viewshed workdirs sibling to ``bundle``: ``<build>/viewsheds``."""
     root = Path(bundle_cache_root).expanduser().resolve()
     return (root.parent / "viewsheds").resolve()
 
@@ -1342,7 +1332,7 @@ def load_preset(path: Path) -> Preset:
 
 
 def viewshed_raster_png_arcname(site_slug: str) -> str:
-    """Path inside KMZ for SPLAT raster (GroundOverlay href)."""
+    """Path inside KMZ for coverage raster (GroundOverlay href)."""
     base = _slugify_files_segment(site_slug)
     return f"sites/viewsheds/raster/{base}/splat.png"
 

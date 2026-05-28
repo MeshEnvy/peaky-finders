@@ -1,1 +1,1 @@
-"""Peaky finders: SPLAT viewshed → KML via Docker."""
+"""Peaky finders: splatter viewshed → KML via Docker."""

@@ -18,7 +18,6 @@ from peaky_finders.site_suggestions.candidates import SiteCandidate
 from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step
 from peaky_finders.sites_job import (
     BundleKmlLayerStyle,
-    CoverageProvider,
     Preset,
     resolved_viewshed_coverage_kml_style,
 )
@@ -386,11 +385,6 @@ def _run_candidate_batch_viewshed_groups(
 
     stale_workspaces = [ws for _c, ws, _digest, cached in planned if not cached]
     if stale_workspaces:
-        provider = preset.simulation.provider
-        if provider != CoverageProvider.LOS:
-            raise RuntimeError(
-                "site suggest batch viewshed requires simulation.provider=los (splatter run-batch)"
-            )
         with suggest_step(verbose, f"splatter run-batch ({len(stale_workspaces)} workspace(s))"):
             rc = run_viewshed_batch(
                 preset=preset,

@@ -1,17 +1,14 @@
-"""Native SPLAT / splatter coverage runs and footprint polygon exports."""
+"""Splatter coverage runs and footprint polygon exports."""
 
 from __future__ import annotations
 
-import logging
 import os
 import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from peaky_finders import kml_bundle
-from peaky_finders.models import SplatCoverageRequest
-from peaky_finders.sites_job import BundleKmlLayerStyle, CoverageProvider, ensure_skadi_mirror_dir
-from peaky_finders.splat_engine import Splat
+from peaky_finders.sites_job import BundleKmlLayerStyle, ensure_skadi_mirror_dir
 from peaky_finders.splat_ppm_to_png import write_splat_png_from_ppm
 from peaky_finders.splat_polygonize import (
     SPLAT_GPKG_NAME,
@@ -19,9 +16,6 @@ from peaky_finders.splat_polygonize import (
     SPLAT_OUTPUT_PPM_BASENAME,
     write_coverage_polygons,
 )
-
-logger = logging.getLogger(__name__)
-
 
 def _limit_nested_blas_threads() -> None:
     for key in (
@@ -129,38 +123,15 @@ def run_splatter_batch(
     return int(result.returncode)
 
 
-def run_splat_site(*, data_dir: Path, coverage_verbose: bool = False) -> int:
-    """Run legacy SPLAT ITM coverage in-process for *data_dir*."""
-    wd = Path(data_dir).expanduser().resolve()
-    req_file = wd / "request.json"
-    if not req_file.is_file():
-        raise FileNotFoundError(f"Missing {req_file}")
-    request = SplatCoverageRequest.model_validate_json(req_file.read_text(encoding="utf-8"))
-    splat_path = os.environ.get("SPLAT_PATH", "/opt/splat")
-    if coverage_verbose:
-        logging.getLogger("peaky_finders.splat_engine").setLevel(logging.DEBUG)
-    print(f"Coverage: SPLAT ({wd.name})", flush=True)
-    service = Splat(splat_path, cache_dir=str(ensure_skadi_mirror_dir()))
-    try:
-        service.run_coverage_to_workdir(request, wd)
-    except Exception:
-        logger.exception("SPLAT run failed")
-        return 1
-    return 0
-
-
 def run_viewshed_coverage(
     *,
     site_name: str,
-    provider: CoverageProvider,
     data_dir: Path,
     coverage_verbose: bool = False,
 ) -> int:
-    """Run coverage engine in *data_dir*; leaves ``output.ppm`` (+ sidecars from the engine)."""
+    """Run splatter in *data_dir*; leaves ``output.ppm`` (+ sidecars from the engine)."""
     print(f"Coverage: {site_name.strip()}", flush=True)
-    if provider == CoverageProvider.LOS:
-        return run_splatter_site(data_dir=data_dir, coverage_verbose=coverage_verbose)
-    return run_splat_site(data_dir=data_dir, coverage_verbose=coverage_verbose)
+    return run_splatter_site(data_dir=data_dir, coverage_verbose=coverage_verbose)
 
 
 def load_splat_bbox(data_dir: Path) -> dict[str, float]:
