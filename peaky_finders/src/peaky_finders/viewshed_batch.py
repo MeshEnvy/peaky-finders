@@ -64,11 +64,13 @@ def run_viewshed_batch(
         f"Coverage batch: {n} workspace(s) via splatter run-batch (workers={workers})",
         flush=True,
     )
+    requests_json = batch_req.read_text(encoding="utf-8")
     try:
         rc = run_splatter_batch(
             viewshed_root=viewshed_root_r,
             batch_jobs=workers,
             coverage_verbose=coverage_verbose,
+            requests_json=requests_json,
         )
         if rc == 0:
             kml_ov = preset.bundle.kml_overlay if preset.bundle else None

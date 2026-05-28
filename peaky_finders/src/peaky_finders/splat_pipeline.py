@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import multiprocessing as mp
 import os
-import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from peaky_finders.splat_polygonize import (
     write_coverage_polygons,
 )
 
+
 def _limit_nested_blas_threads() -> None:
     for key in (
         "OMP_NUM_THREADS",
@@ -28,12 +30,11 @@ def _limit_nested_blas_threads() -> None:
         os.environ.setdefault(key, "1")
 
 
-def _coverage_subprocess_env(*, batch_jobs: int | None = None) -> dict[str, str]:
-    env = os.environ.copy()
-    env["SPLAT_CACHE"] = str(ensure_skadi_mirror_dir())
-    if batch_jobs is not None:
-        env["SPLATTER_BATCH_JOBS"] = str(max(1, int(batch_jobs)))
-    return env
+def _splatter_session(*, coverage_verbose: bool = False):
+    from splatter import get_session
+
+    mirror_root = str(ensure_skadi_mirror_dir())
+    return get_session(mirror_root=mirror_root, verbose=coverage_verbose)
 
 
 def footprint_vectorize_needed(data_dir: Path) -> bool:
@@ -82,7 +83,11 @@ def vectorize_coverage_footprints_parallel(
             _vectorize_footprint_worker((str(wd), style_dict))
         return
 
-    with ProcessPoolExecutor(max_workers=mx, initializer=_limit_nested_blas_threads) as pool:
+    with ProcessPoolExecutor(
+        max_workers=mx,
+        mp_context=mp.get_context("spawn"),
+        initializer=_limit_nested_blas_threads,
+    ) as pool:
         futs = {
             pool.submit(_vectorize_footprint_worker, (str(wd), style_dict)): wd for wd in pending
         }
@@ -93,14 +98,16 @@ def vectorize_coverage_footprints_parallel(
 
 
 def run_splatter_site(*, data_dir: Path, coverage_verbose: bool = False) -> int:
-    """Run ``splatter run`` in *data_dir* (must contain ``request.json``)."""
+    """Run in-process splatter coverage in *data_dir* (must contain ``request.json``)."""
     wd = Path(data_dir).expanduser().resolve()
-    cmd = ["splatter", "run", "--work-dir", str(wd)]
-    if coverage_verbose:
-        cmd.append("--verbose")
     print(f"Coverage: splatter run ({wd.name})", flush=True)
-    result = subprocess.run(cmd, env=_coverage_subprocess_env(), check=False)
-    return int(result.returncode)
+    session = _splatter_session(coverage_verbose=coverage_verbose)
+    try:
+        session.run(str(wd))
+    except Exception as exc:
+        print(f"Coverage: splatter run failed ({wd.name}): {exc}", flush=True)
+        return 1
+    return 0
 
 
 def run_splatter_batch(
@@ -108,19 +115,19 @@ def run_splatter_batch(
     viewshed_root: Path,
     batch_jobs: int = 1,
     coverage_verbose: bool = False,
+    requests_json: str | None = None,
 ) -> int:
-    """Run ``splatter run-batch`` with array ``request.json`` at *viewshed_root*."""
+    """Run in-process splatter batch at *viewshed_root*."""
     root = Path(viewshed_root).expanduser().resolve()
-    cmd = ["splatter", "run-batch", "--work-dir", str(root)]
-    if coverage_verbose:
-        cmd.append("--verbose")
     print("Coverage batch: splatter run-batch", flush=True)
-    result = subprocess.run(
-        cmd,
-        env=_coverage_subprocess_env(batch_jobs=batch_jobs),
-        check=False,
-    )
-    return int(result.returncode)
+    session = _splatter_session(coverage_verbose=coverage_verbose)
+    workers = max(1, int(batch_jobs))
+    try:
+        session.run_batch(str(root), batch_jobs=workers, requests_json=requests_json)
+    except Exception as exc:
+        print(f"Coverage batch: splatter run-batch failed: {exc}", flush=True)
+        return 1
+    return 0
 
 
 def run_viewshed_coverage(

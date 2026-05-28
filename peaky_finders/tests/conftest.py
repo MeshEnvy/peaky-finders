@@ -21,3 +21,16 @@ def peaky_test_home(monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("PEAKY_PROJECTS", raising=False)
     monkeypatch.delenv("PEAKY_SHARE", raising=False)
     return PEAKY_TEST_HOME
+
+
+@pytest.fixture(autouse=True)
+def _reset_splatter_session() -> None:
+    """Drop the process-wide splatter DEM session between tests."""
+    try:
+        from splatter import reset_session
+    except ImportError:
+        yield
+        return
+    reset_session()
+    yield
+    reset_session()

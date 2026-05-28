@@ -1,9 +1,8 @@
-"""Tests for cwd config.yaml resolution and optional coverage binaries."""
+"""Tests for cwd config.yaml resolution and the splatter PyO3 extension."""
 
 from __future__ import annotations
 
-import shutil
-import subprocess
+import json
 from pathlib import Path
 
 import pytest
@@ -29,13 +28,25 @@ def test_resolved_skadi_mirror_dir_honors_env(tmp_path: Path, monkeypatch) -> No
     assert resolved_skadi_mirror_dir() == (tmp_path / "mirror").resolve()
 
 
-@pytest.mark.skipif(shutil.which("splatter") is None, reason="splatter not on PATH")
-def test_splatter_binary_exposes_run_batch() -> None:
-    r = subprocess.run(
-        ["splatter", "--help"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert r.returncode == 0
-    assert "run-batch" in r.stdout
+def test_splatter_extension_exposes_session_and_batch_api() -> None:
+    import splatter
+    from splatter._core import Session
+
+    assert hasattr(Session, "run")
+    assert hasattr(Session, "run_batch")
+    assert splatter.SPLAT_CACHE_SCHEMA_VERSION == 6
+
+
+def test_splatter_input_sha256_matches_python_golden() -> None:
+    from splatter import input_sha256
+
+    from peaky_finders.models import SplatCoverageRequest
+    from peaky_finders.splat_input_hash import splat_input_sha256
+
+    golden = "c08c8569a1ab414a053679c7fb0ed9c8726c943449f514472e3ac4f71e27011d"
+    repo = Path(__file__).resolve().parents[1]
+    fixture = repo / "tests" / "fixtures" / "splat_request_hash_fixture.json"
+    req = SplatCoverageRequest.model_validate_json(fixture.read_text(encoding="utf-8"))
+    payload = json.dumps(req.model_dump(mode="json"))
+    assert input_sha256(payload) == golden
+    assert splat_input_sha256(req) == golden

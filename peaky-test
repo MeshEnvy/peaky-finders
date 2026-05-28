@@ -47,12 +47,14 @@ if [ -t 0 ] && [ -t 1 ]; then
 fi
 
 run_cmd=(docker run "${DOCKER_FLAGS[@]}" \
+  -e POETRY_VIRTUALENVS_CREATE=false \
   -v "$ROOT/peaky_finders:/app/peaky_finders" \
+  -v "$ROOT/peaky_finders/tests/fixtures/peaky_home/projects:/app/projects" \
   -v "$CACHE_DIR:/.peaky/splat_cache" \
   -w /app/peaky_finders \
   --entrypoint bash \
   "$IMAGE" \
-  -lc 'cd /app/peaky_finders && poetry install --no-interaction && exec poetry run pytest "$@"' \
+  -lc 'cd /app/peaky_finders && poetry install --no-interaction && exec poetry run pytest -ra --durations=20 "$@"' \
   _)
 
 if [ ${#filtered[@]} -gt 0 ]; then
