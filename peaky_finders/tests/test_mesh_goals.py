@@ -13,10 +13,13 @@ from peaky_finders.site_suggestions.corridor_scoring import build_corridor_score
 from peaky_finders.site_suggestions.depth_grid import build_coverage_depth_grid
 from peaky_finders.site_suggestions.mesh_backbone_candidates import generate_corridor_grow_candidates
 from peaky_finders.site_suggestions.mesh_goals import (
+    captured_tracked_goals,
     goal_point_for_key,
+    goals_satisfied_since,
     is_bridge_goal_key,
     is_goal_captured,
     ordered_uncaptured_goal_keys,
+    tracked_goal_keys,
 )
 from peaky_finders.site_suggestions.mesh_connectivity import main_footprint_slugs
 from peaky_finders.site_suggestions.mesh_grow import analysis_sites
@@ -28,7 +31,38 @@ from peaky_finders.sites_job import (
     SiteEntry,
     SiteSuggestionStrategy,
     SiteType,
+    load_preset,
+    write_preset_document,
 )
+
+_SUGGEST_SIMULATION = {
+    "provider": "los",
+    "radius_km": 60.0,
+    "modem_presets": {
+        "meshcore-us": {
+            "frequency_mhz": 910.525,
+            "bandwidth_khz": 62.5,
+            "spreading_factor": 7,
+            "coding_rate": 5,
+            "implementation_margin_db": 3.0,
+            "power_dbm": 22.0,
+            "sensitivity_dbm": -121.0,
+        }
+    },
+    "environment_presets": {
+        "test-desert": {
+            "climate": "desert",
+            "polarization": "vertical",
+            "clutter_height_m": 1.0,
+        }
+    },
+    "modem": "meshcore-us",
+    "environment": "test-desert",
+    "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
+    "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
+}
+
+_PRESET_ROOT = Path("/tmp/peaky_test_mesh_goals")
 
 
 def _disconnected_ctx() -> SiteSuggestionContext:
@@ -43,17 +77,22 @@ def _disconnected_ctx() -> SiteSuggestionContext:
         max_raster_dimension=128,
     )
     grid.add_footprint(main_fp)
-    ctx = SiteSuggestionContext(
-        preset=type(
-            "P",
-            (),
-            {
-                "sites": {
-                    "main": SiteEntry(type=SiteType.INSTALLED, name="Main", loc=(41.5, -119.0)),
-                    "sat": SiteEntry(type=SiteType.INSTALLED, name="Sat", loc=(36.2, -115.3)),
-                }
+    _PRESET_ROOT.mkdir(parents=True, exist_ok=True)
+    preset_path = _PRESET_ROOT / "job.yaml"
+    write_preset_document(
+        preset_path,
+        {
+            "simulation": dict(_SUGGEST_SIMULATION),
+            "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
+            "sites": {
+                "main": {"name": "Main", "loc": [41.5, -119.0]},
+                "sat": {"name": "Sat", "loc": [36.2, -115.3]},
             },
-        )(),
+        },
+    )
+    preset = load_preset(preset_path)
+    ctx = SiteSuggestionContext(
+        preset=preset,
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),
         grid=grid,
         eligible_ll=eligible,
@@ -163,10 +202,60 @@ def test_corridor_score_context_for_bridge_goal() -> None:
         assert {s.slug for s in score_ctx.sites} == {"main"}
 
 
-def test_bridge_goal_captured_when_main_covers_sat_pin() -> None:
+def test_bridge_goal_not_captured_when_only_pin_covered() -> None:
     ctx = _disconnected_ctx()
     merged = box(-120.0, 35.0, -114.0, 42.0)
     footprints = {"main": merged, "sat": box(-115.4, 36.1, -115.2, 36.3)}
+    with patch(
+        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        return_value=footprints,
+    ):
+        assert not is_goal_captured(ctx, "bridge:sat")
+
+
+def test_tracked_goals_include_bridge_while_disconnected() -> None:
+    ctx = _disconnected_ctx()
+    with patch(
+        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        return_value=ctx.session_footprints,
+    ):
+        assert tracked_goal_keys(ctx) == {"g0", "bridge:sat"}
+
+
+def test_goals_satisfied_since_counts_newly_captured_bridge() -> None:
+    ctx = _disconnected_ctx()
+    footprints_hop = {
+        "main": box(-120.0, 35.0, -114.0, 42.0),
+        "sat": box(-119.5, 36.0, -115.0, 41.8),
+    }
+    with patch(
+        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        return_value=ctx.session_footprints,
+    ):
+        baseline = captured_tracked_goals(ctx, planning_complete=False)
+        tracked = tracked_goal_keys(ctx)
+        assert "bridge:sat" not in baseline
+        assert "bridge:sat" in tracked
+    ctx.session_footprints = footprints_hop
+    with patch(
+        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        return_value=footprints_hop,
+    ):
+        done = goals_satisfied_since(
+            ctx,
+            planning_complete=False,
+            baseline=baseline,
+            tracked_keys=tracked,
+        )
+        assert done == {"bridge:sat", "g0"}
+
+
+def test_bridge_goal_captured_when_satellite_hops_to_main() -> None:
+    ctx = _disconnected_ctx()
+    footprints = {
+        "main": box(-120.0, 35.0, -114.0, 42.0),
+        "sat": box(-119.5, 36.0, -115.0, 41.8),
+    }
     with patch(
         "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
         return_value=footprints,

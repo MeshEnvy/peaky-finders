@@ -10,18 +10,23 @@ from peaky_finders.site_suggestions.candidates import SiteCandidate
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.corridor import CorridorGrowState, CorridorPath
 from peaky_finders.site_suggestions.corridor_kml import (
+    CORRIDOR_PATH_LINE_COLOR,
+    CORRIDOR_PATH_STYLE_ID,
     CorridorGoalDebug,
     CorridorRouteRecord,
+    CorridorTrialRecord,
     OUTPUT_KML_NAME,
+    _ensure_viewshed_png,
     _prepare_output_kml_for_earth,
-    _viewshed_href,
     _write_goal_kml,
     corridor_goal_kml_path,
+    init_corridor_goal_kml,
     mark_active_corridor,
     record_corridor_pick,
     record_corridor_trial_viewshed,
     record_corridor_trials,
     record_planned_corridors,
+    update_corridor_planning_state,
     write_corridor_goal_kml,
 )
 from peaky_finders.site_suggestions.planner import CandidateOutcome, CandidateTrial
@@ -57,17 +62,28 @@ def _minimal_ctx(tmp_path: Path) -> SiteSuggestionContext:
     return ctx
 
 
-def test_viewshed_href_uses_output_kml(tmp_path: Path) -> None:
+def test_viewshed_overlay_href_uses_splat_png(tmp_path: Path) -> None:
     workdir = tmp_path / "viewsheds" / "trial_b"
     workdir.mkdir(parents=True)
+    (workdir / "splat.png").write_bytes(b"png")
     (workdir / OUTPUT_KML_NAME).write_text(
-        '<?xml version="1.0"?><kml><GroundOverlay><Icon><href>splat.png</href></Icon></GroundOverlay></kml>',
+        """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <GroundOverlay>
+    <Icon><href>output.ppm</href></Icon>
+    <LatLonBox>
+      <north>39.1</north><south>39.0</south><east>-115.7</east><west>-115.9</west>
+      <rotation>0</rotation>
+    </LatLonBox>
+  </GroundOverlay>
+</kml>""",
         encoding="utf-8",
     )
     from_kml = tmp_path / "suggest" / "corridors" / "east.kml"
     from_kml.parent.mkdir(parents=True)
-    href = _viewshed_href(from_kml=from_kml, workdir=workdir)
-    assert href == "../../viewsheds/trial_b/output.kml"
+    png = _ensure_viewshed_png(workdir)
+    assert png is not None
+    assert png.name == "splat.png"
 
 
 def test_prepare_output_kml_patches_ppm_href(tmp_path: Path, monkeypatch) -> None:
@@ -100,13 +116,50 @@ def test_prepare_output_kml_patches_ppm_href(tmp_path: Path, monkeypatch) -> Non
     assert "splat.png" in out.read_text(encoding="utf-8")
 
 
+def test_init_corridor_goal_kml_writes_immediately(tmp_path: Path) -> None:
+    ctx = _minimal_ctx(tmp_path)
+    out = init_corridor_goal_kml(ctx, "east")
+    assert out is not None
+    assert out.is_file()
+    xml = out.read_text(encoding="utf-8")
+    assert "Corridor east (planning)" in xml
+    assert "Goal: east" in xml
+
+
+def test_update_corridor_planning_state_refreshes_kml(tmp_path: Path) -> None:
+    ctx = _minimal_ctx(tmp_path)
+    init_corridor_goal_kml(ctx, "east")
+    update_corridor_planning_state(
+        ctx,
+        "east",
+        attachment=(39.01, -115.5),
+        relay_nodes=[(39.0, -115.8), (39.0, -115.6)],
+        note="evaluating RF hops",
+    )
+    out = corridor_goal_kml_path(ctx.suggest_root, "east")
+    xml = out.read_text(encoding="utf-8")
+    assert "Attachment" in xml
+    assert "Relay candidates (2)" in xml
+    assert "evaluating RF hops" in xml
+
+
 def test_corridor_goal_kml_visibility_and_hrefs(tmp_path: Path) -> None:
     ctx = _minimal_ctx(tmp_path)
     suggest_root = ctx.suggest_root
     workdir = tmp_path / "viewsheds" / "trial_a"
     workdir.mkdir(parents=True)
+    (workdir / "splat.png").write_bytes(b"png")
     (workdir / OUTPUT_KML_NAME).write_text(
-        '<?xml version="1.0"?><kml><GroundOverlay><Icon><href>splat.png</href></Icon></GroundOverlay></kml>',
+        """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <GroundOverlay>
+    <Icon><href>output.ppm</href></Icon>
+    <LatLonBox>
+      <north>39.1</north><south>39.0</south><east>-115.7</east><west>-115.9</west>
+      <rotation>0</rotation>
+    </LatLonBox>
+  </GroundOverlay>
+</kml>""",
         encoding="utf-8",
     )
 
@@ -186,10 +239,16 @@ def test_corridor_goal_kml_visibility_and_hrefs(tmp_path: Path) -> None:
     assert "Pick #3" in xml
     assert "Viewshed #3" in xml
     assert "Viewshed [1]" in xml
-    assert "NetworkLink" in xml
+    assert "GroundOverlay" in xml
+    assert "NetworkLink" not in xml
+    assert f'id="{CORRIDOR_PATH_STYLE_ID}"' in xml
+    assert CORRIDOR_PATH_LINE_COLOR in xml
+    assert f"#{CORRIDOR_PATH_STYLE_ID}" in xml
 
-    rel = Path("../../viewsheds/trial_a/output.kml").as_posix()
+    rel = Path("../../viewsheds/trial_a/splat.png").as_posix()
     assert rel in xml
+    assert "output.ppm" not in xml
+    assert "output.kml" not in xml
 
 
 def test_write_goal_kml_direct(tmp_path: Path) -> None:
@@ -214,3 +273,34 @@ def test_write_goal_kml_direct(tmp_path: Path) -> None:
     xml = out.read_text(encoding="utf-8")
     assert "Corridor vegas (blocked)" in xml
     assert "Corridor path (gen 1, variant 1)" in xml
+    assert CORRIDOR_PATH_LINE_COLOR in xml
+    assert '\n    <Document>' in xml
+    assert "-116.00000000,36.00000000,0\n-115.20000000,36.10000000,0" in xml
+
+
+def test_write_goal_kml_planning_defers_trial_overlays(tmp_path: Path) -> None:
+    dbg = CorridorGoalDebug(
+        goal_key="east",
+        goal_lat=39.0,
+        goal_lon=-114.8,
+        status="planning",
+        trials=[
+            CorridorTrialRecord(
+                iteration=1,
+                phase="coarse",
+                index=1,
+                lat=39.0,
+                lon=-115.0,
+                elev_m=2000.0,
+                strategy="corridor:east",
+                outcome="runner_up",
+                detail="test",
+                workdir=tmp_path / "trial_a",
+            )
+        ],
+    )
+    out = tmp_path / "east.kml"
+    _write_goal_kml(out_kml=out, dbg=dbg, verbose=False)
+    xml = out.read_text(encoding="utf-8")
+    assert "Coarse trials" not in xml
+    assert "GroundOverlay" not in xml

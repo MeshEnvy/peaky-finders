@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import geopandas as gpd
@@ -18,12 +19,13 @@ from peaky_finders.site_suggestions.mesh_backbone_completion import (
     hop_adjacency,
     hop_connected_components,
     mesh_connectivity_complete,
-    sites_capturing_goal,
 )
 from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint
 from peaky_finders.sites_job import SiteSuggestionStrategy
 
 _TO_M = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+
+_CORRIDOR_TRIAL_SLUG = "__corridor_trial__"
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,32 @@ def _component_snapshot(ctx: SiteSuggestionContext) -> tuple[
     return sites, sites_by_slug, footprints, components, main_id
 
 
+def satellite_in_main_component(
+    *,
+    satellite_slug: str,
+    sites: Sequence[BackboneSite],
+    footprints: Mapping[str, BaseGeometry | None],
+    trial_lat: float | None = None,
+    trial_lon: float | None = None,
+    trial_footprint: BaseGeometry | None = None,
+) -> bool:
+    """True when ``satellite_slug`` shares a hop component with the main mesh."""
+    sites_list = list(sites)
+    fps: dict[str, BaseGeometry | None] = dict(footprints)
+    if trial_footprint is not None and trial_lat is not None and trial_lon is not None:
+        fp = trial_footprint if trial_footprint.is_valid else make_valid(trial_footprint)
+        sites_list.append(
+            BackboneSite(slug=_CORRIDOR_TRIAL_SLUG, lat=float(trial_lat), lon=float(trial_lon))
+        )
+        fps[_CORRIDOR_TRIAL_SLUG] = fp
+    if satellite_slug not in {s.slug for s in sites_list}:
+        return False
+    adj = hop_adjacency(sites_list, fps)
+    components = hop_connected_components(adj, [s.slug for s in sites_list])
+    main_id = _main_component_id(components, fps)
+    return satellite_slug in components[main_id]
+
+
 def mesh_healing_needed(ctx: SiteSuggestionContext) -> bool:
     """True when mesh-backbone should run a healing pass before preset goals."""
     if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
@@ -179,19 +207,23 @@ def healing_goals(ctx: SiteSuggestionContext) -> dict[str, GoalPoint]:
 
 
 def uncaptured_healing_goals(ctx: SiteSuggestionContext) -> dict[str, GoalPoint]:
-    """Bridge goals not yet captured by main-component footprints."""
+    """Bridge goals whose satellite site is not yet in the main hop component."""
+    from peaky_finders.site_suggestions.mesh_goals import bridge_satellite_slug
+
     goals = healing_goals(ctx)
     if not goals:
         return {}
 
-    _sites, _sites_by_slug, footprints, components, main_id = _component_snapshot(ctx)
-    main_slugs = components[main_id]
-    main_sites = [s for s in all_backbone_sites(ctx) if s.slug in main_slugs]
-    main_footprints = {slug: footprints.get(slug) for slug in main_slugs}
+    sites = all_backbone_sites(ctx)
+    footprints = mesh_completion.footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
     missing = {
         key
-        for key, goal in goals.items()
-        if not sites_capturing_goal(goal, main_sites, main_footprints)
+        for key in goals
+        if not satellite_in_main_component(
+            satellite_slug=bridge_satellite_slug(key),
+            sites=sites,
+            footprints=footprints,
+        )
     }
     return {key: goals[key] for key in sorted(missing)}
 

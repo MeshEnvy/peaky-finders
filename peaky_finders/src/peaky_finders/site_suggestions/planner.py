@@ -26,7 +26,7 @@ from peaky_finders.site_suggestions.corridor_scoring import (
     score_corridor_trials,
 )
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, build_coverage_depth_grid
-from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step
+from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step, SuggestProgressTicker
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
 from peaky_finders.site_suggestions.strategies.registry import resolve_site_suggestion_strategy
 from peaky_finders.site_suggestions.mesh_backbone_completion import (
@@ -40,6 +40,11 @@ from peaky_finders.site_suggestions.mesh_grow import (
     mesh_grow_trial_has_progress,
     score_mesh_grow_trials,
     summarize_mesh_grow_outcomes,
+)
+from peaky_finders.site_suggestions.mesh_goals import (
+    captured_tracked_goals,
+    goals_satisfied_since,
+    tracked_goal_keys,
 )
 from peaky_finders.site_suggestions.preset_io import count_suggested_sites, next_suggest_iteration
 from peaky_finders.sites_job import (
@@ -312,12 +317,12 @@ def _log_selection_summary(
     iteration: int,
     best: PlannedSuggestion,
     uncovered_pct: float,
-    max_steps: int | None,
+    max_goals: int | None,
 ) -> None:
-    budget_s = "solve" if max_steps is None else str(max_steps)
+    budget_s = "solve" if max_goals is None else f"{max_goals} goal(s)"
     suggest_log(
         verbose,
-        f"site suggest: ✓ pick {iteration}/{budget_s}  "
+        f"site suggest: ✓ site #{iteration} ({budget_s})  "
         f"gain={best.gain_cells} cells  uncovered={uncovered_pct:.2f}%  "
         f"{_format_loc(best.lat, best.lon)}  strategy={best.strategy}",
     )
@@ -554,6 +559,7 @@ def _select_mesh_grow_from_evals(
         verbose,
         f"mesh-grow score {len(evals)} trial(s) across {len(score_ctx.uncaptured_goals)} goal(s)",
     ):
+        ticker = SuggestProgressTicker(verbose, label="mesh-grow score", interval_s=0.5)
         for ev in evals:
             trial = ev.trial
             if trial.footprint is None or trial.outcome == CandidateOutcome.VIEWSHED_FAILED:
@@ -561,12 +567,9 @@ def _select_mesh_grow_from_evals(
                 continue
 
             scored += 1
-            if scored == 1 or scored % 10 == 0 or scored == scorable:
-                suggest_progress(
-                    verbose,
-                    f"mesh-grow score [{scored}/{scorable}] "
-                    f"{_format_candidate_brief(trial.candidate)}",
-                )
+            ticker.maybe(
+                f"[{scored}/{scorable}] {_format_candidate_brief(trial.candidate)}",
+            )
 
             score = cache[trial.index] if trial.index in cache else None
 
@@ -636,6 +639,7 @@ def _select_corridor_from_evals(
     iteration: int,
     target_label: str,
     verbose: bool = False,
+    jobs: int = 1,
     score_cache: dict[int, CorridorTrialScore | None] | None = None,
 ) -> tuple[PlannedSuggestion | None, BaseGeometry | None, list[CandidateTrial]]:
     score_ctx = build_corridor_score_context(ctx)
@@ -667,12 +671,15 @@ def _select_corridor_from_evals(
             pending_ev.append(ev)
 
     if pending_ev:
+        workers = max(1, int(jobs))
         batch_scores = score_corridor_trials(
             score_ctx=score_ctx,
             trials=[
                 (ev.trial.candidate.lat, ev.trial.candidate.lon, ev.trial.footprint)
                 for ev in pending_ev
             ],
+            jobs=workers,
+            verbose=verbose,
         )
         for ev, score in zip(pending_ev, batch_scores, strict=True):
             cache[ev.trial.index] = score
@@ -681,6 +688,7 @@ def _select_corridor_from_evals(
         verbose,
         f"corridor score {len(evals)} trial(s) toward {goal_key}",
     ):
+        ticker = SuggestProgressTicker(verbose, label="corridor score", interval_s=0.5)
         for ev in evals:
             trial = ev.trial
             if trial.footprint is None or trial.outcome == CandidateOutcome.VIEWSHED_FAILED:
@@ -688,12 +696,9 @@ def _select_corridor_from_evals(
                 continue
 
             scored += 1
-            if scored == 1 or scored % 10 == 0 or scored == scorable:
-                suggest_progress(
-                    verbose,
-                    f"corridor score [{scored}/{scorable}] "
-                    f"{_format_candidate_brief(trial.candidate)}",
-                )
+            ticker.maybe(
+                f"[{scored}/{scorable}] {_format_candidate_brief(trial.candidate)}",
+            )
 
             score = cache.get(trial.index)
             if score is None:
@@ -938,6 +943,7 @@ def _corridor_refine_seeds_from_coarse_evals(
     ctx: SiteSuggestionContext,
     refine_top_n: int,
     verbose: bool,
+    jobs: int,
     score_cache: dict[int, CorridorTrialScore | None],
 ) -> list[SiteCandidate]:
     top_n = max(0, int(refine_top_n))
@@ -963,6 +969,8 @@ def _corridor_refine_seeds_from_coarse_evals(
                 (ev.trial.candidate.lat, ev.trial.candidate.lon, ev.trial.footprint)
                 for ev in pending_ev
             ],
+            jobs=max(1, int(jobs)),
+            verbose=verbose,
         )
         for ev, score in zip(pending_ev, batch_scores, strict=True):
             score_cache[ev.trial.index] = score
@@ -1094,6 +1102,7 @@ def _run_candidate_trials(
                 ctx=suggest_ctx,
                 refine_top_n=int(refine.refine_top_n),
                 verbose=verbose,
+                jobs=workers,
                 score_cache=corridor_score_cache,
             )
         if refine_centers:
@@ -1243,6 +1252,7 @@ def _run_candidate_trials(
             iteration=iteration,
             target_label=target_label,
             verbose=verbose,
+            jobs=workers,
             score_cache=corridor_score_cache,
         )
     if mesh_grow and suggest_ctx is not None:
@@ -1270,7 +1280,7 @@ def plan_greedy_site_suggestions(
     jobs: int = 1,
     on_pick: Callable[[PlannedSuggestion], str] | None = None,
 ) -> list[PlannedSuggestion]:
-    """Run the site-suggestion solver until ``planning_complete`` or ``suggest_cli_n`` new sites are written."""
+    """Run the site-suggestion solver until ``planning_complete`` or ``suggest_cli_n`` goal(s) are satisfied."""
     if preset.bundle is None:
         raise ValueError("site suggestions require preset bundle.*")
 
@@ -1281,8 +1291,7 @@ def plan_greedy_site_suggestions(
     if mesh_grow and not cfg.mesh_backbone.goals:
         raise ValueError("mesh-backbone strategy requires mesh_backbone.goals")
     existing_suggested = count_suggested_sites(preset)
-    max_new = provider.resolve_step_budget(cfg, suggest_cli_n)
-    max_steps = max_new
+    max_goals = provider.resolve_step_budget(cfg, suggest_cli_n)
 
     goal = provider.goal_depth(cfg)
     refine = provider.refine_settings(cfg)
@@ -1309,6 +1318,7 @@ def plan_greedy_site_suggestions(
             max_raster_dimension=int(cfg.planner_raster_dimension),
             verbose=verbose,
             target_label=target_label,
+            jobs=jobs,
         )
 
     _log_planner_config(
@@ -1340,6 +1350,9 @@ def plan_greedy_site_suggestions(
     )
     if corridor_grow:
         suggest_ctx.corridor_state = CorridorGrowState()
+        from peaky_finders.site_suggestions.corridor_kml import corridor_kml_dir
+
+        corridor_kml_dir(suggest_root).mkdir(parents=True, exist_ok=True)
 
     if provider.planning_complete(suggest_ctx):
         msg = f"site suggest: {provider.name} goal already met — no picks needed"
@@ -1349,11 +1362,23 @@ def plan_greedy_site_suggestions(
 
     winners: list[PlannedSuggestion] = []
     attempt = 0
-    budget_label = "solve" if max_steps is None else str(max_steps)
+    budget_label = "solve" if max_goals is None else f"{max_goals} goal(s)"
     first_iteration = next_suggest_iteration(preset)
+    goals_at_start = captured_tracked_goals(
+        suggest_ctx,
+        planning_complete=provider.planning_complete(suggest_ctx),
+    )
+    tracked_keys_at_start = tracked_goal_keys(suggest_ctx)
 
     while True:
-        if provider.planning_complete(suggest_ctx):
+        planning_done = provider.planning_complete(suggest_ctx)
+        goals_done = goals_satisfied_since(
+            suggest_ctx,
+            planning_complete=planning_done,
+            baseline=goals_at_start,
+            tracked_keys=tracked_keys_at_start,
+        )
+        if planning_done:
             if winners:
                 mb = cfg.mesh_backbone
                 max_nodes = mb.max_nodes if mesh_grow else None
@@ -1374,32 +1399,41 @@ def plan_greedy_site_suggestions(
                         flush=True,
                     )
             break
-        if max_steps is not None and len(winners) >= max_steps:
+        if max_goals is not None and len(goals_done) >= max_goals:
+            names = ", ".join(sorted(goals_done)) or "?"
+            print(
+                f"site suggest: stopping — {len(goals_done)} goal(s) satisfied "
+                f"(budget {max_goals}: {names})",
+                flush=True,
+            )
             break
 
         attempt += 1
         site_n = first_iteration + len(winners)
         new_written = len(winners)
         uncovered_before = grid.uncovered_fraction(goal_depth=goal)
-        if max_steps is None:
-            budget_progress = f"{new_written}+ new (solve)"
+        if max_goals is None:
+            goal_progress = "solve"
         else:
-            budget_progress = f"{new_written}/{budget_label} new"
+            goal_progress = f"{len(goals_done)}/{max_goals} goal(s)"
+        site_progress = f"{new_written} site(s) written"
 
         suggest_log(
             verbose,
-            f"site suggest: ══ attempt {attempt} (site #{site_n}, {budget_progress}) "
+            f"site suggest: ══ attempt {attempt} (site #{site_n}, {goal_progress}, {site_progress}) "
             f"(uncovered {100.0 * uncovered_before:.2f}% below depth≥{goal}) ══",
         )
 
-        candidates = provider.generate_candidates(suggest_ctx, iteration=site_n - 1)
+        with suggest_step(verbose, f"generate candidates for site #{site_n}"):
+            suggest_progress(verbose, f"strategy={provider.name}")
+            candidates = provider.generate_candidates(suggest_ctx, iteration=site_n - 1)
         _log_candidate_shortlist(verbose=verbose, iteration=site_n, candidates=candidates)
 
         corridor_active = corridor_grow
 
         if not candidates:
             print(
-                f"site suggest: no candidates at attempt {attempt} (sites written {budget_progress})",
+                f"site suggest: no candidates at attempt {attempt} ({site_progress}, {goal_progress})",
                 flush=True,
             )
             break
@@ -1435,7 +1469,7 @@ def plan_greedy_site_suggestions(
             if corridor_active and corridor_stall_recovery(suggest_ctx):
                 print(
                     f"site suggest: corridor recovery at attempt {attempt} "
-                    f"(sites written {budget_progress})",
+                    f"({site_progress}, {goal_progress})",
                     flush=True,
                 )
                 _log_trial_results(
@@ -1449,7 +1483,7 @@ def plan_greedy_site_suggestions(
                 continue
             print(
                 f"site suggest: no improving candidate at attempt {attempt} "
-                f"(sites written {budget_progress})",
+                f"({site_progress}, {goal_progress})",
                 flush=True,
             )
             _log_trial_results(
@@ -1468,7 +1502,7 @@ def plan_greedy_site_suggestions(
         if site_location_key(best.lat, best.lon) in placed_keys:
             print(
                 f"site suggest: stopping — selected location already placed "
-                f"({_format_loc(best.lat, best.lon)}, sites written {budget_progress})",
+                f"({_format_loc(best.lat, best.lon)}, {site_progress}, {goal_progress})",
                 flush=True,
             )
             _log_trial_results(
@@ -1507,22 +1541,36 @@ def plan_greedy_site_suggestions(
         winners.append(best)
         new_after = len(winners)
         uncovered_after = 100.0 * grid.uncovered_fraction(goal_depth=goal)
-        if max_steps is None:
-            progress_label = f"{new_after}+ new (solve)"
+        goals_after = goals_satisfied_since(
+            suggest_ctx,
+            planning_complete=provider.planning_complete(suggest_ctx),
+            baseline=goals_at_start,
+            tracked_keys=tracked_keys_at_start,
+        )
+        if max_goals is None:
+            goal_progress_after = "solve"
         else:
-            progress_label = f"{new_after}/{budget_label} new"
+            goal_progress_after = f"{len(goals_after)}/{max_goals} goal(s)"
         print(
-            f"site suggest: wrote site {progress_label} "
+            f"site suggest: wrote site #{new_after} ({goal_progress_after}) "
             f"gain={best.gain_cells} cells uncovered={uncovered_after:.2f}% "
             f"({best.lat:.5f}, {best.lon:.5f})",
             flush=True,
         )
+        if max_goals is not None and len(goals_after) >= max_goals:
+            names = ", ".join(sorted(goals_after)) or "?"
+            print(
+                f"site suggest: stopping — {len(goals_after)} goal(s) satisfied "
+                f"(budget {max_goals}: {names})",
+                flush=True,
+            )
+            break
         _log_selection_summary(
             verbose=verbose,
             iteration=len(winners),
             best=best,
             uncovered_pct=uncovered_after,
-            max_steps=max_steps,
+            max_goals=max_goals,
         )
 
     if corridor_grow:

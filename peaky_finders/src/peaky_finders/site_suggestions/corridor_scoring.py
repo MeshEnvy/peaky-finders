@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
@@ -18,9 +19,20 @@ from peaky_finders.site_suggestions.corridor import (
     active_corridor,
     effective_corridor_buffer_m,
 )
-from peaky_finders.site_suggestions.mesh_backbone_completion import mutual_hop_neighbors
+from peaky_finders.site_suggestions.log import (
+    SuggestProgressTicker,
+    suggest_log,
+    suggest_progress,
+    suggest_step,
+)
+from peaky_finders.site_suggestions.mesh_backbone_completion import (
+    all_backbone_sites,
+    footprints_for_backbone_sites,
+    mutual_hop_neighbors,
+)
 from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint
-from peaky_finders.site_suggestions.mesh_goals import goal_point_for_key
+from peaky_finders.site_suggestions.mesh_connectivity import satellite_in_main_component
+from peaky_finders.site_suggestions.mesh_goals import bridge_satellite_slug, goal_point_for_key, is_bridge_goal_key
 from peaky_finders.site_suggestions.mesh_grow import (
     analysis_footprints,
     analysis_sites,
@@ -52,6 +64,9 @@ class CorridorScoreContext:
     sites: tuple[BackboneSite, ...]
     footprints: Mapping[str, BaseGeometry | None]
     coverage_m: BaseGeometry | None
+    bridge_satellite_slug: str | None = None
+    hop_sites: tuple[BackboneSite, ...] = ()
+    hop_footprints: Mapping[str, BaseGeometry | None] | None = None
 
 
 def _to_m3857(geom: BaseGeometry | None) -> BaseGeometry | None:
@@ -112,6 +127,7 @@ def max_covered_arc_m(
     *,
     buffer_m: float,
     step_m: float = 250.0,
+    verbose: bool = False,
 ) -> float:
     """Maximum arc length along ``corridor_line_m`` covered by ``coverage_m`` within buffer."""
     if coverage_m is None or coverage_m.is_empty:
@@ -134,21 +150,40 @@ def max_covered_arc_m(
 
     step = max(25.0, float(step_m))
     n = max(1, int(length / step))
+    if verbose:
+        suggest_progress(
+            verbose,
+            f"covered arc: line {length / 1000.0:.1f} km, buffer {buf:.0f} m, {n + 1} sample(s)",
+        )
+    ticker = SuggestProgressTicker(verbose, label="covered arc", interval_s=0.5)
     for i in range(n + 1):
         s = min(length, i * step)
         pt = line.interpolate(s)
         if on_corridor.contains(pt) or on_corridor.intersects(pt.buffer(min(buf, step))):
             max_s = max(max_s, s)
+        ticker.maybe(f"arc sample {i}/{n}, s={max_s / 1000.0:.1f} km")
 
+    boundary_pts = 0
+    if verbose:
+        suggest_progress(verbose, "covered arc: boundary vertex scan…")
+    boundary_ticker = SuggestProgressTicker(
+        verbose, label="covered arc boundary", interval_s=0.5, every_n=500
+    )
     for geom in _explode_parts(on_corridor):
         if geom.is_empty:
             continue
         if geom.geom_type == "Point":
             max_s = max(max_s, float(line.project(geom)))
+            boundary_pts += 1
+            boundary_ticker.maybe(f"vertex {boundary_pts}, s={max_s / 1000.0:.1f} km")
             continue
         for x, y in _iter_boundary_coords(geom):
             max_s = max(max_s, float(line.project(Point(x, y))))
+            boundary_pts += 1
+            boundary_ticker.maybe(f"vertex {boundary_pts}, s={max_s / 1000.0:.1f} km")
 
+    if verbose:
+        ticker.done(f"max covered arc {max_s / 1000.0:.1f} km")
     return float(max_s)
 
 
@@ -160,11 +195,38 @@ def build_corridor_score_context(ctx: SiteSuggestionContext) -> CorridorScoreCon
     if goal is None:
         return None
 
+    verbose = ctx.verbose
     line_m = corridor.line_m3857()
     buffer_m = effective_corridor_buffer_m(ctx)
-    coverage = composite_coverage_geometry(ctx)
-    coverage_m = _to_m3857(coverage)
-    s_before = max_covered_arc_m(coverage_m, line_m, buffer_m=buffer_m)
+    if verbose:
+        suggest_progress(
+            verbose,
+            f"corridor score context: goal={corridor.goal_key} variant={corridor.variant} "
+            f"buffer={buffer_m:.0f} m corridor={corridor.length_m / 1000.0:.1f} km",
+        )
+
+    with suggest_step(verbose, "corridor score context composite coverage"):
+        coverage = composite_coverage_geometry(ctx, verbose=verbose)
+    with suggest_step(verbose, "corridor score context project coverage"):
+        coverage_m = _to_m3857(coverage)
+    with suggest_step(verbose, "corridor score context baseline covered arc"):
+        s_before = max_covered_arc_m(coverage_m, line_m, buffer_m=buffer_m, verbose=verbose)
+
+    if verbose:
+        dist_km = _point_dist_m(coverage_m, lon=goal.lon, lat=goal.lat) / 1000.0
+        suggest_log(
+            verbose,
+            f"site suggest:     corridor score context ready: s_before={s_before / 1000.0:.1f} km "
+            f"dist_to_goal={dist_km:.1f} km sites={len(analysis_sites(ctx))}",
+        )
+
+    bridge_sat: str | None = None
+    hop_sites: tuple[BackboneSite, ...] = ()
+    hop_fps: Mapping[str, BaseGeometry | None] | None = None
+    if is_bridge_goal_key(corridor.goal_key):
+        bridge_sat = bridge_satellite_slug(corridor.goal_key)
+        hop_sites = tuple(all_backbone_sites(ctx))
+        hop_fps = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
 
     return CorridorScoreContext(
         goal=goal,
@@ -176,6 +238,9 @@ def build_corridor_score_context(ctx: SiteSuggestionContext) -> CorridorScoreCon
         sites=analysis_sites(ctx),
         footprints=analysis_footprints(ctx),
         coverage_m=coverage_m,
+        bridge_satellite_slug=bridge_sat,
+        hop_sites=hop_sites,
+        hop_footprints=hop_fps,
     )
 
 
@@ -216,8 +281,18 @@ def score_corridor_trial(
     )
     delta_s = float(s_after - score_ctx.s_before_m)
 
-    pt = Point(float(score_ctx.goal.lon), float(score_ctx.goal.lat))
-    captured = fp.covers(pt)
+    if score_ctx.bridge_satellite_slug is not None and score_ctx.hop_footprints is not None:
+        captured = satellite_in_main_component(
+            satellite_slug=score_ctx.bridge_satellite_slug,
+            sites=score_ctx.hop_sites,
+            footprints=score_ctx.hop_footprints,
+            trial_lat=float(lat),
+            trial_lon=float(lon),
+            trial_footprint=fp,
+        )
+    else:
+        pt = Point(float(score_ctx.goal.lon), float(score_ctx.goal.lat))
+        captured = fp.covers(pt)
     after_dist = _point_dist_m(union_m, lon=score_ctx.goal.lon, lat=score_ctx.goal.lat)
     delta_dist = float(score_ctx.before_dist_to_goal_m - after_dist)
 
@@ -245,12 +320,68 @@ def corridor_sort_key(score: CorridorTrialScore) -> tuple:
     )
 
 
+def _score_corridor_trial_worker(
+    args: tuple[CorridorScoreContext, float, float, BaseGeometry],
+) -> CorridorTrialScore | None:
+    score_ctx, lat, lon, trial_footprint = args
+    return score_corridor_trial(
+        score_ctx=score_ctx,
+        lat=lat,
+        lon=lon,
+        trial_footprint=trial_footprint,
+    )
+
+
 def score_corridor_trials(
     *,
     score_ctx: CorridorScoreContext,
     trials: Sequence[tuple[float, float, BaseGeometry]],
+    jobs: int = 1,
+    verbose: bool = False,
 ) -> list[CorridorTrialScore | None]:
-    return [
-        score_corridor_trial(score_ctx=score_ctx, lat=lat, lon=lon, trial_footprint=fp)
-        for lat, lon, fp in trials
-    ]
+    """Score many trial footprints; parallel when ``jobs > 1``."""
+    if not trials:
+        return []
+    workers = max(1, int(jobs))
+    n = len(trials)
+    if verbose:
+        suggest_progress(verbose, f"corridor trial score: {n} trial(s), workers={workers}")
+
+    if workers <= 1 or n <= 1:
+        ticker = SuggestProgressTicker(verbose, label="corridor trial score", interval_s=0.5)
+        out: list[CorridorTrialScore | None] = []
+        for idx, (lat, lon, fp) in enumerate(trials, start=1):
+            out.append(
+                score_corridor_trial(
+                    score_ctx=score_ctx,
+                    lat=lat,
+                    lon=lon,
+                    trial_footprint=fp,
+                )
+            )
+            ticker.maybe(f"[{idx}/{n}] scored")
+        if verbose:
+            ticker.done(f"{sum(s is not None for s in out)}/{n} scorable")
+        return out
+
+    mx = min(workers, n)
+    payload = [(score_ctx, lat, lon, fp) for lat, lon, fp in trials]
+    out: list[CorridorTrialScore | None] = [None] * n
+    ticker = SuggestProgressTicker(verbose, label="corridor trial score", interval_s=0.5)
+    if verbose:
+        suggest_progress(verbose, f"corridor trial score: process pool workers={mx}, submitting…")
+    with ProcessPoolExecutor(max_workers=mx) as pool:
+        futs = {
+            pool.submit(_score_corridor_trial_worker, item): idx
+            for idx, item in enumerate(payload)
+        }
+        if verbose:
+            suggest_progress(verbose, f"corridor trial score: {len(futs)} job(s) queued, awaiting results…")
+        done = 0
+        for fut in as_completed(futs):
+            out[futs[fut]] = fut.result()
+            done += 1
+            ticker.maybe(f"[{done}/{n}] scored")
+    if verbose:
+        ticker.done(f"{sum(s is not None for s in out)}/{n} scorable")
+    return out

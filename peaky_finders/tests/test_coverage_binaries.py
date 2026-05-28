@@ -34,6 +34,8 @@ def test_splatter_extension_exposes_session_and_batch_api() -> None:
 
     assert hasattr(Session, "run")
     assert hasattr(Session, "run_batch")
+    assert hasattr(Session, "link_mutual_viable")
+    assert hasattr(Session, "link_mutual_batch")
     assert splatter.SPLAT_CACHE_SCHEMA_VERSION == 6
 
 

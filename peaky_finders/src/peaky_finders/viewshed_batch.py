@@ -60,10 +60,11 @@ def run_viewshed_batch(
 
     n = len(workspaces)
     workers = resolved_splatter_batch_jobs(preset=preset, workspace_count=n, build_jobs=build_jobs)
-    print(
-        f"Coverage batch: {n} workspace(s) via splatter run-batch (workers={workers})",
-        flush=True,
-    )
+    if coverage_verbose:
+        print(
+            f"Coverage batch: {n} workspace(s) via splatter run-batch (workers={workers})",
+            flush=True,
+        )
     requests_json = batch_req.read_text(encoding="utf-8")
     try:
         rc = run_splatter_batch(
@@ -79,6 +80,7 @@ def run_viewshed_batch(
                 workdirs=[ws.workdir for ws in workspaces],
                 polygon_style=style,
                 jobs=workers,
+                verbose=coverage_verbose,
             )
         return rc
     finally:

@@ -5,9 +5,8 @@ from __future__ import annotations
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.corridor import (
     corridor_grow_planning_complete,
-    ensure_active_corridor,
 )
-from peaky_finders.site_suggestions.log import suggest_log
+from peaky_finders.site_suggestions.log import suggest_log, suggest_progress
 from peaky_finders.site_suggestions.mesh_backbone_candidates import (
     generate_corridor_grow_candidates,
     generate_mesh_grow_candidates,
@@ -87,7 +86,7 @@ class MeshBackboneStrategy:
 
     def _generate_corridor_candidates(self, ctx: SiteSuggestionContext) -> list:
         if ctx.verbose:
-            ensure_active_corridor(ctx)
+            suggest_progress(ctx.verbose, "corridor-grow: gather goal status…")
             state = ctx.corridor_state
             active = state.active_goal_key if state else None
             blocked = len(state.blocked_goal_keys) if state else 0
@@ -99,7 +98,13 @@ class MeshBackboneStrategy:
                 f"     phase={phase}  active={active or '?'}  pending={len(pending)}  "
                 f"blocked={blocked}  selection by hop-valid Δs along corridor",
             )
-        return generate_corridor_grow_candidates(ctx)
+        candidates = generate_corridor_grow_candidates(ctx)
+        if ctx.verbose:
+            suggest_log(
+                ctx.verbose,
+                f"site suggest:     corridor-grow done: {len(candidates)} candidate(s)",
+            )
+        return candidates
 
     def _log_grow_status(self, ctx: SiteSuggestionContext, remaining, *, greedy: bool) -> None:
         phase = mesh_connectivity_phase(ctx)

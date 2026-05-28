@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,10 +13,18 @@ from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.corridor import CorridorPath
+from peaky_finders.site_suggestions.log import SuggestProgressTicker, suggest_log, suggest_progress
 from peaky_finders.site_suggestions.mesh_goals import goal_point_for_key
 
 KML_NS = "http://www.opengis.net/kml/2.2"
 OUTPUT_KML_NAME = "output.kml"
+# Google Earth aabbggrr — opaque yellow for RF corridor polylines (distinct from mesh link overlays).
+CORRIDOR_PATH_LINE_COLOR = "ff00ffff"
+CORRIDOR_PATH_ALT_LINE_COLOR = "9900ffff"
+CORRIDOR_PATH_LINE_WIDTH = 4.0
+CORRIDOR_PATH_ALT_LINE_WIDTH = 3.0
+CORRIDOR_PATH_STYLE_ID = "corridor-path-active"
+CORRIDOR_PATH_ALT_STYLE_ID = "corridor-path-alt"
 
 
 @dataclass
@@ -57,6 +66,10 @@ class CorridorGoalDebug:
     goal_lat: float
     goal_lon: float
     status: str = "active"
+    planning_note: str = ""
+    attachment_lat: float | None = None
+    attachment_lon: float | None = None
+    relay_nodes: list[tuple[float, float]] = field(default_factory=list)
     routes: list[CorridorRouteRecord] = field(default_factory=list)
     active_variant: int | None = None
     active_plan_generation: int | None = None
@@ -82,39 +95,56 @@ def _relative_href(*, from_kml: Path, target: Path) -> str:
     return rel.replace("\\", "/")
 
 
-def _prepare_output_kml_for_earth(workdir: Path) -> Path | None:
-    """Ensure ``output.kml`` GroundOverlay href is Earth-friendly (``splat.png``)."""
+def _ensure_viewshed_png(workdir: Path) -> Path | None:
+    """Ensure ``splat.png`` exists for Earth display; return PNG path when ready."""
+    wd = Path(workdir).expanduser().resolve()
+    if not wd.is_dir():
+        return None
+    png = wd / "splat.png"
+    if png.is_file():
+        return png
+    ppm = wd / "output.ppm"
+    out_kml = wd / OUTPUT_KML_NAME
+    if not ppm.is_file() or not out_kml.is_file():
+        return None
+    from peaky_finders.splat_pipeline import ensure_splat_raster_png
+
+    ensure_splat_raster_png(site_name=wd.name, data_dir=wd)
+    return png if png.is_file() else None
+
+
+def _viewshed_bounds(workdir: Path) -> dict[str, float] | None:
     wd = Path(workdir).expanduser().resolve()
     out_kml = wd / OUTPUT_KML_NAME
     if not out_kml.is_file():
         return None
-    ppm = wd / "output.ppm"
-    if ppm.is_file():
-        raw = out_kml.read_text(encoding="utf-8")
-        if "output.ppm" in raw:
-            from peaky_finders.splat_pipeline import ensure_splat_raster_png
+    try:
+        from peaky_finders.kml_bundle import parse_lat_lon_box
 
-            ensure_splat_raster_png(site_name=wd.name, data_dir=wd)
+        return parse_lat_lon_box(out_kml.read_bytes())
+    except (OSError, ValueError):
+        return None
+
+
+def _prepare_output_kml_for_earth(workdir: Path) -> Path | None:
+    """Ensure viewshed raster is Earth-friendly (``splat.png``) and ``output.kml`` exists."""
+    wd = Path(workdir).expanduser().resolve()
+    out_kml = wd / OUTPUT_KML_NAME
+    png = _ensure_viewshed_png(wd)
+    if png is None:
+        return out_kml if out_kml.is_file() else None
     return out_kml if out_kml.is_file() else None
 
 
-def _viewshed_href(*, from_kml: Path, workdir: Path | None) -> str | None:
-    if workdir is None:
-        return None
-    wd = Path(workdir).expanduser().resolve()
-    if not wd.is_dir():
-        return None
-    out_kml = _prepare_output_kml_for_earth(wd)
-    if out_kml is None:
-        return None
-    return _relative_href(from_kml=from_kml, target=out_kml)
-
-
 def _line_coords_text(line: LineString) -> str:
-    coords: list[str] = []
-    for x, y in line.coords:
-        coords.append(f"{float(x):.8f},{float(y):.8f},0")
-    return " ".join(coords)
+    return "\n".join(f"{float(x):.8f},{float(y):.8f},0" for x, y in line.coords)
+
+
+def _write_kml_tree(root: ET.Element, out_kml: Path) -> None:
+    tree = ET.ElementTree(root)
+    ET.indent(tree, space="    ")
+    out_kml.parent.mkdir(parents=True, exist_ok=True)
+    tree.write(out_kml, encoding="utf-8", xml_declaration=True)
 
 
 def _goal_debug(ctx: SiteSuggestionContext, goal_key: str) -> CorridorGoalDebug | None:
@@ -143,6 +173,84 @@ def _ensure_goal_debug(ctx: SiteSuggestionContext, goal_key: str) -> CorridorGoa
     return dbg
 
 
+def _refresh_goal_kml(ctx: SiteSuggestionContext, goal_key: str) -> Path | None:
+    return write_corridor_goal_kml(ctx, goal_key=goal_key)
+
+
+def init_corridor_goal_kml(ctx: SiteSuggestionContext, goal_key: str) -> Path | None:
+    """Create or reset per-goal debug KML as soon as a corridor goal is activated."""
+    dbg = _ensure_goal_debug(ctx, goal_key)
+    if dbg is None:
+        return None
+    dbg.status = "planning"
+    dbg.planning_note = "goal activated"
+    dbg.attachment_lat = None
+    dbg.attachment_lon = None
+    dbg.relay_nodes = []
+    dbg.routes = []
+    dbg.active_variant = None
+    dbg.active_plan_generation = None
+    path = _refresh_goal_kml(ctx, goal_key)
+    if path is not None:
+        suggest_log(ctx.verbose, f"site suggest:   corridor kml init: {path}")
+    return path
+
+
+def update_corridor_planning_state(
+    ctx: SiteSuggestionContext,
+    goal_key: str,
+    *,
+    attachment: tuple[float, float] | None = None,
+    relay_nodes: list[tuple[float, float]] | None = None,
+    note: str | None = None,
+    status: str | None = None,
+) -> None:
+    dbg = _ensure_goal_debug(ctx, goal_key)
+    if dbg is None:
+        return
+    if attachment is not None:
+        dbg.attachment_lat, dbg.attachment_lon = float(attachment[0]), float(attachment[1])
+    if relay_nodes is not None:
+        dbg.relay_nodes = [(float(lat), float(lon)) for lat, lon in relay_nodes]
+    if note is not None:
+        dbg.planning_note = str(note)
+    if status is not None:
+        dbg.status = str(status)
+    _refresh_goal_kml(ctx, goal_key)
+
+
+def append_corridor_route(
+    ctx: SiteSuggestionContext,
+    *,
+    goal_key: str,
+    corridor: CorridorPath,
+    plan_generation: int,
+    set_active: bool = False,
+) -> None:
+    dbg = _ensure_goal_debug(ctx, goal_key)
+    if dbg is None:
+        return
+    line = corridor.line
+    if not isinstance(line, LineString):
+        return
+    variant = int(corridor.variant)
+    gen = int(plan_generation)
+    key = (gen, variant)
+    if not any(r.plan_generation == key[0] and r.variant == key[1] for r in dbg.routes):
+        dbg.routes.append(
+            CorridorRouteRecord(
+                plan_generation=gen,
+                variant=variant,
+                line=line,
+                length_m=float(corridor.length_m),
+            )
+        )
+    if set_active:
+        dbg.active_variant = variant
+        dbg.active_plan_generation = gen
+    _refresh_goal_kml(ctx, goal_key)
+
+
 def record_planned_corridors(
     ctx: SiteSuggestionContext,
     *,
@@ -153,19 +261,18 @@ def record_planned_corridors(
     dbg = _ensure_goal_debug(ctx, goal_key)
     if dbg is None:
         return
-    for corridor in corridors:
-        line = corridor.line
-        if not isinstance(line, LineString):
-            continue
-        dbg.routes.append(
-            CorridorRouteRecord(
-                plan_generation=plan_generation,
-                variant=int(corridor.variant),
-                line=line,
-                length_m=float(corridor.length_m),
-            )
+    for i, corridor in enumerate(corridors):
+        append_corridor_route(
+            ctx,
+            goal_key=goal_key,
+            corridor=corridor,
+            plan_generation=plan_generation,
+            set_active=i == 0,
         )
-    refresh_corridor_goal_kml(ctx)
+    if corridors:
+        dbg.status = "active"
+        dbg.planning_note = f"{len(corridors)} route(s) planned"
+        _refresh_goal_kml(ctx, goal_key)
 
 
 def mark_active_corridor(
@@ -180,7 +287,9 @@ def mark_active_corridor(
         return
     dbg.active_variant = int(variant)
     dbg.active_plan_generation = int(plan_generation)
-    refresh_corridor_goal_kml(ctx)
+    if dbg.status == "planning":
+        dbg.status = "active"
+    _refresh_goal_kml(ctx, goal_key)
 
 
 def _trial_record_key(record: CorridorTrialRecord) -> tuple[int, str, int]:
@@ -226,7 +335,7 @@ def record_corridor_trials(
         rec = _trial_from_runtime(iteration=iteration, trial=trial)
         by_key[_trial_record_key(rec)] = rec
     dbg.trials = sorted(by_key.values(), key=_trial_record_key)
-    refresh_corridor_goal_kml(ctx)
+    _refresh_goal_kml(ctx, goal_key)
 
 
 def refresh_corridor_goal_kml(ctx: SiteSuggestionContext) -> None:
@@ -276,7 +385,7 @@ def record_corridor_trial_viewshed(
     by_key = {_trial_record_key(t): t for t in dbg.trials}
     by_key[_trial_record_key(rec)] = rec
     dbg.trials = sorted(by_key.values(), key=_trial_record_key)
-    refresh_corridor_goal_kml(ctx)
+    _refresh_goal_kml(ctx, goal_key)
 
 
 def record_corridor_pick(
@@ -313,7 +422,7 @@ def record_corridor_pick(
     )
     for trial in dbg.trials:
         trial.selected = trial.iteration == iteration and trial.outcome == "selected"
-    refresh_corridor_goal_kml(ctx)
+    _refresh_goal_kml(ctx, goal_key)
 
 
 def finalize_corridor_goal(
@@ -328,7 +437,7 @@ def finalize_corridor_goal(
     dbg.status = status
     path = write_corridor_goal_kml(ctx, goal_key=goal_key)
     if path is not None:
-        print(f"site suggest: corridor debug kml ({status}): {path}", flush=True)
+        suggest_log(ctx.verbose, f"site suggest:   corridor kml ({status}): {path}")
 
 
 def flush_corridor_kml(ctx: SiteSuggestionContext) -> None:
@@ -345,7 +454,22 @@ def write_corridor_goal_kml(ctx: SiteSuggestionContext, *, goal_key: str) -> Pat
         return None
     out_kml = corridor_goal_kml_path(ctx.suggest_root, goal_key)
     out_kml.parent.mkdir(parents=True, exist_ok=True)
-    _write_goal_kml(out_kml=out_kml, dbg=dbg)
+    if ctx.verbose:
+        parts = [f"status={dbg.status}"]
+        if dbg.relay_nodes:
+            parts.append(f"{len(dbg.relay_nodes)} relay(s)")
+        if dbg.routes:
+            parts.append(f"{len(dbg.routes)} route(s)")
+        if dbg.trials:
+            parts.append(f"{len(dbg.trials)} trial(s)")
+        if dbg.planning_note:
+            parts.append(dbg.planning_note)
+        suggest_progress(ctx.verbose, f"corridor kml: write {goal_key} ({', '.join(parts)})…")
+    t0 = time.perf_counter()
+    _write_goal_kml(out_kml=out_kml, dbg=dbg, verbose=ctx.verbose)
+    if ctx.verbose:
+        elapsed = time.perf_counter() - t0
+        suggest_progress(ctx.verbose, f"corridor kml: wrote {goal_key} ({elapsed:.1f}s)")
     return out_kml
 
 
@@ -398,6 +522,20 @@ def _add_point_placemark(
     ET.SubElement(pt, _kml_tag("coordinates")).text = f"{lon:.8f},{lat:.8f},0"
 
 
+def _add_line_style(
+    parent: ET.Element,
+    *,
+    style_id: str,
+    color: str,
+    width: float,
+) -> None:
+    st = ET.SubElement(parent, _kml_tag("Style"))
+    st.set("id", style_id)
+    ls = ET.SubElement(st, _kml_tag("LineStyle"))
+    ET.SubElement(ls, _kml_tag("color")).text = color
+    ET.SubElement(ls, _kml_tag("width")).text = f"{float(width):.1f}"
+
+
 def _add_line_placemark(
     parent: ET.Element,
     *,
@@ -405,6 +543,7 @@ def _add_line_placemark(
     line: BaseGeometry,
     description: str | None = None,
     visible: bool = True,
+    style_url: str | None = None,
 ) -> None:
     if line.is_empty:
         return
@@ -414,6 +553,8 @@ def _add_line_placemark(
     pm = ET.SubElement(parent, _kml_tag("Placemark"))
     ET.SubElement(pm, _kml_tag("name")).text = name
     ET.SubElement(pm, _kml_tag("visibility")).text = "1" if visible else "0"
+    if style_url:
+        ET.SubElement(pm, _kml_tag("styleUrl")).text = style_url
     if description:
         ET.SubElement(pm, _kml_tag("description")).text = description
     ls = ET.SubElement(pm, _kml_tag("LineString"))
@@ -421,32 +562,96 @@ def _add_line_placemark(
     ET.SubElement(ls, _kml_tag("coordinates")).text = _line_coords_text(geom)
 
 
-def _add_viewshed_link(
+def _add_ground_overlay(
+    parent: ET.Element,
+    *,
+    name: str,
+    href: str,
+    bounds: dict[str, float],
+    visible: bool,
+) -> None:
+    go = ET.SubElement(parent, _kml_tag("GroundOverlay"))
+    ET.SubElement(go, _kml_tag("name")).text = name
+    ET.SubElement(go, _kml_tag("visibility")).text = "1" if visible else "0"
+    icon = ET.SubElement(go, _kml_tag("Icon"))
+    ET.SubElement(icon, _kml_tag("href")).text = href
+    box = ET.SubElement(go, _kml_tag("LatLonBox"))
+    ET.SubElement(box, _kml_tag("north")).text = f"{bounds['north']:.8f}"
+    ET.SubElement(box, _kml_tag("south")).text = f"{bounds['south']:.8f}"
+    ET.SubElement(box, _kml_tag("east")).text = f"{bounds['east']:.8f}"
+    ET.SubElement(box, _kml_tag("west")).text = f"{bounds['west']:.8f}"
+    rot = float(bounds.get("rotation", 0.0))
+    ET.SubElement(box, _kml_tag("rotation")).text = f"{rot:.8f}"
+
+
+def _add_viewshed_overlay(
     parent: ET.Element,
     *,
     from_kml: Path,
     name: str,
     workdir: Path | None,
     visible: bool,
+    overlay_ticker: SuggestProgressTicker | None = None,
 ) -> None:
-    href = _viewshed_href(from_kml=from_kml, workdir=workdir)
-    if href is None:
+    if workdir is None:
         return
-    nl = ET.SubElement(parent, _kml_tag("NetworkLink"))
-    ET.SubElement(nl, _kml_tag("name")).text = name
-    ET.SubElement(nl, _kml_tag("visibility")).text = "1" if visible else "0"
-    link = ET.SubElement(nl, _kml_tag("Link"))
-    ET.SubElement(link, _kml_tag("href")).text = href
+    wd = Path(workdir).expanduser().resolve()
+    if overlay_ticker is not None:
+        overlay_ticker.maybe(name)
+    png = _ensure_viewshed_png(wd)
+    if png is None:
+        return
+    bounds = _viewshed_bounds(wd)
+    if bounds is None:
+        return
+    href = _relative_href(from_kml=from_kml, target=png)
+    _add_ground_overlay(
+        parent,
+        name=name,
+        href=href,
+        bounds=bounds,
+        visible=visible,
+    )
 
 
-def _write_goal_kml(*, out_kml: Path, dbg: CorridorGoalDebug) -> None:
+def _write_goal_kml(*, out_kml: Path, dbg: CorridorGoalDebug, verbose: bool = False) -> None:
+    include_trial_history = dbg.status != "planning"
+    if verbose:
+        parts = [
+            f"status={dbg.status}",
+            f"{len(dbg.relay_nodes)} relay(s)",
+            f"{len(dbg.routes)} route(s)",
+        ]
+        if include_trial_history:
+            parts.append(f"{len(dbg.picks)} pick(s)")
+            parts.append(f"{len(dbg.trials)} trial(s)")
+        else:
+            parts.append("trial overlays deferred")
+        suggest_progress(verbose, f"corridor kml body: {', '.join(parts)}…")
+
     ET.register_namespace("", KML_NS)
     root = ET.Element(_kml_tag("kml"))
     doc = ET.SubElement(root, _kml_tag("Document"))
     ET.SubElement(doc, _kml_tag("name")).text = f"Corridor {dbg.goal_key} ({dbg.status})"
-    ET.SubElement(doc, _kml_tag("description")).text = (
-        f"Corridor grow debug for goal {dbg.goal_key!r}. "
-        "Selected folder is visible by default; alternate routes and trial viewsheds are hidden."
+    desc_parts = [
+        f"Corridor grow debug for goal {dbg.goal_key!r}.",
+        "Selected folder is visible by default; alternate routes and trial viewsheds are hidden.",
+    ]
+    if dbg.planning_note:
+        desc_parts.append(f"Status: {dbg.planning_note}")
+    ET.SubElement(doc, _kml_tag("description")).text = "\n".join(desc_parts)
+
+    _add_line_style(
+        doc,
+        style_id=CORRIDOR_PATH_STYLE_ID,
+        color=CORRIDOR_PATH_LINE_COLOR,
+        width=CORRIDOR_PATH_LINE_WIDTH,
+    )
+    _add_line_style(
+        doc,
+        style_id=CORRIDOR_PATH_ALT_STYLE_ID,
+        color=CORRIDOR_PATH_ALT_LINE_COLOR,
+        width=CORRIDOR_PATH_ALT_LINE_WIDTH,
     )
 
     selected = _add_folder(doc, name="Selected", visible=True, open_folder=True)
@@ -459,36 +664,85 @@ def _write_goal_kml(*, out_kml: Path, dbg: CorridorGoalDebug) -> None:
         visible=True,
     )
 
+    planning_visible = dbg.status == "planning"
+    if dbg.attachment_lat is not None and dbg.attachment_lon is not None:
+        _add_point_placemark(
+            selected,
+            name="Attachment",
+            lat=dbg.attachment_lat,
+            lon=dbg.attachment_lon,
+            description="Coverage boundary attachment toward goal",
+            visible=True,
+        )
+
+    if dbg.relay_nodes:
+        relay_folder = _add_folder(
+            selected,
+            name=f"Relay candidates ({len(dbg.relay_nodes)})",
+            visible=planning_visible,
+            open_folder=planning_visible,
+        )
+        for i, (lat, lon) in enumerate(dbg.relay_nodes, start=1):
+            _add_point_placemark(
+                relay_folder,
+                name=f"Relay {i}",
+                lat=lat,
+                lon=lon,
+                visible=planning_visible,
+            )
+
     active = _active_route(dbg)
-    if active is not None:
+    if dbg.status == "planning" and dbg.routes:
+        latest_gen = max(r.plan_generation for r in dbg.routes)
+        for route in dbg.routes:
+            if route.plan_generation != latest_gen:
+                continue
+            label = f"Corridor path (gen {route.plan_generation}, variant {route.variant + 1})"
+            if active is not None and _is_active_route(dbg, route):
+                label += " [active]"
+            _add_line_placemark(
+                selected,
+                name=label,
+                line=route.line,
+                description=f"{route.length_m / 1000.0:.1f} km",
+                visible=True,
+                style_url=f"#{CORRIDOR_PATH_STYLE_ID}",
+            )
+    elif active is not None:
         _add_line_placemark(
             selected,
             name=f"Corridor path (gen {active.plan_generation}, variant {active.variant + 1})",
             line=active.line,
             description=f"{active.length_m / 1000.0:.1f} km",
             visible=True,
+            style_url=f"#{CORRIDOR_PATH_STYLE_ID}",
         )
 
     picks_folder = _add_folder(selected, name="Placed sites", visible=True, open_folder=True)
-    for pick in dbg.picks:
-        elev = f" {int(pick.elev_m)} m" if pick.elev_m is not None else ""
-        label = f"Pick #{pick.iteration}{elev}"
-        desc = f"{pick.strategy} @ ({pick.lat:.5f}, {pick.lon:.5f})"
-        _add_point_placemark(
-            picks_folder,
-            name=label,
-            lat=pick.lat,
-            lon=pick.lon,
-            description=desc,
-            visible=True,
-        )
-        _add_viewshed_link(
-            picks_folder,
-            from_kml=out_kml,
-            name=f"Viewshed #{pick.iteration}",
-            workdir=pick.workdir,
-            visible=True,
-        )
+    overlay_ticker = SuggestProgressTicker(verbose, label="corridor kml overlay", interval_s=0.5)
+    if include_trial_history:
+        for pick in dbg.picks:
+            elev = f" {int(pick.elev_m)} m" if pick.elev_m is not None else ""
+            label = f"Pick #{pick.iteration}{elev}"
+            desc = f"{pick.strategy} @ ({pick.lat:.5f}, {pick.lon:.5f})"
+            _add_point_placemark(
+                picks_folder,
+                name=label,
+                lat=pick.lat,
+                lon=pick.lon,
+                description=desc,
+                visible=True,
+            )
+            _add_viewshed_overlay(
+                picks_folder,
+                from_kml=out_kml,
+                name=f"Viewshed #{pick.iteration}",
+                workdir=pick.workdir,
+                visible=True,
+                overlay_ticker=overlay_ticker,
+            )
+    elif verbose and dbg.picks:
+        suggest_progress(verbose, f"corridor kml: skip {len(dbg.picks)} pick viewshed overlay(s) while planning")
 
     alt_folder = _add_folder(doc, name="Alternate corridors", visible=False)
     seen_alt: set[tuple[int, int]] = set()
@@ -505,39 +759,46 @@ def _write_goal_kml(*, out_kml: Path, dbg: CorridorGoalDebug) -> None:
             line=route.line,
             description=f"{route.length_m / 1000.0:.1f} km",
             visible=False,
+            style_url=f"#{CORRIDOR_PATH_ALT_STYLE_ID}",
         )
 
-    for phase_label, phase_key in (("Coarse trials", "coarse"), ("Refine trials", "refine")):
-        phase_trials = [t for t in dbg.trials if t.phase == phase_key]
-        if not phase_trials:
-            continue
-        phase_folder = _add_folder(doc, name=phase_label, visible=False)
-        by_iter: dict[int, list[CorridorTrialRecord]] = {}
-        for trial in phase_trials:
-            by_iter.setdefault(trial.iteration, []).append(trial)
-        for iteration in sorted(by_iter):
-            iter_folder = _add_folder(phase_folder, name=f"Iteration {iteration}", visible=False)
-            for trial in by_iter[iteration]:
-                if trial.selected:
-                    continue
-                elev = f" {int(trial.elev_m)} m" if trial.elev_m is not None else ""
-                label = f"[{trial.index}] {trial.outcome}{elev}"
-                desc = f"{trial.strategy}\n{trial.detail}"
-                _add_point_placemark(
-                    iter_folder,
-                    name=label,
-                    lat=trial.lat,
-                    lon=trial.lon,
-                    description=desc,
-                    visible=False,
-                )
-                _add_viewshed_link(
-                    iter_folder,
-                    from_kml=out_kml,
-                    name=f"Viewshed [{trial.index}]",
-                    workdir=trial.workdir,
-                    visible=False,
-                )
+    if include_trial_history:
+        for phase_label, phase_key in (("Coarse trials", "coarse"), ("Refine trials", "refine")):
+            phase_trials = [t for t in dbg.trials if t.phase == phase_key]
+            if not phase_trials:
+                continue
+            phase_folder = _add_folder(doc, name=phase_label, visible=False)
+            by_iter: dict[int, list[CorridorTrialRecord]] = {}
+            for trial in phase_trials:
+                by_iter.setdefault(trial.iteration, []).append(trial)
+            for iteration in sorted(by_iter):
+                iter_folder = _add_folder(phase_folder, name=f"Iteration {iteration}", visible=False)
+                for trial in by_iter[iteration]:
+                    if trial.selected:
+                        continue
+                    elev = f" {int(trial.elev_m)} m" if trial.elev_m is not None else ""
+                    label = f"[{trial.index}] {trial.outcome}{elev}"
+                    desc = f"{trial.strategy}\n{trial.detail}"
+                    _add_point_placemark(
+                        iter_folder,
+                        name=label,
+                        lat=trial.lat,
+                        lon=trial.lon,
+                        description=desc,
+                        visible=False,
+                    )
+                    _add_viewshed_overlay(
+                        iter_folder,
+                        from_kml=out_kml,
+                        name=f"Viewshed [{trial.index}]",
+                        workdir=trial.workdir,
+                        visible=False,
+                        overlay_ticker=overlay_ticker,
+                    )
+    elif verbose and dbg.trials:
+        suggest_progress(verbose, f"corridor kml: skip {len(dbg.trials)} trial viewshed overlay(s) while planning")
 
-    out_kml.parent.mkdir(parents=True, exist_ok=True)
-    ET.ElementTree(root).write(out_kml, encoding="utf-8", xml_declaration=True)
+    if verbose and include_trial_history and (dbg.picks or dbg.trials):
+        overlay_ticker.done("viewshed overlay(s) inlined")
+
+    _write_kml_tree(root, out_kml)

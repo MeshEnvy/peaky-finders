@@ -39,7 +39,11 @@ def run_site_suggestion_pass(
         preset = load_preset(preset_path_r)
 
     suggest_root = resolved_site_suggest_dir(preset_path_r)
-    budget_label = "solve" if int(suggest_cli_n) == SOLVE_UNTIL_COMPLETE else str(int(suggest_cli_n))
+    budget_label = (
+        "solve"
+        if int(suggest_cli_n) == SOLVE_UNTIL_COMPLETE
+        else f"{int(suggest_cli_n)} goal(s)"
+    )
     if verbose:
         print(
             f"site suggest: starting {budget_label} pass "

@@ -12,7 +12,7 @@ from shapely.geometry.base import BaseGeometry
 from peaky_finders.site_suggestions.candidates import SiteCandidate, _dedupe_candidates, generate_refine_candidates
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.eligible_peaks_cache import load_or_build_eligible_peaks
-from peaky_finders.site_suggestions.log import suggest_log, suggest_step
+from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step, SuggestProgressTicker
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
 
 _TO_M = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
@@ -26,6 +26,7 @@ def regional_peak_candidates_around_centers(
     per_seed_cap: int,
     eligible_ll: BaseGeometry,
     strategy: str = "refine_peak",
+    verbose: bool = False,
 ) -> list[SiteCandidate]:
     """Return Skadi peaks within ``radius_m`` of each center, capped per seed by elevation."""
     if not peaks_llz or not centers or int(per_seed_cap) <= 0 or float(radius_m) <= 0:
@@ -39,7 +40,8 @@ def regional_peak_candidates_around_centers(
     px, py = _TO_M.transform(lons, lats)
 
     out: list[SiteCandidate] = []
-    for center in centers:
+    ticker = SuggestProgressTicker(verbose, label="coarse peaks", interval_s=0.5)
+    for center_idx, center in enumerate(centers, start=1):
         cx, cy = _TO_M.transform(float(center.lon), float(center.lat))
         dist2 = (px - cx) ** 2 + (py - cy) ** 2
         sel = dist2 <= radius2
@@ -69,6 +71,9 @@ def regional_peak_candidates_around_centers(
             kept += 1
             if kept >= cap:
                 break
+        ticker.maybe(f"seed [{center_idx}/{len(centers)}], {len(out)} peak(s) kept")
+    if verbose and centers:
+        ticker.done(f"{len(out)} peak(s) from {len(centers)} seed(s)")
     return _dedupe_candidates(out)
 
 
@@ -158,6 +163,7 @@ def attach_frontier_peak_candidates(
         per_seed_cap=int(mb.coarse_peaks_per_sample),
         eligible_ll=eligible_ll,
         strategy="frontier_peak",
+        verbose=verbose,
     )
     suggest_log(
         verbose,
