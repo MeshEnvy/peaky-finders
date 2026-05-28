@@ -744,6 +744,41 @@ class MeshBackboneStrategyConfig(BaseModel):
         ge=10.0,
         description="Grid spacing for micro-refinement viewshed samples.",
     )
+    refine_peaks_enabled: bool = Field(
+        default=True,
+        description="Add Skadi peak samples within the refine area around each coarse winner.",
+    )
+    refine_peak_radius_m: float = Field(
+        default=400.0,
+        ge=25.0,
+        description="Search radius for regional peaks around each refine seed.",
+    )
+    refine_peak_bin_size_m: float = Field(
+        default=150.0,
+        ge=25.0,
+        description="Skadi bin size when indexing eligible peaks for refine search.",
+    )
+    refine_peaks_per_seed: int = Field(
+        default=8,
+        ge=0,
+        le=64,
+        description="Max peak candidates per refine seed (viewshed batch cap).",
+    )
+    coarse_peaks_enabled: bool = Field(
+        default=True,
+        description="Add nearest Skadi peak(s) around each coarse frontier sample.",
+    )
+    coarse_peak_radius_m: float = Field(
+        default=750.0,
+        ge=25.0,
+        description="Search radius for Skadi peaks around each frontier sample.",
+    )
+    coarse_peaks_per_sample: int = Field(
+        default=2,
+        ge=0,
+        le=16,
+        description="Max peak candidates added per frontier sample (coarse pass).",
+    )
     max_nodes: int | None = Field(
         default=None,
         ge=1,

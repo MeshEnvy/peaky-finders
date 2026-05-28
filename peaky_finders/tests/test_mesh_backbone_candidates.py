@@ -88,6 +88,7 @@ def test_generate_mesh_grow_candidates_on_frontier() -> None:
     cfg = MeshBackboneStrategyConfig(
         goals={"g1": MeshBackboneGoalEntry(loc=(39.0, -115.2))},
         max_candidates_per_round=8,
+        coarse_peaks_enabled=False,
     )
     ctx = SiteSuggestionContext(
         preset=type("P", (), {"sites": {"seed": type("E", (), {"lat": 39.0, "lon": -115.8})()}})(),
@@ -123,6 +124,7 @@ def test_generate_mesh_grow_candidates_multi_goal() -> None:
         eligible=eligible,
     )
     ctx.cfg.mesh_backbone.max_candidates_per_round = 16
+    ctx.cfg.mesh_backbone.coarse_peaks_enabled = False
     cands = generate_mesh_grow_candidates(ctx)
     assert cands
     strategies = {c.strategy for c in cands}
