@@ -19,6 +19,8 @@ from peaky_finders.site_suggestions.mesh_connectivity import (
     healing_context,
     mesh_healing_needed,
     minimum_component_gap,
+    satellite_in_main_component,
+    uncaptured_healing_goals,
 )
 from peaky_finders.site_suggestions.mesh_grow import grow_goals, main_footprint_slugs
 from peaky_finders.sites_job import (
@@ -62,6 +64,63 @@ def test_anchor_slugs_excludes_suggested() -> None:
         },
     )()
     assert anchor_slugs(preset) == {"seed"}
+
+
+def test_bridge_uncaptured_until_satellite_in_main_hop_component() -> None:
+    sites = [
+        BackboneSite(slug="main", lat=41.5, lon=-119.0),
+        BackboneSite(slug="sat", lat=36.2, lon=-115.3),
+    ]
+    pin_only = box(-120.0, 35.0, -114.0, 42.0)
+    footprints_pin_only = {"main": pin_only, "sat": box(-115.4, 36.1, -115.2, 36.3)}
+    footprints_hop = {
+        "main": box(-120.0, 35.0, -114.0, 42.0),
+        "sat": box(-119.5, 36.0, -115.0, 41.8),
+    }
+    preset = type(
+        "P",
+        (),
+        {
+            "sites": {
+                "main": SiteEntry(type=SiteType.INSTALLED, name="Main", loc=(41.5, -119.0)),
+                "sat": SiteEntry(type=SiteType.INSTALLED, name="Sat", loc=(36.2, -115.3)),
+            }
+        },
+    )()
+    ctx = SiteSuggestionContext(
+        preset=preset,
+        plan=type("Plan", (), {"viewshed_workspaces": ()})(),
+        grid=type("G", (), {"depth_at_point": lambda *a, **k: 0})(),
+        eligible_ll=box(-120.0, 35.0, -114.0, 42.0),
+        aoi_ll=box(-120.0, 35.0, -114.0, 42.0),
+        target_ll=box(-120.0, 35.0, -114.0, 42.0),
+        suggest_root=Path("/tmp/suggest"),
+        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
+        dem_mirror_root=Path("/tmp/dem"),
+        eligible_sha="x",
+        jobs=1,
+        verbose=False,
+    )
+    with patch(
+        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        return_value=footprints_pin_only,
+    ):
+        assert "bridge:sat" in uncaptured_healing_goals(ctx)
+        assert not satellite_in_main_component(
+            satellite_slug="sat",
+            sites=sites,
+            footprints=footprints_pin_only,
+        )
+    with patch(
+        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        return_value=footprints_hop,
+    ):
+        assert "bridge:sat" not in uncaptured_healing_goals(ctx)
+        assert satellite_in_main_component(
+            satellite_slug="sat",
+            sites=sites,
+            footprints=footprints_hop,
+        )
 
 
 def test_mesh_healing_needed_when_disconnected_even_if_goals_captured() -> None:

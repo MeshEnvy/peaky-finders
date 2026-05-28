@@ -65,6 +65,7 @@ def vectorize_coverage_footprints_parallel(
     workdirs: list[Path] | tuple[Path, ...],
     polygon_style: BundleKmlLayerStyle,
     jobs: int = 1,
+    verbose: bool = False,
 ) -> None:
     """Vectorize ``output.ppm`` → ``splat.gpkg`` across independent workspaces (CPU-bound)."""
     pending = [Path(wd).expanduser().resolve() for wd in workdirs if footprint_vectorize_needed(wd)]
@@ -74,10 +75,11 @@ def vectorize_coverage_footprints_parallel(
     workers = max(1, int(jobs))
     mx = min(workers, len(pending))
     style_dict = polygon_style.model_dump()
-    print(
-        f"footprint vectorize: {len(pending)} workspace(s), workers={mx}",
-        flush=True,
-    )
+    if verbose:
+        print(
+            f"footprint vectorize: {len(pending)} workspace(s), workers={mx}",
+            flush=True,
+        )
     if mx <= 1:
         for wd in pending:
             _vectorize_footprint_worker((str(wd), style_dict))

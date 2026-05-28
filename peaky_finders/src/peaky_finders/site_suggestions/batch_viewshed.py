@@ -15,7 +15,7 @@ from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.models import SplatCoverageRequest
 from peaky_finders.preset_mapping import preset_to_request
 from peaky_finders.site_suggestions.candidates import SiteCandidate
-from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step
+from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step, SuggestProgressTicker
 from peaky_finders.sites_job import (
     BundleKmlLayerStyle,
     Preset,
@@ -104,6 +104,14 @@ def _limit_nested_blas_threads() -> None:
 def _polygon_style_dict(preset: Preset) -> dict:
     kml_ov = preset.bundle.kml_overlay if preset.bundle else None
     return resolved_viewshed_coverage_kml_style(kml_ov).model_dump()
+
+
+def _read_footprint_worker(workdir: str) -> BaseGeometry | None:
+    """Thread-pool worker: read an already-vectorized footprint GPKG."""
+    gpkg = Path(workdir) / SPLAT_GPKG_NAME
+    if not gpkg.is_file():
+        return None
+    return read_coverage_footprint(gpkg)
 
 
 def _ensure_footprint_worker(workdir: str, style_dict: dict) -> BaseGeometry | None:
@@ -196,12 +204,22 @@ def _collect_candidate_footprints(
     n = len(planned)
     workers = max(1, int(jobs))
     mx = min(workers, n) if n else 1
-    use_process_pool = footprint_runner is None and mx > 1 and n > 1
-    pool_kind = "process" if use_process_pool else "thread"
+    need_vectorize = footprint_runner is None and any(
+        footprint_vectorize_needed(ws.workdir) for _c, ws, _digest, _cached in planned
+    )
+    use_process_pool = footprint_runner is None and need_vectorize and mx > 1 and n > 1
+    use_thread_pool = footprint_runner is None and not need_vectorize and mx > 1 and n > 1
+    if use_process_pool:
+        pool_kind = "process"
+    elif use_thread_pool:
+        pool_kind = "thread"
+    else:
+        pool_kind = "serial"
     label = f"read {n} candidate footprint(s), workers={mx} ({pool_kind})"
     out: dict[tuple[int, int], CandidateViewshedResult] = {}
 
     with suggest_step(verbose, label):
+        ticker = SuggestProgressTicker(verbose, label="footprint", interval_s=0.5)
         if mx <= 1 or n <= 1:
             for offset, (cand, ws, _digest, was_cached) in enumerate(planned):
                 trial_index = trial_index_start + offset
@@ -230,10 +248,42 @@ def _collect_candidate_footprints(
                 )
                 if verbose:
                     tag = "footprint" if footprint_runner is None else "mock viewshed"
-                    suggest_progress(verbose, f"{tag} [{trial_index}/{trial_index_start + n - 1}] {area_s}")
+                    ticker.maybe(f"{tag} [{trial_index}/{trial_index_start + n - 1}] {area_s}")
             return out
 
         done = 0
+        if use_thread_pool:
+            with ThreadPoolExecutor(max_workers=mx) as pool:
+                futs = {
+                    pool.submit(_read_footprint_worker, str(ws.workdir.resolve())): (
+                        trial_index_start + offset,
+                        cand,
+                        ws,
+                        was_cached,
+                    )
+                    for offset, (cand, ws, _digest, was_cached) in enumerate(planned)
+                }
+                for fut in as_completed(futs):
+                    trial_index, cand, ws, was_cached = futs[fut]
+                    fp = fut.result()
+                    result = CandidateViewshedResult(
+                        candidate=cand,
+                        footprint=fp,
+                        workdir=ws.workdir,
+                        from_cache=was_cached and fp is not None,
+                    )
+                    out[_candidate_key(cand)] = result
+                    _notify_viewshed_ready(
+                        on_viewshed_ready,
+                        trial_index=trial_index,
+                        cand=cand,
+                        workdir=ws.workdir,
+                        footprint=fp,
+                    )
+                    done += 1
+                    ticker.maybe(f"[{done}/{n}] {_footprint_status(fp)}")
+            return out
+
         if use_process_pool:
             style_dict = _polygon_style_dict(preset)
             with ProcessPoolExecutor(max_workers=mx, initializer=_limit_nested_blas_threads) as pool:
@@ -264,8 +314,7 @@ def _collect_candidate_footprints(
                         footprint=fp,
                     )
                     done += 1
-                    if verbose:
-                        suggest_progress(verbose, f"footprint [{done}/{n}] {_footprint_status(fp)}")
+                    ticker.maybe(f"[{done}/{n}] {_footprint_status(fp)}")
             return out
 
         with ThreadPoolExecutor(max_workers=mx) as pool:
@@ -293,9 +342,8 @@ def _collect_candidate_footprints(
                     footprint=result.footprint,
                 )
                 done += 1
-                if verbose:
-                    tag = "footprint" if footprint_runner is None else "mock viewshed"
-                    suggest_progress(verbose, f"{tag} [{done}/{n}] {area_s}")
+                tag = "footprint" if footprint_runner is None else "mock viewshed"
+                ticker.maybe(f"{tag} [{done}/{n}] {area_s}")
     return out
 
 

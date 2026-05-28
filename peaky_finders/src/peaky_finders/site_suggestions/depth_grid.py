@@ -16,8 +16,40 @@ from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.link_overlap import _read_coverage_footprint_epsg3857
+
+
+def _strict_frontier_mask(covered: np.ndarray) -> np.ndarray:
+    """True where ``covered`` cells touch a non-covered neighbor (8-connect) or grid edge."""
+    padded = np.pad(covered, 1, constant_values=False)
+    inner = padded[1:-1, 1:-1]
+    frontier = np.zeros_like(covered, dtype=bool)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            neighbor = padded[1 + dr : 1 + dr + covered.shape[0], 1 + dc : 1 + dc + covered.shape[1]]
+            frontier |= inner & ~neighbor
+    return frontier
+
+
+def _rasterize_seed_footprint_layer(
+    path: Path,
+    *,
+    transform: object,
+    rows: int,
+    cols: int,
+) -> np.ndarray | None:
+    fp_m = _read_coverage_footprint_epsg3857(path)
+    if fp_m is None or fp_m.is_empty:
+        return None
+    return features.rasterize(
+        [(fp_m, 1)],
+        out_shape=(rows, cols),
+        transform=transform,
+        fill=0,
+        dtype=np.uint16,
+    )
 
 
 @dataclass
@@ -74,13 +106,14 @@ class CoverageDepthGrid:
         if not peaks_llz:
             return []
 
-        from peaky_finders.site_suggestions.log import suggest_progress
+        from peaky_finders.site_suggestions.log import SuggestProgressTicker, suggest_progress
 
         n = len(peaks_llz)
         need = int(goal_depth)
         to_m = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
         out: list[tuple[float, float, float]] = []
         chunk = max(1, int(progress_every))
+        ticker = SuggestProgressTicker(verbose, label="uncovered grid filter", interval_s=0.5)
         for start in range(0, n, chunk):
             end = min(n, start + chunk)
             block = peaks_llz[start:end]
@@ -97,8 +130,9 @@ class CoverageDepthGrid:
                 cc = cols[in_bounds]
                 sel[in_bounds] = self.target_mask[rr, cc] & (self.depth[rr, cc].astype(np.uint32) < need)
             out.extend(p for p, keep in zip(block, sel, strict=True) if keep)
-            if verbose and end < n:
-                suggest_progress(verbose, f"uncovered grid filter {end}/{n} peaks checked, {len(out)} kept so far")
+            ticker.maybe(f"{end}/{n} peaks checked, {len(out)} kept")
+        if verbose and n:
+            ticker.done(f"{len(out)}/{n} peak(s) still uncovered")
         return out
 
     def uncovered_geometry_wgs84(self, *, goal_depth: int) -> BaseGeometry | None:
@@ -208,9 +242,12 @@ class CoverageDepthGrid:
         spacing_m: float = 500.0,
         max_points: int = 48,
         coverage_geometry_wgs84: BaseGeometry | None = None,
+        verbose: bool = False,
     ) -> list[tuple[float, float]]:
         """Sample ``(lat, lon)`` on depth≥``min_depth`` frontier biased toward ``goal``."""
         from pyproj import Transformer
+
+        from peaky_finders.site_suggestions.log import SuggestProgressTicker
 
         if coverage_geometry_wgs84 is not None and not coverage_geometry_wgs84.is_empty:
             g = (
@@ -237,39 +274,47 @@ class CoverageDepthGrid:
         gx, gy = to_m.transform(float(goal_lon), float(goal_lat))
 
         rows, cols = np.where(covered)
-        if rows.size == 0:
+        ticker = SuggestProgressTicker(verbose, label="frontier scan", interval_s=0.5)
+
+        frontier = _strict_frontier_mask(covered)
+        fr_rows, fr_cols = np.where(frontier)
+        strict_frontier = fr_rows.size > 0
+        if not strict_frontier:
+            ticker.maybe("no strict frontier cells; falling back to all covered cells", force=True)
+            fr_rows, fr_cols = rows, cols
+
+        ticker.maybe(
+            f"{fr_rows.size} frontier cell(s) from {rows.size} covered cell(s)",
+            force=True,
+        )
+
+        a, b, c, d, e, f = self.transform[:6]
+        cols_f = fr_cols.astype(np.float64) + 0.5
+        rows_f = fr_rows.astype(np.float64) + 0.5
+        xs = c + cols_f * a + rows_f * b
+        ys = f + cols_f * d + rows_f * e
+        dist_goal = np.hypot(xs - gx, ys - gy)
+        lons, lats = from_m.transform(xs, ys)
+
+        from shapely import contains_xy
+
+        eligible_mask = contains_xy(eligible_ll, np.asarray(lons), np.asarray(lats))
+        keep = np.flatnonzero(eligible_mask)
+        if keep.size == 0:
+            if verbose:
+                ticker.done("0 frontier sample(s) on eligible land")
             return []
 
-        scored: list[tuple[float, float, float]] = []
-        for r, c in zip(rows, cols, strict=True):
-            x, y = self.transform * (c + 0.5, r + 0.5)
-            dist_goal = float(np.hypot(x - gx, y - gy))
-            is_frontier = False
-            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)):
-                nr, nc = int(r) + dr, int(c) + dc
-                if nr < 0 or nc < 0 or nr >= self.rows or nc >= self.cols:
-                    is_frontier = True
-                    break
-                if not covered[nr, nc]:
-                    is_frontier = True
-                    break
-            if not is_frontier:
-                continue
-            lon, lat = from_m.transform(x, y)
-            if not eligible_ll.intersects(Point(float(lon), float(lat))):
-                continue
-            scored.append((dist_goal, float(lat), float(lon)))
+        order = np.lexsort((lons[keep], lats[keep], dist_goal[keep]))
+        scored = [
+            (float(dist_goal[keep[i]]), float(lats[keep[i]]), float(lons[keep[i]]))
+            for i in order
+        ]
+        if verbose and not strict_frontier:
+            ticker.maybe(f"fallback eligible cells: {len(scored)}")
+        elif verbose:
+            ticker.maybe(f"eligible frontier cells: {len(scored)}")
 
-        if not scored:
-            for r, c in zip(rows, cols, strict=True):
-                x, y = self.transform * (c + 0.5, r + 0.5)
-                dist_goal = float(np.hypot(x - gx, y - gy))
-                lon, lat = from_m.transform(x, y)
-                if not eligible_ll.intersects(Point(float(lon), float(lat))):
-                    continue
-                scored.append((dist_goal, float(lat), float(lon)))
-
-        scored.sort(key=lambda item: (item[0], item[1], item[2]))
         step = max(50.0, float(spacing_m))
         out: list[tuple[float, float]] = []
         seen: set[tuple[int, int]] = set()
@@ -282,6 +327,8 @@ class CoverageDepthGrid:
             out.append((lat, lon))
             if len(out) >= max(1, int(max_points)):
                 break
+        if verbose:
+            ticker.done(f"{len(out)} frontier sample(s) kept (cap={max_points})")
         return out
 
 
@@ -313,11 +360,14 @@ def build_coverage_depth_grid(
     max_raster_dimension: int,
     verbose: bool = False,
     target_label: str = "target",
+    jobs: int = 1,
 ) -> CoverageDepthGrid:
     """Sum footprint overlap counts on an EPSG:3857 grid bounded by ``aoi_ll``.
 
     Marginal gain and uncovered fraction use ``target_ll`` (typically eligible land).
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from peaky_finders.site_suggestions.log import suggest_log, suggest_progress
 
     aoi0 = make_valid(aoi_ll) if not aoi_ll.is_valid else aoi_ll
@@ -352,29 +402,50 @@ def build_coverage_depth_grid(
     n_paths = len(paths)
     if verbose and n_paths:
         suggest_log(verbose, f"site suggest:     rasterizing {n_paths} seed footprint(s)…")
-    for i, p in enumerate(paths, start=1):
-        if verbose:
-            suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}…")
-        fp_ll = read_coverage_footprint(p)
-        if fp_ll is None or fp_ll.is_empty:
+
+    workers = max(1, int(jobs))
+    mx = min(workers, n_paths) if n_paths else 1
+    if mx <= 1 or n_paths <= 1:
+        for i, p in enumerate(paths, start=1):
             if verbose:
-                suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}: empty, skipped")
-            continue
-        fp_m = _read_coverage_footprint_epsg3857(p)
-        if fp_m is None or fp_m.is_empty:
+                suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}…")
+            layer = _rasterize_seed_footprint_layer(p, transform=transform, rows=rows, cols=cols)
+            if layer is None:
+                if verbose:
+                    suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}: empty, skipped")
+                continue
+            depth += layer.astype(np.uint32, copy=False)
             if verbose:
-                suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}: empty EPSG:3857, skipped")
-            continue
-        layer = features.rasterize(
-            [(fp_m, 1)],
-            out_shape=(rows, cols),
-            transform=transform,
-            fill=0,
-            dtype=np.uint16,
-        )
-        depth += layer.astype(np.uint32, copy=False)
+                suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}: merged")
+    else:
         if verbose:
-            suggest_progress(verbose, f"seed footprint [{i}/{n_paths}] {p.name}: merged")
+            suggest_progress(verbose, f"seed footprint rasterize: {n_paths} path(s), workers={mx}")
+        done = 0
+        with ThreadPoolExecutor(max_workers=mx) as pool:
+            futs = {
+                pool.submit(
+                    _rasterize_seed_footprint_layer,
+                    p,
+                    transform=transform,
+                    rows=rows,
+                    cols=cols,
+                ): p
+                for p in paths
+            }
+            for fut in as_completed(futs):
+                p = futs[fut]
+                layer = fut.result()
+                done += 1
+                if layer is None:
+                    if verbose:
+                        suggest_progress(
+                            verbose,
+                            f"seed footprint [{done}/{n_paths}] {p.name}: empty, skipped",
+                        )
+                    continue
+                depth += layer.astype(np.uint32, copy=False)
+                if verbose:
+                    suggest_progress(verbose, f"seed footprint [{done}/{n_paths}] {p.name}: merged")
 
     if verbose:
         suggest_log(

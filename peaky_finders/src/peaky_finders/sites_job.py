@@ -715,7 +715,7 @@ class MeshBackboneStrategyConfig(BaseModel):
 
     routing: MeshBackboneRouting = Field(
         default=MeshBackboneRouting.GREEDY,
-        description="``greedy``: all goals bid each round; ``corridor``: one goal, eligible corridor spine.",
+        description="``greedy``: all goals bid each round; ``corridor``: one goal, min-hop RF relay spine.",
     )
     goal_order: list[str] = Field(
         default_factory=list,
@@ -724,13 +724,13 @@ class MeshBackboneStrategyConfig(BaseModel):
     corridor_grid_cell_m: float = Field(
         default=750.0,
         ge=50.0,
-        description="Eligible-land grid cell size (m) for corridor A* planning.",
+        description="Relay candidate spacing (m) along attachment→goal geodesic for RF min-hop planning.",
     )
     corridor_k: int = Field(
         default=3,
         ge=1,
         le=16,
-        description="Alternate eligible corridors to try per goal before blocking.",
+        description="Alternate min-hop RF corridors to try per goal before blocking.",
     )
     corridor_buffer_m: float = Field(
         default=3000.0,
@@ -818,7 +818,7 @@ class MeshBackboneStrategyConfig(BaseModel):
         default=None,
         ge=1,
         le=512,
-        description="Optional cap on solver picks per ``--suggest`` pass (stop when reached).",
+        description="Optional cap on backbone site count (installed + suggested); not the CLI ``--suggest`` goal budget.",
     )
     goals: dict[str, MeshBackboneGoalEntry] = Field(
         default_factory=dict,

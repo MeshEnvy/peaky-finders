@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -20,7 +19,7 @@ from peaky_finders.site_suggestions.candidates import (
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid, largest_uncovered_patch_centroid_ll
 from peaky_finders.site_suggestions.eligible_peaks_cache import load_or_build_eligible_peaks
-from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step
+from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step, SuggestProgressTicker
 from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
 from peaky_finders.sites_job import BundleSiteSuggestionsConfig, LandGrabStrategyConfig
 from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
@@ -79,9 +78,7 @@ def _cluster_points_by_buffer(
 
     used = np.zeros(n, dtype=bool)
     clusters: list[_PeakCluster] = []
-    t0 = time.perf_counter()
-    t_last = t0
-    report_every = max(1, n // 20)
+    ticker = SuggestProgressTicker(verbose, label="spatial cluster", interval_s=0.5)
     seeds_done = 0
 
     if verbose:
@@ -95,18 +92,9 @@ def _cluster_points_by_buffer(
         if used[i]:
             continue
         seeds_done += 1
-        now = time.perf_counter()
-        if verbose and (
-            seeds_done == 1
-            or seeds_done % report_every == 0
-            or now - t_last >= 2.0
-        ):
-            suggest_progress(
-                verbose,
-                f"spatial cluster seed {seeds_done} at index {i}/{n}, "
-                f"{len(clusters) + 1} cluster(s) forming ({now - t0:.1f}s elapsed)",
-            )
-            t_last = now
+        ticker.maybe(
+            f"seed {seeds_done} at index {i}/{n}, {len(clusters) + 1} cluster(s) forming",
+        )
 
         group = [points[i]]
         used[i] = True
@@ -128,12 +116,7 @@ def _cluster_points_by_buffer(
         clusters.append(_PeakCluster(center=center, members=tuple(group)))
 
     if verbose:
-        elapsed = time.perf_counter() - t0
-        suggest_log(
-            verbose,
-            f"site suggest:     spatial index cluster done: {len(clusters)} cluster(s) "
-            f"from {n} peak(s) ({elapsed:.1f}s)",
-        )
+        ticker.done(f"{len(clusters)} cluster(s) from {n} peak(s)")
     return clusters
 
 

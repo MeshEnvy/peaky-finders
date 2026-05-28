@@ -416,17 +416,20 @@ def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
         lon = float(kw["lon"])
         return box(lon - 0.02, lat - 0.01, lon + 0.02, lat + 0.01)
 
+    from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
+
     winners = plan_greedy_site_suggestions(
         preset=preset,
         preset_path=preset_path,
         plan=plan,
-        suggest_cli_n=1,
+        suggest_cli_n=SOLVE_UNTIL_COMPLETE,
         suggest_root=tmp_path / "suggest",
         footprint_runner=_fake_footprint,
     )
-    assert len(winners) == 1
+    assert len(winners) >= 1
     entries = planned_to_preset_entries(winners)
     assert "Greedy suggest" in entries[0]["rationale"]
+    assert winners[0].gain_cells == max(w.gain_cells for w in winners)
 
 
 def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
@@ -527,7 +530,7 @@ def test_resolve_land_grab_strategy() -> None:
     assert isinstance(provider, LandGrabStrategy)
     assert provider.name == "land-grab"
     assert provider.goal_depth(BundleSiteSuggestionsConfig()) == 1
-    assert provider.resolve_step_budget(BundleSiteSuggestionsConfig(), 3) == 3
+    assert provider.resolve_step_budget(BundleSiteSuggestionsConfig(), 3) == 3  # goal budget
     assert provider.resolve_step_budget(BundleSiteSuggestionsConfig(), SOLVE_UNTIL_COMPLETE) is None
 
 
@@ -608,12 +611,13 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
         suggest_root=tmp_path / "suggest",
         footprint_runner=_fake_footprint,
     )
-    assert len(winners) == 1
+    assert len(winners) >= 1
     assert winners[0].lon > -115.04
     assert winners[0].strategy.startswith("goal:")
+    assert winners[-1].strategy.startswith("goal:")
 
 
-def test_suggest_cli_n_counts_successful_site_writes(monkeypatch, tmp_path: Path) -> None:
+def test_suggest_cli_n_stops_after_goal_budget(monkeypatch, tmp_path: Path) -> None:
     from peaky_finders.build_configure import PlannedComposite, PlannedViewshedWorkspace
     from peaky_finders.site_suggestions import planner as planner_mod
     from peaky_finders.site_suggestions.candidates import SiteCandidate
@@ -699,15 +703,22 @@ def test_suggest_cli_n_counts_successful_site_writes(monkeypatch, tmp_path: Path
     monkeypatch.setattr(
         MeshBackboneStrategy,
         "planning_complete",
-        lambda self, ctx: len(ctx.session_sites) >= 3,
+        lambda self, ctx: False,
     )
     monkeypatch.setattr(planner_mod, "_run_candidate_trials", _fake_trials)
+
+    def _mock_goals_satisfied(ctx, *, planning_complete, baseline, tracked_keys=None):
+        del planning_complete, tracked_keys
+        done = {f"goal-{n}" for n in range(1, len(ctx.session_sites) + 1)}
+        return done - baseline
+
+    monkeypatch.setattr(planner_mod, "goals_satisfied_since", _mock_goals_satisfied)
 
     winners = plan_greedy_site_suggestions(
         preset=preset,
         preset_path=preset_path,
         plan=plan,
-        suggest_cli_n=5,
+        suggest_cli_n=3,
         suggest_root=tmp_path / "suggest",
         footprint_runner=lambda **kw: box(-115.04, 39.01, -115.02, 39.03),
     )
@@ -845,6 +856,13 @@ def test_suggest_cli_n_adds_new_sites_when_prior_suggested_exist(monkeypatch, tm
         lambda self, ctx: False,
     )
     monkeypatch.setattr(planner_mod, "_run_candidate_trials", _fake_trials)
+
+    def _mock_goals_satisfied(ctx, *, planning_complete, baseline, tracked_keys=None):
+        del planning_complete, tracked_keys
+        done = {f"goal-{n}" for n in range(1, len(ctx.session_sites) + 1)}
+        return done - baseline
+
+    monkeypatch.setattr(planner_mod, "goals_satisfied_since", _mock_goals_satisfied)
 
     winners = plan_greedy_site_suggestions(
         preset=preset,

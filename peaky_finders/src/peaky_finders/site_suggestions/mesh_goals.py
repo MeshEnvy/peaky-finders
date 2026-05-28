@@ -13,14 +13,25 @@ from peaky_finders.site_suggestions.mesh_backbone_completion import (
 from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint, goals_from_config
 from peaky_finders.site_suggestions.mesh_connectivity import (
     healing_goals,
+    mesh_connectivity_complete,
     uncaptured_healing_goals,
 )
+from peaky_finders.sites_job import BundleSiteSuggestionsConfig, SiteSuggestionStrategy
+
+LAND_GRAB_COVERAGE_GOAL_KEY = "__land_grab_coverage__"
 
 BRIDGE_GOAL_PREFIX = "bridge:"
 
 
 def is_bridge_goal_key(key: str) -> bool:
     return key.startswith(BRIDGE_GOAL_PREFIX)
+
+
+def bridge_satellite_slug(goal_key: str) -> str:
+    """Installed/suggested site slug for ``bridge:<slug>``."""
+    if not is_bridge_goal_key(goal_key):
+        raise ValueError(f"not a bridge goal key: {goal_key!r}")
+    return goal_key[len(BRIDGE_GOAL_PREFIX) :]
 
 
 def goal_point_for_key(ctx: SiteSuggestionContext, key: str) -> GoalPoint | None:
@@ -32,7 +43,7 @@ def goal_point_for_key(ctx: SiteSuggestionContext, key: str) -> GoalPoint | None
 
 
 def is_goal_captured(ctx: SiteSuggestionContext, goal_key: str) -> bool:
-    """True when ``goal_key`` is satisfied (bridge: main mesh; preset: any site)."""
+    """True when satisfied (bridge: satellite in main hop mesh; preset: footprint covers goal)."""
     if is_bridge_goal_key(goal_key):
         return goal_key not in uncaptured_healing_goals(ctx)
     mb = ctx.cfg.mesh_backbone
@@ -51,6 +62,49 @@ def uncaptured_effective_goal_keys(ctx: SiteSuggestionContext) -> set[str]:
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
     missing |= uncaptured_goal_keys(mb, sites, footprints)
     return missing
+
+
+def tracked_goal_keys(ctx: SiteSuggestionContext) -> set[str]:
+    """Goal keys the active strategy may satisfy during a suggest pass."""
+    if ctx.cfg.strategy == SiteSuggestionStrategy.MESH_BACKBONE:
+        keys = set(ctx.cfg.mesh_backbone.goals.keys())
+        if not mesh_connectivity_complete(ctx):
+            keys |= set(healing_goals(ctx).keys())
+        return keys
+    if ctx.cfg.strategy == SiteSuggestionStrategy.LAND_GRAB:
+        return {LAND_GRAB_COVERAGE_GOAL_KEY}
+    return set()
+
+
+def captured_tracked_goals(ctx: SiteSuggestionContext, *, planning_complete: bool) -> set[str]:
+    """Subset of ``tracked_goal_keys`` currently satisfied."""
+    keys = tracked_goal_keys(ctx)
+    if not keys:
+        return set()
+    if LAND_GRAB_COVERAGE_GOAL_KEY in keys:
+        return {LAND_GRAB_COVERAGE_GOAL_KEY} if planning_complete else set()
+    return {key for key in keys if is_goal_captured(ctx, key)}
+
+
+def goals_satisfied_since(
+    ctx: SiteSuggestionContext,
+    *,
+    planning_complete: bool,
+    baseline: set[str],
+    tracked_keys: set[str] | None = None,
+) -> set[str]:
+    """Goals newly satisfied relative to a pass-start snapshot.
+
+    ``tracked_keys`` should be ``tracked_goal_keys`` at pass start so bridge goals
+    still count after the mesh connects and they leave the live tracked set.
+    """
+    keys = tracked_keys if tracked_keys is not None else tracked_goal_keys(ctx)
+    if not keys:
+        return set()
+    if LAND_GRAB_COVERAGE_GOAL_KEY in keys:
+        done = {LAND_GRAB_COVERAGE_GOAL_KEY} if planning_complete else set()
+        return done - baseline
+    return {key for key in keys if is_goal_captured(ctx, key)} - baseline
 
 
 def ordered_uncaptured_goal_keys(ctx: SiteSuggestionContext) -> list[str]:

@@ -72,25 +72,39 @@ def analysis_sites(ctx: SiteSuggestionContext) -> tuple[BackboneSite, ...]:
     return tuple(s for s in sites if s.slug in main)
 
 
-def composite_coverage_geometry(ctx: SiteSuggestionContext) -> BaseGeometry | None:
+def composite_coverage_geometry(ctx: SiteSuggestionContext, *, verbose: bool = False) -> BaseGeometry | None:
     """Union of analysis-scope footprints plus rasterized composite coverage."""
+    from peaky_finders.site_suggestions.log import SuggestProgressTicker
+
     footprints = analysis_footprints(ctx)
+    ticker = SuggestProgressTicker(verbose, label="composite coverage", interval_s=0.5)
     parts: list[BaseGeometry] = []
     # Main-mesh scope: satellite seed coverage must not expand the composite mesh.
     if main_footprint_slugs(ctx) is None:
+        ticker.maybe("rasterizing seed coverage grid…", force=True)
         grid_cov = ctx.grid.coverage_geometry_wgs84(min_depth=1)
         if grid_cov is not None and not grid_cov.is_empty:
             parts.append(grid_cov if grid_cov.is_valid else make_valid(grid_cov))
+    fp_n = sum(1 for fp in footprints.values() if fp is not None and not fp.is_empty)
+    ticker.maybe(f"union {fp_n} session footprint(s) + {len(parts)} grid part(s)", force=True)
     for fp in footprints.values():
         if fp is None or fp.is_empty:
             continue
         parts.append(fp if fp.is_valid else make_valid(fp))
     if not parts:
+        if verbose:
+            ticker.done("empty")
         return None
+    ticker.maybe(f"merging {len(parts)} geometry part(s)…")
     union = unary_union(parts)
     if union is None or union.is_empty:
+        if verbose:
+            ticker.done("empty union")
         return None
-    return union if union.is_valid else make_valid(union)
+    out = union if union.is_valid else make_valid(union)
+    if verbose:
+        ticker.done(f"{len(parts)} part(s) merged")
+    return out
 
 
 def uncaptured_goals(ctx: SiteSuggestionContext) -> dict[str, GoalPoint]:

@@ -60,7 +60,8 @@ def build_build_parser() -> argparse.ArgumentParser:
         dest="suggest_n",
         help=(
             "After building known sites, run the site solver and append picks to preset YAML. "
-            "Omit N to solve until the strategy goal is met; N is the max new sites to write."
+            "Omit N to solve until the strategy goal is met; N is how many goals to satisfy "
+            "before stopping (e.g. one bridge satellite joined to the main mesh)."
         ),
     )
     p.add_argument(
