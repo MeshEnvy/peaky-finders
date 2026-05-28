@@ -15,4 +15,5 @@ dist/
 *.kmz
 share
 build
-projects/nevada/data
+projects
+*.log
