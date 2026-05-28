@@ -152,7 +152,7 @@ def test_eligible_peak_candidates_use_masked_dem(
     tmp_path: Path,
 ) -> None:
     from peaky_finders import pairwise_dem_peak as dem_peak
-    from peaky_finders.site_suggestions.strategies.land_grab import _eligible_peak_candidates
+    from peaky_finders.site_suggestions.providers.land_grab.candidates import _eligible_peak_candidates
     from peaky_finders.site_suggestions.candidates import _grid_samples_around_point
     from peaky_finders.sites_job import BundleSiteSuggestionsConfig, LandGrabStrategyConfig
     from rasterio.transform import from_bounds
@@ -223,7 +223,7 @@ def test_grid_samples_around_point_on_eligible() -> None:
 
 def test_spatial_index_cluster_matches_buffer_greedy() -> None:
     from peaky_finders.site_suggestions.candidates import SiteCandidate
-    from peaky_finders.site_suggestions.strategies.land_grab import _cluster_points_by_buffer
+    from peaky_finders.site_suggestions.providers.land_grab.candidates import _cluster_points_by_buffer
 
     def _brute_cluster(
         points: list[SiteCandidate],
@@ -277,7 +277,7 @@ def test_spatial_index_cluster_matches_buffer_greedy() -> None:
 
 def test_spatial_index_cluster_many_peaks_fast() -> None:
     from peaky_finders.site_suggestions.candidates import SiteCandidate
-    from peaky_finders.site_suggestions.strategies.land_grab import _cluster_points_by_buffer
+    from peaky_finders.site_suggestions.providers.land_grab.candidates import _cluster_points_by_buffer
 
     pts = [
         SiteCandidate(lat=39.0 + i * 0.001, lon=-115.0 + (i % 17) * 0.001, elev_m=float(i), strategy="peak")
@@ -522,8 +522,8 @@ def test_site_suggestions_default_strategy() -> None:
 
 def test_resolve_land_grab_strategy() -> None:
     from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
-    from peaky_finders.site_suggestions.strategies.land_grab import LandGrabStrategy
-    from peaky_finders.site_suggestions.strategies.registry import resolve_site_suggestion_strategy
+    from peaky_finders.site_suggestions.providers.land_grab import LandGrabStrategy
+    from peaky_finders.site_suggestions.providers.registry import resolve_site_suggestion_strategy
     from peaky_finders.sites_job import BundleSiteSuggestionsConfig
 
     provider = resolve_site_suggestion_strategy(BundleSiteSuggestionsConfig())
@@ -622,7 +622,7 @@ def test_suggest_cli_n_stops_after_goal_budget(monkeypatch, tmp_path: Path) -> N
     from peaky_finders.site_suggestions import planner as planner_mod
     from peaky_finders.site_suggestions.candidates import SiteCandidate
     from peaky_finders.site_suggestions.planner import PlannedSuggestion
-    from peaky_finders.site_suggestions.strategies.mesh_backbone import MeshBackboneStrategy
+    from peaky_finders.site_suggestions.providers.mesh_backbone import MeshBackboneStrategy
 
     aoi = box(-115.05, 39.00, -114.98, 39.05)
     eligible = box(-115.04, 39.01, -114.99, 39.04)
@@ -760,7 +760,7 @@ def test_suggest_cli_n_adds_new_sites_when_prior_suggested_exist(monkeypatch, tm
     from peaky_finders.site_suggestions import planner as planner_mod
     from peaky_finders.site_suggestions.candidates import SiteCandidate
     from peaky_finders.site_suggestions.planner import PlannedSuggestion
-    from peaky_finders.site_suggestions.strategies.mesh_backbone import MeshBackboneStrategy
+    from peaky_finders.site_suggestions.providers.mesh_backbone import MeshBackboneStrategy
 
     aoi = box(-115.05, 39.00, -114.98, 39.05)
     eligible = box(-115.04, 39.01, -114.99, 39.04)
@@ -882,7 +882,7 @@ def test_on_pick_writes_each_site_to_preset(monkeypatch, tmp_path: Path) -> None
     from peaky_finders.site_suggestions.candidates import SiteCandidate
     from peaky_finders.site_suggestions.planner import PlannedSuggestion
     from peaky_finders.site_suggestions.preset_io import count_suggested_sites
-    from peaky_finders.site_suggestions.strategies.mesh_backbone import MeshBackboneStrategy
+    from peaky_finders.site_suggestions.providers.mesh_backbone import MeshBackboneStrategy
 
     aoi = box(-115.05, 39.00, -114.98, 39.05)
     eligible = box(-115.04, 39.01, -114.99, 39.04)

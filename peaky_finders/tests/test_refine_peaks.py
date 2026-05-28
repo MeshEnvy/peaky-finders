@@ -6,8 +6,8 @@ from shapely.geometry import box
 
 from peaky_finders.site_suggestions.candidates import SiteCandidate
 from peaky_finders.site_suggestions.refine_peaks import regional_peak_candidates_around_centers
-from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
-from peaky_finders.site_suggestions.strategies.mesh_backbone import MeshBackboneStrategy
+from peaky_finders.site_suggestions.providers.protocol import StrategyRefineSettings
+from peaky_finders.site_suggestions.providers.mesh_backbone import MeshBackboneStrategy
 from peaky_finders.sites_job import BundleSiteSuggestionsConfig, SiteSuggestionStrategy
 
 
@@ -130,7 +130,7 @@ def test_attach_frontier_peak_candidates() -> None:
 
 
 def test_strategy_refine_settings_peak_defaults_off_for_land_grab() -> None:
-    from peaky_finders.site_suggestions.strategies.land_grab import LandGrabStrategy
+    from peaky_finders.site_suggestions.providers.land_grab import LandGrabStrategy
 
     cfg = BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.LAND_GRAB)
     refine = LandGrabStrategy().refine_settings(cfg)

@@ -14,7 +14,7 @@ from shapely.geometry.base import BaseGeometry
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.corridor import CorridorPath
 from peaky_finders.site_suggestions.log import SuggestProgressTicker, suggest_log, suggest_progress
-from peaky_finders.site_suggestions.mesh_goals import goal_point_for_key
+from peaky_finders.site_suggestions.providers.mesh_backbone.goals import goal_point_for_key
 
 KML_NS = "http://www.opengis.net/kml/2.2"
 OUTPUT_KML_NAME = "output.kml"

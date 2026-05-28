@@ -8,7 +8,7 @@ from unittest.mock import patch
 from shapely.geometry import box
 
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
-from peaky_finders.site_suggestions.mesh_backbone_completion import (
+from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     anchor_slugs,
     hop_adjacency,
     hop_connected_components,
@@ -22,7 +22,7 @@ from peaky_finders.site_suggestions.mesh_connectivity import (
     satellite_in_main_component,
     uncaptured_healing_goals,
 )
-from peaky_finders.site_suggestions.mesh_grow import grow_goals, main_footprint_slugs
+from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import grow_goals, main_footprint_slugs
 from peaky_finders.sites_job import (
     BundleSiteSuggestionsConfig,
     MeshBackboneGoalEntry,
@@ -102,7 +102,7 @@ def test_bridge_uncaptured_until_satellite_in_main_hop_component() -> None:
         verbose=False,
     )
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints_pin_only,
     ):
         assert "bridge:sat" in uncaptured_healing_goals(ctx)
@@ -112,7 +112,7 @@ def test_bridge_uncaptured_until_satellite_in_main_hop_component() -> None:
             footprints=footprints_pin_only,
         )
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints_hop,
     ):
         assert "bridge:sat" not in uncaptured_healing_goals(ctx)
@@ -163,7 +163,7 @@ def test_mesh_healing_needed_when_disconnected_even_if_goals_captured() -> None:
         session_footprints={"relay": footprints["relay"], "orphan": footprints["orphan"]},
     )
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         assert mesh_grow_goals_complete(ctx)
@@ -198,7 +198,7 @@ def test_minimum_component_gap_uses_pins_not_overlapping_footprints() -> None:
         session_footprints=footprints,
     )
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         gap = minimum_component_gap(ctx)
@@ -248,7 +248,7 @@ def test_healing_context_yields_bridge_goals_on_satellite_pins() -> None:
         verbose=False,
     )
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         healing = healing_context(ctx)
@@ -297,7 +297,7 @@ def test_healing_goals_one_bridge_goal_per_satellite_component() -> None:
         verbose=False,
     )
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         goals = grow_goals(ctx)
@@ -342,7 +342,7 @@ def test_mesh_connectivity_incomplete_when_two_anchor_islands() -> None:
         verbose=False,
     )
     with patch(
-        "peaky_finders.site_suggestions.mesh_backbone_completion.footprints_for_backbone_sites",
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
     ):
         assert not mesh_connectivity_complete(ctx)

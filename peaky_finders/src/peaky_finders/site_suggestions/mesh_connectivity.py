@@ -13,14 +13,14 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
-import peaky_finders.site_suggestions.mesh_backbone_completion as mesh_completion
-from peaky_finders.site_suggestions.mesh_backbone_completion import (
+import peaky_finders.site_suggestions.providers.mesh_backbone.completion as mesh_completion
+from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     all_backbone_sites,
     hop_adjacency,
     hop_connected_components,
     mesh_connectivity_complete,
 )
-from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint
 from peaky_finders.sites_job import SiteSuggestionStrategy
 
 _TO_M = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
@@ -208,7 +208,7 @@ def healing_goals(ctx: SiteSuggestionContext) -> dict[str, GoalPoint]:
 
 def uncaptured_healing_goals(ctx: SiteSuggestionContext) -> dict[str, GoalPoint]:
     """Bridge goals whose satellite site is not yet in the main hop component."""
-    from peaky_finders.site_suggestions.mesh_goals import bridge_satellite_slug
+    from peaky_finders.site_suggestions.providers.mesh_backbone.goals import bridge_satellite_slug
 
     goals = healing_goals(ctx)
     if not goals:
@@ -291,7 +291,7 @@ def minimum_component_gap(
 
 def main_footprint_slugs(ctx: SiteSuggestionContext) -> frozenset[str] | None:
     """Main-component slugs when attaching from main mesh (bridge goals or greedy heal)."""
-    from peaky_finders.site_suggestions.mesh_goals import is_bridge_goal_key
+    from peaky_finders.site_suggestions.providers.mesh_backbone.goals import is_bridge_goal_key
 
     active: str | None = None
     if ctx.corridor_state is not None:

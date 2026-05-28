@@ -15,13 +15,13 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
-import peaky_finders.site_suggestions.mesh_backbone_completion as mesh_completion
-from peaky_finders.site_suggestions.mesh_backbone_completion import (
+import peaky_finders.site_suggestions.providers.mesh_backbone.completion as mesh_completion
+from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     all_backbone_sites,
     captured_goal_keys,
     mutual_hop_neighbors,
 )
-from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint, goals_from_config
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_config
 from peaky_finders.site_suggestions.mesh_connectivity import (
     main_footprint_slugs,
     mesh_healing_needed,

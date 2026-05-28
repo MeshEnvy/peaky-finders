@@ -13,7 +13,7 @@ from peaky_finders.site_suggestions.candidates import SiteCandidate, _dedupe_can
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.eligible_peaks_cache import load_or_build_eligible_peaks
 from peaky_finders.site_suggestions.log import suggest_log, suggest_progress, suggest_step, SuggestProgressTicker
-from peaky_finders.site_suggestions.strategies.base import StrategyRefineSettings
+from peaky_finders.site_suggestions.providers.protocol import StrategyRefineSettings
 
 _TO_M = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 

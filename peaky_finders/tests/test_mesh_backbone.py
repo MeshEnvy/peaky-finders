@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from peaky_finders.site_suggestions.mesh_backbone_geom import goals_from_config
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import goals_from_config
 from peaky_finders.sites_job import (
     BundleSiteSuggestionsConfig,
     MeshBackboneGoalEntry,
@@ -91,8 +91,8 @@ def test_preset_loads_mesh_grow_block(tmp_path: Path) -> None:
 
 
 def test_mesh_backbone_strategy_in_registry() -> None:
-    from peaky_finders.site_suggestions.strategies.mesh_backbone import MeshBackboneStrategy
-    from peaky_finders.site_suggestions.strategies.registry import resolve_site_suggestion_strategy
+    from peaky_finders.site_suggestions.providers.mesh_backbone import MeshBackboneStrategy
+    from peaky_finders.site_suggestions.providers.registry import resolve_site_suggestion_strategy
 
     cfg = BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE)
     provider = resolve_site_suggestion_strategy(cfg)

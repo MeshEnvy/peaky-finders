@@ -25,7 +25,7 @@ from peaky_finders.site_suggestions.corridor_scoring import (
     score_corridor_trials,
 )
 from peaky_finders.site_suggestions.depth_grid import build_coverage_depth_grid
-from peaky_finders.site_suggestions.mesh_backbone_candidates import generate_corridor_grow_candidates
+from peaky_finders.site_suggestions.providers.mesh_backbone.candidates import generate_corridor_grow_candidates
 from peaky_finders.sites_job import (
     BundleSiteSuggestionsConfig,
     MeshBackboneGoalEntry,
@@ -383,7 +383,7 @@ def test_score_corridor_trials_parallel_matches_serial() -> None:
             assert s.hop_neighbors == p.hop_neighbors
 
 
-@patch("peaky_finders.site_suggestions.mesh_backbone_candidates.ensure_active_corridor")
+@patch("peaky_finders.site_suggestions.providers.mesh_backbone.candidates.ensure_active_corridor")
 def test_generate_corridor_candidates_active_goal(mock_ensure) -> None:
     from peaky_finders.site_suggestions.corridor import CorridorPath
 

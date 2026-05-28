@@ -25,15 +25,15 @@ from peaky_finders.site_suggestions.log import (
     suggest_progress,
     suggest_step,
 )
-from peaky_finders.site_suggestions.mesh_backbone_completion import (
+from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     all_backbone_sites,
     footprints_for_backbone_sites,
     mutual_hop_neighbors,
 )
-from peaky_finders.site_suggestions.mesh_backbone_geom import GoalPoint
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint
 from peaky_finders.site_suggestions.mesh_connectivity import satellite_in_main_component
-from peaky_finders.site_suggestions.mesh_goals import bridge_satellite_slug, goal_point_for_key, is_bridge_goal_key
-from peaky_finders.site_suggestions.mesh_grow import (
+from peaky_finders.site_suggestions.providers.mesh_backbone.goals import bridge_satellite_slug, goal_point_for_key, is_bridge_goal_key
+from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import (
     analysis_footprints,
     analysis_sites,
     composite_coverage_geometry,
