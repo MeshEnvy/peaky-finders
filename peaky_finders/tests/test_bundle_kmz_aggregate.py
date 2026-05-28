@@ -320,7 +320,7 @@ def test_geodataframe_kml_explodes_multipolygon_and_injects_ge_hints(tmp_path: P
         kml_overlay=None,
     )
     raw = kml.read_text(encoding="utf-8")
-    assert raw.count("<Placemark ") == 2
+    assert raw.count("</Placemark>") == 2
     assert raw.count("clampToGround") == 2
     assert "drawOrder" in raw
 

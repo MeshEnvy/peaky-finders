@@ -8,6 +8,7 @@ packages = [{ include = "peaky_finders", from = "src" }]
 [tool.poetry.dependencies]
 python = "^3.11"
 pydantic = "^2.9"
+splatter = { path = "../splatter", develop = false }
 pillow = "^12.2.0"
 boto3 = "^1.35"
 geopandas = "^1.0"
