@@ -17,4 +17,4 @@ share
 build
 projects
 *.log
-
+!projects/**/config.yaml
