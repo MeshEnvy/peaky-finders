@@ -20,7 +20,7 @@
       href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
       rel="stylesheet"
     />
-    <link href="/styles.css?v=8" rel="stylesheet" />
+    <link href="/styles.css?v=9" rel="stylesheet" />
   </head>
   <body>
     <div class="app">
@@ -60,6 +60,24 @@
       <main class="main">
         <div class="map-wrap">
           <div id="map"></div>
+          <aside class="sites-panel" id="sites-panel" aria-label="Sites">
+            <button
+              type="button"
+              id="sites-panel-toggle"
+              class="sites-panel-toggle"
+              aria-expanded="true"
+              aria-controls="sites-panel-body"
+              title="Toggle sites panel"
+            >
+              <span class="sites-panel-chevron" aria-hidden="true"></span>
+              <span class="sites-panel-title">Sites</span>
+              <span id="sites-panel-count" class="sites-panel-count"></span>
+            </button>
+            <div id="sites-panel-body" class="sites-panel-body">
+              <ul id="sites-list" class="sites-list"></ul>
+              <p id="sites-list-empty" class="sites-list-empty" hidden>No sites in project</p>
+            </div>
+          </aside>
           <div class="map-legend" aria-hidden="true">
             <div class="legend-item">
               <span class="legend-dot viewshed"></span> Viewsheds
@@ -138,6 +156,6 @@
     </div>
 
     <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-    <script src="/app.js?v=29"></script>
+    <script src="/app.js?v=30"></script>
   </body>
 </html>

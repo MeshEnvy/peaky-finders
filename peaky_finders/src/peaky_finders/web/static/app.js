@@ -16,6 +16,15 @@ const chatContextNote = document.getElementById('chat-context-note')
 const chatSummarizeBtn = document.getElementById('chat-summarize')
 const chatCopyContextBtn = document.getElementById('chat-copy-context')
 
+const sitesPanel = document.getElementById('sites-panel')
+const sitesPanelToggle = document.getElementById('sites-panel-toggle')
+const sitesPanelCount = document.getElementById('sites-panel-count')
+const sitesListEl = document.getElementById('sites-list')
+const sitesListEmptyEl = document.getElementById('sites-list-empty')
+
+const siteRegistry = new Map()
+let sitesPanelCollapsed = false
+
 const chatHistory = []
 const chatMapPins = new Map()
 let chatSummary = null
@@ -371,12 +380,13 @@ async function loadProjectViewsheds(projectSlug, sites) {
   for (const r of results) {
     if (!r || seenUrl.has(r.url)) continue
     seenUrl.add(r.url)
-    if (mapReady) addViewshedRaster(r)
+    if (mapReady) addViewshedRaster(r, false)
     else pendingRasters.push(r)
   }
+  renderSitesPanel()
 }
 
-function addViewshedRaster(r) {
+function addViewshedRaster(r, refreshPanel = true) {
   const sourceId = `viewshed-raster-${r.slug}`
   const layerId = `${sourceId}-layer`
   const useImage = Boolean(r.url && r.coordinates)
@@ -404,11 +414,20 @@ function addViewshedRaster(r) {
     return
   }
 
+  const slug = r.slug || null
+  if (slug && siteRegistry.has(slug)) {
+    siteRegistry.get(slug).hasViewshed = true
+  }
+
+  const entry = slug ? siteRegistry.get(slug) : null
+  const visible = entry ? entry.visible : true
+
   map.addLayer(
     {
       id: layerId,
       type: 'raster',
       source: sourceId,
+      layout: { visibility: visible ? 'visible' : 'none' },
       paint: {
         'raster-opacity': r.opacity ?? 0.7,
         'raster-fade-duration': 0,
@@ -420,10 +439,12 @@ function addViewshedRaster(r) {
   viewshedRasterLayers.push({
     sourceId,
     layerId,
+    slug,
     bounds: r.bounds,
     coordinates: r.coordinates,
   })
   raiseOverlayLayers()
+  if (refreshPanel) renderSitesPanel()
 }
 
 function clearViewshedRasters() {
@@ -432,6 +453,111 @@ function clearViewshedRasters() {
     if (map.getSource(sourceId)) map.removeSource(sourceId)
   }
   viewshedRasterLayers.length = 0
+  for (const entry of siteRegistry.values()) {
+    entry.hasViewshed = false
+  }
+  renderSitesPanel()
+}
+
+const EYE_OPEN_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
+const EYE_CLOSED_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+
+function setSiteViewshedVisible(slug, visible) {
+  const entry = siteRegistry.get(slug)
+  if (!entry?.hasViewshed) return
+  entry.visible = visible
+  for (const layer of viewshedRasterLayers) {
+    if (layer.slug === slug && map.getLayer(layer.layerId)) {
+      map.setLayoutProperty(layer.layerId, 'visibility', visible ? 'visible' : 'none')
+    }
+  }
+  renderSitesPanel()
+}
+
+function toggleSiteViewshedVisibility(slug) {
+  const entry = siteRegistry.get(slug)
+  if (!entry?.hasViewshed) return
+  setSiteViewshedVisible(slug, !entry.visible)
+}
+
+function flyToSite(slug) {
+  const entry = siteRegistry.get(slug)
+  if (!entry || !Number.isFinite(entry.lat) || !Number.isFinite(entry.lon)) return
+  map.flyTo({ center: [entry.lon, entry.lat], zoom: Math.max(map.getZoom(), 10), duration: 600 })
+}
+
+function resetSitesPanel(sites) {
+  siteRegistry.clear()
+  for (const s of sites || []) {
+    siteRegistry.set(s.slug, {
+      slug: s.slug,
+      label: s.slug,
+      lat: s.lat,
+      lon: s.lon,
+      hasViewshed: false,
+      visible: true,
+    })
+  }
+  renderSitesPanel()
+}
+
+function renderSitesPanel() {
+  if (!sitesListEl) return
+  sitesListEl.innerHTML = ''
+  const sites = [...siteRegistry.values()].sort((a, b) => a.label.localeCompare(b.label))
+  const withViewshed = sites.filter((s) => s.hasViewshed).length
+
+  if (sitesPanelCount) {
+    sitesPanelCount.textContent = sites.length ? `${withViewshed}/${sites.length}` : ''
+  }
+  if (sitesListEmptyEl) {
+    sitesListEmptyEl.hidden = sites.length > 0
+  }
+
+  for (const site of sites) {
+    const li = document.createElement('li')
+    li.className = `site-row${site.hasViewshed ? '' : ' no-viewshed'}`
+
+    const visBtn = document.createElement('button')
+    visBtn.type = 'button'
+    visBtn.className = `site-visibility${site.hasViewshed && !site.visible ? ' hidden' : ''}`
+    visBtn.disabled = !site.hasViewshed
+    visBtn.innerHTML = site.hasViewshed && site.visible ? EYE_OPEN_SVG : EYE_CLOSED_SVG
+    visBtn.title = site.hasViewshed
+      ? site.visible
+        ? 'Hide viewshed'
+        : 'Show viewshed'
+      : 'No viewshed loaded'
+    visBtn.setAttribute(
+      'aria-label',
+      site.hasViewshed
+        ? site.visible
+          ? `Hide viewshed for ${site.label}`
+          : `Show viewshed for ${site.label}`
+        : `No viewshed for ${site.label}`,
+    )
+    visBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation()
+      toggleSiteViewshedVisibility(site.slug)
+    })
+
+    const label = document.createElement('span')
+    label.className = 'site-label'
+    label.textContent = site.label
+    label.title = site.label
+    label.addEventListener('click', () => flyToSite(site.slug))
+
+    li.append(visBtn, label)
+    sitesListEl.appendChild(li)
+  }
+}
+
+function setSitesPanelCollapsed(collapsed) {
+  sitesPanelCollapsed = collapsed
+  sitesPanel?.classList.toggle('collapsed', collapsed)
+  sitesPanelToggle?.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
 }
 
 function removeBasemapReference() {
@@ -1201,6 +1327,7 @@ async function loadContext(slug) {
   clearOverlayLayers()
   const res = await fetch(`/api/projects/${slug}/context`)
   const ctx = await res.json()
+  resetSitesPanel(ctx.sites)
 
   for (const g of ctx.goals || []) {
     handlers['map.pin']({ layer_id: 'goals', id: g.key, lat: g.lat, lon: g.lon, label: g.key })
@@ -1219,6 +1346,10 @@ async function loadContext(slug) {
   await loadProjectMeshLinks(slug)
   scheduleChatContextRefresh('')
 }
+
+sitesPanelToggle?.addEventListener('click', () => {
+  setSitesPanelCollapsed(!sitesPanelCollapsed)
+})
 
 projectSel.addEventListener('change', () => loadContext(projectSel.value))
 basemapSel.addEventListener('change', () => setBasemap(basemapSel.value))
@@ -1399,8 +1530,9 @@ map.on('load', () => {
   hookCompassReset()
   for (const pin of pendingPins) handlers['map.pin'](pin)
   pendingPins.length = 0
-  for (const r of pendingRasters) addViewshedRaster(r)
+  for (const r of pendingRasters) addViewshedRaster(r, false)
   pendingRasters.length = 0
+  renderSitesPanel()
   loadProjects()
 })
 
