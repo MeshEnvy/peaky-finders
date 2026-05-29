@@ -70,7 +70,12 @@ def project_context(slug: str) -> dict[str, Any]:
         for s, e in sorted(preset.sites.items())
     ]
     goals: list[dict[str, Any]] = [
-        {"key": slug, "lat": e.lat, "lon": e.lon}
+        {
+            "key": slug,
+            "label": e.name.strip() or slug,
+            "lat": e.lat,
+            "lon": e.lon,
+        }
         for slug, e in sorted(preset.sites.items())
         if e.type == SiteType.GOAL
     ]
@@ -83,7 +88,7 @@ def project_context(slug: str) -> dict[str, Any]:
         else:
             gcfg = {}
         for key, ent in gcfg.items():
-            goals.append({"key": key, "lat": ent.lat, "lon": ent.lon})
+            goals.append({"key": key, "label": key, "lat": ent.lat, "lon": ent.lon})
     bbox = None
     if sites:
         lats = [s["lat"] for s in sites]

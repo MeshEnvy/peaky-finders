@@ -784,8 +784,8 @@ function ensureLayer(layerId) {
       })
       ids.outline = `${layerId}-outline`
     }
-    if (layerId === 'sites') {
-      ids.labelLayer = 'sites-labels-layer'
+    if (layerId === 'sites' || layerId === 'goals') {
+      ids.labelLayer = `${layerId}-labels-layer`
       map.addLayer({
         id: ids.labelLayer,
         type: 'symbol',
@@ -799,7 +799,7 @@ function ensureLayer(layerId) {
           'text-allow-overlap': true,
         },
         paint: {
-          'text-color': '#f1f5f9',
+          'text-color': layerId === 'goals' ? '#fdba74' : '#f1f5f9',
           'text-halo-color': '#0f172a',
           'text-halo-width': 1.5,
         },
@@ -1188,7 +1188,8 @@ function clearOverlayLayers() {
   for (const layerId of ['viewsheds', 'goals', 'sites', 'trials', 'committed', 'mesh_links']) {
     const outlineId = `${layerId}-outline`
     if (map.getLayer(outlineId)) map.removeLayer(outlineId)
-    if (layerId === 'sites' && map.getLayer('sites-labels-layer')) map.removeLayer('sites-labels-layer')
+    const labelLayerId = `${layerId}-labels-layer`
+    if (map.getLayer(labelLayerId)) map.removeLayer(labelLayerId)
     if (map.getLayer(`${layerId}-layer`)) map.removeLayer(`${layerId}-layer`)
     if (map.getSource(`${layerId}-src`)) map.removeSource(`${layerId}-src`)
     layers.delete(layerId)
@@ -1484,7 +1485,7 @@ async function loadContext(slug) {
       id: g.key,
       lat: g.lat,
       lon: g.lon,
-      label: g.key,
+      label: (g.label || '').trim() || g.key,
     })
   }
   for (const s of ctx.sites || []) {
