@@ -11,11 +11,13 @@ from shapely.geometry.base import BaseGeometry
 from peaky_finders.bundle_build import load_composite_aoi_polygon
 from peaky_finders.http_pool import HttpPool
 from peaky_finders.site_metadata_enrich import enrich_all_preset_sites, resolve_site_metadata
-from peaky_finders.site_suggestions.rf_link import rf_mutual_link_slug_pairs_from_site
-from peaky_finders.sites_job import SiteType, load_preset, peaky_projects_dir, resolved_preset_bundle_data_dir
+from peaky_finders.site_suggestions.rf_link import (
+    rf_mutual_link_slug_pairs,
+    rf_mutual_link_slug_pairs_from_site,
+)
+from peaky_finders.sites_job import Preset, SiteType, load_preset, peaky_projects_dir, resolved_preset_bundle_data_dir
 from peaky_finders.web.site_preset_io import (
     delete_site_from_preset,
-    get_site_from_preset,
     update_site_in_preset,
 )
 
@@ -135,16 +137,7 @@ def project_context(slug: str) -> dict[str, Any]:
         raise FileNotFoundError(f"project not found: {slug!r}")
     enrich_all_preset_sites(cfg, allow_network_plss=True)
     preset = load_preset(cfg)
-    sites = [
-        {
-            "slug": s,
-            "name": e.name.strip() or s,
-            "lat": e.lat,
-            "lon": e.lon,
-            "type": e.type.value,
-        }
-        for s, e in sorted(preset.sites.items())
-    ]
+    sites = _site_details_for_preset(preset)
     goals: list[dict[str, Any]] = [
         {
             "key": slug,
@@ -257,33 +250,99 @@ def _rf_peers_for_site(preset, site_slug: str) -> list[str]:
     if site is None or not site.participates_in_rf:
         return []
     peers: set[str] = set()
-    for slug_a, slug_b in rf_mutual_link_slug_pairs_from_site(
-        preset,
-        from_slug=site_slug,
-        from_lat=float(site.lat),
-        from_lon=float(site.lon),
-    ):
+    try:
+        pair_iter = rf_mutual_link_slug_pairs_from_site(
+            preset,
+            from_slug=site_slug,
+            from_lat=float(site.lat),
+            from_lon=float(site.lon),
+        )
+    except ValueError:
+        return []
+    for slug_a, slug_b in pair_iter:
         peers.add(slug_b if slug_a == site_slug else slug_a)
     return sorted(peers)
+
+
+def _rf_peers_by_slug(preset: Preset) -> dict[str, list[str]]:
+    empty = {slug: [] for slug in preset.sites}
+    try:
+        pairs = rf_mutual_link_slug_pairs(preset)
+    except ValueError:
+        return empty
+    peers: dict[str, set[str]] = {slug: set() for slug in preset.sites}
+    for slug_a, slug_b in pairs:
+        peers.setdefault(slug_a, set()).add(slug_b)
+        peers.setdefault(slug_b, set()).add(slug_a)
+    return {slug: sorted(slug_peers) for slug, slug_peers in peers.items()}
+
+
+def _site_base_from_preset(preset: Preset, site_slug: str) -> dict[str, Any]:
+    if site_slug not in preset.sites:
+        raise FileNotFoundError(f"unknown site {site_slug!r}")
+    entry = preset.sites[site_slug]
+    return {
+        "slug": site_slug,
+        "type": entry.type.value,
+        "name": entry.name,
+        "lat": entry.lat,
+        "lon": entry.lon,
+        "elevation_m": entry.elevation_m,
+        "description": entry.description,
+        "plss": entry.plss,
+        "mlrs": entry.mlrs,
+        "rationale": entry.rationale,
+        "sees": list(entry.sees),
+        "participates_in_rf": entry.participates_in_rf,
+    }
+
+
+def _site_detail_from_preset(
+    preset: Preset,
+    site_slug: str,
+    *,
+    sees_by_slug: dict[str, list[str]] | None = None,
+    rf_peers_by_slug: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
+    base = _site_base_from_preset(preset, site_slug)
+    if sees_by_slug is None:
+        sees_by_slug = {s: list(e.sees) for s, e in preset.sites.items()}
+    mutual, pending = _sees_mutual_and_pending(site_slug, base["sees"], sees_by_slug)
+    peer_slugs = sorted(
+        s for s, e in preset.sites.items() if s != site_slug and e.participates_in_rf
+    )
+    if rf_peers_by_slug is None:
+        rf_peers = _rf_peers_for_site(preset, site_slug)
+    else:
+        rf_peers = rf_peers_by_slug.get(site_slug, [])
+    return {
+        **base,
+        "rf_peers": rf_peers,
+        "sees_mutual": mutual,
+        "sees_pending": pending,
+        "peer_slugs": peer_slugs,
+    }
+
+
+def _site_details_for_preset(preset: Preset) -> list[dict[str, Any]]:
+    sees_by_slug = {s: list(e.sees) for s, e in preset.sites.items()}
+    rf_peers_by_slug = _rf_peers_by_slug(preset)
+    return [
+        _site_detail_from_preset(
+            preset,
+            site_slug,
+            sees_by_slug=sees_by_slug,
+            rf_peers_by_slug=rf_peers_by_slug,
+        )
+        for site_slug in sorted(preset.sites)
+    ]
 
 
 def project_site_detail(slug: str, site_slug: str) -> dict[str, Any]:
     """Full site record plus RF / ``sees`` helper lists."""
     cfg = _project_config_path(slug)
-    base = get_site_from_preset(cfg, site_slug)
     preset = load_preset(cfg)
-    sees_by_slug = {s: list(e.sees) for s, e in preset.sites.items()}
-    mutual, pending = _sees_mutual_and_pending(site_slug, base["sees"], sees_by_slug)
-    peer_slugs = sorted(
-        s for s, e in preset.sites.items() if s != site_slug and e.participates_in_rf
-    )
-    return {
-        **base,
-        "rf_peers": _rf_peers_for_site(preset, site_slug),
-        "sees_mutual": mutual,
-        "sees_pending": pending,
-        "peer_slugs": peer_slugs,
-    }
+    return _site_detail_from_preset(preset, site_slug)
 
 
 def patch_project_site(slug: str, site_slug: str, body: dict[str, Any]) -> dict[str, Any]:

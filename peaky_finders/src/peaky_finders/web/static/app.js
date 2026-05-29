@@ -53,6 +53,7 @@ const siteSeesMutualEl = document.getElementById('site-sees-mutual')
 const siteSeesPendingEl = document.getElementById('site-sees-pending')
 
 const siteRegistry = new Map()
+const siteDetailBySlug = new Map()
 let sitesPanelCollapsed = false
 const sitesPanelSectionCollapsed = { installed: false, planned: false, goal: false }
 let presetSiteSlugs = new Set()
@@ -851,6 +852,13 @@ function flyToSite(id) {
   map.flyTo({ center: [entry.lon, entry.lat], zoom: Math.max(map.getZoom(), 10), duration: 600 })
 }
 
+function buildSiteDetailCache(sites) {
+  siteDetailBySlug.clear()
+  for (const s of sites || []) {
+    if (s?.slug) siteDetailBySlug.set(s.slug, s)
+  }
+}
+
 function resetSitesPanel(sites, goals) {
   siteRegistry.clear()
   for (const s of sites || []) {
@@ -1193,6 +1201,13 @@ async function openSiteDrawer(slug) {
   setSidebarTab('info')
   siteDrawerSlug = slug
   setSiteDrawerOpen(true)
+
+  const cached = siteDetailBySlug.get(slug)
+  if (cached) {
+    populateSiteDrawer(cached)
+    return
+  }
+
   if (siteDrawerSaveBtn) siteDrawerSaveBtn.disabled = true
   try {
     const res = await fetch(
@@ -1203,6 +1218,7 @@ async function openSiteDrawer(slug) {
       throw new Error(err.detail || `HTTP ${res.status}`)
     }
     const detail = await res.json()
+    siteDetailBySlug.set(slug, detail)
     populateSiteDrawer(detail)
   } catch (err) {
     setSiteDrawerOpen(false)
@@ -2199,6 +2215,7 @@ async function loadContext(slug) {
   const res = await fetch(`/api/projects/${slug}/context`)
   const ctx = await res.json()
   presetSiteSlugs = new Set((ctx.sites || []).map((s) => s.slug))
+  buildSiteDetailCache(ctx.sites)
   resetSitesPanel(ctx.sites, ctx.goals)
 
   for (const g of ctx.goals || []) {

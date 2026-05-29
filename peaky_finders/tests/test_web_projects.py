@@ -32,6 +32,20 @@ def test_project_context_includes_site_name(monkeypatch) -> None:
     assert by_slug["peer-a"]["name"] == "Peer A"
 
 
+def test_project_context_includes_full_site_detail(monkeypatch) -> None:
+    monkeypatch.setenv("PEAKY_HOME", str(PEAKY_TEST_HOME))
+    ctx = project_context("sample")
+    hub = next(s for s in ctx["sites"] if s["slug"] == "hub")
+    assert set(hub["sees"]) == {"peer-a", "peer-b", "peer-c"}
+    assert set(hub["sees_mutual"]) == {"peer-a", "peer-b", "peer-c"}
+    assert hub["sees_pending"] == []
+    assert "peer_slugs" in hub
+    assert "rf_peers" in hub
+    assert hub["elevation_m"] == 1454.0
+    assert "plss" in hub
+    assert "participates_in_rf" in hub
+
+
 def test_enrich_all_project_sites_skips_invalid_presets(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PEAKY_HOME", str(tmp_path))
     root = tmp_path / "projects"
