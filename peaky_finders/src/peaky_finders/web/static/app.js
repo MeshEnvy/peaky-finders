@@ -90,10 +90,10 @@ const map = new maplibregl.Map({
   zoom: 5,
   maxPitch: 85,
   pitch: 0,
+  attributionControl: { compact: true },
 })
 
 map.addControl(new maplibregl.NavigationControl(), 'top-right')
-map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
 
 const layers = new Map()
 const layerFeatureCache = new Map()
