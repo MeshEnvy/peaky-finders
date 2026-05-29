@@ -160,7 +160,7 @@ maps:
   type: exclude
   path: FRTCMapData_LandStatus_styled.kml
   layers:
-  - FRTCMapData_LandStatus_styled
+  - 'Layer #0'
 - id: usfs_wilderness
   name: USFS Wilderness Areas
   description: US Forest Service wilderness exclusions.
