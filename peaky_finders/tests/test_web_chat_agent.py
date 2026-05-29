@@ -278,6 +278,18 @@ def test_show_on_map_emits_pin_and_viewshed() -> None:
     ), patch(
         "peaky_finders.web.chat_tools.ensure_point_viewshed",
         return_value=viewshed_rec,
+    ), patch(
+        "peaky_finders.web.chat_tools.load_preset",
+        return_value=object(),
+    ), patch(
+        "peaky_finders.web.chat_tools.rf_link_line_features_from_site",
+        return_value=[
+            {
+                "type": "Feature",
+                "properties": {"id": "chat-peavine--site-x", "from": "chat-peavine", "to": "site-x"},
+                "geometry": {"type": "LineString", "coordinates": [[-119.947, 39.591], [-119.0, 39.0]]},
+            }
+        ],
     ):
         result = dispatch_web_tool(
             "show_on_map",
@@ -289,7 +301,12 @@ def test_show_on_map_emits_pin_and_viewshed() -> None:
     ops = [op for op, _ in emitted]
     assert "map.pin" in ops
     assert "map.viewshed" in ops
-    assert emitted[-1] == ("map.fit_bounds", {"bbox": viewshed_rec["bounds"]})
+    assert "map.line" in ops
+    line_emits = [payload for op, payload in emitted if op == "map.line"]
+    assert line_emits[0]["layer_id"] == "mesh_links"
+    assert line_emits[0]["id"] == "chat-peavine--site-x"
+    assert ("map.fit_bounds", {"bbox": viewshed_rec["bounds"]}) in emitted
+    assert len(result["rf_links"]) == 1
 
 
 def test_stream_web_chat_forwards_thinking_deltas() -> None:

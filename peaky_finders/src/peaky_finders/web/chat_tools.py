@@ -11,7 +11,8 @@ from typing import Any, Callable
 from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.site_suggestions.preset_io import chat_site_slug_for_pin, ensure_chat_site_in_preset
-from peaky_finders.sites_job import peaky_projects_dir
+from peaky_finders.sites_job import load_preset, peaky_projects_dir
+from peaky_finders.web.rf_links import rf_link_line_features_from_site
 from peaky_finders.web.chat_dem import (
     label_with_elevation_ft,
     looks_like_peak_label,
@@ -347,6 +348,37 @@ def _geocode_place(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
     return payload
 
 
+def _emit_rf_mesh_links(
+    ctx: WebChatContext,
+    preset_path: Path,
+    *,
+    site_slug: str,
+    label: str,
+    lat: float,
+    lon: float,
+) -> list[dict[str, Any]]:
+    preset = load_preset(preset_path)
+    features = rf_link_line_features_from_site(
+        preset,
+        from_slug=site_slug,
+        from_lat=lat,
+        from_lon=lon,
+        from_label=label,
+    )
+    if ctx.emit:
+        for feat in features:
+            coords = feat["geometry"]["coordinates"]
+            props = feat["properties"]
+            ctx.emit(
+                "map.line",
+                layer_id="mesh_links",
+                id=str(props["id"]),
+                coordinates=coords,
+                properties=props,
+            )
+    return features
+
+
 def _fit_bbox(lat: float, lon: float, *, padding_deg: float, place_bbox: list[float] | None) -> list[float]:
     if place_bbox and len(place_bbox) == 4:
         west, south, east, north = place_bbox
@@ -487,6 +519,21 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
         has_viewshed=True,
     )
 
+    rf_links: list[dict[str, Any]] = []
+    try:
+        rf_links = _emit_rf_mesh_links(
+            ctx,
+            preset_path,
+            site_slug=site_slug,
+            label=label,
+            lat=lat,
+            lon=lon,
+        )
+    except Exception as exc:
+        rf_links_error = str(exc)
+    else:
+        rf_links_error = None
+
     out = {
         "ok": True,
         "lat": lat,
@@ -497,7 +544,10 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
         "bbox": bbox,
         "saved_to_preset": True,
         "viewshed": viewshed,
+        "rf_links": rf_links,
     }
+    if rf_links_error:
+        out["rf_links_error"] = rf_links_error
     if peak_snap:
         out["peak_snap"] = peak_snap
     return out
