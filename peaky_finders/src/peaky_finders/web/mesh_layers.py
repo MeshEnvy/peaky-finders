@@ -355,6 +355,10 @@ def _enumerate_pairwise_entries(
     bundle_dir: Path,
     yaml_root: Any,
 ) -> list[dict[str, Any]]:
+    mesh_cfg = preset.bundle.mesh_coverage if preset.bundle else None
+    if not resolved_mesh_pairwise_enabled(mesh_cfg):
+        return []
+
     kml_overlay = preset.bundle.kml_overlay if preset.bundle else None
     mesh_yaml = _mesh_kmz_block(yaml_root)
 
@@ -404,6 +408,10 @@ def _enumerate_depth_band_entries(
     bundle_dir: Path,
     yaml_root: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    mesh_cfg = preset.bundle.mesh_coverage if preset.bundle else None
+    if not resolved_mesh_depth_enabled(mesh_cfg):
+        return []
+
     kml_overlay = preset.bundle.kml_overlay if preset.bundle else None
     vis = resolved_kmz_document_layers(preset.bundle)
     mesh_yaml = _mesh_kmz_block(yaml_root)
@@ -657,6 +665,7 @@ def run_mesh_rebuild(
                 slug_to_viewshed_digest=slug_to_digest,
                 site_pins=site_pins,
                 viewshed_radius_m=viewshed_radius_m,
+                progress_log=progress_log,
             )
             pairwise_count = len(plain)
             plog(f"mesh pairwise plain done: {pairwise_count} pair(s)")
@@ -675,6 +684,7 @@ def run_mesh_rebuild(
                 slug_to_viewshed_digest=slug_to_digest,
                 site_pins=site_pins,
                 viewshed_radius_m=viewshed_radius_m,
+                progress_log=progress_log,
             )
             plog(f"mesh pairwise eligible done: {len(elig)} pair(s)")
 

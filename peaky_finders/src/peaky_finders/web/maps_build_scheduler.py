@@ -362,7 +362,7 @@ def _maintenance_planner(slug: str) -> None:
         if not auto:
             mesh_note = "auto_rebuild off"
         elif not mesh_cfg_ok:
-            mesh_note = "unavailable"
+            mesh_note = "unavailable (pairwise and depth disabled in preset)"
         vlog(
             f"{prefix} clips={'stale' if clips_stale else 'current'}, "
             f"mesh={mesh_note}"

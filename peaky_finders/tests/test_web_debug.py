@@ -110,6 +110,31 @@ def test_run_maps_rebuild_receives_verbose_log_when_debug(monkeypatch: pytest.Mo
     captured["verbose_log"]("maps verbose")  # type: ignore[operator]
 
 
+def test_maintenance_planner_logs_unavailable_mesh_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("DEBUG", "1")
+    from peaky_finders.web import maps_build_scheduler as sched
+    from types import SimpleNamespace
+
+    preset = SimpleNamespace(bundle=SimpleNamespace(mesh_coverage=object()))
+
+    with patch.object(sched, "clips_need_rebuild", return_value=False), patch.object(
+        sched, "mesh_need_rebuild", return_value=False
+    ), patch.object(sched, "auto_rebuild_enabled", return_value=True), patch.object(
+        sched, "_preset_path", return_value=Path("/tmp/nevada/config.yaml")
+    ), patch.object(sched, "load_preset", return_value=preset), patch.object(
+        sched, "resolved_mesh_pairwise_enabled", return_value=False
+    ), patch.object(sched, "resolved_mesh_depth_enabled", return_value=False), patch.object(
+        sched, "_notify_build_status"
+    ):
+        sched._maintenance_planner("nevada")
+
+    out = capsys.readouterr().out
+    assert "mesh=unavailable (pairwise and depth disabled in preset)" in out
+
+
 def test_maintenance_planner_logs_current_artifacts_when_debug(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

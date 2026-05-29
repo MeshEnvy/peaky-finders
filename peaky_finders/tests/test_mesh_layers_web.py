@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from shapely.geometry import box
@@ -54,6 +55,35 @@ def test_mesh_layers_catalog_pairwise_and_depth(monkeypatch) -> None:
     for entry in catalog["depth_bands"]:
         assert entry["display_mode"] in ("off", "eligible", "all")
         assert "build_phase" in entry
+
+
+def test_mesh_layers_catalog_hides_disabled_mesh_coverage(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PEAKY_HOME", str(tmp_path))
+    proj = tmp_path / "projects" / "off"
+    proj.mkdir(parents=True)
+    (proj / "config.yaml").write_text(
+        """simulation:
+  provider: los
+  radius_km: 10
+sites:
+  a:
+    name: A
+    loc: [39.0, -115.0]
+    participates_in_rf: true
+  b:
+    name: B
+    loc: [39.1, -115.1]
+    participates_in_rf: true
+bundle:
+  mesh_coverage:
+    pairwise: false
+    depth: false
+""",
+        encoding="utf-8",
+    )
+    catalog = mesh_layers_catalog("off")
+    assert catalog["pairwise_pairs"] == []
+    assert catalog["depth_bands"] == []
 
 
 def test_project_maps_catalog_includes_mesh(monkeypatch) -> None:

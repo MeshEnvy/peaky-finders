@@ -2285,10 +2285,9 @@ async function loadContext(slug) {
     console.warn('fitMapToMeshScope failed:', err)
   }
   connectProjectEvents(slug)
-  void loadProjectViewsheds(slug, rfSites(ctx.sites))
-  await loadProjectMeshLinks(slug)
-  await loadProjectMaps(slug)
+  await Promise.all([loadProjectMeshLinks(slug), loadProjectMaps(slug)])
   await loadChatModels(slug)
+  void loadProjectViewsheds(slug, rfSites(ctx.sites))
   scheduleChatContextRefresh('')
 }
 
@@ -2988,16 +2987,18 @@ async function loadProjectMaps(slug, opts = {}) {
     }
 
     if (!opts.refreshOnly) {
+      const layerTasks = []
       for (const entry of catalog.maps || []) {
         const mode = mapLayerDisplayMode.get(entry.id) ?? 'off'
-        if (mode !== 'off') await applyMapLayerMode(slug, entry, mode)
+        if (mode !== 'off') layerTasks.push(applyMapLayerMode(slug, entry, mode))
       }
       const eligMode = mapLayerDisplayMode.get('eligible') ?? 'off'
-      if (eligMode !== 'off') await applyEligibleLayerMode(slug, eligMode)
+      if (eligMode !== 'off') layerTasks.push(applyEligibleLayerMode(slug, eligMode))
       for (const entry of [...(catalog.mesh?.pairwise_pairs || []), ...(catalog.mesh?.depth_bands || [])]) {
         const mode = mapLayerDisplayMode.get(entry.id) ?? 'off'
-        if (mode !== 'off') await applyMeshLayerMode(slug, entry, mode)
+        if (mode !== 'off') layerTasks.push(applyMeshLayerMode(slug, entry, mode))
       }
+      await Promise.all(layerTasks)
     }
 
     applyMapsBuildStatus(catalog.build?.clips, catalog.build?.mesh)

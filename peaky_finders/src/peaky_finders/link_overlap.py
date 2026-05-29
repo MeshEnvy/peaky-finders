@@ -11,7 +11,7 @@ import time
 import xml.etree.ElementTree as ET
 
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 from pathlib import Path
@@ -578,6 +578,7 @@ def write_pairwise_link_overlap_kml_pairs(
     bundle_land_use_inputs_digest: str | None = None,
     site_pins: Mapping[str, tuple[float, float]] | None = None,
     viewshed_radius_m: float | None = None,
+    progress_log: Callable[[str], None] | None = None,
 ) -> tuple[list[tuple[str, Path, str]], list[tuple[str, Path, str]]]:
     """Pairwise link overlap plus optional reuse as plain ∩ eligible. One footprint read and one A∩B per pair.
 
@@ -627,7 +628,14 @@ def write_pairwise_link_overlap_kml_pairs(
         tag = "eligible link overlap"
     else:
         tag = "link overlap"
-    print(f"{tag.capitalize()}: {total_pairs} pair(s)...", flush=True)
+
+    def _pair_log(msg: str) -> None:
+        if progress_log is not None:
+            progress_log(msg)
+        else:
+            print(msg, flush=True)
+
+    _pair_log(f"{tag.capitalize()}: {total_pairs} pair(s)...")
 
     want_eligible = emit_eligible and eligible_ll is not None and not eligible_ll.is_empty
     plain_peak_style = pairwise_peak_pin_style or DEFAULT_MESH_PAIRWISE_PEAK_PIN_STYLE
@@ -639,7 +647,7 @@ def write_pairwise_link_overlap_kml_pairs(
     ]
     thread_cap = _pairwise_worker_cap(pairwise_overlap_workers, total_pairs=len(pair_tasks))
     if thread_cap > 1:
-        print(f"  Pairwise parallelism: {thread_cap} threads", flush=True)
+        _pair_log(f"  Pairwise parallelism: {thread_cap} threads")
     print_lock: threading.Lock | None = threading.Lock() if thread_cap > 1 else None
 
     pairwise_geom_locks: dict[str, threading.Lock] = {}
@@ -662,17 +670,17 @@ def write_pairwise_link_overlap_kml_pairs(
         msg = f"{_pair_log_prefix()} [{pair_idx}/{total_pairs}] {label_a} ↔ {label_b}..."
         if print_lock is not None:
             with print_lock:
-                print(msg, flush=True)
+                _pair_log(msg)
         else:
-            print(msg, flush=True)
+            _pair_log(msg)
 
     def log_pair_done(pair_idx: int, label_a: str, label_b: str, detail: str) -> None:
         msg = f"{_pair_log_prefix()} [{pair_idx}/{total_pairs}] {label_a} ↔ {label_b}: {detail}"
         if print_lock is not None:
             with print_lock:
-                print(msg, flush=True)
+                _pair_log(msg)
         else:
-            print(msg, flush=True)
+            _pair_log(msg)
 
     def emit_one_pair(
         pair_idx: int,
@@ -976,6 +984,7 @@ def write_pairwise_link_overlap_layers(
     slug_to_viewshed_digest: Mapping[str, str] | None = None,
     site_pins: Mapping[str, tuple[float, float]] | None = None,
     viewshed_radius_m: float | None = None,
+    progress_log: Callable[[str], None] | None = None,
 ) -> list[tuple[str, Path, str]]:
     """Pairwise footprint ∩ footprint → flat KML under ``sites/mesh/coverage/pairwise/``."""
     emitted, _ = write_pairwise_link_overlap_kml_pairs(
@@ -996,6 +1005,7 @@ def write_pairwise_link_overlap_layers(
         slug_to_viewshed_digest=slug_to_viewshed_digest,
         site_pins=site_pins,
         viewshed_radius_m=viewshed_radius_m,
+        progress_log=progress_log,
     )
     return emitted
 
@@ -1014,6 +1024,7 @@ def write_pairwise_eligible_link_overlap_layers(
     slug_to_viewshed_digest: Mapping[str, str] | None = None,
     site_pins: Mapping[str, tuple[float, float]] | None = None,
     viewshed_radius_m: float | None = None,
+    progress_log: Callable[[str], None] | None = None,
 ) -> list[tuple[str, Path, str]]:
     """Plain link ∩ eligible (same geometry as pairwise link overlap clipped in WGS-84)."""
 
@@ -1038,5 +1049,6 @@ def write_pairwise_eligible_link_overlap_layers(
         slug_to_viewshed_digest=slug_to_viewshed_digest,
         site_pins=site_pins,
         viewshed_radius_m=viewshed_radius_m,
+        progress_log=progress_log,
     )
     return emitted

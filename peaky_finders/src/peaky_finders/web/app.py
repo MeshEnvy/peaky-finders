@@ -62,9 +62,8 @@ from peaky_finders.web.projects import (
 from peaky_finders.web.settings import log_debug_mode_at_boot
 from peaky_finders.web.site_preset_io import SitePresetConflictError
 from peaky_finders.sites_job import peaky_projects_dir
-from peaky_finders.web.viewshed_rasters import resolve_splat_png_path
+from peaky_finders.web.viewshed_rasters import resolve_point_workdir, resolve_splat_png_path
 from peaky_finders.web.viewshed_service import (
-    ensure_site_viewshed,
     get_point_viewshed,
     get_site_viewshed,
     list_cached_site_viewsheds,
@@ -476,22 +475,13 @@ def create_app() -> FastAPI:
         slug: str,
         lat: float,
         lon: float,
-        force: bool = False,
     ) -> FileResponse:
         try:
-            get_point_viewshed(
-                project_slug=slug,
-                lat=lat,
-                lon=lon,
-                force=force,
-            )
-            from peaky_finders.web.viewshed_rasters import resolve_point_workdir
-
             path = resolve_point_workdir(project_slug=slug, lat=lat, lon=lon) / "splat.png"
+            if not path.is_file():
+                raise FileNotFoundError(f"viewshed raster missing for {lat:.5f},{lon:.5f}")
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
         return FileResponse(path, media_type="image/png")
 
     @app.get("/api/projects/{slug}/viewsheds/at/tiles/{z}/{x}/{y}.png")
@@ -536,22 +526,11 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.get("/api/projects/{slug}/viewsheds/{site_slug}/splat.png")
-    def api_viewshed_raster(
-        slug: str,
-        site_slug: str,
-        force: bool = False,
-    ) -> FileResponse:
+    def api_viewshed_raster(slug: str, site_slug: str) -> FileResponse:
         try:
-            ensure_site_viewshed(
-                project_slug=slug,
-                site_slug=site_slug,
-                force=force,
-            )
             path = resolve_splat_png_path(project_slug=slug, site_slug=site_slug)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
         return FileResponse(path, media_type="image/png")
 
     @app.get("/api/projects/{slug}/viewsheds/{site_slug}/tiles/{z}/{x}/{y}.png")
