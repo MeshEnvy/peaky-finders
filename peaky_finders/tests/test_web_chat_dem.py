@@ -5,9 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+from rasterio.transform import from_bounds
 from shapely.geometry import box
 
-from peaky_finders.web.chat_dem import clear_dem_highest_cache, query_project_dem_highest
+from peaky_finders import pairwise_dem_peak as dem_peak
+from peaky_finders.web.chat_dem import clear_dem_highest_cache, query_project_dem_highest, snap_peak_to_local_dem
 
 
 def test_query_project_dem_highest_uses_cache() -> None:

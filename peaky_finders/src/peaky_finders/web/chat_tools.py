@@ -12,7 +12,12 @@ from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.site_suggestions.preset_io import chat_site_slug_for_pin, ensure_chat_site_in_preset
 from peaky_finders.sites_job import peaky_projects_dir
-from peaky_finders.web.chat_dem import query_project_dem_highest
+from peaky_finders.web.chat_dem import (
+    label_with_elevation_ft,
+    looks_like_peak_label,
+    query_project_dem_highest,
+    snap_peak_to_local_dem,
+)
 from peaky_finders.web.geocode import GeocodeError, geocode_place_ranked
 from peaky_finders.web.projects import project_geocode_aoi
 from peaky_finders.web.viewshed_service import ensure_point_viewshed
@@ -214,13 +219,39 @@ def format_map_pins_for_prompt(pins: list[MapPinState] | None) -> str:
     return "\n".join(lines)
 
 
-def _fit_bbox(lat: float, lon: float, *, padding_deg: float, place_bbox: list[float] | None) -> list[float]:
-    if place_bbox and len(place_bbox) == 4:
-        west, south, east, north = place_bbox
-        if east > west and north > south:
-            return [west, south, east, north]
-    pad = max(0.01, float(padding_deg))
-    return [lon - pad, lat - pad, lon + pad, lat + pad]
+def _apply_peak_dem_snap(
+    ctx: WebChatContext,
+    *,
+    lat: float,
+    lon: float,
+    label: str,
+    quality: str | None = None,
+) -> tuple[float, float, str, dict[str, Any] | None]:
+    if not ctx.project_slug:
+        return lat, lon, label, None
+    is_peak = quality == "peak" or looks_like_peak_label(label)
+    if not is_peak:
+        return lat, lon, label, None
+    snap = snap_peak_to_local_dem(project_slug=ctx.project_slug, lat=lat, lon=lon)
+    if snap is None:
+        return lat, lon, label, None
+    slat = float(snap["lat"])
+    slon = float(snap["lon"])
+    elev_ft = snap.get("elev_ft")
+    new_label = label_with_elevation_ft(label, float(elev_ft) if elev_ft is not None else None)
+    return slat, slon, new_label, snap
+
+
+def _merge_peak_snap_into_geocode_hit(hit: dict[str, Any], snap: dict[str, Any]) -> None:
+    hit["geocode_lat"] = hit["lat"]
+    hit["geocode_lon"] = hit["lon"]
+    hit["lat"] = float(snap["lat"])
+    hit["lon"] = float(snap["lon"])
+    hit["elev_m"] = snap.get("elev_m")
+    hit["elev_ft"] = snap.get("elev_ft")
+    hit["dem_snapped"] = bool(snap.get("dem_snapped"))
+    hit["snap_shift_m"] = snap.get("shift_m")
+    hit["snap_source"] = snap.get("source")
 
 
 def dispatch_web_tool(name: str, args: dict[str, Any], *, ctx: WebChatContext) -> ToolResult:
@@ -290,7 +321,39 @@ def _geocode_place(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
         return {"error": str(exc)}
     if not payload["results"]:
         return {"query": query, "results": [], "best": None, "error": "no matches", "hint": payload.get("hint")}
+    best = payload.get("best")
+    if isinstance(best, dict):
+        orig_lat = float(best["lat"])
+        orig_lon = float(best["lon"])
+        lat, lon, label, snap = _apply_peak_dem_snap(
+            ctx,
+            lat=orig_lat,
+            lon=orig_lon,
+            label=str(best.get("display_name") or query),
+            quality=str(best.get("quality") or ""),
+        )
+        if snap is not None:
+            _merge_peak_snap_into_geocode_hit(best, snap)
+            best["display_name"] = label
+            for row in payload.get("results") or []:
+                if (
+                    isinstance(row, dict)
+                    and float(row.get("lat", 0)) == orig_lat
+                    and float(row.get("lon", 0)) == orig_lon
+                ):
+                    _merge_peak_snap_into_geocode_hit(row, snap)
+                    row["display_name"] = label
+                    break
     return payload
+
+
+def _fit_bbox(lat: float, lon: float, *, padding_deg: float, place_bbox: list[float] | None) -> list[float]:
+    if place_bbox and len(place_bbox) == 4:
+        west, south, east, north = place_bbox
+        if east > west and north > south:
+            return [west, south, east, north]
+    pad = max(0.01, float(padding_deg))
+    return [lon - pad, lat - pad, lon + pad, lat + pad]
 
 
 def _resolve_show_on_map_target(ctx: WebChatContext, args: dict[str, Any]) -> tuple[float, float, str, str] | ToolResult:
@@ -329,6 +392,12 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
         return resolved
     lat, lon, label, pin_id = resolved
     lat, lon = normalize_point_coords(lat, lon)
+
+    peak_snap: dict[str, Any] | None = None
+    if not str(args.get("pin_id") or "").strip():
+        lat, lon, label, peak_snap = _apply_peak_dem_snap(ctx, lat=lat, lon=lon, label=label)
+        if peak_snap is not None:
+            pin_id = _pin_id(label, lat, lon)
 
     preset_path = ctx.preset_path
     if preset_path is None:
@@ -396,16 +465,17 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
             has_viewshed=False,
         )
         return {
-            "ok": True,
-            "lat": lat,
-            "lon": lon,
-            "label": label,
-            "pin_id": pin_id,
-            "site_slug": site_slug,
-            "bbox": bbox,
-            "saved_to_preset": True,
-            "viewshed_error": str(exc),
-        }
+        "ok": True,
+        "lat": lat,
+        "lon": lon,
+        "label": label,
+        "pin_id": pin_id,
+        "site_slug": site_slug,
+        "bbox": bbox,
+        "saved_to_preset": True,
+        "viewshed_error": str(exc),
+        **({"peak_snap": peak_snap} if peak_snap else {}),
+    }
 
     remember_map_pin(
         ctx,
@@ -417,7 +487,7 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
         has_viewshed=True,
     )
 
-    return {
+    out = {
         "ok": True,
         "lat": lat,
         "lon": lon,
@@ -428,6 +498,9 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
         "saved_to_preset": True,
         "viewshed": viewshed,
     }
+    if peak_snap:
+        out["peak_snap"] = peak_snap
+    return out
 
 
 def truncate_tool_result_for_stream(result: ToolResult, *, max_chars: int = 4000) -> ToolResult:
@@ -483,6 +556,7 @@ def web_chat_system_prompt(
         "Coordinate rules (critical):\n"
         "- Never recall or invent lat/lon from memory.\n"
         "- New places: geocode_place once, then show_on_map with the returned best lat/lon/label/bbox.\n"
+        "- geocode_place snaps named peaks to the local Skadi DEM high point when project DEM tiles exist.\n"
         "- Follow-ups on an existing pin ('that one', 'there', 'add a viewshed'): use show_on_map with "
         "pin_id from map state below — do not pass new coordinates.\n"
         "- Copy coordinates exactly from tool results or map state; do not round or substitute.\n\n"

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
+from pyproj import Transformer
 from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 
@@ -16,6 +18,9 @@ from peaky_finders.web.geocode import GeocodeError, reverse_geocode_label
 from peaky_finders.web.projects import project_context
 
 M_PER_FT = 3.280839895
+PEAK_LABEL_WORDS = frozenset({"peak", "mountain", "mount", "summit", "hill", "pico", "butte"})
+DEFAULT_PEAK_SNAP_RADIUS_M = 2000.0
+MIN_PEAK_SNAP_SHIFT_M = 25.0
 
 # Process-local cache: full-state AOI scans are expensive; repeat chat turns reuse results.
 _dem_highest_by_project: dict[str, dict[str, Any]] = {}
@@ -27,6 +32,80 @@ def clear_dem_highest_cache() -> None:
 
 def _meters_to_feet(m: float) -> float:
     return float(m) * M_PER_FT
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6_378_137.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlon / 2) ** 2
+    return 2 * r * math.asin(min(1.0, a**0.5))
+
+
+def _search_box_around_point(lon: float, lat: float, *, radius_m: float) -> box:
+    to_m = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    to_ll = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+    x, y = to_m.transform(lon, lat)
+    r = max(200.0, float(radius_m))
+    corners = [to_ll.transform(x + dx, y + dy) for dx, dy in ((-r, -r), (-r, r), (r, -r), (r, r))]
+    lons = [c[0] for c in corners]
+    lats = [c[1] for c in corners]
+    return box(min(lons), min(lats), max(lons), max(lats))
+
+
+def looks_like_peak_label(label: str) -> bool:
+    tokens = {t.strip(".,;:").lower() for t in str(label or "").replace("-", " ").split()}
+    return bool(tokens & PEAK_LABEL_WORDS)
+
+
+def label_with_elevation_ft(label: str, elev_ft: float | None) -> str:
+    base = str(label or "").strip()
+    if elev_ft is None or not base:
+        return base
+    suffix = f"({int(elev_ft)} ft)"
+    if suffix in base:
+        return base
+    return f"{base} {suffix}"
+
+
+def snap_peak_to_local_dem(
+    *,
+    project_slug: str,
+    lat: float,
+    lon: float,
+    radius_m: float = DEFAULT_PEAK_SNAP_RADIUS_M,
+    max_shift_m: float = DEFAULT_PEAK_SNAP_RADIUS_M,
+) -> dict[str, Any] | None:
+    """Snap a geocoded peak seed to the highest Skadi cell within ``radius_m``."""
+    preset_path = peaky_projects_dir() / project_slug / "config.yaml"
+    if not preset_path.is_file():
+        return None
+    dem_dir = resolved_project_dem_dir(preset_path)
+    if dem_dir is None:
+        return None
+
+    search = _search_box_around_point(lon, lat, radius_m=radius_m)
+    peak = global_max_skadi_elevation_in_polygon(search, dem_dir)
+    if peak is None:
+        return None
+
+    slon, slat, elev_m = peak
+    shift_m = _haversine_m(lat, lon, slat, slon)
+    if shift_m > float(max_shift_m):
+        return None
+
+    out: dict[str, Any] = {
+        "lat": slat,
+        "lon": slon,
+        "elev_m": round(elev_m, 1),
+        "elev_ft": round(_meters_to_feet(elev_m), 0),
+        "shift_m": round(shift_m, 1),
+        "source": f"Skadi SRTM highest cell within {int(radius_m)} m of geocode seed",
+    }
+    if shift_m >= MIN_PEAK_SNAP_SHIFT_M:
+        out["dem_snapped"] = True
+    return out
 
 
 def project_dem_search_geometry(

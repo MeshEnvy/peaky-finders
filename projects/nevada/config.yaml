@@ -700,10 +700,4 @@ sites:
     plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 22 — CadNSDI 
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN220
     mlrs: NV210170N0210E0SN220
-  chat-f233931270c3:
-    type: planned
-    name: Virginia Peak
-    loc:
-    - 39.756021
-    - -119.460455
-    rationale: Chat agent map placement
+
