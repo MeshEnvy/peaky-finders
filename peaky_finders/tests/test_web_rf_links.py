@@ -117,3 +117,37 @@ def test_rf_link_line_features_for_preset_deduplicates_pairs() -> None:
     assert len(features) == 1
     assert features[0]["properties"]["id"] == "site-a--site-b"
     assert batch.call_count == 1
+
+
+def test_rf_link_line_features_from_coords_allows_goal_source() -> None:
+    clear_rf_link_cache()
+    preset = _FakePreset(
+        sites={
+            "gabbs": _FakeSite("Gabbs", 39.0, -119.0, participates_in_rf=False),
+            "site-b": _FakeSite("Bravo", 39.1, -119.1),
+        },
+        simulation=object(),
+    )
+    with patch("peaky_finders.site_suggestions.rf_link.max_hop_range_m", return_value=200_000.0), patch(
+        "peaky_finders.site_suggestions.rf_link.rf_json_for_preset",
+        return_value='{"rf":"test"}',
+    ), patch(
+        "peaky_finders.site_suggestions.rf_link.splatter_session",
+    ), patch(
+        "peaky_finders.site_suggestions.rf_link.ensure_dem_for_points",
+    ), patch(
+        "peaky_finders.site_suggestions.rf_link.mutual_hop_batch",
+        return_value=[True],
+    ):
+        from peaky_finders.web.rf_links import rf_link_line_features_from_coords
+
+        features = rf_link_line_features_from_coords(
+            preset,  # type: ignore[arg-type]
+            from_slug="gabbs",
+            from_lat=39.0,
+            from_lon=-119.0,
+            from_label="Gabbs",
+        )
+
+    assert len(features) == 1
+    assert features[0]["properties"]["id"] == "gabbs--site-b"

@@ -433,16 +433,7 @@ async function loadProjectMeshLinks(projectSlug) {
   const res = await fetch(`/api/projects/${projectSlug}/mesh-links`)
   if (!res.ok) return
   const gj = await res.json()
-  const layerId = 'mesh_links'
-  for (const f of gj.features || []) {
-    const id = f.properties?.id || `${f.properties?.from}--${f.properties?.to}`
-    layerFeatureCache.set(`${layerId}:${id}`, {
-      ...f,
-      properties: { ...(f.properties || {}), id },
-    })
-  }
-  flushLayerFeatures(layerId)
-  raiseOverlayLayers()
+  mergeMeshLinkFeatures(gj.features)
 }
 
 function applyViewshedRasterRecords(records, refreshPanel = false) {
@@ -529,14 +520,14 @@ function addViewshedRaster(r, refreshPanel = true) {
   }
 
   const slug = r.slug || null
-  if (slug && siteRegistry.has(slug)) {
-    const entry = siteRegistry.get(slug)
-    entry.hasViewshed = true
-    entry.viewshedPending = false
+  const registryId = r._registryId || resolveRegistryIdForRecord(r)
+  const regEntry = registryId ? siteRegistry.get(registryId) : registryEntryBySlug(slug)
+  if (regEntry) {
+    regEntry.hasViewshed = true
+    regEntry.viewshedPending = false
   }
 
-  const entry = slug ? siteRegistry.get(slug) : null
-  const visible = entry ? entry.visible : true
+  const visible = regEntry ? regEntry.splatVisible : false
 
   map.addLayer(
     {
@@ -556,6 +547,7 @@ function addViewshedRaster(r, refreshPanel = true) {
     sourceId,
     layerId,
     slug,
+    registryId,
     bounds: r.bounds,
     coordinates: r.coordinates,
   })
@@ -572,31 +564,200 @@ function clearViewshedRasters() {
   for (const entry of siteRegistry.values()) {
     entry.hasViewshed = false
     entry.viewshedPending = false
+    entry.linksPending = false
   }
   renderSitesPanel()
 }
 
-const EYE_OPEN_SVG =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
-const EYE_CLOSED_SVG =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+const SPLAT_ICON_SVG =
+  '<svg viewBox="0 0 128 128" aria-hidden="true"><path fill="#907BF3" d="M59.4 21.9c3.8-2.7 6.9-.2 8.3 3.2c2.1 4.9 4.9 6.7 10.7 6.5c5.9-.2 7.6-2.6 8.1-6.5c0 0 2.8-13.7 3.6-16.1c2.8-8.9 15.7-6.3 12.9 4c-3.2 11.5-16.7 19.7-7.6 27.7c3.7 3.2 8.3 3.1 11.2.8c8.3-6.5 17.3-3.4 18.5 2.7c1.2 5.9-2.9 7.7-5.4 8.5c-4.6 1.5-15.8 2-16.3 12.4c-.3 6.7 6.9 8.1 8.1 13s-.9 7-2.5 8.7s-1.7 4-.2 6.1c5.1 7.2 12.7 10.7 10.3 17.3c-2.4 6.5-14.9 8.9-19-1.4c-8.8-22-14.8-12.4-19.6-11.4c-12.6 2.6-13.1-6.1-22.4-1.3c-9.4 4.9-6.6 28.1-20.9 26.4c-5.3-.6-8.9-7.8-4.2-14.2c5.9-8 21.5-16.7 16.5-22c-2.5-2.6-5.9-.4-7 .2c-11.5 6.2-23.7-9.6-11.9-19.7c6.1-5.2 15.3-4 14.7-10.4c-.4-4.7-6-5.9-11.9-9.3c-12.4-7.1-19-10.2-21.2-15C6.9 20.9 22.9 11.6 30 22.5c3.4 5.3 5.6 5.7 8.3 5.9s11.3.7 11.3-4.1c0-1.8-1.7-3.2-3.1-5c-1.9-2.5-3.3-5.8-2.2-8.6c1.6-4.3 7.3-3.9 9-1.5s6.1 12.7 6.1 12.7m18.2 85.8c0 1.7-.3 7.4.6 10.5c3.6 12.8 18.6 5 12.8-6.8c-.9-1.8-3-5.6-3.7-6.7c-2.9-4.5-9.7-2.1-9.7 3M8 58.6c-7 2.8-4.7 14.1 2.7 13.6c4.3-.3 15-8 15-8c2.9-2 1.7-7.1-2.3-7c-1.2-.1-11-.3-15.4 1.4"/><path fill="#004FAC" d="M108.8 92c-3.7.5-4.6-1.9-4.7-3.5c-.2-4.2 4.5-5.1 4-8c-.3-1.8 2-3.8 4.5-1.6c4.6 3.8-.1 12.6-3.8 13.1m11.2 14.1c-.4-1.7-4.5-2.3-4.4 1.2c.1 2.1-.6 4.6-5.7 4.6c-1.5 0-4.4.5-3.1 4.3c1.3 3.9 16.5 2.5 13.2-10.1M91.4 115c-1.1-.1-2.5.7-2.9 2.7s-2.1 2.9-3.2 2.8s-4 .1-4 3.1s12.2 3.9 11.9-6.6c0-1-.6-1.8-1.8-2m-2.8-19c2.4-1.8 1-7.6-4.3-6.1c-3.6 1-3.5 5.1-13.4 7.7c-2.9.8-2.3 3.6 2.1 3.5c10.5-.4 14.4-4.1 15.6-5.1m-28.7.8c.7-2.8-1.5-4.4-4.4-2.8c-9.2 5.4-6.2 17.4-14.6 23.5c-2.7 1.9-2.8 4.7-.2 6c7.7 3.9 19-25.9 19.2-26.7M28.3 60.3c-.7-2-4.2-1.9-4.4.3c-.2 2.7-6.4 4.4-10.7 6.8c-.9.5-3.3 2.5-.2 5.1c3.1 2.7 17.7-5 15.3-12.2m76.2-51.5c-.9-2.7-5-2.5-4.6.8c.3 2-.6 4.6-1.6 6.4c-2.5 4.3-4.8 7.5-7.3 11.5c-1.2 1.9-2.8 6.5 2.2 6.3c4.9-.2 14.4-15.4 11.3-25m21.1 36.7c-.5-5.1-5.9-3.3-5.3-.4c1 5.4-11.6 3.3-16.6 9c-2.2 2.5-.9 6.5 3.3 7.2c4.1.5 19.7-3.8 18.6-15.8"/><path fill="#D8BDF4" d="M10.9 62.5c-.3.4-1.1.9-1.4 2.2c-.3 1.6-3.1 1.3-3.2-.4s1.2-3.4 3.3-3.6c1.6-.2 1.9 1.1 1.3 1.8m23.6 6.7c-5.3.5-6.5 5.2-6 7.2c.3 1.4 3.5 1.3 3.4-.6c0-3.3 2.7-4.4 3.3-5.1c.5-.6.1-1.6-.7-1.5m14.6-9.9c-.8 2.4-2.3 3.3-3 4.1c-1.3 1.6.9 3.6 2.6 2.5c1.3-.8 2.9-3.4 2.4-6.3c-.2-.8-1.7-1.2-2-.3M23.3 21.2c-.8-.6-5.7-2.5-8.3 1.9c-.6 1-.3 2.1.4 2.7c.8.6 2.1.5 2.6-.3c1.6-2.5 3.6-2.5 5-2.6c.7 0 1.1-1.1.3-1.7m28.2 6.3c-.2.6-2 2.2-3 2.6c-2.9 1-.9 4.5 1.3 3.1c3.3-2 3.1-4.7 3.1-5.4c.1-.8-1.1-1.2-1.4-.3M49.1 9.3c-3.4.2-3.3 3.9-3.2 5.1c.2 1.7 3.1 1.5 2.9-.3c-.2-2 .9-2.7 1.4-3.2c.7-.8-.1-1.7-1.1-1.6M43 102.1c-1.5 1.1-6.8 6.3-7.6 7.2c-1.8 1.8-2.1 4.1-1.4 5.9c.6 1.8 3.2.9 3.1-.6c-.1-1.2-.1-2.1.4-2.8s6.5-7.6 6.8-7.9c.8-1.5-.4-2.5-1.3-1.8M94.5 5.9c-3.4 2.5-3.3 5.5-3 6.8s2 .8 2.1.2c.5-2 2.6-4.5 3-5c.9-1.3-.6-3.1-2.1-2"/></svg>'
+const LINKS_ICON_SVG =
+  '<svg viewBox="0 0 14 14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2"><circle cx="2.5" cy="7" r="2"/><circle cx="11.5" cy="2.5" r="2"/><circle cx="11.5" cy="11.5" r="2"/><path d="m3.71 5.41l5.85-2.43M3.71 8.59l5.85 2.43"/></g></svg>'
 
-function setSiteViewshedVisible(slug, visible) {
-  const entry = siteRegistry.get(slug)
-  if (!entry?.hasViewshed) return
-  entry.visible = visible
-  for (const layer of viewshedRasterLayers) {
-    if (layer.slug === slug && map.getLayer(layer.layerId)) {
-      map.setLayoutProperty(layer.layerId, 'visibility', visible ? 'visible' : 'none')
+function registryEntryBySlug(slug) {
+  if (!slug) return null
+  if (siteRegistry.has(slug)) return siteRegistry.get(slug)
+  const goalId = `goal:${slug}`
+  if (siteRegistry.has(goalId)) return siteRegistry.get(goalId)
+  return null
+}
+
+function resolveRegistryIdForRecord(r) {
+  if (r.slug) {
+    const bySlug = registryEntryBySlug(r.slug)
+    if (bySlug) return bySlug.id
+    if (siteRegistry.has(r.slug)) return r.slug
+  }
+  if (r.lat != null && r.lon != null) {
+    for (const entry of siteRegistry.values()) {
+      if (Math.abs(entry.lat - r.lat) < 1e-4 && Math.abs(entry.lon - r.lon) < 1e-4) {
+        return entry.id
+      }
     }
   }
-  renderSitesPanel()
+  return r.slug || null
 }
 
-function toggleSiteViewshedVisibility(slug) {
-  const entry = siteRegistry.get(slug)
-  if (!entry?.hasViewshed) return
-  setSiteViewshedVisible(slug, !entry.visible)
+async function ensureViewshedForEntry(id) {
+  const entry = siteRegistry.get(id)
+  if (!entry || !currentProjectSlug || entry.hasViewshed) return true
+
+  try {
+    let res
+    if (entry.category === 'goal' || (entry.slug && !siteRegistry.has(entry.slug))) {
+      res = await fetch(
+        `/api/projects/${currentProjectSlug}/viewsheds/at?lat=${entry.lat}&lon=${entry.lon}`,
+      )
+    } else if (entry.slug) {
+      res = await fetch(
+        `/api/projects/${currentProjectSlug}/viewsheds/${encodeURIComponent(entry.slug)}?ensure=true`,
+      )
+    } else {
+      return false
+    }
+    if (!res.ok) return false
+    const record = await res.json()
+    record._registryId = id
+    if (mapReady) addViewshedRaster(record, true)
+    else pendingRasters.push(record)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function siteHasCachedLinks(slug) {
+  if (!slug) return false
+  const prefix = 'mesh_links:'
+  for (const [key, f] of layerFeatureCache) {
+    if (!key.startsWith(prefix)) continue
+    if (f.properties?.from === slug || f.properties?.to === slug) return true
+  }
+  return false
+}
+
+function mergeMeshLinkFeatures(features) {
+  const layerId = 'mesh_links'
+  for (const f of features || []) {
+    const featId = f.properties?.id || `${f.properties?.from}--${f.properties?.to}`
+    layerFeatureCache.set(`${layerId}:${featId}`, {
+      ...f,
+      properties: { ...(f.properties || {}), id: featId },
+    })
+  }
+  flushLayerFeatures(layerId)
+  raiseOverlayLayers()
+}
+
+async function ensureLinksForEntry(id) {
+  const entry = siteRegistry.get(id)
+  if (!entry || !currentProjectSlug) return true
+  if (entry.slug && siteHasCachedLinks(entry.slug)) return true
+  if (!entry.slug && !Number.isFinite(entry.lat)) return false
+
+  try {
+    let res = null
+    if (entry.slug) {
+      res = await fetch(
+        `/api/projects/${currentProjectSlug}/mesh-links/from/${encodeURIComponent(entry.slug)}`,
+      )
+    }
+    if (!res?.ok) {
+      const fromSlug = encodeURIComponent(entry.slug || entry.id)
+      res = await fetch(
+        `/api/projects/${currentProjectSlug}/mesh-links/at?lat=${entry.lat}&lon=${entry.lon}&from_slug=${fromSlug}`,
+      )
+    }
+    if (!res.ok) return false
+    const gj = await res.json()
+    mergeMeshLinkFeatures(gj.features)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function setSiteSplatVisible(id, visible) {
+  const entry = siteRegistry.get(id)
+  if (!entry) return
+  entry.splatVisible = visible
+
+  const applyRasterVisibility = () => {
+    for (const layer of viewshedRasterLayers) {
+      if (layer.registryId === id && map.getLayer(layer.layerId)) {
+        map.setLayoutProperty(layer.layerId, 'visibility', visible ? 'visible' : 'none')
+      }
+    }
+    renderSitesPanel()
+  }
+
+  if (!visible) {
+    applyRasterVisibility()
+    return
+  }
+
+  if (entry.hasViewshed) {
+    applyRasterVisibility()
+    return
+  }
+
+  entry.viewshedPending = true
+  renderSitesPanel()
+  void ensureViewshedForEntry(id).then((ok) => {
+    entry.viewshedPending = false
+    if (!ok) entry.splatVisible = false
+    else applyRasterVisibility()
+    renderSitesPanel()
+  })
+}
+
+function toggleSiteSplatVisibility(id) {
+  const entry = siteRegistry.get(id)
+  if (!entry || entry.viewshedPending) return
+  setSiteSplatVisible(id, !entry.splatVisible)
+}
+
+function isSiteLinksShown(slug) {
+  if (!slug) return true
+  const entry = registryEntryBySlug(slug)
+  if (!entry) return true
+  return entry.linksVisible !== false
+}
+
+function setSiteLinksVisible(id, visible) {
+  const entry = siteRegistry.get(id)
+  if (!entry?.slug && !Number.isFinite(entry?.lat)) return
+  entry.linksVisible = visible
+
+  const applyLinkVisibility = () => {
+    flushLayerFeatures('mesh_links')
+    renderSitesPanel()
+  }
+
+  if (!visible) {
+    applyLinkVisibility()
+    return
+  }
+
+  if (entry.slug && siteHasCachedLinks(entry.slug)) {
+    applyLinkVisibility()
+    return
+  }
+
+  entry.linksPending = true
+  renderSitesPanel()
+  void ensureLinksForEntry(id).then((ok) => {
+    entry.linksPending = false
+    if (!ok) entry.linksVisible = false
+    applyLinkVisibility()
+  })
+}
+
+function toggleSiteLinksVisibility(id) {
+  const entry = siteRegistry.get(id)
+  if (!entry || entry.linksPending) return
+  if (!entry.slug && !Number.isFinite(entry.lat)) return
+  setSiteLinksVisible(id, !entry.linksVisible)
 }
 
 function flyToSite(id) {
@@ -618,21 +779,25 @@ function resetSitesPanel(sites, goals) {
       lon: s.lon,
       hasViewshed: false,
       viewshedPending: false,
-      visible: true,
+      linksPending: false,
+      splatVisible: true,
+      linksVisible: true,
     })
   }
   for (const g of goals || []) {
     const id = `goal:${g.key}`
     siteRegistry.set(id, {
       id,
-      slug: null,
+      slug: g.key || null,
       category: 'goal',
       label: (g.label || '').trim() || g.key,
       lat: g.lat,
       lon: g.lon,
       hasViewshed: false,
       viewshedPending: false,
-      visible: true,
+      linksPending: false,
+      splatVisible: false,
+      linksVisible: false,
     })
   }
   renderSitesPanel()
@@ -640,40 +805,60 @@ function resetSitesPanel(sites, goals) {
 
 function renderSiteRow(site) {
   const li = document.createElement('li')
-  li.className = `site-row${site.hasViewshed ? '' : site.viewshedPending ? ' viewshed-pending' : ' no-viewshed'}`
+  li.className = `site-row${site.hasViewshed ? '' : site.viewshedPending || site.linksPending ? ' viewshed-pending' : ' no-viewshed'}`
   if (site.category === 'goal') li.classList.add('site-row-goal')
   if (site.category === 'planned') li.classList.add('site-row-planned')
 
-  const visBtn = document.createElement('button')
-  visBtn.type = 'button'
-  visBtn.className = `site-visibility${site.hasViewshed && !site.visible ? ' hidden' : ''}`
-  visBtn.disabled = site.category === 'goal' || !site.hasViewshed
-  visBtn.innerHTML = site.hasViewshed && site.visible ? EYE_OPEN_SVG : EYE_CLOSED_SVG
-  visBtn.title = site.category === 'goal'
-    ? 'Goals have no viewshed'
-    : site.viewshedPending
-      ? 'Computing viewshed…'
-      : site.hasViewshed
-        ? site.visible
-          ? 'Hide viewshed'
-          : 'Show viewshed'
-        : 'Viewshed pending'
-  visBtn.setAttribute(
+  const visGroup = document.createElement('div')
+  visGroup.className = 'site-vis-group'
+
+  const splatBtn = document.createElement('button')
+  splatBtn.type = 'button'
+  splatBtn.className = `site-visibility splat${site.splatVisible ? '' : ' hidden'}`
+  splatBtn.disabled = site.viewshedPending
+  splatBtn.innerHTML = SPLAT_ICON_SVG
+  splatBtn.title = site.viewshedPending
+    ? 'Computing viewshed…'
+    : site.splatVisible
+      ? 'Hide splat'
+      : 'Show splat'
+  splatBtn.setAttribute(
     'aria-label',
-    site.category === 'goal'
-      ? `${site.label} (goal, no viewshed)`
-      : site.viewshedPending
-        ? `Computing viewshed for ${site.label}`
-        : site.hasViewshed
-          ? site.visible
-            ? `Hide viewshed for ${site.label}`
-            : `Show viewshed for ${site.label}`
-          : `Viewshed pending for ${site.label}`,
+    site.viewshedPending
+      ? `Computing viewshed for ${site.label}`
+      : site.splatVisible
+        ? `Hide splat for ${site.label}`
+        : `Show splat for ${site.label}`,
   )
-  visBtn.addEventListener('click', (ev) => {
+  splatBtn.addEventListener('click', (ev) => {
     ev.stopPropagation()
-    if (site.slug) toggleSiteViewshedVisibility(site.slug)
+    toggleSiteSplatVisibility(site.id)
   })
+
+  const linksBtn = document.createElement('button')
+  linksBtn.type = 'button'
+  linksBtn.className = `site-visibility links${site.linksVisible ? '' : ' hidden'}`
+  linksBtn.disabled = site.linksPending || (!site.slug && !Number.isFinite(site.lat))
+  linksBtn.innerHTML = LINKS_ICON_SVG
+  linksBtn.title = site.linksPending
+    ? 'Computing links…'
+    : site.linksVisible
+      ? 'Hide links'
+      : 'Show links'
+  linksBtn.setAttribute(
+    'aria-label',
+    site.linksPending
+      ? `Computing links for ${site.label}`
+      : site.linksVisible
+        ? `Hide links for ${site.label}`
+        : `Show links for ${site.label}`,
+  )
+  linksBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation()
+    toggleSiteLinksVisibility(site.id)
+  })
+
+  visGroup.append(splatBtn, linksBtn)
 
   const label = document.createElement('span')
   label.className = 'site-label'
@@ -681,7 +866,7 @@ function renderSiteRow(site) {
   label.title = site.label
   label.addEventListener('click', () => flyToSite(site.id))
 
-  li.append(visBtn, label)
+  li.append(visGroup, label)
   return li
 }
 
@@ -885,9 +1070,14 @@ function ensureLayer(layerId) {
 function flushLayerFeatures(layerId) {
   const ids = ensureLayer(layerId)
   const prefix = `${layerId}:`
-  const features = []
+  let features = []
   for (const [key, feature] of layerFeatureCache) {
     if (key.startsWith(prefix)) features.push(feature)
+  }
+  if (layerId === 'mesh_links') {
+    features = features.filter(
+      (f) => isSiteLinksShown(f.properties?.from) && isSiteLinksShown(f.properties?.to),
+    )
   }
   map.getSource(ids.source).setData({ type: 'FeatureCollection', features })
 }

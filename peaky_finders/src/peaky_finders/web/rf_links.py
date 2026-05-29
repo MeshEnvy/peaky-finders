@@ -6,11 +6,17 @@ from typing import Any
 
 from peaky_finders.site_suggestions.rf_link import (
     clear_rf_link_cache,
+    rf_mutual_link_slug_pairs_from_coords,
     rf_mutual_link_slug_pairs_from_site,
 )
 from peaky_finders.sites_job import Preset
 
-__all__ = ["clear_rf_link_cache", "rf_link_line_features_for_preset", "rf_link_line_features_from_site"]
+__all__ = [
+    "clear_rf_link_cache",
+    "rf_link_line_features_for_preset",
+    "rf_link_line_features_from_coords",
+    "rf_link_line_features_from_site",
+]
 
 
 def rf_link_line_features_for_preset(preset: Preset) -> list[dict[str, Any]]:
@@ -39,13 +45,40 @@ def rf_link_line_features_from_site(
     from_label: str,
 ) -> list[dict[str, Any]]:
     """GeoJSON LineString features for mutual RF links from one site to others."""
-    features: list[dict[str, Any]] = []
-    for slug_a, slug_b in rf_mutual_link_slug_pairs_from_site(
+    return rf_link_line_features_from_coords(
         preset,
         from_slug=from_slug,
         from_lat=from_lat,
         from_lon=from_lon,
-    ):
+        from_label=from_label,
+        pair_slugs=rf_mutual_link_slug_pairs_from_site(
+            preset,
+            from_slug=from_slug,
+            from_lat=from_lat,
+            from_lon=from_lon,
+        ),
+    )
+
+
+def rf_link_line_features_from_coords(
+    preset: Preset,
+    *,
+    from_slug: str,
+    from_lat: float,
+    from_lon: float,
+    from_label: str,
+    pair_slugs: list[tuple[str, str]] | None = None,
+) -> list[dict[str, Any]]:
+    """GeoJSON LineString features for mutual RF links from coordinates to RF sites."""
+    if pair_slugs is None:
+        pair_slugs = rf_mutual_link_slug_pairs_from_coords(
+            preset,
+            from_slug=from_slug,
+            from_lat=from_lat,
+            from_lon=from_lon,
+        )
+    features: list[dict[str, Any]] = []
+    for slug_a, slug_b in pair_slugs:
         other_slug = slug_b if slug_a == from_slug else slug_a
         other = preset.sites[other_slug]
         lat_b = float(other.lat)

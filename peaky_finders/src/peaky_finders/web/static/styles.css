@@ -494,12 +494,19 @@ select option {
   background: rgba(148, 163, 184, 0.06);
 }
 
+.site-vis-group {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
 .site-visibility {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  width: 1.65rem;
-  height: 1.65rem;
+  width: 1.45rem;
+  height: 1.45rem;
   padding: 0;
   border: none;
   border-radius: 4px;
@@ -508,7 +515,8 @@ select option {
   cursor: pointer;
   transition:
     background 0.15s ease,
-    color 0.15s ease;
+    color 0.15s ease,
+    opacity 0.15s ease;
 }
 
 .site-visibility:hover:not(:disabled) {
@@ -517,6 +525,10 @@ select option {
 
 .site-visibility.hidden {
   color: var(--text-dim);
+}
+
+.site-visibility.splat.hidden {
+  opacity: 0.35;
 }
 
 .site-visibility:disabled {
@@ -553,10 +565,6 @@ select option {
 .site-row.viewshed-pending .site-label {
   color: var(--text-muted);
   font-style: italic;
-}
-
-.site-row-goal .site-visibility {
-  opacity: 0.2;
 }
 
 .site-row-goal .site-label {

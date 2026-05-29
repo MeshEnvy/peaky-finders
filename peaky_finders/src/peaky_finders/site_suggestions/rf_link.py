@@ -50,17 +50,14 @@ def _canonical_slug_pair(a: str, b: str) -> tuple[str, str]:
     return (a, b) if a <= b else (b, a)
 
 
-def rf_mutual_link_slug_pairs_from_site(
+def rf_mutual_link_slug_pairs_from_coords(
     preset: Preset,
     *,
     from_slug: str,
     from_lat: float,
     from_lon: float,
 ) -> list[tuple[str, str]]:
-    """Mutual RF-viable slug pairs involving ``from_slug`` (canonical order)."""
-    from_site = preset.sites.get(from_slug)
-    if from_site is None or not from_site.participates_in_rf:
-        return []
+    """Mutual RF-viable slug pairs from arbitrary coordinates (e.g. goals) to RF sites."""
     rf_json = rf_json_for_preset(preset)
     rf_key = hashlib.sha256(rf_json.encode()).hexdigest()[:16]
     max_hop_m = max_hop_range_m(preset)
@@ -96,6 +93,25 @@ def rf_mutual_link_slug_pairs_from_site(
                 out.append(_canonical_slug_pair(from_slug, slug))
 
     return out
+
+
+def rf_mutual_link_slug_pairs_from_site(
+    preset: Preset,
+    *,
+    from_slug: str,
+    from_lat: float,
+    from_lon: float,
+) -> list[tuple[str, str]]:
+    """Mutual RF-viable slug pairs involving ``from_slug`` (canonical order)."""
+    from_site = preset.sites.get(from_slug)
+    if from_site is None or not from_site.participates_in_rf:
+        return []
+    return rf_mutual_link_slug_pairs_from_coords(
+        preset,
+        from_slug=from_slug,
+        from_lat=from_lat,
+        from_lon=from_lon,
+    )
 
 
 def rf_mutual_link_slug_pairs(preset: Preset) -> list[tuple[str, str]]:
