@@ -8,11 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from shapely.geometry.base import BaseGeometry
+
 from peaky_finders.site_suggestions.preset_io import chat_site_slug_for_pin, ensure_chat_site_in_preset
 from peaky_finders.sites_job import peaky_projects_dir
 from peaky_finders.web.chat_dem import query_project_dem_highest
 from peaky_finders.web.geocode import GeocodeError, geocode_place_ranked
-from peaky_finders.web.projects import project_context
+from peaky_finders.web.projects import project_geocode_aoi
 from peaky_finders.web.viewshed_service import ensure_point_viewshed
 from peaky_finders.web.viewshed_rasters import normalize_point_coords
 
@@ -45,7 +47,7 @@ def _tool(name: str, description: str, parameters: dict[str, Any]) -> dict[str, 
 WEB_TOOL_SCHEMAS: list[dict[str, Any]] = [
     _tool(
         "geocode_place",
-        "Resolve a place name to WGS-84 coordinates (OpenStreetMap). Returns ranked results and a best pick.",
+        "Resolve a place name to WGS-84 coordinates (OpenStreetMap). Biases toward the active project AOI when set.",
         {
             "type": "object",
             "properties": {
@@ -113,6 +115,7 @@ class WebChatContext:
     project_slug: str | None
     emit: EmitFn | None = None
     geocode_viewbox: list[float] | None = None
+    geocode_aoi: BaseGeometry | None = None
     geocode_calls: int = 0
     map_pins: list[MapPinState] | None = None
 
@@ -277,7 +280,12 @@ def _geocode_place(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
         }
     ctx.geocode_calls += 1
     try:
-        payload = geocode_place_ranked(query, viewbox=ctx.geocode_viewbox, project_slug=ctx.project_slug)
+        payload = geocode_place_ranked(
+            query,
+            viewbox=ctx.geocode_viewbox,
+            aoi=ctx.geocode_aoi,
+            project_slug=ctx.project_slug,
+        )
     except GeocodeError as exc:
         return {"error": str(exc)}
     if not payload["results"]:
@@ -435,15 +443,13 @@ def web_chat_context_for_project(
     map_pins: list[MapPinState] | None = None,
 ) -> WebChatContext:
     geocode_viewbox = None
+    geocode_aoi = None
     if project_slug:
-        try:
-            ctx = project_context(project_slug)
-            geocode_viewbox = ctx.get("bbox")
-        except FileNotFoundError:
-            geocode_viewbox = None
+        geocode_viewbox, geocode_aoi = project_geocode_aoi(project_slug)
     return WebChatContext(
         project_slug=project_slug,
         geocode_viewbox=geocode_viewbox,
+        geocode_aoi=geocode_aoi,
         map_pins=normalize_map_pins(map_pins),
     )
 
@@ -483,9 +489,10 @@ def web_chat_system_prompt(
         f"{format_map_pins_for_prompt(map_pins)}\n\n"
         "Geocoding rules:\n"
         "- Call geocode_place once per new place.\n"
+        "- With an active project, geocode_place biases toward the project AOI; use the returned best.\n"
         "- Use the returned best result unless quality is likely_street_not_peak.\n"
         "- Do not retry geocode with rephrased queries; ask the user to clarify instead.\n"
-        "- For mountains/peaks, include state in the query (e.g. 'Charleston Peak, Nevada').\n"
+        "- For mountains/peaks without a project, include state in the query (e.g. 'Charleston Peak, Nevada').\n"
         "Confirm briefly what you placed.\n\n"
         "After reporting DEM highest-point facts, offer show_on_map only if they want it on the map."
     )

@@ -6,6 +6,8 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from shapely.geometry import Point
+from shapely.geometry.base import BaseGeometry
 
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
@@ -66,6 +68,10 @@ def _in_viewbox(lat: float, lon: float, viewbox: list[float]) -> bool:
     return west <= float(lon) <= east and south <= float(lat) <= north
 
 
+def _in_aoi(lat: float, lon: float, aoi: BaseGeometry) -> bool:
+    return bool(aoi.covers(Point(float(lon), float(lat))))
+
+
 def _project_region_boost(hit: dict[str, Any], *, project_slug: str | None) -> float:
     slug = str(project_slug or "").strip().lower()
     if not slug:
@@ -81,24 +87,61 @@ def rank_geocode_hits(
     *,
     query: str,
     viewbox: list[float] | None = None,
+    aoi: BaseGeometry | None = None,
     project_slug: str | None = None,
 ) -> list[dict[str, Any]]:
     wants_peak = _query_wants_peak(query)
     ranked: list[dict[str, Any]] = []
     for hit in hits:
+        lat = float(hit["lat"])
+        lon = float(hit["lon"])
         score = _geocode_score(hit, wants_peak=wants_peak)
         score += _project_region_boost(hit, project_slug=project_slug)
-        if viewbox and _in_viewbox(float(hit["lat"]), float(hit["lon"]), viewbox):
+        in_aoi = aoi is not None and _in_aoi(lat, lon, aoi)
+        if in_aoi:
+            score += 5.0
+        elif viewbox and _in_viewbox(lat, lon, viewbox):
             score += 2.0
         ranked.append(
             {
                 **hit,
                 "score": round(score, 3),
                 "quality": _quality_label(hit, wants_peak=wants_peak),
+                "in_project_aoi": in_aoi,
             }
         )
     ranked.sort(key=lambda row: float(row["score"]), reverse=True)
     return ranked
+
+
+def _best_geocode_hit(
+    ranked: list[dict[str, Any]],
+    *,
+    viewbox: list[float] | None = None,
+    aoi: BaseGeometry | None = None,
+    wants_peak: bool = False,
+) -> tuple[dict[str, Any] | None, bool]:
+    if not ranked:
+        return None, False
+    if aoi is not None:
+        in_aoi = [row for row in ranked if row.get("in_project_aoi")]
+        if in_aoi:
+            if wants_peak:
+                in_aoi = [row for row in in_aoi if row.get("quality") == "peak"] or in_aoi
+            best = in_aoi[0]
+            return best, best is not ranked[0]
+    if viewbox and len(viewbox) == 4:
+        in_viewbox = [
+            row
+            for row in ranked
+            if _in_viewbox(float(row["lat"]), float(row["lon"]), viewbox)
+        ]
+        if in_viewbox:
+            if wants_peak:
+                in_viewbox = [row for row in in_viewbox if row.get("quality") == "peak"] or in_viewbox
+            best = in_viewbox[0]
+            return best, best is not ranked[0]
+    return ranked[0], False
 
 
 def geocode_place(
@@ -179,22 +222,26 @@ def geocode_place_ranked(
     query: str,
     *,
     viewbox: list[float] | None = None,
+    aoi: BaseGeometry | None = None,
     project_slug: str | None = None,
     limit: int = 5,
 ) -> dict[str, Any]:
-    """Geocode with soft project bias, US filter, ranking, and a single best pick."""
+    """Geocode with project AOI bias, US filter, ranking, and a single best pick."""
     q = str(query).strip()
     hits = geocode_place(q, viewbox=viewbox, bounded=False, limit=limit)
     if not hits:
         hits = geocode_place(q, viewbox=None, bounded=False, limit=limit)
-    ranked = rank_geocode_hits(hits, query=q, viewbox=viewbox, project_slug=project_slug)
-    best = ranked[0] if ranked else None
+    ranked = rank_geocode_hits(hits, query=q, viewbox=viewbox, aoi=aoi, project_slug=project_slug)
+    wants_peak = _query_wants_peak(q)
+    best, aoi_picked = _best_geocode_hit(ranked, viewbox=viewbox, aoi=aoi, wants_peak=wants_peak)
     hint = None
     if best and best.get("quality") == "likely_street_not_peak":
         hint = (
             "Top hit looks like a street name, not a mountain peak. "
             "Prefer a natural/peak result or ask the user to clarify."
         )
+    elif aoi_picked:
+        hint = "Best pick is inside the active project AOI (not the highest global OSM rank)."
     elif not ranked:
         hint = "No matches. Try a more specific query such as 'Charleston Peak, Nevada'."
     return {
