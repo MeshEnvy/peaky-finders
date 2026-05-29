@@ -23,6 +23,8 @@ def main(argv: list[str] | None = None) -> None:
         log_level="debug" if debug_enabled() else "info",
         reload=True,
         reload_dirs=[str(Path(__file__).resolve().parents[1])],
+        # SSE clients (project events) stay open; without a cap reload hangs forever.
+        timeout_graceful_shutdown=1.0,
     )
 
 
