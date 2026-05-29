@@ -13,7 +13,11 @@ from shapely.geometry.base import BaseGeometry
 from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
 from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_config
-from peaky_finders.sites_job import MeshBackboneStrategyConfig, Preset, SiteSuggestionStrategy, SiteType
+from peaky_finders.site_suggestions.providers.mesh_grow_config import (
+    grow_goals_config_from_ctx,
+    is_mesh_grow_strategy,
+)
+from peaky_finders.sites_job import MeshBackboneStrategyConfig, MeshGrowAiStrategyConfig, Preset, SiteType
 
 
 def backbone_sites_from_preset(sites: Mapping[str, object]) -> list[BackboneSite]:
@@ -42,7 +46,7 @@ def sites_capturing_goal(
 
 
 def captured_goal_keys(
-    cfg: MeshBackboneStrategyConfig,
+    cfg: MeshBackboneStrategyConfig | MeshGrowAiStrategyConfig,
     sites: Sequence[BackboneSite],
     footprints: Mapping[str, BaseGeometry | None],
 ) -> set[str]:
@@ -55,7 +59,7 @@ def captured_goal_keys(
 
 
 def uncaptured_goal_keys(
-    cfg: MeshBackboneStrategyConfig,
+    cfg: MeshBackboneStrategyConfig | MeshGrowAiStrategyConfig,
     sites: Sequence[BackboneSite],
     footprints: Mapping[str, BaseGeometry | None],
 ) -> set[str]:
@@ -197,7 +201,7 @@ def anchor_slugs(preset: Preset) -> set[str]:
 
 def mesh_connectivity_complete(ctx: SiteSuggestionContext) -> bool:
     """True when all backbone sites form a single hop component."""
-    if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
+    if not is_mesh_grow_strategy(ctx.cfg.strategy):
         return True
     sites = all_backbone_sites(ctx)
     if len(sites) <= 1:
@@ -210,22 +214,22 @@ def mesh_connectivity_complete(ctx: SiteSuggestionContext) -> bool:
 
 def mesh_grow_goals_complete(ctx: SiteSuggestionContext) -> bool:
     """True when every preset goal is captured (connectivity ignored)."""
-    if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
+    if not is_mesh_grow_strategy(ctx.cfg.strategy):
         return False
-    mb = ctx.cfg.mesh_backbone
-    if not mb.goals:
+    grow = grow_goals_config_from_ctx(ctx)
+    if not grow.goals:
         return True
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
-    return not uncaptured_goal_keys(mb, sites, footprints)
+    return not uncaptured_goal_keys(grow, sites, footprints)
 
 
 def mesh_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
     """True when every goal is captured by a site hop-connected to preset seeds."""
-    if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
+    if not is_mesh_grow_strategy(ctx.cfg.strategy):
         return False
-    mb = ctx.cfg.mesh_backbone
-    if not mb.goals:
+    grow = grow_goals_config_from_ctx(ctx)
+    if not grow.goals:
         return True
 
     if not mesh_connectivity_complete(ctx):
@@ -233,7 +237,7 @@ def mesh_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
 
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
-    uncaptured = uncaptured_goal_keys(mb, sites, footprints)
+    uncaptured = uncaptured_goal_keys(grow, sites, footprints)
     if uncaptured:
         return False
 
@@ -243,7 +247,7 @@ def mesh_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
 
     adjacency = hop_adjacency(sites, footprints)
     reachable = hop_reachable_from(start_slugs=seed_slugs, adjacency=adjacency)
-    goals = goals_from_config(mb)
+    goals = goals_from_config(grow)
     for key, goal in goals.items():
         captors = sites_capturing_goal(goal, sites, footprints)
         if not captors or not (captors & reachable):

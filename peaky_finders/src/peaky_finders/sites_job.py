@@ -676,6 +676,7 @@ class SiteSuggestionStrategy(StrEnum):
 
     LAND_GRAB = "land-grab"
     MESH_BACKBONE = "mesh-backbone"
+    MESH_GROW_AI = "mesh-grow-ai"
 
 
 class MeshBackboneRouting(StrEnum):
@@ -690,14 +691,21 @@ class MeshBackboneGoalEntry(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    loc: tuple[float, float] = Field(description="``[lat, lon]`` goal point (viewshed capture target).")
+    loc: tuple[float, float] | str = Field(
+        description="``[lat, lon]`` goal point or preset site slug (resolved at load).",
+    )
 
     @field_validator("loc", mode="before")
     @classmethod
-    def _coerce_loc(cls, v: Any) -> tuple[float, float]:
-        if not isinstance(v, (list, tuple)) or len(v) != 2:
-            raise ValueError("loc must be a length-2 array [lat, lon]")
-        return (float(v[0]), float(v[1]))
+    def _coerce_loc(cls, v: Any) -> tuple[float, float] | str:
+        if isinstance(v, str):
+            slug = v.strip()
+            if not slug:
+                raise ValueError("goal loc site slug must be non-empty")
+            return slug
+        if isinstance(v, (list, tuple)) and len(v) == 2:
+            return (float(v[0]), float(v[1]))
+        raise ValueError("loc must be [lat, lon] or a site slug string")
 
     @property
     def lat(self) -> float:
@@ -886,6 +894,46 @@ class LandGrabStrategyConfig(BaseModel):
     )
 
 
+class MeshGrowAiStrategyConfig(BaseModel):
+    """AI mesh grower: goals + Ollama agent (tool-driven search)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    goals: dict[str, MeshBackboneGoalEntry] = Field(
+        default_factory=dict,
+        description="Named geographic targets (``loc: [lat, lon]`` or site slug).",
+    )
+    goal_order: list[str] = Field(
+        default_factory=list,
+        description="Optional goal priority hint for the agent.",
+    )
+    max_nodes: int | None = Field(
+        default=None,
+        ge=1,
+        le=512,
+        description="Optional cap on backbone site count (installed + suggested).",
+    )
+    max_candidates_per_round: int = Field(
+        default=8,
+        ge=1,
+        le=64,
+        description="Max site proposals from the agent per planner iteration.",
+    )
+    refine_enabled: bool = Field(default=True)
+    refine_top_n: int = Field(default=3, ge=0, le=16)
+    refine_radius_m: float = Field(default=200.0, ge=25.0)
+    refine_spacing_m: float = Field(default=50.0, ge=10.0)
+    refine_peaks_enabled: bool = Field(default=True)
+    refine_peak_radius_m: float = Field(default=400.0, ge=25.0)
+    refine_peak_bin_size_m: float = Field(default=150.0, ge=25.0)
+    refine_peaks_per_seed: int = Field(default=8, ge=0, le=64)
+    ollama_model: str = Field(default="qwen3.5:9b")
+    ollama_base_url: str = Field(default="http://host.docker.internal:11434/v1")
+    max_agent_steps: int = Field(default=40, ge=1, le=200)
+    max_viewshed_evals_per_episode: int = Field(default=16, ge=1, le=64)
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+
+
 class BundleSiteSuggestionsConfig(BaseModel):
     """Site suggestion planner (``peaky build --suggest``)."""
 
@@ -893,7 +941,10 @@ class BundleSiteSuggestionsConfig(BaseModel):
 
     strategy: SiteSuggestionStrategy = Field(
         default=SiteSuggestionStrategy.LAND_GRAB,
-        description="Candidate-generation strategy (``land_grab`` / ``mesh_backbone`` per-strategy knobs).",
+        description=(
+            "Candidate-generation strategy "
+            "(``land_grab`` / ``mesh_backbone`` / ``mesh_grow_ai`` per-strategy knobs)."
+        ),
     )
     coverage_target: SiteSuggestionCoverageTarget = Field(
         default=SiteSuggestionCoverageTarget.ELIGIBLE,
@@ -919,6 +970,17 @@ class BundleSiteSuggestionsConfig(BaseModel):
         default_factory=MeshBackboneStrategyConfig,
         description="Knobs for ``strategy: mesh-backbone`` (grow mesh toward configured goals).",
     )
+    mesh_grow_ai: MeshGrowAiStrategyConfig = Field(
+        default_factory=MeshGrowAiStrategyConfig,
+        description="Knobs for ``strategy: mesh-grow-ai`` (Ollama tool-driven grow).",
+    )
+
+    @field_validator("strategy", mode="before")
+    @classmethod
+    def _normalize_strategy(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.strip().replace("_", "-")
+        return v
 
 
 class BundleMeshCoverageConfig(BaseModel):
@@ -1259,7 +1321,48 @@ class Preset(BaseModel):
                 if target in seen_sees:
                     raise ValueError(f"duplicate slug in sites.{slug}.sees: {target!r}")
                 seen_sees.add(target)
+        return self._resolve_mesh_grow_goal_locs()
+
+    def _resolve_mesh_grow_goal_locs(self) -> Preset:
+        if self.bundle is None or self.bundle.site_suggestions is None:
+            return self
+        ss = self.bundle.site_suggestions
+        mb = ss.mesh_backbone.model_copy(
+            update={"goals": _resolve_mesh_goals_dict(ss.mesh_backbone.goals, self.sites)}
+        )
+        ai = ss.mesh_grow_ai.model_copy(
+            update={"goals": _resolve_mesh_goals_dict(ss.mesh_grow_ai.goals, self.sites)}
+        )
+        object.__setattr__(
+            self,
+            "bundle",
+            self.bundle.model_copy(
+                update={
+                    "site_suggestions": ss.model_copy(
+                        update={"mesh_backbone": mb, "mesh_grow_ai": ai}
+                    )
+                }
+            ),
+        )
         return self
+
+
+def _resolve_mesh_goals_dict(
+    goals: dict[str, MeshBackboneGoalEntry],
+    sites: Mapping[str, SiteEntry],
+) -> dict[str, MeshBackboneGoalEntry]:
+    out: dict[str, MeshBackboneGoalEntry] = {}
+    for key, goal in goals.items():
+        loc = goal.loc
+        if isinstance(loc, str):
+            if loc not in sites:
+                raise ValueError(f"mesh goal {key!r} loc references unknown site slug {loc!r}")
+            site = sites[loc]
+            resolved = (float(site.lat), float(site.lon))
+        else:
+            resolved = (float(loc[0]), float(loc[1]))
+        out[key] = goal.model_copy(update={"loc": resolved})
+    return out
 
 
 def resolved_coverage_dispatcher_max_workers(job: Preset) -> int:

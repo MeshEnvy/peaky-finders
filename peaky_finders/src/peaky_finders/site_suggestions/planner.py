@@ -1211,6 +1211,10 @@ def plan_greedy_site_suggestions(
 
     cfg = resolved_site_suggestions_config(preset.bundle)
     provider = resolve_site_suggestion_strategy(cfg)
+    if hasattr(provider, "set_runtime"):
+        from peaky_finders.web.stream import stream_emit_fn
+
+        provider.set_runtime(preset_path=preset_path, emit=stream_emit_fn())
     hooks = provider.planner_hooks(cfg)
     provider.validate_config(cfg)
     existing_suggested = count_suggested_sites(preset)

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Peaky — Mesh Site Planner</title>
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#111820" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
+      rel="stylesheet"
+    />
+    <link href="/styles.css?v=4" rel="stylesheet" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="brand">
+          <img
+            class="brand-logo"
+            src="/favicon-96x96.png"
+            alt=""
+            width="36"
+            height="36"
+          />
+          <div>
+            <div class="brand-text">Peaky</div>
+            <div class="brand-sub">Finders</div>
+          </div>
+        </div>
+
+        <div class="controls">
+          <div class="control-group">
+            <label for="project">Project</label>
+            <select id="project"></select>
+          </div>
+          <div class="control-group">
+            <label for="basemap">Map</label>
+            <select id="basemap" title="Base map">
+              <option value="osm">OpenStreetMap</option>
+              <option value="opentopo">OpenTopoMap</option>
+              <option value="satellite">Satellite</option>
+            </select>
+          </div>
+          <button id="build" class="btn-build" type="button">
+            Build + Suggest
+          </button>
+        </div>
+
+        <span id="status" class="status-pill">idle</span>
+      </header>
+
+      <main class="main">
+        <div class="map-wrap">
+          <div id="map"></div>
+          <div class="map-legend" aria-hidden="true">
+            <div class="legend-item">
+              <span class="legend-dot viewshed"></span> Viewsheds
+            </div>
+            <div class="legend-item">
+              <span class="legend-dot goal"></span> Goals
+            </div>
+            <div class="legend-item">
+              <span class="legend-dot site"></span> Sites
+            </div>
+            <div class="legend-item">
+              <span class="legend-dot trial"></span> Trials
+            </div>
+          </div>
+        </div>
+
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <h2 class="sidebar-title">Agent trace</h2>
+            <p class="sidebar-sub">
+              Build progress and mesh-grow-ai tool calls
+            </p>
+          </div>
+          <div id="chat" class="chat">
+            <div id="chat-empty" class="chat-empty">
+              <div class="chat-empty-icon" aria-hidden="true">◎</div>
+              <p>
+                Say hello below, or run <strong>Build + Suggest</strong> to
+                stream agent events here.
+              </p>
+            </div>
+          </div>
+          <form id="chat-form" class="chat-composer">
+            <input
+              id="chat-input"
+              type="text"
+              placeholder="Say hello…"
+              autocomplete="off"
+            />
+            <button id="chat-send" type="submit">Send</button>
+          </form>
+        </aside>
+      </main>
+    </div>
+
+    <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+    <script src="/app.js?v=18"></script>
+  </body>
+</html>

@@ -11,6 +11,7 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     uncaptured_goal_keys,
 )
 from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_config
+from peaky_finders.site_suggestions.providers.mesh_grow_config import grow_goals_config
 from peaky_finders.site_suggestions.mesh_connectivity import (
     healing_goals,
     mesh_connectivity_complete,
@@ -39,14 +40,14 @@ def goal_point_for_key(ctx: SiteSuggestionContext, key: str) -> GoalPoint | None
     bridge = healing_goals(ctx).get(key)
     if bridge is not None:
         return bridge
-    return goals_from_config(ctx.cfg.mesh_backbone).get(key)
+    return goals_from_config(grow_goals_config(ctx.cfg)).get(key)
 
 
 def is_goal_captured(ctx: SiteSuggestionContext, goal_key: str) -> bool:
     """True when satisfied (bridge: satellite in main hop mesh; preset: footprint covers goal)."""
     if is_bridge_goal_key(goal_key):
         return goal_key not in uncaptured_healing_goals(ctx)
-    mb = ctx.cfg.mesh_backbone
+    mb = grow_goals_config(ctx.cfg)
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
     return goal_key in captured_goal_keys(mb, sites, footprints)
@@ -57,7 +58,7 @@ def uncaptured_effective_goal_keys(ctx: SiteSuggestionContext) -> set[str]:
     missing: set[str] = set()
     if not mesh_connectivity_complete(ctx):
         missing |= set(uncaptured_healing_goals(ctx).keys())
-    mb = ctx.cfg.mesh_backbone
+    mb = grow_goals_config(ctx.cfg)
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
     missing |= uncaptured_goal_keys(mb, sites, footprints)
@@ -66,8 +67,11 @@ def uncaptured_effective_goal_keys(ctx: SiteSuggestionContext) -> set[str]:
 
 def tracked_goal_keys(ctx: SiteSuggestionContext) -> set[str]:
     """Goal keys the active strategy may satisfy during a suggest pass."""
-    if ctx.cfg.strategy == SiteSuggestionStrategy.MESH_BACKBONE:
-        keys = set(ctx.cfg.mesh_backbone.goals.keys())
+    if ctx.cfg.strategy in (
+        SiteSuggestionStrategy.MESH_BACKBONE,
+        SiteSuggestionStrategy.MESH_GROW_AI,
+    ):
+        keys = set(grow_goals_config(ctx.cfg).goals.keys())
         if not mesh_connectivity_complete(ctx):
             keys |= set(healing_goals(ctx).keys())
         return keys
@@ -115,7 +119,7 @@ def ordered_uncaptured_goal_keys(ctx: SiteSuggestionContext) -> list[str]:
         missing = set(uncaptured_healing_goals(ctx).keys()) - blocked
         return sorted(missing)
 
-    mb = ctx.cfg.mesh_backbone
+    mb = grow_goals_config(ctx.cfg)
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
     missing = uncaptured_goal_keys(mb, sites, footprints) - blocked

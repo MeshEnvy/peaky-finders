@@ -62,6 +62,7 @@ from peaky_finders.skadi_dem import (
 )
 from peaky_finders.viewshed_batch import resolved_splatter_batch_jobs, run_viewshed_batch
 from peaky_finders.viewshed_workspace import viewshed_workspace_digest
+from peaky_finders.web.stream import emit_op
 
 _print_lock = Lock()
 
@@ -531,8 +532,11 @@ def _run_target_subgraph(
                 verb = "run" if stale or force else "skip"
                 _log(f"build: {tid_} [{verb}]")
             if not stale and not force:
+                emit_op("build.target", target=tid_, status="skip")
                 return tid_, 0
+            emit_op("build.target", target=tid_, status="start")
             rc = execute_target(plan, preset, node_, bundle_data_dir=bundle_data_dir, verbose=verbose)
+            emit_op("build.target", target=tid_, status="done" if rc == 0 else "error")
             return tid_, rc
 
         codes: dict[str, int] = dict(batched_codes)
@@ -618,6 +622,7 @@ def run_incremental_build(
         if dry_run:
             print(f"build: would run site suggest pass ({budget_label})")
         else:
+            emit_op("build.phase", name="suggest")
             run_site_suggestion_pass(
                 preset=preset,
                 preset_path=preset_path_r,

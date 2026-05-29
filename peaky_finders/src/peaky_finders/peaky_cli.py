@@ -12,6 +12,11 @@ from peaky_finders.cli import build_granular_viewshed_argument_parser, run_splat
 from peaky_finders.inspect_cli import build_inspect_parser, run_inspect
 from peaky_finders.mesh_commands import run_mesh_entry
 from peaky_finders.stamp_cli import build_stamp_parser, run_stamp
+from peaky_finders.web.cli import run_web
+
+
+def _run_web_cli(args: argparse.Namespace) -> int:
+    return run_web(["--host", args.host, "--port", str(args.port)])
 
 
 def main() -> None:
@@ -97,6 +102,11 @@ def main() -> None:
         help="Assemble aggregate KMZ (no coverage run)",
     )
     p_kmz.set_defaults(_handler=run_aggregate_kmz)
+
+    p_web = sub.add_parser("web", help="Peaky Web GUI (FastAPI + SSE)")
+    p_web.add_argument("--host", default="0.0.0.0")
+    p_web.add_argument("--port", type=int, default=8765)
+    p_web.set_defaults(_handler=_run_web_cli)
 
     args = parser.parse_args()
     handler = getattr(args, "_handler", None)

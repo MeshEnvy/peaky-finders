@@ -1,0 +1,861 @@
+/** Peaky Web — SSE op router + MapLibre */
+
+const projectSel = document.getElementById('project')
+const basemapSel = document.getElementById('basemap')
+const buildBtn = document.getElementById('build')
+const statusEl = document.getElementById('status')
+const chatEl = document.getElementById('chat')
+const chatEmptyEl = document.getElementById('chat-empty')
+const chatForm = document.getElementById('chat-form')
+const chatInput = document.getElementById('chat-input')
+const chatSendBtn = document.getElementById('chat-send')
+
+const TERRAIN_SOURCE = 'terrain-dem'
+const TERRAIN_HILLSHADE = 'terrain-hillshade'
+
+const TERRAIN_TILES = [
+  'https://elevation-tiles-prod.s3.amazonaws.com/v2/terrarium/{z}/{x}/{y}.png',
+]
+
+function terrainDemSourceSpec() {
+  return {
+    type: 'raster-dem',
+    tiles: TERRAIN_TILES,
+    tileSize: 256,
+    maxzoom: 15,
+    encoding: 'terrarium',
+  }
+}
+
+const PITCH_TERRAIN_ON = 12
+const PITCH_TERRAIN_OFF = 6
+
+const BASEMAPS = {
+  osm: {
+    label: 'OpenStreetMap',
+    tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+    attribution:
+      '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxzoom: 19,
+  },
+  opentopo: {
+    label: 'OpenTopoMap',
+    tiles: ['https://tile.opentopomap.org/{z}/{x}/{y}.png'],
+    attribution:
+      '© <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA), © OpenStreetMap',
+    maxzoom: 17,
+  },
+  satellite: {
+    label: 'Satellite',
+    tiles: [
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    ],
+    attribution: '© Esri, Maxar, Earthstar Geographics',
+    maxzoom: 19,
+  },
+}
+
+function basemapStyle(key) {
+  const bm = BASEMAPS[key] || BASEMAPS.osm
+  return {
+    version: 8,
+    sources: {
+      basemap: {
+        type: 'raster',
+        tiles: bm.tiles,
+        tileSize: 256,
+        attribution: bm.attribution,
+        maxzoom: bm.maxzoom,
+      },
+    },
+    layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }],
+  }
+}
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: basemapStyle('osm'),
+  center: [-116, 39],
+  zoom: 5,
+  maxPitch: 85,
+  pitch: 0,
+})
+
+map.addControl(new maplibregl.NavigationControl(), 'top-right')
+map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
+
+const layers = new Map()
+const layerFeatureCache = new Map()
+const pinFeatureCache = new Map()
+const viewshedRasterLayers = []
+const pendingRasters = []
+let mapReady = false
+const pendingPins = []
+let currentProjectSlug = null
+let projectMeshScopeBbox = null
+let terrainActive = false
+
+const MESH_SCOPE_LAYER_IDS = ['goals', 'sites', 'trials', 'committed', 'mesh_links', 'viewsheds']
+const MESH_SCOPE_FIT = { padding: 64, bearing: 0, pitch: 0, maxZoom: 15 }
+
+function ensureTerrainSource() {
+  if (map.getSource(TERRAIN_SOURCE)) return
+  map.addSource(TERRAIN_SOURCE, terrainDemSourceSpec())
+}
+
+function ensureHillshadeLayer() {
+  if (map.getLayer(TERRAIN_HILLSHADE)) return
+  ensureTerrainSource()
+  map.addLayer(
+    {
+      id: TERRAIN_HILLSHADE,
+      type: 'hillshade',
+      source: TERRAIN_SOURCE,
+      paint: {
+        'hillshade-exaggeration': 0.35,
+        'hillshade-shadow-color': '#0a0e14',
+        'hillshade-highlight-color': '#ffffff',
+        'hillshade-accent-color': '#64748b',
+      },
+    },
+    'basemap',
+  )
+}
+
+function removeHillshadeLayer() {
+  if (map.getLayer(TERRAIN_HILLSHADE)) map.removeLayer(TERRAIN_HILLSHADE)
+}
+
+function removeTerrainSource() {
+  removeHillshadeLayer()
+  if (map.getSource(TERRAIN_SOURCE)) map.removeSource(TERRAIN_SOURCE)
+}
+
+function overlayLayerIds() {
+  const ids = []
+  for (const layerId of MESH_SCOPE_LAYER_IDS) {
+    const entry = layers.get(layerId)
+    if (entry?.layer && map.getLayer(entry.layer)) ids.push(entry.layer)
+    if (entry?.outline && map.getLayer(entry.outline)) ids.push(entry.outline)
+  }
+  for (const { layerId } of viewshedRasterLayers) {
+    if (map.getLayer(layerId)) ids.push(layerId)
+  }
+  return ids
+}
+
+function raiseOverlayLayers() {
+  for (const id of overlayLayerIds()) {
+    try {
+      map.moveLayer(id)
+    } catch (_) {
+      /* layer may be mid-remove */
+    }
+  }
+}
+
+function showTerrainOverlays() {
+  ensureTerrainSource()
+  ensureHillshadeLayer()
+  map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: 1.35 })
+  if (map.getLayer('basemap')) {
+    map.setPaintProperty('basemap', 'raster-opacity', 0.9)
+  }
+  raiseOverlayLayers()
+}
+
+function hideTerrainOverlays() {
+  map.setTerrain(null)
+  removeTerrainSource()
+  if (map.getLayer('basemap')) {
+    map.setPaintProperty('basemap', 'raster-opacity', 1)
+  }
+}
+
+function syncTerrainFromPitch() {
+  if (!mapReady) return
+  const pitch = map.getPitch()
+  if (!terrainActive && pitch >= PITCH_TERRAIN_ON) {
+    terrainActive = true
+    showTerrainOverlays()
+  } else if (terrainActive && pitch <= PITCH_TERRAIN_OFF) {
+    terrainActive = false
+    hideTerrainOverlays()
+  }
+}
+
+function visitGeometryCoords(geometry, visit) {
+  if (!geometry) return
+  const { type, coordinates: c } = geometry
+  if (type === 'Point') visit(c[0], c[1])
+  else if (type === 'LineString' || type === 'MultiPoint') {
+    for (const p of c) visit(p[0], p[1])
+  } else if (type === 'Polygon') {
+    for (const ring of c) for (const p of ring) visit(p[0], p[1])
+  } else if (type === 'MultiLineString') {
+    for (const line of c) for (const p of line) visit(p[0], p[1])
+  } else if (type === 'MultiPolygon') {
+    for (const poly of c) for (const ring of poly) for (const p of ring) visit(p[0], p[1])
+  } else if (type === 'GeometryCollection') {
+    for (const g of geometry.geometries || []) visitGeometryCoords(g, visit)
+  }
+}
+
+function visitGeoJsonData(data, visit) {
+  if (!data) return
+  if (data.type === 'FeatureCollection') {
+    for (const f of data.features || []) visitGeometryCoords(f.geometry, visit)
+  } else if (data.type === 'Feature') {
+    visitGeometryCoords(data.geometry, visit)
+  } else {
+    visitGeometryCoords(data, visit)
+  }
+}
+
+function expandMeshScopeBbox(bbox, minPadDeg = 0.04) {
+  let [west, south, east, north] = bbox
+  const spanLon = east - west
+  const spanLat = north - south
+  if (spanLon < minPadDeg) {
+    const extra = (minPadDeg - spanLon) / 2
+    west -= extra
+    east += extra
+  }
+  if (spanLat < minPadDeg) {
+    const extra = (minPadDeg - spanLat) / 2
+    south -= extra
+    north += extra
+  }
+  return [west, south, east, north]
+}
+
+function computeMeshScopeBbox() {
+  const lons = []
+  const lats = []
+  const add = (lon, lat) => {
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      lons.push(lon)
+      lats.push(lat)
+    }
+  }
+
+  for (const layerId of MESH_SCOPE_LAYER_IDS) {
+    const prefix = `${layerId}:`
+    for (const [key, feature] of layerFeatureCache) {
+      if (key.startsWith(prefix)) visitGeometryCoords(feature.geometry, add)
+    }
+    for (const [key, feature] of pinFeatureCache) {
+      if (key.startsWith(prefix)) visitGeometryCoords(feature.geometry, add)
+    }
+  }
+
+  for (const { bounds, coordinates } of viewshedRasterLayers) {
+    if (bounds?.length === 4) {
+      add(bounds[0], bounds[1])
+      add(bounds[2], bounds[3])
+    } else if (coordinates?.length) {
+      for (const c of coordinates) add(c[0], c[1])
+    }
+  }
+
+  if (!lons.length) return projectMeshScopeBbox
+
+  const padLon = Math.max((Math.max(...lons) - Math.min(...lons)) * 0.1, 0.04)
+  const padLat = Math.max((Math.max(...lats) - Math.min(...lats)) * 0.1, 0.04)
+  return expandMeshScopeBbox([
+    Math.min(...lons) - padLon,
+    Math.min(...lats) - padLat,
+    Math.max(...lons) + padLon,
+    Math.max(...lats) + padLat,
+  ])
+}
+
+function fitMapToMeshScope(bbox, { duration } = {}) {
+  if (!bbox || bbox.length !== 4) return
+  const opts = { ...MESH_SCOPE_FIT }
+  if (duration != null) opts.duration = duration
+  map.fitBounds(
+    [
+      [bbox[0], bbox[1]],
+      [bbox[2], bbox[3]],
+    ],
+    opts,
+  )
+}
+
+function resetMapToMeshScope() {
+  if (!mapReady) return
+  const bbox = computeMeshScopeBbox()
+  if (bbox) {
+    fitMapToMeshScope(bbox, { duration: 400 })
+  } else if (typeof map.resetNorthPitch === 'function') {
+    map.resetNorthPitch({ duration: 400 })
+  } else {
+    map.easeTo({ bearing: 0, pitch: 0, duration: 400 })
+  }
+}
+
+function hookCompassReset() {
+  const compass = map.getContainer().querySelector('.maplibregl-ctrl-compass')
+  if (!compass || compass.dataset.peakyReset === '1') return
+  compass.dataset.peakyReset = '1'
+  compass.addEventListener(
+    'click',
+    (ev) => {
+      ev.preventDefault()
+      ev.stopImmediatePropagation()
+      resetMapToMeshScope()
+    },
+    true,
+  )
+}
+
+function firstOverlayLayerId() {
+  for (const id of ['goals-layer', 'sites-layer', 'trials-layer', 'committed-layer', 'mesh_links-layer']) {
+    if (map.getLayer(id)) return id
+  }
+  return undefined
+}
+
+async function loadSiteViewshed(projectSlug, siteSlug) {
+  const res = await fetch(`/api/projects/${projectSlug}/viewsheds/${siteSlug}?ensure=false`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+async function loadProjectViewsheds(projectSlug, sites) {
+  const seenUrl = new Set()
+  const results = await Promise.all((sites || []).map((s) => loadSiteViewshed(projectSlug, s.slug)))
+  for (const r of results) {
+    if (!r || seenUrl.has(r.url)) continue
+    seenUrl.add(r.url)
+    if (mapReady) addViewshedRaster(r)
+    else pendingRasters.push(r)
+  }
+}
+
+function addViewshedRaster(r) {
+  const sourceId = `viewshed-raster-${r.slug}`
+  const layerId = `${sourceId}-layer`
+  if (map.getSource(sourceId)) return
+
+  if (r.tile_url && r.bounds) {
+    map.addSource(sourceId, {
+      type: 'raster',
+      tiles: [r.tile_url],
+      tileSize: 256,
+      bounds: r.bounds,
+      minzoom: r.minzoom ?? 0,
+      maxzoom: r.maxzoom ?? 22,
+    })
+  } else {
+    map.addSource(sourceId, {
+      type: 'image',
+      url: r.url,
+      coordinates: r.coordinates,
+    })
+  }
+
+  map.addLayer(
+    {
+      id: layerId,
+      type: 'raster',
+      source: sourceId,
+      paint: {
+        'raster-opacity': r.opacity ?? 0.7,
+        'raster-fade-duration': 0,
+        'raster-resampling': 'linear',
+      },
+    },
+    firstOverlayLayerId(),
+  )
+  viewshedRasterLayers.push({
+    sourceId,
+    layerId,
+    bounds: r.bounds,
+    coordinates: r.coordinates,
+  })
+  raiseOverlayLayers()
+}
+
+function clearViewshedRasters() {
+  for (const { sourceId, layerId } of viewshedRasterLayers) {
+    if (map.getLayer(layerId)) map.removeLayer(layerId)
+    if (map.getSource(sourceId)) map.removeSource(sourceId)
+  }
+  viewshedRasterLayers.length = 0
+}
+
+function setBasemap(key) {
+  const bm = BASEMAPS[key]
+  if (!bm || !mapReady) return
+  const src = map.getSource('basemap')
+  if (!src || typeof src.setTiles !== 'function') return
+  src.setTiles(bm.tiles)
+  map.setMaxZoom(bm.maxzoom)
+}
+
+function ensureLayer(layerId) {
+  if (layers.has(layerId)) return layers.get(layerId)
+  const ids = { source: `${layerId}-src`, layer: `${layerId}-layer` }
+  if (!map.getSource(ids.source)) {
+    map.addSource(ids.source, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    const isLine = layerId === 'mesh_links'
+    const isCircle = layerId === 'sites' || layerId === 'goals' || layerId === 'trials'
+    map.addLayer({
+      id: ids.layer,
+      type: isLine ? 'line' : isCircle ? 'circle' : 'fill',
+      source: ids.source,
+      paint:
+        layerId === 'mesh_links'
+          ? { 'line-color': '#38bdf8', 'line-width': 2.5, 'line-opacity': 0.85 }
+          : layerId === 'goals'
+            ? {
+                'circle-radius': 8,
+                'circle-color': '#fb923c',
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#fff',
+              }
+            : layerId === 'trials'
+              ? {
+                  'circle-radius': 7,
+                  'circle-color': '#c084fc',
+                  'circle-stroke-width': 2,
+                  'circle-stroke-color': '#fff',
+                }
+              : layerId === 'sites'
+                ? {
+                    'circle-radius': 6,
+                    'circle-color': '#60a5fa',
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#fff',
+                  }
+                : layerId === 'viewsheds'
+                  ? {
+                      'fill-color': '#38bdf8',
+                      'fill-opacity': 0.28,
+                      'fill-outline-color': '#7dd3fc',
+                    }
+                  : { 'fill-color': '#34d399', 'fill-opacity': 0.22, 'fill-outline-color': '#34d399' },
+    })
+    if (layerId === 'viewsheds') {
+      map.addLayer({
+        id: `${layerId}-outline`,
+        type: 'line',
+        source: ids.source,
+        paint: {
+          'line-color': '#7dd3fc',
+          'line-width': 1.5,
+          'line-opacity': 0.75,
+        },
+      })
+      ids.outline = `${layerId}-outline`
+    }
+  }
+  layers.set(layerId, ids)
+  return ids
+}
+
+function flushLayerFeatures(layerId) {
+  const ids = ensureLayer(layerId)
+  const prefix = `${layerId}:`
+  const features = []
+  for (const [key, feature] of layerFeatureCache) {
+    if (key.startsWith(prefix)) features.push(feature)
+  }
+  map.getSource(ids.source).setData({ type: 'FeatureCollection', features })
+}
+
+function flushPinLayer(layerId) {
+  const ids = ensureLayer(layerId)
+  const prefix = `${layerId}:`
+  const features = []
+  for (const [key, feature] of pinFeatureCache) {
+    if (key.startsWith(prefix)) features.push(feature)
+  }
+  map.getSource(ids.source).setData({ type: 'FeatureCollection', features })
+}
+
+function setStatus(state, label) {
+  statusEl.className = `status-pill${state ? ` ${state}` : ''}`
+  statusEl.textContent = label
+}
+
+function appendChat(text, kind = 'build', label = null) {
+  if (chatEmptyEl) chatEmptyEl.hidden = true
+
+  const div = document.createElement('div')
+  div.className = `msg ${kind}`
+
+  if (label) {
+    const lbl = document.createElement('span')
+    lbl.className = 'msg-label'
+    lbl.textContent = label
+    div.appendChild(lbl)
+  }
+
+  const body = document.createElement('span')
+  body.className = 'msg-body'
+  body.textContent = text
+  div.appendChild(body)
+
+  chatEl.appendChild(div)
+  chatEl.scrollTop = chatEl.scrollHeight
+  return div
+}
+
+let chatPendingEl = null
+
+function setChatPendingLabel(label) {
+  if (!chatPendingEl) return
+  const body = chatPendingEl.querySelector('.chat-pending-text')
+  if (!body) return
+  body.textContent = label
+  const dots = document.createElement('span')
+  dots.className = 'chat-pending-dots'
+  dots.setAttribute('aria-hidden', 'true')
+  dots.textContent = '…'
+  body.appendChild(dots)
+}
+
+function setChatPending(active) {
+  if (!active) {
+    chatPendingEl?.remove()
+    chatPendingEl = null
+    return
+  }
+  if (chatPendingEl) return
+
+  if (chatEmptyEl) chatEmptyEl.hidden = true
+  const div = document.createElement('div')
+  div.className = 'msg assistant pending'
+  div.setAttribute('aria-live', 'polite')
+  div.setAttribute('aria-busy', 'true')
+
+  const lbl = document.createElement('span')
+  lbl.className = 'msg-label'
+  lbl.textContent = 'Assistant'
+  div.appendChild(lbl)
+
+  const body = document.createElement('span')
+  body.className = 'chat-pending-text'
+  body.textContent = 'Thinking'
+  const dots = document.createElement('span')
+  dots.className = 'chat-pending-dots'
+  dots.setAttribute('aria-hidden', 'true')
+  dots.textContent = '…'
+  body.appendChild(dots)
+  div.appendChild(body)
+
+  chatEl.appendChild(div)
+  chatEl.scrollTop = chatEl.scrollHeight
+  chatPendingEl = div
+}
+
+function beginAssistantReply() {
+  setChatPending(false)
+  if (chatEmptyEl) chatEmptyEl.hidden = true
+  const div = document.createElement('div')
+  div.className = 'msg assistant streaming'
+  div.setAttribute('aria-live', 'polite')
+
+  const lbl = document.createElement('span')
+  lbl.className = 'msg-label'
+  lbl.textContent = 'Assistant'
+  div.appendChild(lbl)
+
+  const body = document.createElement('span')
+  body.className = 'msg-body'
+  div.appendChild(body)
+
+  chatEl.appendChild(div)
+  chatEl.scrollTop = chatEl.scrollHeight
+  return body
+}
+
+async function consumeChatStream(res, onEvent) {
+  const reader = res.body?.getReader()
+  if (!reader) throw new Error('Streaming not supported')
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let splitAt
+    while ((splitAt = buffer.indexOf('\n\n')) !== -1) {
+      const block = buffer.slice(0, splitAt)
+      buffer = buffer.slice(splitAt + 2)
+      for (const line of block.split('\n')) {
+        if (!line.startsWith('data: ')) continue
+        onEvent(JSON.parse(line.slice(6)))
+      }
+    }
+  }
+  if (buffer.trim()) {
+    for (const line of buffer.split('\n')) {
+      if (!line.startsWith('data: ')) continue
+      onEvent(JSON.parse(line.slice(6)))
+    }
+  }
+}
+
+const handlers = {
+  'build.started': (m) => {
+    setStatus('running', 'building')
+    appendChat(`Project: ${m.project}`, 'build', 'Build started')
+  },
+  'build.phase': (m) => {
+    setStatus('running', m.name)
+    appendChat(m.name, 'build', 'Phase')
+  },
+  'build.finished': (m) => {
+    setStatus(m.ok ? 'done' : 'error', m.ok ? 'complete' : 'failed')
+    appendChat(m.ok ? 'Build finished successfully.' : `Exit code ${m.exit_code}`, 'build', 'Finished')
+    buildBtn.disabled = false
+  },
+  'build.error': (m) => {
+    setStatus('error', 'error')
+    appendChat(m.message, 'error', 'Error')
+  },
+  'build.target': (m) => appendChat(`${m.target} — ${m.status}`, 'tool', 'Target'),
+  'chat.system': (m) => appendChat(m.text, 'system', 'System'),
+  'chat.user': (m) => appendChat(m.text, 'user', 'User'),
+  'chat.assistant': (m) => appendChat(m.text, 'assistant', 'Assistant'),
+  'chat.tool_call': (m) =>
+    appendChat(`${m.name}(${JSON.stringify(m.arguments)})`, 'tool', 'Tool call'),
+  'chat.tool_result': (m) =>
+    appendChat(`${m.name}: ${JSON.stringify(m.result)}`, 'tool', 'Tool result'),
+  'chat.divider': (m) => appendChat(m.label, 'divider'),
+  'log.line': (m) => appendChat(m.text, 'tool', 'Log'),
+  'map.clear_layer': (m) => {
+    const prefix = `${m.layer_id}:`
+    for (const key of [...layerFeatureCache.keys()]) {
+      if (key.startsWith(prefix)) layerFeatureCache.delete(key)
+    }
+    for (const key of [...pinFeatureCache.keys()]) {
+      if (key.startsWith(prefix)) pinFeatureCache.delete(key)
+    }
+    flushLayerFeatures(m.layer_id)
+    flushPinLayer(m.layer_id)
+  },
+  'map.pin': (m) => {
+    if (!mapReady) {
+      pendingPins.push(m)
+      return
+    }
+    const layerId = m.layer_id
+    const feature = {
+      type: 'Feature',
+      properties: { id: m.id, label: m.label || m.id },
+      geometry: { type: 'Point', coordinates: [m.lon, m.lat] },
+    }
+    pinFeatureCache.set(`${layerId}:${m.id}`, feature)
+    flushPinLayer(layerId)
+  },
+  'map.line': (m) => {
+    const ids = ensureLayer(m.layer_id)
+    const src = map.getSource(ids.source)
+    src.setData({
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { id: m.id },
+          geometry: { type: 'LineString', coordinates: m.coordinates },
+        },
+      ],
+    })
+  },
+  'map.polygon': (m) => {
+    if (!mapReady) return
+    const layerId = m.layer_id
+    const id = m.id || layerId
+    const gj = m.geojson
+    const incoming =
+      gj?.type === 'FeatureCollection'
+        ? gj.features
+        : gj?.type === 'Feature'
+          ? [gj]
+          : []
+    for (const f of incoming) {
+      const featId = f.properties?.id || id
+      layerFeatureCache.set(`${layerId}:${featId}`, {
+        ...f,
+        properties: { ...(f.properties || {}), id: featId },
+      })
+    }
+    flushLayerFeatures(layerId)
+  },
+  'map.fit_bounds': (m) => {
+    if (!m.bbox) return
+    projectMeshScopeBbox = m.bbox
+    fitMapToMeshScope(m.bbox)
+  },
+}
+
+function routeOp(msg) {
+  const fn = handlers[msg.op]
+  if (fn) fn(msg)
+}
+
+function clearOverlayLayers() {
+  clearViewshedRasters()
+  pinFeatureCache.clear()
+  for (const layerId of ['viewsheds', 'goals', 'sites', 'trials', 'committed', 'mesh_links']) {
+    const outlineId = `${layerId}-outline`
+    if (map.getLayer(outlineId)) map.removeLayer(outlineId)
+    if (map.getLayer(`${layerId}-layer`)) map.removeLayer(`${layerId}-layer`)
+    if (map.getSource(`${layerId}-src`)) map.removeSource(`${layerId}-src`)
+    layers.delete(layerId)
+    const prefix = `${layerId}:`
+    for (const key of [...layerFeatureCache.keys()]) {
+      if (key.startsWith(prefix)) layerFeatureCache.delete(key)
+    }
+  }
+}
+
+function clearChat() {
+  chatEl.querySelectorAll('.msg').forEach((el) => el.remove())
+  if (chatEmptyEl) chatEmptyEl.hidden = false
+}
+
+async function loadProjects() {
+  const res = await fetch('/api/projects')
+  const projects = await res.json()
+  projectSel.innerHTML = ''
+  for (const p of projects) {
+    const opt = document.createElement('option')
+    opt.value = p.slug
+    opt.textContent = `${p.slug} · ${p.strategy} · ${p.site_count} sites`
+    projectSel.appendChild(opt)
+  }
+  if (projects[0]) await loadContext(projects[0].slug)
+}
+
+async function loadContext(slug) {
+  currentProjectSlug = slug
+  projectMeshScopeBbox = null
+  clearOverlayLayers()
+  const res = await fetch(`/api/projects/${slug}/context`)
+  const ctx = await res.json()
+
+  for (const g of ctx.goals || []) {
+    handlers['map.pin']({ layer_id: 'goals', id: g.key, lat: g.lat, lon: g.lon, label: g.key })
+  }
+  for (const s of ctx.sites || []) {
+    handlers['map.pin']({ layer_id: 'sites', id: s.slug, lat: s.lat, lon: s.lon, label: s.slug })
+  }
+  raiseOverlayLayers()
+  projectMeshScopeBbox = ctx.bbox || null
+  try {
+    if (ctx.bbox) fitMapToMeshScope(ctx.bbox)
+  } catch (err) {
+    console.warn('fitMapToMeshScope failed:', err)
+  }
+  void loadProjectViewsheds(slug, ctx.sites)
+}
+
+projectSel.addEventListener('change', () => loadContext(projectSel.value))
+basemapSel.addEventListener('change', () => setBasemap(basemapSel.value))
+
+buildBtn.addEventListener('click', async () => {
+  buildBtn.disabled = true
+  clearChat()
+  setStatus('running', 'starting')
+  const res = await fetch('/api/build', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_slug: projectSel.value }),
+  })
+  if (!res.ok) {
+    setStatus('error', 'error')
+    buildBtn.disabled = false
+    appendChat(await res.text(), 'error', 'Error')
+    return
+  }
+  const { job_id } = await res.json()
+  const es = new EventSource(`/api/jobs/${job_id}/events`)
+  es.onmessage = (ev) => {
+    try {
+      routeOp(JSON.parse(ev.data))
+    } catch (e) {
+      console.warn(e)
+    }
+  }
+  es.onerror = () => {
+    es.close()
+    buildBtn.disabled = false
+  }
+})
+
+async function sendChatMessage(text) {
+  appendChat(text, 'user', 'You')
+  chatInput.disabled = true
+  chatSendBtn.disabled = true
+  const sendLabel = chatSendBtn.textContent
+  chatSendBtn.textContent = 'Thinking…'
+  setChatPending(true)
+  setStatus('thinking', 'thinking')
+  let assistantBody = null
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        project_slug: projectSel.value || null,
+      }),
+    })
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null)
+      const detail = payload?.detail || res.statusText || 'Chat request failed'
+      appendChat(String(detail), 'error', 'Error')
+      return
+    }
+    await consumeChatStream(res, (msg) => {
+      if (msg.op === 'chat.started') {
+        setChatPendingLabel('Waiting for model')
+      } else if (msg.op === 'chat.delta') {
+        if (!assistantBody) assistantBody = beginAssistantReply()
+        assistantBody.textContent += msg.text
+        chatEl.scrollTop = chatEl.scrollHeight
+      } else if (msg.op === 'chat.error') {
+        appendChat(String(msg.message), 'error', 'Error')
+      }
+    })
+    assistantBody?.closest('.msg')?.classList.remove('streaming')
+  } catch (err) {
+    appendChat(String(err), 'error', 'Error')
+  } finally {
+    setChatPending(false)
+    if (!buildBtn.disabled) setStatus('', 'idle')
+    chatInput.disabled = false
+    chatSendBtn.disabled = false
+    chatSendBtn.textContent = sendLabel
+    chatInput.focus()
+  }
+}
+
+chatForm.addEventListener('submit', (ev) => {
+  ev.preventDefault()
+  const text = chatInput.value.trim()
+  if (!text) return
+  chatInput.value = ''
+  void sendChatMessage(text)
+})
+
+map.on('load', () => {
+  mapReady = true
+  setBasemap(basemapSel.value)
+  hookCompassReset()
+  for (const pin of pendingPins) handlers['map.pin'](pin)
+  pendingPins.length = 0
+  for (const r of pendingRasters) addViewshedRaster(r)
+  pendingRasters.length = 0
+  loadProjects()
+})
+
+map.on('pitch', syncTerrainFromPitch)
+map.on('moveend', syncTerrainFromPitch)

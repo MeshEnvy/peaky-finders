@@ -238,7 +238,7 @@ bundle:
 
   # ``peaky build --suggest``: site planner (``land_grab`` / ``mesh_backbone`` strategy blocks).
   site_suggestions:
-    strategy: mesh-backbone
+    strategy: mesh_grow_ai
     coverage_target: eligible # score marginal gain on deployable land, not full AOI hull
     planner_raster_dimension: 1024 # EPSG:3857 depth grid longer edge for suggest scoring
     uncovered_stop_pct: 0.5 # stop when <0.5% eligible land still below goal depth
@@ -545,6 +545,17 @@ bundle:
         #   loc: [38.9554, -119.1101]
         # zephyr-cove:
         #   loc: [39.0082, -119.9307]
+    # mesh-grow-ai: tool-driven agent (no corridor / frontier grids)
+    mesh_grow_ai:
+      ollama_model: qwen3.5:9b
+      # Host Ollama (brew install ollama && ollama pull qwen2.5:7b). ./peaky reaches the Mac via host.docker.internal.
+      ollama_base_url: http://host.docker.internal:11434/v1
+      temperature: 0.2
+      goals:
+        russel-bridge:
+          loc: russell-peak
+        slpt-bridge:
+          loc: slpt-south-entrance
 
 
   # doc.kml initial NetworkLink checkbox visibility inside aggregate KMZ

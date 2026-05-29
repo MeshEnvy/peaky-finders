@@ -1,10 +1,9 @@
-"""Mesh-grow goal geometry."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
-from peaky_finders.sites_job import MeshBackboneStrategyConfig
+from peaky_finders.sites_job import MeshBackboneGoalEntry, MeshBackboneStrategyConfig, MeshGrowAiStrategyConfig
 
 
 @dataclass(frozen=True)
@@ -14,9 +13,13 @@ class GoalPoint:
     lon: float
 
 
-def goals_from_config(cfg: MeshBackboneStrategyConfig) -> dict[str, GoalPoint]:
-    """Resolve ``mesh_backbone.goals`` to ``GoalPoint`` locations."""
+def goals_from_goals(goals: Mapping[str, MeshBackboneGoalEntry]) -> dict[str, GoalPoint]:
     return {
         key: GoalPoint(key=str(key), lat=float(goal.lat), lon=float(goal.lon))
-        for key, goal in cfg.goals.items()
+        for key, goal in goals.items()
     }
+
+
+def goals_from_config(cfg: MeshBackboneStrategyConfig | MeshGrowAiStrategyConfig) -> dict[str, GoalPoint]:
+    """Resolve configured goals to ``GoalPoint`` locations."""
+    return goals_from_goals(cfg.goals)
