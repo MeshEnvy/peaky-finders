@@ -20,7 +20,7 @@
       href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
       rel="stylesheet"
     />
-    <link href="/styles.css?v=9" rel="stylesheet" />
+    <link href="/styles.css?v=10" rel="stylesheet" />
   </head>
   <body>
     <div class="app">
@@ -60,7 +60,7 @@
       <main class="main">
         <div class="map-wrap">
           <div id="map"></div>
-          <aside class="sites-panel" id="sites-panel" aria-label="Sites">
+          <aside class="sites-panel" id="sites-panel" aria-label="Sites and goals">
             <button
               type="button"
               id="sites-panel-toggle"
@@ -74,7 +74,7 @@
               <span id="sites-panel-count" class="sites-panel-count"></span>
             </button>
             <div id="sites-panel-body" class="sites-panel-body">
-              <ul id="sites-list" class="sites-list"></ul>
+              <div id="sites-panel-scroll" class="sites-panel-scroll"></div>
               <p id="sites-list-empty" class="sites-list-empty" hidden>No sites in project</p>
             </div>
           </aside>
@@ -168,6 +168,6 @@
     </div>
 
     <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-    <script src="/app.js?v=33"></script>
+    <script src="/app.js?v=34"></script>
   </body>
 </html>

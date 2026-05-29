@@ -398,16 +398,81 @@ select option {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  flex: 1;
   border-top: 1px solid var(--border);
 }
 
-.sites-list {
-  list-style: none;
-  margin: 0;
-  padding: 0.35rem 0;
+.sites-panel-scroll {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  padding: 0.2rem 0 0.35rem;
+}
+
+.sites-section + .sites-section {
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.sites-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.45rem 0.65rem 0.45rem 0.7rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sites-section-toggle:hover {
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--text);
+}
+
+.sites-section-chevron {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sites-section.collapsed .sites-section-chevron {
+  transform: rotate(45deg);
+}
+
+.sites-section-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.sites-section-count {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.sites-section.collapsed .sites-section-list {
+  display: none;
+}
+
+.sites-section-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0.15rem;
 }
 
 .sites-list-empty {
@@ -488,6 +553,18 @@ select option {
 .site-row.viewshed-pending .site-label {
   color: var(--text-muted);
   font-style: italic;
+}
+
+.site-row-goal .site-visibility {
+  opacity: 0.2;
+}
+
+.site-row-goal .site-label {
+  color: #fdba74;
+}
+
+.site-row-planned .site-label {
+  color: #fde68a;
 }
 
 /* ── Sidebar / chat ── */

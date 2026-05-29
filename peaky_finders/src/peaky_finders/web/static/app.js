@@ -19,11 +19,18 @@ const chatCopyContextBtn = document.getElementById('chat-copy-context')
 const sitesPanel = document.getElementById('sites-panel')
 const sitesPanelToggle = document.getElementById('sites-panel-toggle')
 const sitesPanelCount = document.getElementById('sites-panel-count')
-const sitesListEl = document.getElementById('sites-list')
+const sitesPanelScrollEl = document.getElementById('sites-panel-scroll')
 const sitesListEmptyEl = document.getElementById('sites-list-empty')
 
 const siteRegistry = new Map()
 let sitesPanelCollapsed = false
+const sitesPanelSectionCollapsed = { installed: false, planned: false, goal: false }
+
+const SITE_PANEL_SECTIONS = [
+  { id: 'installed', label: 'Installed' },
+  { id: 'planned', label: 'Planned' },
+  { id: 'goal', label: 'Goals' },
+]
 
 function siteDisplayLabel(site) {
   return (site.name || '').trim() || site.slug
@@ -31,6 +38,13 @@ function siteDisplayLabel(site) {
 
 function isGoalSite(site) {
   return String(site?.type || '').toLowerCase() === 'goal'
+}
+
+function sitePanelCategory(site) {
+  const t = String(site?.type || '').toLowerCase()
+  if (t === 'goal') return 'goal'
+  if (t === 'planned' || t === 'suggested') return 'planned'
+  return 'installed'
 }
 
 function rfSites(sites) {
@@ -584,17 +598,20 @@ function toggleSiteViewshedVisibility(slug) {
   setSiteViewshedVisible(slug, !entry.visible)
 }
 
-function flyToSite(slug) {
-  const entry = siteRegistry.get(slug)
+function flyToSite(id) {
+  const entry = siteRegistry.get(id)
   if (!entry || !Number.isFinite(entry.lat) || !Number.isFinite(entry.lon)) return
   map.flyTo({ center: [entry.lon, entry.lat], zoom: Math.max(map.getZoom(), 10), duration: 600 })
 }
 
-function resetSitesPanel(sites) {
+function resetSitesPanel(sites, goals) {
   siteRegistry.clear()
-  for (const s of rfSites(sites)) {
+  for (const s of sites || []) {
+    if (isGoalSite(s)) continue
     siteRegistry.set(s.slug, {
+      id: s.slug,
       slug: s.slug,
+      category: sitePanelCategory(s),
       label: siteDisplayLabel(s),
       lat: s.lat,
       lon: s.lon,
@@ -603,61 +620,115 @@ function resetSitesPanel(sites) {
       visible: true,
     })
   }
+  for (const g of goals || []) {
+    const id = `goal:${g.key}`
+    siteRegistry.set(id, {
+      id,
+      slug: null,
+      category: 'goal',
+      label: (g.label || '').trim() || g.key,
+      lat: g.lat,
+      lon: g.lon,
+      hasViewshed: false,
+      viewshedPending: false,
+      visible: true,
+    })
+  }
   renderSitesPanel()
 }
 
-function renderSitesPanel() {
-  if (!sitesListEl) return
-  sitesListEl.innerHTML = ''
-  const sites = [...siteRegistry.values()].sort((a, b) => a.label.localeCompare(b.label))
-  const withViewshed = sites.filter((s) => s.hasViewshed).length
+function renderSiteRow(site) {
+  const li = document.createElement('li')
+  li.className = `site-row${site.hasViewshed ? '' : site.viewshedPending ? ' viewshed-pending' : ' no-viewshed'}`
+  if (site.category === 'goal') li.classList.add('site-row-goal')
+  if (site.category === 'planned') li.classList.add('site-row-planned')
 
-  if (sitesPanelCount) {
-    sitesPanelCount.textContent = sites.length ? `${withViewshed}/${sites.length}` : ''
-  }
-  if (sitesListEmptyEl) {
-    sitesListEmptyEl.hidden = sites.length > 0
-  }
-
-  for (const site of sites) {
-    const li = document.createElement('li')
-    li.className = `site-row${site.hasViewshed ? '' : site.viewshedPending ? ' viewshed-pending' : ' no-viewshed'}`
-
-    const visBtn = document.createElement('button')
-    visBtn.type = 'button'
-    visBtn.className = `site-visibility${site.hasViewshed && !site.visible ? ' hidden' : ''}`
-    visBtn.disabled = !site.hasViewshed
-    visBtn.innerHTML = site.hasViewshed && site.visible ? EYE_OPEN_SVG : EYE_CLOSED_SVG
-    visBtn.title = site.viewshedPending
+  const visBtn = document.createElement('button')
+  visBtn.type = 'button'
+  visBtn.className = `site-visibility${site.hasViewshed && !site.visible ? ' hidden' : ''}`
+  visBtn.disabled = site.category === 'goal' || !site.hasViewshed
+  visBtn.innerHTML = site.hasViewshed && site.visible ? EYE_OPEN_SVG : EYE_CLOSED_SVG
+  visBtn.title = site.category === 'goal'
+    ? 'Goals have no viewshed'
+    : site.viewshedPending
       ? 'Computing viewshed…'
       : site.hasViewshed
         ? site.visible
           ? 'Hide viewshed'
           : 'Show viewshed'
         : 'Viewshed pending'
-    visBtn.setAttribute(
-      'aria-label',
-      site.viewshedPending
+  visBtn.setAttribute(
+    'aria-label',
+    site.category === 'goal'
+      ? `${site.label} (goal, no viewshed)`
+      : site.viewshedPending
         ? `Computing viewshed for ${site.label}`
         : site.hasViewshed
           ? site.visible
             ? `Hide viewshed for ${site.label}`
             : `Show viewshed for ${site.label}`
           : `Viewshed pending for ${site.label}`,
-    )
-    visBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation()
-      toggleSiteViewshedVisibility(site.slug)
+  )
+  visBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation()
+    if (site.slug) toggleSiteViewshedVisibility(site.slug)
+  })
+
+  const label = document.createElement('span')
+  label.className = 'site-label'
+  label.textContent = site.label
+  label.title = site.label
+  label.addEventListener('click', () => flyToSite(site.id))
+
+  li.append(visBtn, label)
+  return li
+}
+
+function renderSitesPanel() {
+  if (!sitesPanelScrollEl) return
+  sitesPanelScrollEl.innerHTML = ''
+
+  const entries = [...siteRegistry.values()]
+  const rfEntries = entries.filter((s) => s.category !== 'goal')
+  const withViewshed = rfEntries.filter((s) => s.hasViewshed).length
+
+  if (sitesPanelCount) {
+    sitesPanelCount.textContent = entries.length
+      ? rfEntries.length
+        ? `${withViewshed}/${entries.length}`
+        : String(entries.length)
+      : ''
+  }
+  if (sitesListEmptyEl) {
+    sitesListEmptyEl.hidden = entries.length > 0
+  }
+
+  for (const section of SITE_PANEL_SECTIONS) {
+    const sectionSites = entries
+      .filter((s) => s.category === section.id)
+      .sort((a, b) => a.label.localeCompare(b.label))
+    if (!sectionSites.length) continue
+
+    const sectionEl = document.createElement('section')
+    sectionEl.className = `sites-section${sitesPanelSectionCollapsed[section.id] ? ' collapsed' : ''}`
+    sectionEl.dataset.section = section.id
+
+    const toggle = document.createElement('button')
+    toggle.type = 'button'
+    toggle.className = 'sites-section-toggle'
+    toggle.setAttribute('aria-expanded', sitesPanelSectionCollapsed[section.id] ? 'false' : 'true')
+    toggle.innerHTML = `<span class="sites-section-chevron" aria-hidden="true"></span><span class="sites-section-title">${section.label}</span><span class="sites-section-count">${sectionSites.length}</span>`
+    toggle.addEventListener('click', () => {
+      sitesPanelSectionCollapsed[section.id] = !sitesPanelSectionCollapsed[section.id]
+      renderSitesPanel()
     })
 
-    const label = document.createElement('span')
-    label.className = 'site-label'
-    label.textContent = site.label
-    label.title = site.label
-    label.addEventListener('click', () => flyToSite(site.slug))
+    const list = document.createElement('ul')
+    list.className = 'sites-section-list'
+    for (const site of sectionSites) list.appendChild(renderSiteRow(site))
 
-    li.append(visBtn, label)
-    sitesListEl.appendChild(li)
+    sectionEl.append(toggle, list)
+    sitesPanelScrollEl.appendChild(sectionEl)
   }
 }
 
@@ -1477,7 +1548,7 @@ async function loadContext(slug) {
   clearOverlayLayers()
   const res = await fetch(`/api/projects/${slug}/context`)
   const ctx = await res.json()
-  resetSitesPanel(ctx.sites)
+  resetSitesPanel(ctx.sites, ctx.goals)
 
   for (const g of ctx.goals || []) {
     handlers['map.pin']({
