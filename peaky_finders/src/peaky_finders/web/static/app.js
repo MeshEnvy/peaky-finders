@@ -912,36 +912,26 @@ function rememberChatTurn(userText, assistantText) {
 
 let pendingChatTurn = null
 
-function startPendingChatTurn(userText) {
-  pendingChatTurn = {
-    userText: String(userText || '').trim(),
-    assistantText: '',
-    errored: false,
-    cancelled: false,
-    committed: false,
-  }
+function syncPendingAssistantText(text, turn = pendingChatTurn) {
+  if (!turn || turn.committed) return
+  turn.assistantText = String(text || '').trim()
 }
 
-function syncPendingAssistantText(text) {
-  if (!pendingChatTurn || pendingChatTurn.committed) return
-  pendingChatTurn.assistantText = String(text || '').trim()
+function markPendingChatTurnCancelled(turn = pendingChatTurn) {
+  if (turn) turn.cancelled = true
 }
 
-function markPendingChatTurnCancelled() {
-  if (pendingChatTurn) pendingChatTurn.cancelled = true
+function markPendingChatTurnErrored(turn = pendingChatTurn) {
+  if (turn) turn.errored = true
 }
 
-function markPendingChatTurnErrored() {
-  if (pendingChatTurn) pendingChatTurn.errored = true
-}
-
-function commitPendingChatTurn() {
-  if (!pendingChatTurn || pendingChatTurn.committed || pendingChatTurn.cancelled || pendingChatTurn.errored) {
+function commitPendingChatTurn(turn = pendingChatTurn) {
+  if (!turn || turn.committed || turn.cancelled || turn.errored) {
     return
   }
-  const { userText, assistantText } = pendingChatTurn
+  const { userText, assistantText } = turn
   if (!userText) return
-  pendingChatTurn.committed = true
+  turn.committed = true
   rememberChatTurn(userText, assistantText)
 }
 
@@ -1118,7 +1108,14 @@ async function sendChatMessage(text) {
   finishPendingToolCalls('—')
 
   appendChat(text, 'user', 'You')
-  startPendingChatTurn(text)
+  const turn = {
+    userText: String(text || '').trim(),
+    assistantText: '',
+    errored: false,
+    cancelled: false,
+    committed: false,
+  }
+  pendingChatTurn = turn
   setChatComposerBusy(true)
   setChatPending(true)
   setStatus('thinking', 'thinking')
@@ -1142,7 +1139,7 @@ async function sendChatMessage(text) {
       signal: chatAbortController.signal,
     })
     if (!res.ok) {
-      markPendingChatTurnErrored()
+      markPendingChatTurnErrored(turn)
       const payload = await res.json().catch(() => null)
       const detail = payload?.detail || res.statusText || 'Chat request failed'
       appendChat(String(detail), 'error', 'Error')
@@ -1151,20 +1148,20 @@ async function sendChatMessage(text) {
     await consumeChatStream(res, (msg) => {
       if (msg.op === 'chat.cancelled') {
         wasCancelled = true
-        markPendingChatTurnCancelled()
+        markPendingChatTurnCancelled(turn)
         return
       }
       if (msg.op === 'chat.error') {
         hadChatError = true
-        markPendingChatTurnErrored()
+        markPendingChatTurnErrored(turn)
         if (mySeq === chatRequestSeq) appendChat(String(msg.message), 'error', 'Error')
         return
       }
       if (msg.op === 'chat.done') {
         if (mySeq === chatRequestSeq) setChatPendingLabel('')
         if (!wasCancelled && !hadChatError) {
-          syncPendingAssistantText(assistantBody?.textContent || '')
-          commitPendingChatTurn()
+          syncPendingAssistantText(assistantBody?.textContent || '', turn)
+          commitPendingChatTurn(turn)
         }
         return
       }
@@ -1185,7 +1182,7 @@ async function sendChatMessage(text) {
       } else if (msg.op === 'chat.delta') {
         if (!assistantBody) assistantBody = beginAssistantReply()
         assistantBody.textContent += msg.text
-        syncPendingAssistantText(assistantBody.textContent)
+        syncPendingAssistantText(assistantBody.textContent, turn)
         chatEl.scrollTop = chatEl.scrollHeight
       } else if (msg.op.startsWith('map.')) {
         routeOp(msg)
@@ -1201,27 +1198,27 @@ async function sendChatMessage(text) {
       appendChat('Stopped.', 'system', 'System')
       scheduleChatContextRefresh('')
     } else if (!hadChatError) {
-      syncPendingAssistantText(assistantBody?.textContent || '')
-      commitPendingChatTurn()
+      syncPendingAssistantText(assistantBody?.textContent || '', turn)
+      commitPendingChatTurn(turn)
     } else {
       scheduleChatContextRefresh('')
     }
   } catch (err) {
     if (mySeq !== chatRequestSeq) return
     if (err?.name === 'AbortError') {
-      markPendingChatTurnCancelled()
+      markPendingChatTurnCancelled(turn)
       finishPendingToolCalls()
       thinkingDetails?.classList.remove('streaming')
       assistantBody?.closest('.msg')?.classList.remove('streaming')
       appendChat('Stopped.', 'system', 'System')
       scheduleChatContextRefresh('')
     } else {
-      markPendingChatTurnErrored()
+      markPendingChatTurnErrored(turn)
       appendChat(String(err), 'error', 'Error')
     }
   } finally {
     if (mySeq !== chatRequestSeq) return
-    pendingChatTurn = null
+    if (pendingChatTurn === turn) pendingChatTurn = null
     chatAbortController = null
     setChatPending(false)
     setChatComposerBusy(false)

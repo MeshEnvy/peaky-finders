@@ -367,7 +367,7 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
             lon=lon,
         )
         if ctx.emit:
-            ctx.emit("map.viewshed", lat=lat, lon=lon, **viewshed)
+            ctx.emit("map.viewshed", **viewshed)
             viewshed_bounds = viewshed.get("bounds")
             if isinstance(viewshed_bounds, list) and len(viewshed_bounds) == 4:
                 ctx.emit("map.fit_bounds", bbox=viewshed_bounds)

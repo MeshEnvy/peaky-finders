@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -55,3 +57,43 @@ def test_chat_stream() -> None:
     assert '"op": "chat.delta"' in body
     assert "Hel" in body
     assert '"op": "chat.done"' in body
+
+
+def test_chat_stream_does_not_block_other_requests() -> None:
+    app = create_app()
+    client = TestClient(app)
+    gate = threading.Event()
+
+    def slow_stream(
+        message: str,
+        *,
+        project_slug: str | None = None,
+        history=None,
+        summary=None,
+        map_pins=None,
+        should_cancel=None,
+    ):
+        gate.wait(timeout=5.0)
+        yield {"op": "chat.done", "model": "test"}
+
+    errors: list[str] = []
+
+    def run_chat() -> None:
+        try:
+            with client.stream("POST", "/api/chat", json={"message": "hello"}) as res:
+                list(res.iter_text())
+        except Exception as exc:
+            errors.append(str(exc))
+
+    chat_thread = threading.Thread(target=run_chat, daemon=True)
+    chat_thread.start()
+    time.sleep(0.05)
+    try:
+        res = client.get("/api/projects")
+    finally:
+        gate.set()
+    chat_thread.join(timeout=5.0)
+
+    assert not errors
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)

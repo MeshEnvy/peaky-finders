@@ -12,7 +12,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.concurrency import iterate_in_threadpool
 
+from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import OllamaError
 from peaky_finders.web.chat import stream_chat
 from peaky_finders.web.chat_context import estimate_chat_context, summarize_chat_history
 from peaky_finders.web.chat_history import ChatTurn
@@ -258,8 +260,7 @@ def create_app() -> FastAPI:
             except asyncio.CancelledError:
                 pass
 
-        async def sse_iter():
-            watcher = asyncio.create_task(watch_disconnect())
+        def sync_sse_chunks():
             gen = stream_chat(
                 body.message,
                 project_slug=body.project_slug,
@@ -273,12 +274,21 @@ def create_app() -> FastAPI:
                     if cancel.is_set():
                         break
                     yield f"data: {json.dumps(msg, default=str)}\n\n"
-                    await asyncio.sleep(0)
             finally:
+                gen.close()
+
+        async def sse_iter():
+            watcher = asyncio.create_task(watch_disconnect())
+            try:
+                async for chunk in iterate_in_threadpool(sync_sse_chunks()):
+                    if cancel.is_set():
+                        break
+                    yield chunk
+            finally:
+                cancel.set()
                 watcher.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await watcher
-                gen.close()
 
         return StreamingResponse(
             sse_iter(),

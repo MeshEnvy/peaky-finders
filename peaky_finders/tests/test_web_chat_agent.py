@@ -260,6 +260,8 @@ def test_show_on_map_emits_pin_and_viewshed() -> None:
     ctx = WebChatContext(project_slug="nevada", emit=emit)
     viewshed_rec = {
         "slug": "at-abc",
+        "lat": 39.591,
+        "lon": -119.947,
         "url": "/api/projects/nevada/viewsheds/at/splat.png?lat=39.591000&lon=-119.947000",
         "coordinates": [[-120, 40], [-119, 40], [-119, 39], [-120, 39]],
         "bounds": [-120.0, 39.0, -119.0, 40.0],
@@ -430,6 +432,8 @@ def test_show_on_map_resolves_pin_id_from_map_state() -> None:
     )
     viewshed_rec = {
         "slug": "at-x",
+        "lat": 36.2716284,
+        "lon": -115.6954918,
         "url": "/u",
         "coordinates": [[-116, 37], [-115, 37], [-115, 36], [-116, 36]],
         "bounds": [-116.0, 36.0, -115.0, 37.0],

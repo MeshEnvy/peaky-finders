@@ -700,10 +700,10 @@ sites:
     plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 22 — CadNSDI 
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN220
     mlrs: NV210170N0210E0SN220
-  chat-1fafba66e75d:
+  chat-19d0deb7f2f6:
     type: planned
-    name: Highest Point in Nevada
+    name: Boundary Peak (13127 ft)
     loc:
-    - 37.846111111111114
-    - -118.35138888888888
+    - 37.846111
+    - -118.351389
     rationale: Chat agent map placement
