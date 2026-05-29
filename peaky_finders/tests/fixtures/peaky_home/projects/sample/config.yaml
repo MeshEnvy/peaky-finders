@@ -40,7 +40,7 @@ maps:
   path: aoi/test.gdb
   layers:
   - boundary
-  visible: false
+  visible: true
 - id: test_include
   name: Test Include
   description: Permissible land for integration tests
