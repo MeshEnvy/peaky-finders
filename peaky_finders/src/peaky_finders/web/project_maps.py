@@ -502,77 +502,124 @@ def run_maps_rebuild(
     plog(f"maps rebuild: {len(preset.maps)} map(s), clips={clips_root}")
     layers, _planned = plan_clip_layer_jobs(preset=preset, data_dir=data_dir, clips_root=clips_root)
 
+    layer_errors: list[str] = []
     for job in layers:
         resolved = resolve_land_use_gdb_path(data_dir, job.preset_path)
         plog(f"clip [{job.role}] {job.preset_path}::{job.layer}")
-        build_clip_layer(
-            clips_root,
-            role=job.role,
-            preset_path=job.preset_path,
-            resolved=resolved,
-            layer=job.layer,
-            where=job.where,
-            mask_body=mask_body,
-            gdb_tree=gdb_fp(resolved),
-            aoi_poly_4326=aoi_poly,
-            kml_label=_kml_label_gdb_job(job.preset_path, job.layer),
-            kml_overlay=kml_overlay,
-            store_crs_3857=job.role in ("include", "exclude"),
-            verbose_log=verbose_log,
-            progress_log=progress_log,
-        )
+        try:
+            build_clip_layer(
+                clips_root,
+                role=job.role,
+                preset_path=job.preset_path,
+                resolved=resolved,
+                layer=job.layer,
+                where=job.where,
+                mask_body=mask_body,
+                gdb_tree=gdb_fp(resolved),
+                aoi_poly_4326=aoi_poly,
+                kml_label=_kml_label_gdb_job(job.preset_path, job.layer),
+                kml_overlay=kml_overlay,
+                store_crs_3857=job.role in ("include", "exclude"),
+                verbose_log=verbose_log,
+                progress_log=progress_log,
+            )
+        except Exception as exc:
+            msg = f"{job.role} {job.preset_path}::{job.layer}: {exc}"
+            layer_errors.append(msg)
+            print(f"maps rebuild ({slug}): clip failed: {msg}", flush=True)
+            if verbose_log:
+                verbose_log(f"maps rebuild ({slug}): clip failed: {msg}")
 
-    aoi_sha = build_composite_aoi(
-        preset=preset,
-        data_dir=data_dir,
-        clips_root=clips_root,
-        mask_body=mask_body,
-        kml_overlay=kml_overlay,
-        verbose_log=verbose_log,
-        progress_log=progress_log,
-    )
-    include_sha = build_composite_include(
-        preset=preset,
-        data_dir=data_dir,
-        clips_root=clips_root,
-        mask_body=mask_body,
-        kml_overlay=kml_overlay,
-        verbose_log=verbose_log,
-        progress_log=progress_log,
-    )
-    exclude_sha = build_composite_exclude(
-        preset=preset,
-        data_dir=data_dir,
-        clips_root=clips_root,
-        mask_body=mask_body,
-        kml_overlay=kml_overlay,
-        verbose_log=verbose_log,
-        progress_log=progress_log,
-    )
-    result = build_eligible_workspace(
-        preset=preset,
-        data_dir=data_dir,
-        clips_root=clips_root,
-        mask_body=mask_body,
-        kml_overlay=kml_overlay,
-        verbose_log=verbose_log,
-        progress_log=progress_log,
-    )
+    def _record_stage_error(stage: str, exc: Exception | str) -> None:
+        msg = f"{stage}: {exc}"
+        layer_errors.append(msg)
+        print(f"maps rebuild ({slug}): {msg}", flush=True)
+        if verbose_log:
+            verbose_log(f"maps rebuild ({slug}): {msg}")
 
-    ref_map = plan_reference_entries(preset=preset, data_dir=data_dir, clips_root=clips_root)
-    for ent in preset_general_overlays(preset):
-        plog(f"general_overlay {ent.id}")
-        build_reference_entry(
-            entry_id=ent.id,
+    aoi_sha: str | None = None
+    include_sha: str | None = None
+    exclude_sha: str | None = None
+    result = None
+
+    try:
+        aoi_sha = build_composite_aoi(
             preset=preset,
             data_dir=data_dir,
             clips_root=clips_root,
-            aoi_sha=aoi_sha,
+            mask_body=mask_body,
             kml_overlay=kml_overlay,
             verbose_log=verbose_log,
             progress_log=progress_log,
         )
+    except Exception as exc:
+        _record_stage_error("composite aoi", exc)
 
+    try:
+        include_sha = build_composite_include(
+            preset=preset,
+            data_dir=data_dir,
+            clips_root=clips_root,
+            mask_body=mask_body,
+            kml_overlay=kml_overlay,
+            verbose_log=verbose_log,
+            progress_log=progress_log,
+        )
+    except Exception as exc:
+        _record_stage_error("composite include", exc)
+
+    try:
+        exclude_sha = build_composite_exclude(
+            preset=preset,
+            data_dir=data_dir,
+            clips_root=clips_root,
+            mask_body=mask_body,
+            kml_overlay=kml_overlay,
+            verbose_log=verbose_log,
+            progress_log=progress_log,
+        )
+    except Exception as exc:
+        _record_stage_error("composite exclude", exc)
+
+    if include_sha is not None and exclude_sha is not None:
+        try:
+            result = build_eligible_workspace(
+                preset=preset,
+                data_dir=data_dir,
+                clips_root=clips_root,
+                mask_body=mask_body,
+                kml_overlay=kml_overlay,
+                verbose_log=verbose_log,
+                progress_log=progress_log,
+            )
+        except Exception as exc:
+            _record_stage_error("eligible workspace", exc)
+
+    ref_map = plan_reference_entries(preset=preset, data_dir=data_dir, clips_root=clips_root)
+    if aoi_sha is not None:
+        for ent in preset_general_overlays(preset):
+            plog(f"general_overlay {ent.id}")
+            try:
+                build_reference_entry(
+                    entry_id=ent.id,
+                    preset=preset,
+                    data_dir=data_dir,
+                    clips_root=clips_root,
+                    aoi_sha=aoi_sha,
+                    kml_overlay=kml_overlay,
+                    verbose_log=verbose_log,
+                    progress_log=progress_log,
+                )
+            except Exception as exc:
+                _record_stage_error(f"general_overlay {ent.id}", exc)
+
+    if layer_errors:
+        summary = "; ".join(layer_errors[:5])
+        if len(layer_errors) > 5:
+            summary += f"; … ({len(layer_errors) - 5} more)"
+        raise RuntimeError(f"{len(layer_errors)} clip build error(s): {summary}")
+
+    assert aoi_sha is not None and include_sha is not None and exclude_sha is not None and result is not None
     write_bundle_resolve(
         bundle_dir,
         clips_root=clips_root,

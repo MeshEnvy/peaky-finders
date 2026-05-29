@@ -262,6 +262,9 @@ def _run_mesh_job(slug: str) -> None:
 
 def _run_clips_then_mesh(slug: str) -> None:
     _run_clips_job(slug)
+    st = _state(slug)
+    if st.clips != "built":
+        return
     if not mesh_need_rebuild(slug):
         return
     with _lock:
