@@ -16,7 +16,7 @@ from starlette.concurrency import iterate_in_threadpool
 
 from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import OllamaError
 from peaky_finders.web.chat import stream_chat
-from peaky_finders.web.chat_context import estimate_chat_context, summarize_chat_history
+from peaky_finders.web.chat_context import measure_chat_context, summarize_chat_history
 from peaky_finders.web.chat_history import ChatTurn
 from peaky_finders.web.dem_contours import load_dem_contours
 from peaky_finders.web.jobs import JOB_MANAGER
@@ -233,7 +233,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/chat/context")
     def api_chat_context(body: ChatContextRequest) -> dict[str, Any]:
-        return estimate_chat_context(
+        return measure_chat_context(
             project_slug=body.project_slug,
             history=body.history,
             summary=body.summary,

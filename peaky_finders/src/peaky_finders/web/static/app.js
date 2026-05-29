@@ -9,6 +9,7 @@ const chatForm = document.getElementById('chat-form')
 const chatInput = document.getElementById('chat-input')
 const chatSendBtn = document.getElementById('chat-send')
 const chatContextFill = document.getElementById('chat-context-fill')
+const chatContextDetail = document.getElementById('chat-context-detail')
 const chatContextPct = document.getElementById('chat-context-pct')
 const chatContextTrack = document.getElementById('chat-context-track')
 const chatContextNote = document.getElementById('chat-context-note')
@@ -1008,15 +1009,44 @@ function chatContextPayload(pendingMessage = '') {
   }
 }
 
+function formatTokenCount(n) {
+  const v = Number(n)
+  if (!Number.isFinite(v) || v < 0) return '—'
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
+  if (v >= 10_000) return `${Math.round(v / 1000)}k`
+  return String(Math.round(v))
+}
+
 function applyChatContext(ctx) {
   if (!ctx || !chatContextFill) return
   chatContextState = ctx
   const pct = Math.max(0, Math.min(100, Number(ctx.usage_pct) || 0))
+  const used = ctx.used_tokens ?? ctx.estimated_tokens
+  const total = ctx.num_ctx
   chatContextFill.style.width = `${pct}%`
   chatContextFill.classList.toggle('warn', ctx.status === 'warn')
   chatContextFill.classList.toggle('full', ctx.status === 'full')
+  if (chatContextDetail && used != null && total != null) {
+    const avail = ctx.available_tokens ?? Math.max(0, total - used)
+    chatContextDetail.textContent = `${formatTokenCount(used)} / ${formatTokenCount(total)} (${formatTokenCount(avail)} free)`
+    chatContextDetail.title = [
+      `Used: ${used}`,
+      `Allocated: ${total}`,
+      `Available: ${avail}`,
+      ctx.token_count_source ? `Count: ${ctx.token_count_source}` : '',
+      ctx.limit_source ? `Limit: ${ctx.limit_source}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+  }
   if (chatContextPct) chatContextPct.textContent = `${pct.toFixed(1)}%`
-  if (chatContextTrack) chatContextTrack.setAttribute('aria-valuenow', String(Math.round(pct)))
+  if (chatContextTrack) {
+    chatContextTrack.setAttribute('aria-valuenow', String(Math.round(pct)))
+    chatContextTrack.setAttribute(
+      'aria-valuetext',
+      used != null && total != null ? `${used} of ${total} tokens` : `${pct}%`,
+    )
+  }
 
   const showSummarize = ctx.status === 'warn' || ctx.status === 'full'
   if (chatSummarizeBtn) chatSummarizeBtn.hidden = !showSummarize
@@ -1225,8 +1255,8 @@ async function sendChatMessage(text) {
         return
       }
       if (mySeq !== chatRequestSeq) return
-      if (msg.op === 'chat.started') {
-        setChatPendingLabel('Waiting for model')
+      if (msg.op === 'chat.started' || msg.op === 'chat.context') {
+        if (msg.op === 'chat.started') setChatPendingLabel('Waiting for model')
         if (msg.context) applyChatContext(msg.context)
       } else if (msg.op === 'chat.status') {
         setChatPendingLabel(String(msg.text || 'Working…'))

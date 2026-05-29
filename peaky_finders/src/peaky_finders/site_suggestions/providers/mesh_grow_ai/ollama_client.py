@@ -37,6 +37,8 @@ def _chat_body(
     tools: list[dict[str, Any]] | None,
     temperature: float,
     stream: bool,
+    num_ctx: int | None = None,
+    include_usage: bool = False,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": model,
@@ -46,6 +48,10 @@ def _chat_body(
     }
     if tools:
         body["tools"] = tools
+    if num_ctx is not None:
+        body["options"] = {"num_ctx": int(num_ctx)}
+    if stream and include_usage:
+        body["stream_options"] = {"include_usage": True}
     return body
 
 
@@ -56,6 +62,7 @@ def chat_completions(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
     temperature: float = 0.2,
+    num_ctx: int | None = None,
     timeout_s: float = 300.0,
 ) -> dict[str, Any]:
     url = f"{base_url.rstrip('/')}/chat/completions"
@@ -65,6 +72,7 @@ def chat_completions(
         tools=tools,
         temperature=temperature,
         stream=False,
+        num_ctx=num_ctx,
     )
     try:
         with httpx.Client(timeout=timeout_s) as client:
@@ -86,6 +94,7 @@ def chat_completions_stream(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
     temperature: float = 0.2,
+    num_ctx: int | None = None,
     timeout_s: float = 300.0,
     should_cancel: Callable[[], bool] | None = None,
 ) -> Iterator[str]:
@@ -97,6 +106,8 @@ def chat_completions_stream(
         tools=tools,
         temperature=temperature,
         stream=True,
+        num_ctx=num_ctx,
+        include_usage=True,
     )
     try:
         with httpx.Client(timeout=timeout_s) as client:
@@ -218,12 +229,14 @@ def stream_chat_completions_turn(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
     temperature: float = 0.2,
+    num_ctx: int | None = None,
     timeout_s: float = 300.0,
     should_cancel: Callable[[], bool] | None = None,
 ) -> Iterator[tuple[str, str | dict[str, Any] | None]]:
-    """Yield ``("delta"|"reasoning", text)`` tokens, then ``("done", assistant_message)``."""
+    """Yield deltas, optional ``("usage", dict)``, then ``("done", assistant_message)``."""
     content_parts: list[str] = []
     tool_calls_by_index: dict[int, dict[str, Any]] = {}
+    last_usage: dict[str, Any] | None = None
 
     for payload in chat_completions_stream(
         base_url=base_url,
@@ -231,6 +244,7 @@ def stream_chat_completions_turn(
         messages=messages,
         tools=tools,
         temperature=temperature,
+        num_ctx=num_ctx,
         timeout_s=timeout_s,
         should_cancel=should_cancel,
     ):
@@ -242,6 +256,9 @@ def stream_chat_completions_turn(
             continue
         if not isinstance(data, dict):
             continue
+        usage = data.get("usage")
+        if isinstance(usage, dict) and usage:
+            last_usage = usage
         choices = data.get("choices") or []
         if not choices:
             continue
@@ -258,6 +275,9 @@ def stream_chat_completions_turn(
 
     if should_cancel and should_cancel():
         return
+
+    if last_usage:
+        yield "usage", last_usage
 
     yield "done", assemble_streamed_assistant_message(
         content_parts=content_parts,

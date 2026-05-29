@@ -11,8 +11,9 @@ from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import 
     ollama_health_ok,
     stream_chat_completions_turn,
 )
-from peaky_finders.web.chat import resolve_ollama_config
-from peaky_finders.web.chat_context import estimate_chat_context
+from peaky_finders.web.chat import resolve_ollama_config, resolve_ollama_limits, resolve_request_num_ctx
+from peaky_finders.web.chat_context import measure_chat_context
+from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_context import usage_prompt_tokens
 from peaky_finders.web.chat_history import build_chat_messages
 from peaky_finders.web.chat_tools import (
     WEB_TOOL_SCHEMAS,
@@ -36,6 +37,7 @@ def _run_model_turn(
     *,
     ai: Any,
     messages: list[dict[str, Any]],
+    request_num_ctx: int | None,
     chat_client: Callable[..., dict[str, Any]] | None,
     should_cancel: Callable[[], bool] | None = None,
 ) -> Iterator[tuple[str, Any]]:
@@ -51,6 +53,7 @@ def _run_model_turn(
                 messages=messages,
                 tools=WEB_TOOL_SCHEMAS,
                 temperature=float(ai.temperature),
+                num_ctx=request_num_ctx,
             )
         except OllamaError as exc:
             yield "error", str(exc)
@@ -78,6 +81,7 @@ def _run_model_turn(
             messages=messages,
             tools=WEB_TOOL_SCHEMAS,
             temperature=float(ai.temperature),
+            num_ctx=request_num_ctx,
             should_cancel=should_cancel,
         ):
             if should_cancel and should_cancel():
@@ -86,6 +90,8 @@ def _run_model_turn(
                 yield "delta", payload
             elif kind == "reasoning":
                 yield "reasoning", payload
+            elif kind == "usage":
+                yield "usage", payload
             elif kind == "done":
                 yield "_assistant", payload
     except OllamaError as exc:
@@ -108,11 +114,13 @@ def stream_web_chat(
         yield {"op": "chat.error", "message": f"Ollama not reachable at {ai.ollama_base_url!r}"}
         return
 
-    context = estimate_chat_context(
+    request_num_ctx = resolve_request_num_ctx(project_slug)
+    context = measure_chat_context(
         project_slug=project_slug,
         history=history,
         summary=summary,
         message=message,
+        map_pins=map_pins,
     )
     yield {"op": "chat.started", "model": ai.ollama_model, "context": context}
 
@@ -144,6 +152,7 @@ def stream_web_chat(
         for kind, payload in _run_model_turn(
             ai=ai,
             messages=messages,
+            request_num_ctx=request_num_ctx,
             chat_client=chat_client,
             should_cancel=should_cancel,
         ):
@@ -158,6 +167,17 @@ def stream_web_chat(
                 yield {"op": "chat.delta", "text": str(payload)}
             elif kind == "reasoning":
                 yield {"op": "chat.thinking.delta", "text": str(payload)}
+            elif kind == "usage":
+                prompt_tokens = usage_prompt_tokens(payload if isinstance(payload, dict) else None)
+                if prompt_tokens is not None:
+                    yield {
+                        "op": "chat.context",
+                        "context": measure_chat_context(
+                            project_slug=project_slug,
+                            messages=list(messages),
+                            measured_prompt_tokens=prompt_tokens,
+                        ),
+                    }
             elif kind == "_assistant":
                 assistant = payload if isinstance(payload, dict) else None
 
@@ -215,10 +235,22 @@ def stream_web_chat(
                 }
             )
 
+        yield {
+            "op": "chat.context",
+            "context": measure_chat_context(
+                project_slug=project_slug,
+                messages=list(messages),
+            ),
+        }
+
     if not got_assistant_text:
         yield {
             "op": "chat.delta",
             "text": "Done — check the map for the pin and viewshed.",
         }
 
+    yield {
+        "op": "chat.context",
+        "context": measure_chat_context(project_slug=project_slug, messages=list(messages)),
+    }
     yield {"op": "chat.done", "model": ai.ollama_model}

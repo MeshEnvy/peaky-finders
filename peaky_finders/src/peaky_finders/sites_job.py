@@ -932,11 +932,14 @@ class MeshGrowAiStrategyConfig(BaseModel):
     max_agent_steps: int = Field(default=40, ge=1, le=200)
     max_viewshed_evals_per_episode: int = Field(default=16, ge=1, le=64)
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    web_chat_num_ctx: int = Field(
-        default=32768,
+    web_chat_num_ctx: int | None = Field(
+        default=None,
         ge=2048,
         le=262144,
-        description="Context window size for the web chat meter and summarization threshold.",
+        description=(
+            "Optional cap on Ollama context window for web chat. "
+            "When unset, Peaky uses the runtime value from ``/api/ps`` or ``/api/show``."
+        ),
     )
 
 

@@ -36,8 +36,44 @@ def resolve_ollama_config(project_slug: str | None) -> MeshGrowAiStrategyConfig:
     return cfg
 
 
-def resolve_web_chat_num_ctx(project_slug: str | None) -> int:
-    return int(resolve_ollama_config(project_slug).web_chat_num_ctx)
+def resolve_web_chat_num_ctx_cap(project_slug: str | None) -> int | None:
+    """Optional preset cap; ``None`` means use Ollama's discovered context size."""
+    cap = resolve_ollama_config(project_slug).web_chat_num_ctx
+    return int(cap) if cap is not None else None
+
+
+def resolve_ollama_limits(project_slug: str | None):
+    """Context limits from Ollama (``/api/ps``, ``/api/show``) with optional preset cap."""
+    from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import ollama_health_ok
+    from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_context import (
+        OLLAMA_FALLBACK_NUM_CTX,
+        OllamaModelLimits,
+        fetch_ollama_model_limits,
+    )
+
+    ai = resolve_ollama_config(project_slug)
+    cap = resolve_web_chat_num_ctx_cap(project_slug)
+    if not ollama_health_ok(ai.ollama_base_url):
+        fallback = cap if cap is not None else OLLAMA_FALLBACK_NUM_CTX
+        return OllamaModelLimits(
+            model=ai.ollama_model,
+            num_ctx=fallback,
+            model_context_length=None,
+            modelfile_num_ctx=None,
+            limit_source="offline",
+            request_num_ctx=cap,
+        )
+    return fetch_ollama_model_limits(ai.ollama_base_url, ai.ollama_model, cap=cap)
+
+
+def resolve_allocated_num_ctx(project_slug: str | None) -> int:
+    """Context window size for display and metering."""
+    return resolve_ollama_limits(project_slug).num_ctx
+
+
+def resolve_request_num_ctx(project_slug: str | None) -> int | None:
+    """``options.num_ctx`` for chat requests; ``None`` lets Ollama choose."""
+    return resolve_ollama_limits(project_slug).request_num_ctx
 
 
 def chat_messages(message: str) -> list[dict[str, str]]:
@@ -56,6 +92,7 @@ def simple_chat(message: str, *, project_slug: str | None = None) -> dict[str, s
         model=ai.ollama_model,
         messages=chat_messages(message),
         temperature=float(ai.temperature),
+        num_ctx=resolve_request_num_ctx(project_slug),
         timeout_s=120.0,
     )
     reply = extract_assistant_content(resp)
