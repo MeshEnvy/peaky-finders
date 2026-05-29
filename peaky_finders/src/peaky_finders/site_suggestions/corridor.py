@@ -797,12 +797,10 @@ def plan_corridors_for_goal(
     goal_key: str,
     k: int = 1,
     cell_m: float = 750.0,
-    penalty_mask: object | None = None,
     plan_generation: int | None = None,
     verbose: bool = False,
 ) -> list[CorridorPath]:
     """Plan up to ``k`` min-hop RF corridors from current mesh toward ``goal_key``."""
-    del penalty_mask  # legacy eligible-grid API; alternates use blocked RF edges
 
     goal = goal_point_for_key(ctx, goal_key)
     if goal is None:

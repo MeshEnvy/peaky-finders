@@ -9,10 +9,10 @@ Default to **parallel or multi-core** approaches when work is embarrassingly par
 
 ## When to parallelize
 
-- **Independent units** — tiles, sites, footprints, build targets, file fetches, raster slices.
+- **Independent units** — tiles, sites, footprints, workspace targets, file fetches, raster slices.
 - **I/O-bound** — DEM/cache/network reads; prefer `ThreadPoolExecutor`.
 - **CPU-bound, release-the-GIL** — NumPy/raster/GDAL-heavy loops; threads or process pools depending on workload and GIL behavior.
-- **Existing knobs** — wire through preset/CLI parallelism (`max_workers`, `jobs`, `parallelism`) rather than hard-coding serial execution.
+- **Existing knobs** — wire through preset/API parallelism (`max_workers`, `jobs`, `parallelism`) rather than hard-coding serial execution.
 
 ## Splatter viewshed cost
 
@@ -29,7 +29,7 @@ Default to **parallel or multi-core** approaches when work is embarrassingly par
 ## Patterns in this repo
 
 - `ThreadPoolExecutor` + `as_completed` for tile/site/raster fan-out (`skadi_dem`, `pairwise_dem_peak`, `mesh_coverage_depth`, web viewshed service).
-- Expose **`max_workers` / `jobs`** on hot paths; default to `1` only when parallelism is opt-in via preset or CLI.
+- Expose **`max_workers` / `jobs`** on hot paths; default to `1` only when parallelism is opt-in via preset or API.
 
 ## Implementation checklist
 

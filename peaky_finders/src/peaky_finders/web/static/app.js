@@ -1540,7 +1540,7 @@ function setStatus(state, label) {
   statusEl.textContent = label
 }
 
-function appendChat(text, kind = 'build', label = null) {
+function appendChat(text, kind = 'system', label = null) {
   if (chatEmptyEl) chatEmptyEl.hidden = true
 
   const div = document.createElement('div')

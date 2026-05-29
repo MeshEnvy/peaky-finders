@@ -1198,14 +1198,14 @@ def plan_greedy_site_suggestions(
     preset: Preset,
     preset_path: Path,
     plan: WorkspacePlan,
-    suggest_cli_n: int,
+    goal_budget: int,
     suggest_root: Path,
     footprint_runner=None,
     verbose: bool = False,
     jobs: int = 1,
     on_pick: Callable[[PlannedSuggestion], str] | None = None,
 ) -> list[PlannedSuggestion]:
-    """Run the site-suggestion solver until ``planning_complete`` or ``suggest_cli_n`` goal(s) are satisfied."""
+    """Run the site-suggestion solver until ``planning_complete`` or ``goal_budget`` goal(s) are satisfied."""
     if preset.bundle is None:
         raise ValueError("site suggestions require preset bundle.*")
 
@@ -1218,7 +1218,7 @@ def plan_greedy_site_suggestions(
     hooks = provider.planner_hooks(cfg)
     provider.validate_config(cfg)
     existing_suggested = count_suggested_sites(preset)
-    max_goals = provider.resolve_step_budget(cfg, suggest_cli_n)
+    max_goals = provider.resolve_step_budget(cfg, goal_budget)
 
     goal = provider.goal_depth(cfg)
     refine = provider.refine_settings(cfg)

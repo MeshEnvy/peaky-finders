@@ -2,5 +2,5 @@
 
 from __future__ import annotations
 
-# ``--suggest`` with no N: run until strategy ``planning_complete`` (no goal cap).
+# Run until strategy ``planning_complete`` when goal budget is ``SOLVE_UNTIL_COMPLETE``.
 SOLVE_UNTIL_COMPLETE = -1

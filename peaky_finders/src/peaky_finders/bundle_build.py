@@ -1,7 +1,7 @@
-"""Build the AOI / land-use bundle: preset-listed GDB layers → ``build/clips`` + ``build/bundle``.
+"""Materialize the AOI / land-use bundle: preset-listed GDB layers → ``build/clips`` + ``build/bundle``.
 
 Per-layer clips and composites live under ``<preset>/build/clips``.
-Each preset job writes ``<preset>/build/bundle/resolve.json`` pointing into ``build/clips``.
+Each preset writes ``<preset>/build/bundle/resolve.json`` pointing into ``build/clips``.
 """
 
 from __future__ import annotations
@@ -164,13 +164,6 @@ def bundle_aoi_inputs_digest(pre: BundleConfig, data_dir: Path) -> str:
     dd = Path(data_dir).expanduser().resolve()
     body = aoi_inputs_fingerprint_body(pre, dd)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
-
-
-def bundle_aoi_dir_slug(pre: BundleConfig, data_dir: Path) -> str:
-    """Legacy slug (AOI inputs only); preset bundle workspace uses a stable ``build/bundle/`` dir."""
-    dd = Path(data_dir).expanduser().resolve()
-    payload = aoi_inputs_fingerprint_body(pre, dd).encode("utf-8")
-    return "aoi_" + hashlib.sha256(payload).hexdigest()[:16]
 
 
 def bundle_land_use_inputs_digest(pre: BundleConfig, data_dir: Path) -> str:

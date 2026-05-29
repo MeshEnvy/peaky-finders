@@ -13,9 +13,9 @@ Pair with **parallel-execution** for implementation patterns; this rule is for *
 
 Before locking in a design, answer:
 
-1. **Unit of work** — What is the embarrassingly parallel chunk (tile, site, footprint, build target, file fetch, raster slice)? Prefer designs that expose clear, independent units over one monolithic loop.
+1. **Unit of work** — What is the embarrassingly parallel chunk (tile, site, footprint, workspace target, file fetch, raster slice)? Prefer designs that expose clear, independent units over one monolithic loop.
 2. **Independence** — Can units run without shared mutable state? If dependencies exist, can phases be **wave-scheduled** (run wave N in parallel, then wave N+1) instead of forcing full serial execution?
-3. **Configuration** — Where does `max_workers` / `jobs` / `parallelism` live? Default: **preset YAML** (`simulation.max_workers`, build fan-out) or a narrow CLI override — not hard-coded `1` with no knob.
+3. **Configuration** — Where does `max_workers` / `jobs` / `parallelism` live? Default: **preset YAML** (`simulation.max_workers`, batch fan-out) or a narrow API override — not hard-coded `1` with no knob.
 4. **Memory** — Does each worker duplicate large arrays or rasters? Design for **capped workers**, streaming, or batched waves when memory scales with parallelism.
 5. **Determinism** — If output order matters, plan **collect → sort/merge** after parallel work; do not rely on completion order.
 6. **Scale** — Will this run on a laptop with few cores and in CI with one? Serial fallback should be correct; parallel should be opt-in or sensibly defaulted, not accidental.
@@ -31,7 +31,7 @@ Before locking in a design, answer:
 
 - Pipelines that **must** run serially because state is tangled in a single object or global cache with no merge strategy.
 - Hidden sequential bottlenecks (one lock around the whole loop, synchronous I/O inside every unit when batch prefetch would work).
-- **No parallelism hook** on hot paths that will clearly scale with site/tile/build counts.
+- **No parallelism hook** on hot paths that will clearly scale with site/tile/workspace artifact counts.
 - Assuming **“we’ll parallelize later”** when the data model already commits to a single shared accumulator.
 
 ## When serial-by-design is fine

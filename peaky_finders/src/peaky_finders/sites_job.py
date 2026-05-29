@@ -30,16 +30,6 @@ def require_preset_yaml_path(path: Path) -> None:
         raise ValueError(f"preset path must end with `.yaml` or `.yml` (got suffix {path.suffix!r}): {path}")
 
 
-def require_cwd_config_yaml(*, cwd: Path | None = None) -> Path:
-    """Return ``./config.yaml`` in *cwd* (default ``Path.cwd()``) or raise ``FileNotFoundError``."""
-    base = Path.cwd() if cwd is None else Path(cwd)
-    path = (base / "config.yaml").resolve()
-    if not path.is_file():
-        raise FileNotFoundError(f"config.yaml not found in {base} — expected projects/<slug>/config.yaml")
-    require_preset_yaml_path(path)
-    return path
-
-
 def resolved_skadi_mirror_dir() -> Path:
     """Global Skadi tile mirror (``SPLAT_CACHE`` env, else ``<peaky_home>/splat_cache``)."""
     raw = os.environ.get("SPLAT_CACHE", "").strip()
@@ -83,8 +73,7 @@ def peaky_projects_dir() -> Path:
 def peaky_share_dir() -> Path:
     """Optional shared root (``PEAKY_SHARE``); default ``<peaky_home>/share``.
 
-    Clips cache use :func:`resolved_preset_build_dir` subtrees
-    (``<preset>/build/clips``) — this path is only for ad-hoc tooling.
+    Clip caches live under :func:`resolved_preset_build_dir` subtrees (``<preset>/build/clips``).
     """
     raw = os.environ.get("PEAKY_SHARE", "").strip()
     if raw:
@@ -93,7 +82,7 @@ def peaky_share_dir() -> Path:
 
 
 def resolved_preset_build_dir(preset_path: Path) -> Path:
-    """Per-preset build outputs root: ``<preset-dir>/build``."""
+    """Per-preset on-disk artifact root: ``<preset-dir>/build``."""
     p = Path(preset_path).expanduser().resolve()
     return (p.parent / "build").resolve()
 
@@ -109,7 +98,7 @@ def resolve_preset_yaml_arg(
     *,
     cwd: Path | None = None,
 ) -> Path:
-    """Resolve a CLI preset argument to an existing ``.yaml`` / ``.yml`` file.
+    """Resolve a preset path or slug to an existing ``.yaml`` / ``.yml`` file.
 
     Accepts explicit paths, ``<name>.yaml``, and project slugs such as ``nevada`` →
     ``<PEAKY_PROJECTS>/nevada/config.yaml``.
@@ -157,13 +146,6 @@ def resolved_preset_slug(preset_path: Path) -> str:
     return path.stem
 
 
-def resolved_aggregate_kmz_path(preset_path: Path) -> Path:
-    """Write aggregate KMZ under preset build dir (``<preset-dir>/build/<slug>.kmz``)."""
-    path = Path(preset_path).expanduser().resolve()
-    slug = resolved_preset_slug(path)
-    return (resolved_preset_build_dir(path) / f"{slug}.kmz").resolve()
-
-
 def resolved_mesh_site_links_kml(preset_path: Path) -> Path:
     """Stable mesh linkage KML under ``build/mesh/links``."""
     path = Path(preset_path).expanduser().resolve()
@@ -174,11 +156,11 @@ def resolved_preset_bundle_data_dir(
     *,
     preset_path: Path,
     preset: Preset,
-    cli_override: Path | None = None,
+    data_dir_override: Path | None = None,
 ) -> Path:
-    """GDB ``bundle.*`` path root: CLI override, else ``<preset-dir>/<bundle.inputs_root>``, else ``<PEAKY_HOME>/data``."""
-    if cli_override is not None:
-        return Path(cli_override).expanduser().resolve()
+    """GDB ``bundle.*`` path root: override, else ``<preset-dir>/<bundle.inputs_root>``, else ``<PEAKY_HOME>/data``."""
+    if data_dir_override is not None:
+        return Path(data_dir_override).expanduser().resolve()
     bundle = preset.bundle
     if bundle is not None and bundle.inputs_root is not None:
         raw = str(bundle.inputs_root).strip()
@@ -833,7 +815,7 @@ class MeshBackboneStrategyConfig(BaseModel):
         default=None,
         ge=1,
         le=512,
-        description="Optional cap on backbone site count (installed + suggested); not the CLI ``--suggest`` goal budget.",
+        description="Optional cap on backbone site count (installed + suggested); not the planner goal budget.",
     )
     goals: dict[str, MeshBackboneGoalEntry] = Field(
         default_factory=dict,

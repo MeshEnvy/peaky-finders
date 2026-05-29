@@ -1,4 +1,4 @@
-"""Preset CLI path resolution (PEAKY_HOME layout, KMZ output, bundle data root)."""
+"""Preset path resolution (PEAKY_HOME layout, bundle data root)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from peaky_finders.sites_job import (
     peaky_share_dir,
     repo_root,
     resolve_preset_yaml_arg,
-    resolved_aggregate_kmz_path,
     resolved_preset_build_dir,
     resolved_preset_bundle_data_dir,
     resolved_preset_slug,
@@ -63,7 +62,6 @@ def test_resolve_project_slug_sample(peaky_test_home: Path) -> None:
 def test_resolved_preset_slug_for_project_config(peaky_test_home: Path) -> None:
     sample = peaky_test_home / "projects" / "sample" / "config.yaml"
     assert resolved_preset_slug(sample) == "sample"
-    assert resolved_aggregate_kmz_path(sample) == (sample.parent / "build" / "sample.kmz").resolve()
 
 
 def test_resolved_preset_build_dir(peaky_test_home: Path) -> None:
@@ -87,12 +85,12 @@ def test_resolved_preset_bundle_data_dir_defaults_to_peaky_home_data(
     assert data_dir == (peaky_env / "data").resolve()
 
 
-def test_resolved_preset_bundle_data_dir_honors_cli_override(tmp_path: Path) -> None:
+def test_resolved_preset_bundle_data_dir_honors_data_dir_override(tmp_path: Path) -> None:
     preset = SimpleNamespace(bundle=BundleConfig.model_validate({"inputs_root": "data", "aoi": []}))
     override = tmp_path / "custom-data"
     data_dir = resolved_preset_bundle_data_dir(
         preset_path=tmp_path / "config.yaml",
         preset=preset,
-        cli_override=override,
+        data_dir_override=override,
     )
     assert data_dir == override.resolve()

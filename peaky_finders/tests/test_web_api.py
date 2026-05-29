@@ -1,4 +1,4 @@
-"""FastAPI smoke tests (no Ollama / build)."""
+"""FastAPI smoke tests (no Ollama)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from peaky_finders.web.app import create_app
-from peaky_finders.web.stream import BuildStream
+from peaky_finders.web.stream import OpStream
 
 
 def test_app_boot_enriches_all_projects() -> None:
@@ -30,13 +30,13 @@ def test_projects_and_stream() -> None:
     assert res.status_code == 200
     assert isinstance(res.json(), list)
 
-    stream = BuildStream("test-job")
-    stream.emit("build.started", project="demo")
-    stream.emit("build.finished", ok=True, exit_code=0)
+    stream = OpStream("test-job")
+    stream.emit("job.started", project="demo")
+    stream.emit("job.finished", ok=True, exit_code=0)
     stream.close()
     events = list(stream.events())
     assert len(events) == 2
-    assert events[0]["op"] == "build.started"
+    assert events[0]["op"] == "job.started"
 
 
 def test_chat_models_endpoint() -> None:

@@ -19,7 +19,7 @@ from peaky_finders.splat_input_hash import splat_input_sha256
 
 
 def viewshed_workspace_digest(*, request: SplatCoverageRequest) -> str:
-    """Fingerprint for propagation inputs (same as SPLAT reuse key). Used in stamps/metadata."""
+    """Fingerprint for propagation inputs (same as SPLAT reuse key). Used in cache keys/metadata."""
     return splat_input_sha256(request)
 
 

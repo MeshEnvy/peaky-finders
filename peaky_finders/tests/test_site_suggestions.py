@@ -478,7 +478,7 @@ def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
         preset=preset,
         preset_path=preset_path,
         plan=plan,
-        suggest_cli_n=SOLVE_UNTIL_COMPLETE,
+        goal_budget=SOLVE_UNTIL_COMPLETE,
         suggest_root=tmp_path / "suggest",
         footprint_runner=_fake_footprint,
     )
@@ -554,7 +554,7 @@ def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
         preset=preset,
         preset_path=preset_path,
         plan=plan,
-        suggest_cli_n=1,
+        goal_budget=1,
         suggest_root=tmp_path / "suggest",
         footprint_runner=_fake_footprint,
         verbose=True,
@@ -663,7 +663,7 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
         preset=preset,
         preset_path=preset_path,
         plan=plan,
-        suggest_cli_n=1,
+        goal_budget=1,
         suggest_root=tmp_path / "suggest",
         footprint_runner=_fake_footprint,
     )
@@ -673,7 +673,7 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
     assert winners[-1].strategy.startswith("goal:")
 
 
-def test_suggest_cli_n_stops_after_goal_budget(monkeypatch, tmp_path: Path) -> None:
+def test_goal_budget_stops_after_goal_budget(monkeypatch, tmp_path: Path) -> None:
     from peaky_finders.workspace_plan import PlannedComposite, PlannedViewshedWorkspace
     from peaky_finders.site_suggestions import planner as planner_mod
     from peaky_finders.site_suggestions.candidates import SiteCandidate
@@ -774,7 +774,7 @@ def test_suggest_cli_n_stops_after_goal_budget(monkeypatch, tmp_path: Path) -> N
         preset=preset,
         preset_path=preset_path,
         plan=plan,
-        suggest_cli_n=3,
+        goal_budget=3,
         suggest_root=tmp_path / "suggest",
         footprint_runner=lambda **kw: box(-115.04, 39.01, -115.02, 39.03),
     )
@@ -811,7 +811,7 @@ def test_suggest_iteration_helpers(tmp_path: Path) -> None:
     assert next_suggest_iteration(preset) == 4
 
 
-def test_suggest_cli_n_adds_new_sites_when_prior_suggested_exist(monkeypatch, tmp_path: Path) -> None:
+def test_goal_budget_adds_new_sites_when_prior_suggested_exist(monkeypatch, tmp_path: Path) -> None:
     from peaky_finders.workspace_plan import PlannedComposite, PlannedViewshedWorkspace
     from peaky_finders.site_suggestions import planner as planner_mod
     from peaky_finders.site_suggestions.candidates import SiteCandidate
@@ -924,7 +924,7 @@ def test_suggest_cli_n_adds_new_sites_when_prior_suggested_exist(monkeypatch, tm
         preset=preset,
         preset_path=preset_path,
         plan=plan,
-        suggest_cli_n=4,
+        goal_budget=4,
         suggest_root=tmp_path / "suggest",
         footprint_runner=lambda **kw: box(-115.04, 39.01, -115.02, 39.03),
     )
@@ -1037,7 +1037,7 @@ def test_on_pick_writes_each_site_to_preset(monkeypatch, tmp_path: Path) -> None
         preset=preset,
         preset_path=preset_path,
         plan=plan,
-        suggest_cli_n=5,
+        goal_budget=5,
         suggest_root=tmp_path / "suggest",
         footprint_runner=lambda **kw: box(-115.04, 39.01, -115.02, 39.03),
         on_pick=_on_pick,

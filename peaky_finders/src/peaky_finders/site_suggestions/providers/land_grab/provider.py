@@ -112,11 +112,11 @@ class LandGrabStrategy:
             refine_spacing_m=float(lg.refine_spacing_m),
         )
 
-    def resolve_step_budget(self, cfg: BundleSiteSuggestionsConfig, cli_n: int) -> int | None:
+    def resolve_step_budget(self, cfg: BundleSiteSuggestionsConfig, goal_budget: int) -> int | None:
         del cfg
-        if int(cli_n) == SOLVE_UNTIL_COMPLETE:
+        if int(goal_budget) == SOLVE_UNTIL_COMPLETE:
             return None
-        return max(1, int(cli_n))
+        return max(1, int(goal_budget))
 
     def planning_complete(self, ctx: SiteSuggestionContext) -> bool:
         goal = self.goal_depth(ctx.cfg)

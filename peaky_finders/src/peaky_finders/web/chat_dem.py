@@ -152,8 +152,8 @@ def query_project_dem_highest(*, project_slug: str, use_cache: bool = True) -> d
     if dem_dir is None:
         return {
             "error": (
-                "no Skadi DEM tiles for this project — run a build that populates "
-                "projects/<slug>/build/dem or configure the global Skadi mirror"
+                "no Skadi DEM tiles for this project — populate "
+                "projects/<slug>/build/dem (e.g. via DEM prefetch) or configure the global Skadi mirror"
             ),
         }
 

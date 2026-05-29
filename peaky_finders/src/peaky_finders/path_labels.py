@@ -1,4 +1,4 @@
-"""Human-readable filesystem labels for preset build artifact directories.
+"""Human-readable filesystem labels for preset workspace artifact directories.
 
 Directories are labeled by site slug, pair of slugs, or fixed role names—not content hashes.
 """
