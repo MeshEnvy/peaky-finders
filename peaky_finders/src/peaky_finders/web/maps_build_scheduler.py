@@ -221,7 +221,7 @@ def _notify_build_status(slug: str) -> None:
 
 
 def _mesh_progress_emit(slug: str) -> Callable[[str], None]:
-    from peaky_finders.mesh_coverage_depth import MESH_DEPTH_BANDS
+    from peaky_finders.mesh_depth_store import MESH_DEPTH_BAND_IDS
 
     def plog(msg: str) -> None:
         text = str(msg)
@@ -235,21 +235,31 @@ def _mesh_progress_emit(slug: str) -> Callable[[str], None]:
     return plog
 
 
+def _maintenance_prefix(slug: str) -> str:
+    return f"maps maintenance ({slug}):"
+
+
 def _run_clips_job(slug: str) -> None:
     st = _state(slug)
     st.clips = "building"
     st.clips_error = None
     _notify_build_status(slug)
+    vlog = stderr_verbose_log()
+    if vlog:
+        vlog(f"{_maintenance_prefix(slug)} clips rebuild start")
     try:
-        vlog = stderr_verbose_log()
         run_maps_rebuild(slug, verbose_log=vlog, progress_log=vlog)
         st.clips = "built"
         publish_layer_phase(slug, layer_id="eligible", phase="built")
         publish_catalog_refresh(slug, reason="clips")
+        if vlog:
+            vlog(f"{_maintenance_prefix(slug)} clips rebuild done")
     except Exception as exc:
         st.clips = "stale"
         st.clips_error = str(exc)
         print(f"maps rebuild ({slug}): {exc}", flush=True)
+        if vlog:
+            vlog(f"{_maintenance_prefix(slug)} clips rebuild failed: {exc}")
     finally:
         st.clips_job = None
         _notify_build_status(slug)
@@ -260,8 +270,10 @@ def _run_mesh_job(slug: str) -> None:
     st.mesh = "building"
     st.mesh_error = None
     _notify_build_status(slug)
+    vlog = stderr_verbose_log()
+    if vlog:
+        vlog(f"{_maintenance_prefix(slug)} mesh rebuild start (background thread)")
     try:
-        vlog = stderr_verbose_log()
         run_mesh_rebuild(
             slug,
             verbose_log=vlog,
@@ -269,10 +281,14 @@ def _run_mesh_job(slug: str) -> None:
         )
         st.mesh = "built"
         publish_catalog_refresh(slug, reason="mesh")
+        if vlog:
+            vlog(f"{_maintenance_prefix(slug)} mesh rebuild done")
     except Exception as exc:
         st.mesh = "stale"
         st.mesh_error = str(exc)
         print(f"mesh rebuild ({slug}): {exc}", flush=True)
+        if vlog:
+            vlog(f"{_maintenance_prefix(slug)} mesh rebuild failed: {exc}")
     finally:
         st.mesh_job = None
         _notify_build_status(slug)
@@ -318,11 +334,17 @@ def _start_mesh_job_locked(slug: str, st: _ProjectBuildState) -> None:
 
 def _maintenance_planner(slug: str) -> None:
     """Scan staleness and enqueue rebuild jobs (never call from request thread)."""
+    prefix = _maintenance_prefix(slug)
+    vlog = stderr_verbose_log()
+    if vlog:
+        vlog(f"{prefix} scan start")
     try:
         clips_stale = clips_need_rebuild(slug)
         mesh_stale = mesh_need_rebuild(slug) if auto_rebuild_enabled() else False
     except Exception as exc:
         print(f"maps maintenance planner ({slug}): {exc}", flush=True)
+        if vlog:
+            vlog(f"{prefix} scan failed: {exc}")
         return
 
     mesh_cfg_ok = False
@@ -334,7 +356,21 @@ def _maintenance_planner(slug: str) -> None:
         except FileNotFoundError:
             mesh_cfg_ok = False
 
+    if vlog:
+        auto = auto_rebuild_enabled()
+        mesh_note = "stale" if mesh_stale else "current"
+        if not auto:
+            mesh_note = "auto_rebuild off"
+        elif not mesh_cfg_ok:
+            mesh_note = "unavailable"
+        vlog(
+            f"{prefix} clips={'stale' if clips_stale else 'current'}, "
+            f"mesh={mesh_note}"
+        )
+
     notify = False
+    enqueue_clips = False
+    enqueue_mesh = False
     with _lock:
         st = _by_slug.get(slug)
         if st is None:
@@ -358,10 +394,19 @@ def _maintenance_planner(slug: str) -> None:
 
         if auto_rebuild_enabled():
             if clips_stale:
+                enqueue_clips = True
                 _start_clips_job_locked(slug, st)
             elif mesh_stale and mesh_cfg_ok:
+                enqueue_mesh = True
                 _start_mesh_job_locked(slug, st)
 
+    if vlog:
+        if enqueue_clips:
+            vlog(f"{prefix} enqueue clips rebuild (background thread)")
+        elif enqueue_mesh:
+            vlog(f"{prefix} enqueue mesh rebuild (pairwise/depth thread pool)")
+        else:
+            vlog(f"{prefix} scan done: nothing to rebuild")
     if notify:
         _notify_build_status(slug)
 
@@ -375,13 +420,18 @@ def schedule_maps_maintenance(slug: str) -> None:
     except FileNotFoundError:
         return
 
+    vlog = stderr_verbose_log()
     with _lock:
         st = _by_slug.get(slug)
         if st is None:
             st = _ProjectBuildState()
             _by_slug[slug] = st
         if st.planner_job is not None and st.planner_job.is_alive():
+            if vlog:
+                vlog(f"{_maintenance_prefix(slug)} planner already running, skip")
             return
+        if vlog:
+            vlog(f"{_maintenance_prefix(slug)} planner start (background thread)")
         t = threading.Thread(
             target=_maintenance_planner,
             args=(slug,),
@@ -396,7 +446,13 @@ def schedule_all_projects_maps_maintenance() -> None:
     """Enqueue maintenance for every project (web server boot; not request path)."""
     from peaky_finders.web.projects import list_projects
 
-    for row in list_projects():
+    rows = list_projects()
+    vlog = stderr_verbose_log()
+    if vlog:
+        vlog(f"boot maps maintenance: start: {len(rows)} project(s)")
+    for row in rows:
         slug = str(row.get("slug") or "")
         if slug:
             schedule_maps_maintenance(slug)
+    if vlog:
+        vlog(f"boot maps maintenance: planners queued for {len(rows)} project(s)")

@@ -110,6 +110,52 @@ def test_run_maps_rebuild_receives_verbose_log_when_debug(monkeypatch: pytest.Mo
     captured["verbose_log"]("maps verbose")  # type: ignore[operator]
 
 
+def test_maintenance_planner_logs_current_artifacts_when_debug(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("DEBUG", "1")
+    from peaky_finders.web import maps_build_scheduler as sched
+    from types import SimpleNamespace
+
+    preset = SimpleNamespace(bundle=SimpleNamespace(mesh_coverage=object()))
+
+    with patch.object(sched, "clips_need_rebuild", return_value=False), patch.object(
+        sched, "mesh_need_rebuild", return_value=False
+    ), patch.object(sched, "auto_rebuild_enabled", return_value=True), patch.object(
+        sched, "_preset_path", return_value=Path("/tmp/nevada/config.yaml")
+    ), patch.object(sched, "load_preset", return_value=preset), patch.object(
+        sched, "resolved_mesh_pairwise_enabled", return_value=True
+    ), patch.object(sched, "resolved_mesh_depth_enabled", return_value=False), patch.object(
+        sched, "_notify_build_status"
+    ):
+        sched._maintenance_planner("nevada")
+
+    out = capsys.readouterr().out
+    assert "maps maintenance (nevada): scan start" in out
+    assert "clips=current" in out
+    assert "mesh=current" in out
+    assert "nothing to rebuild" in out
+
+
+def test_schedule_all_projects_maps_maintenance_logs_when_debug(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("DEBUG", "1")
+    from peaky_finders.web import maps_build_scheduler as sched
+
+    with patch("peaky_finders.web.projects.list_projects", return_value=[{"slug": "nevada"}]), patch.object(
+        sched, "schedule_maps_maintenance"
+    ) as schedule:
+        sched.schedule_all_projects_maps_maintenance()
+
+    schedule.assert_called_once_with("nevada")
+    out = capsys.readouterr().out
+    assert "boot maps maintenance: start: 1 project(s)" in out
+    assert "boot maps maintenance: planners queued" in out
+
+
 def test_enrich_all_project_sites_quiet_without_debug(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
