@@ -35,13 +35,13 @@ display:
 bundle:
   inputs_root: data
   aoi:
-    - path: aoi/test.gdb
-      layers:
-        - name: boundary
+  - path: aoi/test.gdb
+    layers:
+    - name: boundary
   include:
-    - path: include/test.gdb
-      layers:
-        - name: inc_layer
+  - path: include/test.gdb
+    layers:
+    - name: inc_layer
   exclude: []
 
 sites:
@@ -49,15 +49,28 @@ sites:
     name: Hub Site
     loc: [40.42619, -119.5]
     sees: [peer-a, peer-b, peer-c]
+    plss: NV; Mount Diablo Meridian; T.30N R.22E; Sec. 34 — CadNSDI 
+      PLSSID=NV210300N0220E0 | FRSTDIVID=NV210300N0220E0SN340
+    mlrs: NV210300N0220E0SN340
+    elevation_m: 1454.0
   peer-a:
     name: Peer A
     loc: [39.90951, -119.4]
     sees: [hub]
+    elevation_m: 1175.0
   peer-b:
     name: Peer B
     loc: [39.91342, -119.3]
     sees: [hub]
+    plss: NV; Mount Diablo Meridian; T.24N R.24E; Sec. 33 — CadNSDI 
+      PLSSID=NV210240N0240E0 | FRSTDIVID=NV210240N0240E0SN330
+    mlrs: NV210240N0240E0SN330
+    elevation_m: 1391.0
   peer-c:
     name: Peer C
     loc: [40.40376, -119.6]
     sees: [hub]
+    plss: NV; Mount Diablo Meridian; T.29N R.21E; Sec. 11 — CadNSDI 
+      PLSSID=NV210290N0210E0 | FRSTDIVID=NV210290N0210E0SN110
+    mlrs: NV210290N0210E0SN110
+    elevation_m: 1854.0

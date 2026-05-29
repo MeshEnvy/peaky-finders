@@ -13,7 +13,7 @@ import numpy as np
 from pyproj import Transformer
 from rasterio import features
 from rasterio.io import MemoryFile
-from rasterio.transform import Affine, xy
+from rasterio.transform import Affine, rowcol, xy
 from shapely import make_valid
 from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
@@ -248,6 +248,36 @@ def global_max_skadi_elevation_in_polygon(
     if best_z is None:
         return None
     return (best_lon, best_lat, best_z)
+
+
+def skadi_elevation_at_point(
+    lon: float,
+    lat: float,
+    mirror_root: Path | str,
+    *,
+    void_val: int = VOID_SRTM,
+) -> float | None:
+    """Sample Skadi SRTM elevation (m) at a WGS-84 point; ``None`` when tile or cell is missing."""
+    tiles = iter_skadi_tile_names_for_wgs84_bounds(lon, lat, lon, lat)
+    if not tiles:
+        return None
+    root = Path(mirror_root).expanduser().resolve()
+    try:
+        tp = skadi_mirror_tile_gz_path(root, tiles[0])
+    except ValueError:
+        return None
+    if not tp.is_file():
+        return None
+    elev, aff_tup = _cached_skadi_elev_affine(str(tp.resolve()))
+    transform = _affine_tuple_to_affine(aff_tup)
+    r, c = rowcol(transform, lon, lat)
+    h, w = elev.shape
+    if r < 0 or c < 0 or r >= h or c >= w:
+        return None
+    z = int(elev[r, c])
+    if z <= int(void_val):
+        return None
+    return float(z)
 
 
 def _binned_peaks_for_tile(

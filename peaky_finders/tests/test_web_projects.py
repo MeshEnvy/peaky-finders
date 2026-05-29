@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
 from peaky_finders.web.projects import project_context
 
 from fixture_paths import PEAKY_TEST_HOME
+
+
+def test_project_context_enriches_all_sites(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PEAKY_HOME", str(tmp_path))
+    proj = tmp_path / "projects" / "sample"
+    import shutil
+
+    shutil.copytree(PEAKY_TEST_HOME / "projects" / "sample", proj)
+    with patch("peaky_finders.web.projects.enrich_all_preset_sites", return_value=(0, 4)) as enrich:
+        ctx = project_context("sample")
+    enrich.assert_called_once()
+    assert ctx["slug"] == "sample"
 
 
 def test_project_context_includes_site_name(monkeypatch) -> None:

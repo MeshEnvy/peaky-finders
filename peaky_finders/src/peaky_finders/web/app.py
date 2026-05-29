@@ -25,7 +25,14 @@ from peaky_finders.web.mesh_links import (
     project_mesh_links_from_site_geojson,
     project_mesh_links_geojson,
 )
-from peaky_finders.web.projects import list_projects, project_context
+from peaky_finders.web.projects import (
+    list_projects,
+    patch_project_site,
+    project_context,
+    project_site_detail,
+    remove_project_site,
+)
+from peaky_finders.web.site_preset_io import SitePresetConflictError
 from peaky_finders.sites_job import peaky_projects_dir
 from peaky_finders.web.viewshed_rasters import resolve_splat_png_path
 from peaky_finders.web.viewshed_service import (
@@ -81,6 +88,17 @@ class ChatSummarizeRequest(BaseModel):
     summary: str | None = Field(default=None, max_length=24000)
 
 
+class SitePatchRequest(BaseModel):
+    new_slug: str | None = Field(default=None, max_length=128)
+    name: str | None = Field(default=None, max_length=256)
+    type: str | None = Field(default=None, max_length=32)
+    lat: float | None = None
+    lon: float | None = None
+    description: str | None = Field(default=None, max_length=8000)
+    rationale: str | None = Field(default=None, max_length=8000)
+    sees: list[str] | None = None
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Peaky Web", version="1")
 
@@ -103,6 +121,39 @@ def create_app() -> FastAPI:
             return project_context(slug)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{slug}/sites/{site_slug}")
+    def api_project_site_detail(slug: str, site_slug: str) -> dict[str, Any]:
+        try:
+            return project_site_detail(slug, site_slug)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.patch("/api/projects/{slug}/sites/{site_slug}")
+    def api_patch_project_site(slug: str, site_slug: str, body: SitePatchRequest) -> dict[str, Any]:
+        patch = body.model_dump(exclude_unset=True)
+        if not patch:
+            raise HTTPException(status_code=400, detail="at least one field is required")
+        try:
+            return patch_project_site(slug, site_slug, patch)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SitePresetConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/projects/{slug}/sites/{site_slug}")
+    def api_delete_project_site(slug: str, site_slug: str) -> dict[str, bool]:
+        try:
+            remove_project_site(slug, site_slug)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SitePresetConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True}
 
     @app.get("/api/projects/{slug}/mesh-links")
     def api_project_mesh_links(slug: str) -> dict[str, Any]:

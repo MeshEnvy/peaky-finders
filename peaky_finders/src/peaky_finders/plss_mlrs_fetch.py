@@ -343,3 +343,13 @@ def refresh_plss_mlrs_for_bundle(
     write_build_key(plss_bundle_key_path(cache_base), plss_sites_loc_digest(preset))
     if network_count:
         print(f"plss/mlrs: {network_count} CadNSDI quer{'y' if network_count == 1 else 'ies'}", flush=True)
+
+    from peaky_finders.site_metadata_enrich import populate_preset_missing_metadata
+
+    _, elev_updated = populate_preset_missing_metadata(
+        preset_path,
+        site_slugs=site_slugs,
+        allow_network_plss=False,
+    )
+    if elev_updated:
+        print(f"site metadata: elevation filled for {elev_updated} site(s)", flush=True)

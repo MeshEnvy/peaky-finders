@@ -20,7 +20,7 @@
       href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
       rel="stylesheet"
     />
-    <link href="/styles.css?v=10" rel="stylesheet" />
+    <link href="/styles.css?v=15" rel="stylesheet" />
   </head>
   <body>
     <div class="app">
@@ -109,66 +109,236 @@
           </div>
         </div>
 
-        <aside class="sidebar">
-          <div class="sidebar-header">
-            <h2 class="sidebar-title">Agent trace</h2>
-            <p class="sidebar-sub">
-              Build progress and mesh-grow-ai tool calls
-            </p>
-          </div>
-          <div id="chat" class="chat">
-            <div id="chat-empty" class="chat-empty">
-              <div class="chat-empty-icon" aria-hidden="true">◎</div>
-              <p>
-                Say hello below to start a conversation with the agent.
-              </p>
-            </div>
-          </div>
-          <div id="chat-context" class="chat-context" aria-live="polite">
-            <div class="chat-context-row">
-              <span class="chat-context-label">Context</span>
-              <button
-                id="chat-copy-context"
-                type="button"
-                class="chat-copy-context"
-                title="Copy context as JSON"
-                aria-label="Copy context as JSON"
-              >
-                {}
-              </button>
-              <span id="chat-context-detail" class="chat-context-detail">—</span>
-              <span id="chat-context-pct" class="chat-context-pct">0%</span>
-            </div>
-            <div
-              class="chat-context-track"
-              role="progressbar"
-              aria-valuemin="0"
-              aria-valuemax="100"
-              aria-valuenow="0"
-              id="chat-context-track"
+        <aside class="sidebar" aria-label="Sidebar">
+          <div class="sidebar-tabs" role="tablist" aria-label="Sidebar panels">
+            <button
+              type="button"
+              id="sidebar-tab-info"
+              class="sidebar-tab"
+              role="tab"
+              aria-selected="false"
+              aria-controls="sidebar-panel-info"
             >
-              <div id="chat-context-fill" class="chat-context-fill"></div>
-            </div>
-            <p id="chat-context-note" class="chat-context-note" hidden></p>
-            <button id="chat-summarize" type="button" class="chat-summarize" hidden>
-              Summarize &amp; reset context
+              Info
+            </button>
+            <button
+              type="button"
+              id="sidebar-tab-agent"
+              class="sidebar-tab active"
+              role="tab"
+              aria-selected="true"
+              aria-controls="sidebar-panel-agent"
+            >
+              Agent
             </button>
           </div>
-          <form id="chat-form" class="chat-composer">
-            <select id="chat-model" aria-label="Model"></select>
-            <input
-              id="chat-input"
-              type="text"
-              placeholder="Say hello…"
-              autocomplete="off"
-            />
-            <button id="chat-send" type="submit">Send</button>
-          </form>
+
+          <div
+            id="sidebar-panel-info"
+            class="sidebar-panel"
+            role="tabpanel"
+            aria-labelledby="sidebar-tab-info"
+            hidden
+          >
+            <div id="site-info-panel" class="site-info-panel" hidden>
+              <header class="site-drawer-header">
+                <h2 id="site-drawer-title" class="site-drawer-title">Site</h2>
+              </header>
+              <form id="site-drawer-form" class="site-drawer-body">
+                <p id="site-drawer-error" class="site-drawer-error" hidden></p>
+                <p id="site-drawer-rebuild-note" class="site-drawer-note" hidden>
+                  Location changed — rebuild viewshed to refresh coverage.
+                </p>
+                <fieldset class="site-drawer-section">
+                  <legend>Identity</legend>
+                  <label class="site-field">
+                    <span>Slug</span>
+                    <input id="site-field-slug" name="slug" type="text" autocomplete="off" />
+                  </label>
+                  <label class="site-field">
+                    <span>Name</span>
+                    <input id="site-field-name" name="name" type="text" required />
+                  </label>
+                  <label class="site-field">
+                    <span>Type</span>
+                    <select id="site-field-type" name="type">
+                      <option value="installed">installed</option>
+                      <option value="planned">planned</option>
+                      <option value="suggested">suggested</option>
+                      <option value="goal">goal</option>
+                    </select>
+                  </label>
+                </fieldset>
+                <fieldset class="site-drawer-section">
+                  <legend>Location</legend>
+                  <label class="site-field">
+                    <span>Latitude</span>
+                    <input id="site-field-lat" name="lat" type="number" step="any" required />
+                  </label>
+                  <label class="site-field">
+                    <span>Longitude</span>
+                    <input id="site-field-lon" name="lon" type="number" step="any" required />
+                  </label>
+                  <label class="site-field">
+                    <span>Elevation (m)</span>
+                    <input
+                      id="site-field-elevation"
+                      name="elevation_m"
+                      type="text"
+                      readonly
+                      tabindex="-1"
+                      aria-readonly="true"
+                      placeholder="—"
+                    />
+                  </label>
+                  <label class="site-field">
+                    <span>PLSS</span>
+                    <input
+                      id="site-field-plss"
+                      name="plss"
+                      type="text"
+                      readonly
+                      tabindex="-1"
+                      aria-readonly="true"
+                      placeholder="—"
+                    />
+                  </label>
+                  <label class="site-field">
+                    <span>MLRS</span>
+                    <input
+                      id="site-field-mlrs"
+                      name="mlrs"
+                      type="text"
+                      readonly
+                      tabindex="-1"
+                      aria-readonly="true"
+                      placeholder="—"
+                    />
+                  </label>
+                  <p class="site-drawer-hint">
+                    Elevation, PLSS, and MLRS are derived from coordinates when the project loads or
+                    when latitude/longitude changes.
+                  </p>
+                </fieldset>
+                <fieldset class="site-drawer-section">
+                  <legend>Metadata</legend>
+                  <label class="site-field">
+                    <span>Description</span>
+                    <textarea id="site-field-description" name="description" rows="2"></textarea>
+                  </label>
+                  <label class="site-field">
+                    <span>Rationale</span>
+                    <textarea id="site-field-rationale" name="rationale" rows="2"></textarea>
+                  </label>
+                </fieldset>
+                <fieldset id="site-drawer-rf-section" class="site-drawer-section">
+                  <legend>Field links (sees)</legend>
+                  <p class="site-drawer-hint">
+                    Mutual listing required — both sites must list each other.
+                  </p>
+                  <div id="site-sees-chips" class="site-sees-chips"></div>
+                  <label class="site-field">
+                    <span>Add peer</span>
+                    <select id="site-sees-add" aria-label="Add sees peer">
+                      <option value="">— select site —</option>
+                    </select>
+                  </label>
+                  <div class="site-rf-context">
+                    <div class="site-rf-block">
+                      <span class="site-rf-label">RF links</span>
+                      <ul id="site-rf-peers" class="site-rf-list"></ul>
+                    </div>
+                    <div class="site-rf-block">
+                      <span class="site-rf-label">Confirmed mutual</span>
+                      <ul id="site-sees-mutual" class="site-rf-list"></ul>
+                    </div>
+                    <div class="site-rf-block">
+                      <span class="site-rf-label">Pending (one-way)</span>
+                      <ul id="site-sees-pending" class="site-rf-list"></ul>
+                    </div>
+                  </div>
+                </fieldset>
+                <p id="site-drawer-goal-note" class="site-drawer-note" hidden>
+                  Goal marker — no RF, viewshed, or field links.
+                </p>
+              </form>
+              <footer class="site-drawer-footer">
+                <button type="button" id="site-drawer-delete" class="site-drawer-delete">
+                  Delete
+                </button>
+                <button type="submit" id="site-drawer-save" class="site-drawer-save" form="site-drawer-form">
+                  Save
+                </button>
+              </footer>
+            </div>
+          </div>
+
+          <div
+            id="sidebar-panel-agent"
+            class="sidebar-panel active"
+            role="tabpanel"
+            aria-labelledby="sidebar-tab-agent"
+          >
+            <div class="sidebar-header">
+              <h2 class="sidebar-title">Agent trace</h2>
+              <p class="sidebar-sub">
+                Build progress and mesh-grow-ai tool calls
+              </p>
+            </div>
+            <div id="chat" class="chat">
+              <div id="chat-empty" class="chat-empty">
+                <div class="chat-empty-icon" aria-hidden="true">◎</div>
+                <p>
+                  Say hello below to start a conversation with the agent.
+                </p>
+              </div>
+            </div>
+            <div id="chat-context" class="chat-context" aria-live="polite">
+              <div class="chat-context-row">
+                <span class="chat-context-label">Context</span>
+                <button
+                  id="chat-copy-context"
+                  type="button"
+                  class="chat-copy-context"
+                  title="Copy context as JSON"
+                  aria-label="Copy context as JSON"
+                >
+                  {}
+                </button>
+                <span id="chat-context-detail" class="chat-context-detail">—</span>
+                <span id="chat-context-pct" class="chat-context-pct">0%</span>
+              </div>
+              <div
+                class="chat-context-track"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+                id="chat-context-track"
+              >
+                <div id="chat-context-fill" class="chat-context-fill"></div>
+              </div>
+              <p id="chat-context-note" class="chat-context-note" hidden></p>
+              <button id="chat-summarize" type="button" class="chat-summarize" hidden>
+                Summarize &amp; reset context
+              </button>
+            </div>
+            <form id="chat-form" class="chat-composer">
+              <select id="chat-model" aria-label="Model"></select>
+              <input
+                id="chat-input"
+                type="text"
+                placeholder="Say hello…"
+                autocomplete="off"
+              />
+              <button id="chat-send" type="submit">Send</button>
+            </form>
+          </div>
         </aside>
       </main>
     </div>
 
     <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-    <script src="/app.js?v=38"></script>
+    <script src="/app.js?v=43"></script>
   </body>
 </html>

@@ -1,0 +1,291 @@
+"""Fill site PLSS, MLRS, and Skadi elevation from coordinates."""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Any
+
+from peaky_finders.pairwise_dem_peak import skadi_elevation_at_point
+from peaky_finders.plss_mlrs_fetch import (
+    loc_plss_resolved,
+    loc_stamp,
+    plss_mlrs_for_point,
+    read_plss_mlrs_loc_cache,
+    write_plss_mlrs_loc_cache,
+)
+from peaky_finders.sites_job import (
+    dump_preset_yaml_document,
+    parse_preset_dict,
+    read_preset_yaml_tree,
+    resolved_preset_build_dir,
+    resolved_skadi_mirror_dir,
+)
+
+
+def _text_missing(val: Any) -> bool:
+    if val is None:
+        return True
+    return isinstance(val, str) and not val.strip()
+
+
+def _elevation_missing(val: Any) -> bool:
+    return val is None
+
+
+def resolved_dem_mirror_for_preset(preset_path: Path) -> Path | None:
+    """Project ``build/dem`` mirror, else global Skadi cache when populated."""
+    preset_path_r = Path(preset_path).expanduser().resolve()
+    for root in (resolved_preset_build_dir(preset_path_r) / "dem", resolved_skadi_mirror_dir()):
+        if root.is_dir() and any(root.glob("*.hgt.gz")):
+            return root.resolve()
+    return None
+
+
+def lookup_plss_mlrs_for_loc(
+    lat: float,
+    lon: float,
+    *,
+    loc_cache: dict[str, dict[str, str]],
+    allow_network: bool,
+    request_delay_s: float = 0.12,
+) -> tuple[str | None, str | None, bool]:
+    """Resolve PLSS/MLRS for a coordinate. Returns ``(plss, mlrs, from_network)``."""
+    stamp = loc_stamp(lat, lon)
+    cached = loc_cache.get(stamp)
+    if cached is not None and loc_plss_resolved(cached):
+        plss = (cached.get("plss") or "").strip() or None
+        mlrs = (cached.get("mlrs") or "").strip() or None
+        return plss, mlrs, False
+
+    if not allow_network:
+        return None, None, False
+
+    plss_s, mlrs_s = plss_mlrs_for_point(lon, lat)
+    plss = plss_s.strip() or None
+    mlrs = mlrs_s.strip() or None
+    loc_cache[stamp] = {"plss": plss or "", "mlrs": mlrs or ""}
+    if request_delay_s > 0:
+        time.sleep(request_delay_s)
+    return plss, mlrs, True
+
+
+def _site_loc(ent: dict[str, Any]) -> tuple[float, float] | None:
+    loc_v = ent.get("loc")
+    if not isinstance(loc_v, (list, tuple)) or len(loc_v) != 2:
+        return None
+    try:
+        return float(loc_v[0]), float(loc_v[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _apply_text_field(ent: dict[str, Any], key: str, value: str | None, *, force: bool) -> bool:
+    if not force and not _text_missing(ent.get(key)):
+        return False
+    old = ent.get(key)
+    if value:
+        if old != value:
+            ent[key] = value
+            return True
+        return False
+    if key in ent:
+        ent.pop(key)
+        return True
+    return False
+
+
+def _apply_elevation_field(ent: dict[str, Any], value: float | None, *, force: bool) -> bool:
+    if not force and not _elevation_missing(ent.get("elevation_m")):
+        return False
+    if value is None:
+        if "elevation_m" in ent:
+            ent.pop("elevation_m")
+            return True
+        return False
+    rounded = round(float(value), 1)
+    if ent.get("elevation_m") != rounded:
+        ent["elevation_m"] = rounded
+        return True
+    return False
+
+
+def enrich_site_entry_metadata(
+    ent: dict[str, Any],
+    *,
+    loc_cache: dict[str, dict[str, str]],
+    dem_dir: Path | None,
+    allow_network_plss: bool,
+    request_delay_s: float = 0.12,
+    force: bool = False,
+) -> tuple[bool, bool]:
+    """Resolve ``plss`` / ``mlrs`` / ``elevation_m`` from site coordinates.
+
+  ``force=True`` overwrites existing values (e.g. after a coordinate edit).
+  Returns ``(changed, plss_from_network)``.
+    """
+    loc = _site_loc(ent)
+    if loc is None:
+        return False, False
+
+    lat, lon = loc
+    changed = False
+    plss_from_network = False
+
+    need_plss = force or _text_missing(ent.get("plss"))
+    need_mlrs = force or _text_missing(ent.get("mlrs"))
+    if need_plss or need_mlrs:
+        plss, mlrs, from_network = lookup_plss_mlrs_for_loc(
+            lat,
+            lon,
+            loc_cache=loc_cache,
+            allow_network=allow_network_plss,
+            request_delay_s=request_delay_s,
+        )
+        if from_network:
+            plss_from_network = True
+        if need_plss and _apply_text_field(ent, "plss", plss, force=force):
+            changed = True
+        if need_mlrs and _apply_text_field(ent, "mlrs", mlrs, force=force):
+            changed = True
+
+    need_elev = force or _elevation_missing(ent.get("elevation_m"))
+    if need_elev and dem_dir is not None:
+        elev = skadi_elevation_at_point(lon, lat, dem_dir)
+        if _apply_elevation_field(ent, elev, force=force):
+            changed = True
+    elif need_elev and force:
+        if _apply_elevation_field(ent, None, force=True):
+            changed = True
+
+    return changed, plss_from_network
+
+
+def _resolve_site_slugs(
+    preset_path: Path,
+    site_slug: str | None,
+    site_slugs: set[str] | None,
+) -> list[str]:
+    preset_path = Path(preset_path).expanduser().resolve()
+    yaml_rt, root = read_preset_yaml_tree(preset_path)
+    del yaml_rt
+    sites_raw = root.get("sites")
+    if not isinstance(sites_raw, dict):
+        return []
+    if site_slug is not None:
+        return [site_slug] if site_slug in sites_raw else []
+    if site_slugs is not None:
+        return sorted(s for s in site_slugs if s in sites_raw)
+    return sorted(sites_raw.keys())
+
+
+def resolve_site_metadata(
+    preset_path: Path,
+    *,
+    site_slug: str | None = None,
+    site_slugs: set[str] | None = None,
+    force: bool = False,
+    allow_network_plss: bool = True,
+    request_delay_s: float = 0.12,
+    log_fp: Any = None,
+) -> tuple[int, int]:
+    """Resolve coordinate-derived metadata and persist YAML updates.
+
+    Returns ``(network_plss_lookups, sites_updated)``.
+    """
+    preset_path = Path(preset_path).expanduser().resolve()
+    slugs = _resolve_site_slugs(preset_path, site_slug, site_slugs)
+    if not slugs:
+        return 0, 0
+
+    yaml_rt, root = read_preset_yaml_tree(preset_path)
+    sites_raw = root.get("sites")
+    if not isinstance(sites_raw, dict):
+        return 0, 0
+
+    cache_base = resolved_preset_build_dir(preset_path)
+    loc_cache = read_plss_mlrs_loc_cache(cache_base)
+    dem_dir = resolved_dem_mirror_for_preset(preset_path)
+
+    network_count = 0
+    updated = 0
+    any_changed = False
+
+    for slug in slugs:
+        ent = sites_raw.get(slug)
+        if not isinstance(ent, dict):
+            continue
+        changed, from_network = enrich_site_entry_metadata(
+            ent,
+            loc_cache=loc_cache,
+            dem_dir=dem_dir,
+            allow_network_plss=allow_network_plss,
+            request_delay_s=request_delay_s,
+            force=force,
+        )
+        if from_network:
+            network_count += 1
+        if changed:
+            updated += 1
+            any_changed = True
+            if log_fp is not None:
+                print(f"site metadata: {slug} updated", file=log_fp, flush=True)
+
+    if any_changed:
+        parse_preset_dict(root)
+        dump_preset_yaml_document(yaml_rt, root, preset_path)
+
+    write_plss_mlrs_loc_cache(cache_base, loc_cache)
+    return network_count, updated
+
+
+def enrich_all_preset_sites(
+    preset_path: Path,
+    *,
+    allow_network_plss: bool = True,
+    request_delay_s: float = 0.12,
+    log_fp: Any = None,
+) -> tuple[int, int]:
+    """Resolve missing PLSS / MLRS / elevation for every preset site; rewrite YAML when needed."""
+    return resolve_site_metadata(
+        preset_path,
+        force=False,
+        allow_network_plss=allow_network_plss,
+        request_delay_s=request_delay_s,
+        log_fp=log_fp,
+    )
+
+
+def fill_missing_site_metadata(
+    preset_path: Path,
+    site_slug: str,
+    *,
+    allow_network_plss: bool = True,
+) -> bool:
+    """Backfill one site when metadata fields are absent."""
+    _, updated = resolve_site_metadata(
+        preset_path,
+        site_slug=site_slug,
+        force=False,
+        allow_network_plss=allow_network_plss,
+    )
+    return updated > 0
+
+
+def populate_preset_missing_metadata(
+    preset_path: Path,
+    *,
+    site_slugs: set[str] | None = None,
+    allow_network_plss: bool = False,
+    request_delay_s: float = 0.12,
+    log_fp: Any = None,
+) -> tuple[int, int]:
+    """Backfill missing metadata for selected sites (default: all)."""
+    return resolve_site_metadata(
+        preset_path,
+        site_slugs=site_slugs,
+        force=False,
+        allow_network_plss=allow_network_plss,
+        request_delay_s=request_delay_s,
+        log_fp=log_fp,
+    )

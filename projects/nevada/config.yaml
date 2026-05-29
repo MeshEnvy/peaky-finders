@@ -873,6 +873,10 @@ sites:
     loc:
     - 41.2671
     - -114.197
+    plss: NV; Mount Diablo Meridian; T.39N R.69E; Sec. 17 — CadNSDI 
+      PLSSID=NV210390N0690E0 | FRSTDIVID=NV210390N0690E0SN170
+    mlrs: NV210390N0690E0SN170
+    elevation_m: 1491.0
   mount-charleston:
     type: goal
     name: Mount Charleston
@@ -921,6 +925,10 @@ sites:
     loc:
     - 41.0286
     - -114.4763
+    plss: NV; Mount Diablo Meridian; T.36N R.66E; Sec. 02 — CadNSDI 
+      PLSSID=NV210360N0660E0 | FRSTDIVID=NV210360N0660E0SN020
+    mlrs: NV210360N0660E0SN020
+    elevation_m: 1780.0
   orovada:
     type: goal
     name: Orovada
@@ -1215,12 +1223,20 @@ sites:
     loc:
     - 41.1132
     - -114.9535
+    plss: NV; Mount Diablo Meridian; T.37N R.62E; Sec. 03 — CadNSDI 
+      PLSSID=NV210370N0620E0 | FRSTDIVID=NV210370N0620E0SN030
+    mlrs: NV210370N0620E0SN030
+    elevation_m: 1714.0
   west-wendover:
     type: goal
     name: West Wendover
     loc:
     - 40.7407
     - -114.0783
+    plss: NV; Mount Diablo Meridian; T.33N R.70E; Sec. 17 — CadNSDI 
+      PLSSID=NV210330N0700E0 | FRSTDIVID=NV210330N0700E0SN170
+    mlrs: NV210330N0700E0SN170
+    elevation_m: 1380.0
   whitney:
     type: goal
     name: Whitney

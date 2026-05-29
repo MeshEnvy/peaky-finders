@@ -23,9 +23,45 @@ const sitesPanelCount = document.getElementById('sites-panel-count')
 const sitesPanelScrollEl = document.getElementById('sites-panel-scroll')
 const sitesListEmptyEl = document.getElementById('sites-list-empty')
 
+const siteDrawerEl = document.getElementById('site-info-panel')
+const sidebarTabInfoBtn = document.getElementById('sidebar-tab-info')
+const sidebarTabAgentBtn = document.getElementById('sidebar-tab-agent')
+const sidebarPanelInfoEl = document.getElementById('sidebar-panel-info')
+const sidebarPanelAgentEl = document.getElementById('sidebar-panel-agent')
+const siteDrawerTitleEl = document.getElementById('site-drawer-title')
+const siteDrawerFormEl = document.getElementById('site-drawer-form')
+const siteDrawerSaveBtn = document.getElementById('site-drawer-save')
+const siteDrawerDeleteBtn = document.getElementById('site-drawer-delete')
+const siteDrawerErrorEl = document.getElementById('site-drawer-error')
+const siteDrawerRebuildNoteEl = document.getElementById('site-drawer-rebuild-note')
+const siteDrawerRfSectionEl = document.getElementById('site-drawer-rf-section')
+const siteDrawerGoalNoteEl = document.getElementById('site-drawer-goal-note')
+const siteFieldSlugEl = document.getElementById('site-field-slug')
+const siteFieldNameEl = document.getElementById('site-field-name')
+const siteFieldTypeEl = document.getElementById('site-field-type')
+const siteFieldLatEl = document.getElementById('site-field-lat')
+const siteFieldLonEl = document.getElementById('site-field-lon')
+const siteFieldElevationEl = document.getElementById('site-field-elevation')
+const siteFieldDescriptionEl = document.getElementById('site-field-description')
+const siteFieldRationaleEl = document.getElementById('site-field-rationale')
+const siteFieldPlssEl = document.getElementById('site-field-plss')
+const siteFieldMlrsEl = document.getElementById('site-field-mlrs')
+const siteSeesChipsEl = document.getElementById('site-sees-chips')
+const siteSeesAddEl = document.getElementById('site-sees-add')
+const siteRfPeersEl = document.getElementById('site-rf-peers')
+const siteSeesMutualEl = document.getElementById('site-sees-mutual')
+const siteSeesPendingEl = document.getElementById('site-sees-pending')
+
 const siteRegistry = new Map()
 let sitesPanelCollapsed = false
 const sitesPanelSectionCollapsed = { installed: false, planned: false, goal: false }
+let presetSiteSlugs = new Set()
+let siteDrawerSlug = null
+let siteDrawerOriginal = null
+let siteDrawerSees = []
+let siteDrawerPeerSlugs = []
+let siteDrawerBusy = false
+let sidebarActiveTab = 'agent'
 
 const SITE_PANEL_SECTIONS = [
   { id: 'installed', label: 'Installed' },
@@ -429,7 +465,53 @@ function firstOverlayLayerId() {
   return undefined
 }
 
+function clearMeshLinkFeatureCache() {
+  const prefix = 'mesh_links:'
+  for (const key of [...layerFeatureCache.keys()]) {
+    if (key.startsWith(prefix)) layerFeatureCache.delete(key)
+  }
+  if (mapReady && map.getSource('mesh_links-src')) {
+    flushLayerFeatures('mesh_links')
+  }
+}
+
+function purgeMeshLinksTouchingSlugs(slugs) {
+  const want = new Set((slugs || []).filter(Boolean))
+  if (!want.size) return
+  const prefix = 'mesh_links:'
+  for (const [key, f] of [...layerFeatureCache.entries()]) {
+    if (!key.startsWith(prefix)) continue
+    const from = f.properties?.from
+    const to = f.properties?.to
+    if (want.has(from) || want.has(to)) layerFeatureCache.delete(key)
+  }
+}
+
+function meshLinkSlugsAffectedByPatch(body, siteSlug) {
+  const slugs = new Set([siteSlug])
+  if (body?.new_slug) slugs.add(String(body.new_slug).trim())
+  if (Array.isArray(body?.sees)) {
+    for (const s of body.sees) slugs.add(String(s).trim())
+  }
+  if (siteDrawerOriginal?.sees) {
+    for (const s of siteDrawerOriginal.sees) slugs.add(String(s).trim())
+  }
+  return [...slugs].filter(Boolean)
+}
+
+function patchAffectsMeshLinks(body) {
+  if (!body) return false
+  return (
+    'lat' in body ||
+    'lon' in body ||
+    'sees' in body ||
+    'type' in body ||
+    'new_slug' in body
+  )
+}
+
 async function loadProjectMeshLinks(projectSlug) {
+  clearMeshLinkFeatureCache()
   const res = await fetch(`/api/projects/${projectSlug}/mesh-links`)
   if (!res.ok) return
   const gj = await res.json()
@@ -573,6 +655,8 @@ const SPLAT_ICON_SVG =
   '<svg viewBox="0 0 128 128" aria-hidden="true"><path fill="#907BF3" d="M59.4 21.9c3.8-2.7 6.9-.2 8.3 3.2c2.1 4.9 4.9 6.7 10.7 6.5c5.9-.2 7.6-2.6 8.1-6.5c0 0 2.8-13.7 3.6-16.1c2.8-8.9 15.7-6.3 12.9 4c-3.2 11.5-16.7 19.7-7.6 27.7c3.7 3.2 8.3 3.1 11.2.8c8.3-6.5 17.3-3.4 18.5 2.7c1.2 5.9-2.9 7.7-5.4 8.5c-4.6 1.5-15.8 2-16.3 12.4c-.3 6.7 6.9 8.1 8.1 13s-.9 7-2.5 8.7s-1.7 4-.2 6.1c5.1 7.2 12.7 10.7 10.3 17.3c-2.4 6.5-14.9 8.9-19-1.4c-8.8-22-14.8-12.4-19.6-11.4c-12.6 2.6-13.1-6.1-22.4-1.3c-9.4 4.9-6.6 28.1-20.9 26.4c-5.3-.6-8.9-7.8-4.2-14.2c5.9-8 21.5-16.7 16.5-22c-2.5-2.6-5.9-.4-7 .2c-11.5 6.2-23.7-9.6-11.9-19.7c6.1-5.2 15.3-4 14.7-10.4c-.4-4.7-6-5.9-11.9-9.3c-12.4-7.1-19-10.2-21.2-15C6.9 20.9 22.9 11.6 30 22.5c3.4 5.3 5.6 5.7 8.3 5.9s11.3.7 11.3-4.1c0-1.8-1.7-3.2-3.1-5c-1.9-2.5-3.3-5.8-2.2-8.6c1.6-4.3 7.3-3.9 9-1.5s6.1 12.7 6.1 12.7m18.2 85.8c0 1.7-.3 7.4.6 10.5c3.6 12.8 18.6 5 12.8-6.8c-.9-1.8-3-5.6-3.7-6.7c-2.9-4.5-9.7-2.1-9.7 3M8 58.6c-7 2.8-4.7 14.1 2.7 13.6c4.3-.3 15-8 15-8c2.9-2 1.7-7.1-2.3-7c-1.2-.1-11-.3-15.4 1.4"/><path fill="#004FAC" d="M108.8 92c-3.7.5-4.6-1.9-4.7-3.5c-.2-4.2 4.5-5.1 4-8c-.3-1.8 2-3.8 4.5-1.6c4.6 3.8-.1 12.6-3.8 13.1m11.2 14.1c-.4-1.7-4.5-2.3-4.4 1.2c.1 2.1-.6 4.6-5.7 4.6c-1.5 0-4.4.5-3.1 4.3c1.3 3.9 16.5 2.5 13.2-10.1M91.4 115c-1.1-.1-2.5.7-2.9 2.7s-2.1 2.9-3.2 2.8s-4 .1-4 3.1s12.2 3.9 11.9-6.6c0-1-.6-1.8-1.8-2m-2.8-19c2.4-1.8 1-7.6-4.3-6.1c-3.6 1-3.5 5.1-13.4 7.7c-2.9.8-2.3 3.6 2.1 3.5c10.5-.4 14.4-4.1 15.6-5.1m-28.7.8c.7-2.8-1.5-4.4-4.4-2.8c-9.2 5.4-6.2 17.4-14.6 23.5c-2.7 1.9-2.8 4.7-.2 6c7.7 3.9 19-25.9 19.2-26.7M28.3 60.3c-.7-2-4.2-1.9-4.4.3c-.2 2.7-6.4 4.4-10.7 6.8c-.9.5-3.3 2.5-.2 5.1c3.1 2.7 17.7-5 15.3-12.2m76.2-51.5c-.9-2.7-5-2.5-4.6.8c.3 2-.6 4.6-1.6 6.4c-2.5 4.3-4.8 7.5-7.3 11.5c-1.2 1.9-2.8 6.5 2.2 6.3c4.9-.2 14.4-15.4 11.3-25m21.1 36.7c-.5-5.1-5.9-3.3-5.3-.4c1 5.4-11.6 3.3-16.6 9c-2.2 2.5-.9 6.5 3.3 7.2c4.1.5 19.7-3.8 18.6-15.8"/><path fill="#D8BDF4" d="M10.9 62.5c-.3.4-1.1.9-1.4 2.2c-.3 1.6-3.1 1.3-3.2-.4s1.2-3.4 3.3-3.6c1.6-.2 1.9 1.1 1.3 1.8m23.6 6.7c-5.3.5-6.5 5.2-6 7.2c.3 1.4 3.5 1.3 3.4-.6c0-3.3 2.7-4.4 3.3-5.1c.5-.6.1-1.6-.7-1.5m14.6-9.9c-.8 2.4-2.3 3.3-3 4.1c-1.3 1.6.9 3.6 2.6 2.5c1.3-.8 2.9-3.4 2.4-6.3c-.2-.8-1.7-1.2-2-.3M23.3 21.2c-.8-.6-5.7-2.5-8.3 1.9c-.6 1-.3 2.1.4 2.7c.8.6 2.1.5 2.6-.3c1.6-2.5 3.6-2.5 5-2.6c.7 0 1.1-1.1.3-1.7m28.2 6.3c-.2.6-2 2.2-3 2.6c-2.9 1-.9 4.5 1.3 3.1c3.3-2 3.1-4.7 3.1-5.4c.1-.8-1.1-1.2-1.4-.3M49.1 9.3c-3.4.2-3.3 3.9-3.2 5.1c.2 1.7 3.1 1.5 2.9-.3c-.2-2 .9-2.7 1.4-3.2c.7-.8-.1-1.7-1.1-1.6M43 102.1c-1.5 1.1-6.8 6.3-7.6 7.2c-1.8 1.8-2.1 4.1-1.4 5.9c.6 1.8 3.2.9 3.1-.6c-.1-1.2-.1-2.1.4-2.8s6.5-7.6 6.8-7.9c.8-1.5-.4-2.5-1.3-1.8M94.5 5.9c-3.4 2.5-3.3 5.5-3 6.8s2 .8 2.1.2c.5-2 2.6-4.5 3-5c.9-1.3-.6-3.1-2.1-2"/></svg>'
 const LINKS_ICON_SVG =
   '<svg viewBox="0 0 14 14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2"><circle cx="2.5" cy="7" r="2"/><circle cx="11.5" cy="2.5" r="2"/><circle cx="11.5" cy="11.5" r="2"/><path d="m3.71 5.41l5.85-2.43M3.71 8.59l5.85 2.43"/></g></svg>'
+const EDIT_ICON_SVG =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 21q-.825 0-1.412-.587T3 19V5q0-.825.588-1.412T5 3h8.925l-2 2H5v14h14v-6.95l2-2V19q0 .825-.587 1.413T19 21zm4-6v-4.25l9.175-9.175q.3-.3.675-.45t.75-.15q.4 0 .763.15t.662.45L22.425 3q.275.3.425.663T23 4.4t-.137.738t-.438.662L13.25 15zM21.025 4.4l-1.4-1.4zM11 13h1.4l5.8-5.8l-.7-.7l-.725-.7L11 11.575zm6.5-6.5l-.725-.7zl.7.7z"/></svg>'
 
 function registryEntryBySlug(slug) {
   if (!slug) return null
@@ -656,6 +740,7 @@ async function ensureLinksForEntry(id) {
   if (!entry.slug && !Number.isFinite(entry.lat)) return false
 
   try {
+    if (entry.slug) purgeMeshLinksTouchingSlugs([entry.slug])
     let res = null
     if (entry.slug) {
       res = await fetch(
@@ -866,7 +951,37 @@ function renderSiteRow(site) {
   label.title = site.label
   label.addEventListener('click', () => flyToSite(site.id))
 
-  li.append(visGroup, label)
+  const editableSlug = resolveEditableSiteSlug(site.slug || site.id)
+  const actions = document.createElement('div')
+  actions.className = 'site-row-actions'
+
+  if (editableSlug) {
+    const editBtn = document.createElement('button')
+    editBtn.type = 'button'
+    editBtn.className = 'site-edit-btn'
+    editBtn.title = 'Edit site'
+    editBtn.setAttribute('aria-label', `Edit ${site.label}`)
+    editBtn.innerHTML = EDIT_ICON_SVG
+    editBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation()
+      openSiteDrawer(editableSlug)
+    })
+    actions.appendChild(editBtn)
+  }
+
+  const flyBtn = document.createElement('button')
+  flyBtn.type = 'button'
+  flyBtn.className = 'site-fly-btn'
+  flyBtn.title = 'Fly to site'
+  flyBtn.setAttribute('aria-label', `Fly to ${site.label}`)
+  flyBtn.textContent = '⌖'
+  flyBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation()
+    flyToSite(site.id)
+  })
+  actions.appendChild(flyBtn)
+
+  li.append(visGroup, label, actions)
   return li
 }
 
@@ -923,6 +1038,333 @@ function setSitesPanelCollapsed(collapsed) {
   sitesPanel?.classList.toggle('collapsed', collapsed)
   sitesPanelToggle?.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
 }
+
+function resolveEditableSiteSlug(id) {
+  const raw = String(id || '').trim()
+  if (!raw) return null
+  if (raw.startsWith('goal:')) {
+    const key = raw.slice(5)
+    return presetSiteSlugs.has(key) ? key : null
+  }
+  return presetSiteSlugs.has(raw) ? raw : null
+}
+
+function showBundleGoalToast() {
+  setStatus('error', 'Strategy goal — edit in preset bundle config')
+  window.setTimeout(() => setStatus('idle', 'idle'), 3200)
+}
+
+function renderSiteRfList(el, items) {
+  if (!el) return
+  el.innerHTML = ''
+  const list = items || []
+  if (!list.length) {
+    const li = document.createElement('li')
+    li.className = 'empty'
+    li.textContent = '—'
+    el.appendChild(li)
+    return
+  }
+  for (const item of list) {
+    const li = document.createElement('li')
+    li.textContent = item
+    el.appendChild(li)
+  }
+}
+
+function renderSiteSeesChips() {
+  if (!siteSeesChipsEl) return
+  siteSeesChipsEl.innerHTML = ''
+  for (const slug of siteDrawerSees) {
+    const chip = document.createElement('span')
+    chip.className = 'site-sees-chip'
+    const label = document.createElement('span')
+    label.textContent = slug
+    const removeBtn = document.createElement('button')
+    removeBtn.type = 'button'
+    removeBtn.setAttribute('aria-label', `Remove ${slug}`)
+    removeBtn.textContent = '×'
+    removeBtn.addEventListener('click', () => {
+      siteDrawerSees = siteDrawerSees.filter((s) => s !== slug)
+      renderSiteSeesChips()
+      refreshSiteSeesAddOptions()
+    })
+    chip.append(label, removeBtn)
+    siteSeesChipsEl.appendChild(chip)
+  }
+}
+
+function refreshSiteSeesAddOptions() {
+  if (!siteSeesAddEl) return
+  const current = siteSeesAddEl.value
+  siteSeesAddEl.replaceChildren()
+  const blank = document.createElement('option')
+  blank.value = ''
+  blank.textContent = '— select site —'
+  siteSeesAddEl.appendChild(blank)
+  for (const slug of siteDrawerPeerSlugs) {
+    if (siteDrawerSees.includes(slug)) continue
+    const opt = document.createElement('option')
+    opt.value = slug
+    opt.textContent = slug
+    siteSeesAddEl.appendChild(opt)
+  }
+  siteSeesAddEl.value = current && [...siteSeesAddEl.options].some((o) => o.value === current) ? current : ''
+}
+
+function syncSiteDrawerTypeUi() {
+  const isGoal = siteFieldTypeEl?.value === 'goal'
+  if (siteDrawerRfSectionEl) siteDrawerRfSectionEl.hidden = isGoal
+  if (siteDrawerGoalNoteEl) siteDrawerGoalNoteEl.hidden = !isGoal
+}
+
+function populateSiteDrawer(detail) {
+  siteDrawerOriginal = {
+    slug: detail.slug,
+    name: detail.name,
+    type: detail.type,
+    lat: detail.lat,
+    lon: detail.lon,
+    elevation_m: detail.elevation_m ?? null,
+    description: detail.description ?? '',
+    plss: detail.plss ?? '',
+    mlrs: detail.mlrs ?? '',
+    rationale: detail.rationale ?? '',
+    sees: [...(detail.sees || [])],
+  }
+  siteDrawerSees = [...siteDrawerOriginal.sees]
+  siteDrawerPeerSlugs = [...(detail.peer_slugs || [])]
+
+  if (siteDrawerTitleEl) siteDrawerTitleEl.textContent = detail.name || detail.slug
+  if (siteFieldSlugEl) siteFieldSlugEl.value = detail.slug
+  if (siteFieldNameEl) siteFieldNameEl.value = detail.name || ''
+  if (siteFieldTypeEl) siteFieldTypeEl.value = detail.type || 'installed'
+  if (siteFieldLatEl) siteFieldLatEl.value = detail.lat
+  if (siteFieldLonEl) siteFieldLonEl.value = detail.lon
+  if (siteFieldElevationEl) {
+    siteFieldElevationEl.value = detail.elevation_m != null ? String(detail.elevation_m) : ''
+  }
+  if (siteFieldDescriptionEl) siteFieldDescriptionEl.value = detail.description || ''
+  if (siteFieldRationaleEl) siteFieldRationaleEl.value = detail.rationale || ''
+  if (siteFieldPlssEl) siteFieldPlssEl.value = detail.plss || ''
+  if (siteFieldMlrsEl) siteFieldMlrsEl.value = detail.mlrs || ''
+
+  renderSiteRfList(siteRfPeersEl, detail.rf_peers)
+  renderSiteRfList(siteSeesMutualEl, detail.sees_mutual)
+  renderSiteRfList(siteSeesPendingEl, detail.sees_pending)
+  renderSiteSeesChips()
+  refreshSiteSeesAddOptions()
+  syncSiteDrawerTypeUi()
+
+  if (siteDrawerErrorEl) siteDrawerErrorEl.hidden = true
+  if (siteDrawerRebuildNoteEl) siteDrawerRebuildNoteEl.hidden = true
+}
+
+function setSidebarTab(tab) {
+  const next = tab === 'info' ? 'info' : 'agent'
+  sidebarActiveTab = next
+  const isInfo = next === 'info'
+
+  sidebarTabInfoBtn?.classList.toggle('active', isInfo)
+  sidebarTabAgentBtn?.classList.toggle('active', !isInfo)
+  sidebarTabInfoBtn?.setAttribute('aria-selected', isInfo ? 'true' : 'false')
+  sidebarTabAgentBtn?.setAttribute('aria-selected', isInfo ? 'false' : 'true')
+
+  if (sidebarPanelInfoEl) {
+    sidebarPanelInfoEl.hidden = !isInfo
+    sidebarPanelInfoEl.classList.toggle('active', isInfo)
+  }
+  if (sidebarPanelAgentEl) {
+    sidebarPanelAgentEl.hidden = isInfo
+    sidebarPanelAgentEl.classList.toggle('active', !isInfo)
+  }
+}
+
+function setSiteDrawerOpen(open) {
+  if (siteDrawerEl) siteDrawerEl.hidden = !open
+  if (!open) {
+    siteDrawerSlug = null
+    siteDrawerOriginal = null
+  }
+}
+
+async function openSiteDrawer(slug) {
+  if (!currentProjectSlug || !slug) return
+  setSidebarTab('info')
+  siteDrawerSlug = slug
+  setSiteDrawerOpen(true)
+  if (siteDrawerSaveBtn) siteDrawerSaveBtn.disabled = true
+  try {
+    const res = await fetch(
+      `/api/projects/${encodeURIComponent(currentProjectSlug)}/sites/${encodeURIComponent(slug)}`,
+    )
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    const detail = await res.json()
+    populateSiteDrawer(detail)
+  } catch (err) {
+    setSiteDrawerOpen(false)
+    setStatus('error', String(err.message || err))
+    return
+  } finally {
+    if (siteDrawerSaveBtn) siteDrawerSaveBtn.disabled = false
+  }
+}
+
+function closeSiteDrawer() {
+  setSiteDrawerOpen(false)
+}
+
+function siteDrawerPatchBody() {
+  const orig = siteDrawerOriginal
+  if (!orig) return null
+  const body = {}
+  const slugVal = (siteFieldSlugEl?.value || '').trim()
+  if (slugVal && slugVal !== orig.slug) body.new_slug = slugVal
+
+  const nameVal = (siteFieldNameEl?.value || '').trim()
+  if (nameVal !== orig.name) body.name = nameVal
+
+  const typeVal = siteFieldTypeEl?.value || 'installed'
+  if (typeVal !== orig.type) body.type = typeVal
+
+  const latVal = parseFloat(siteFieldLatEl?.value)
+  const lonVal = parseFloat(siteFieldLonEl?.value)
+  if (Number.isFinite(latVal) && latVal !== orig.lat) body.lat = latVal
+  if (Number.isFinite(lonVal) && lonVal !== orig.lon) body.lon = lonVal
+
+  for (const [key, el, origKey] of [
+    ['description', siteFieldDescriptionEl, 'description'],
+    ['rationale', siteFieldRationaleEl, 'rationale'],
+  ]) {
+    const val = (el?.value || '').trim()
+    const origVal = (orig[origKey] || '').trim()
+    if (val !== origVal) body[key] = val || null
+  }
+
+  if (typeVal !== 'goal') {
+    const seesSorted = [...siteDrawerSees].sort()
+    const origSees = [...orig.sees].sort()
+    if (JSON.stringify(seesSorted) !== JSON.stringify(origSees)) {
+      body.sees = siteDrawerSees
+    }
+  }
+
+  return Object.keys(body).length ? body : null
+}
+
+async function saveSiteDrawer(ev) {
+  ev?.preventDefault()
+  if (!currentProjectSlug || !siteDrawerSlug || siteDrawerBusy) return
+  const body = siteDrawerPatchBody()
+  if (!body) {
+    closeSiteDrawer()
+    return
+  }
+
+  const locChanged = 'lat' in body || 'lon' in body
+
+  siteDrawerBusy = true
+  if (siteDrawerSaveBtn) siteDrawerSaveBtn.disabled = true
+  if (siteDrawerErrorEl) siteDrawerErrorEl.hidden = true
+  setStatus('running', 'saving site…')
+
+  try {
+    const res = await fetch(
+      `/api/projects/${encodeURIComponent(currentProjectSlug)}/sites/${encodeURIComponent(siteDrawerSlug)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    )
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(payload.detail || `HTTP ${res.status}`)
+
+    if (patchAffectsMeshLinks(body)) {
+      purgeMeshLinksTouchingSlugs(meshLinkSlugsAffectedByPatch(body, siteDrawerSlug))
+    }
+
+    const savedSlug = payload.slug || siteDrawerSlug
+    await loadContext(currentProjectSlug)
+    await openSiteDrawer(savedSlug)
+    setStatus('idle', locChanged ? 'site saved — rebuild viewshed if needed' : 'site saved')
+    if (locChanged) {
+      window.setTimeout(() => setStatus('idle', 'idle'), 3200)
+    }
+  } catch (err) {
+    if (siteDrawerErrorEl) {
+      siteDrawerErrorEl.textContent = String(err.message || err)
+      siteDrawerErrorEl.hidden = false
+    }
+    setStatus('error', 'save failed')
+  } finally {
+    siteDrawerBusy = false
+    if (siteDrawerSaveBtn) siteDrawerSaveBtn.disabled = false
+  }
+}
+
+async function deleteSiteDrawer() {
+  if (!currentProjectSlug || !siteDrawerSlug || siteDrawerBusy) return
+  const name = siteFieldNameEl?.value || siteDrawerSlug
+  if (!window.confirm(`Delete site “${name}” from preset?`)) return
+
+  siteDrawerBusy = true
+  if (siteDrawerDeleteBtn) siteDrawerDeleteBtn.disabled = true
+  setStatus('running', 'deleting site…')
+
+  try {
+    const res = await fetch(
+      `/api/projects/${encodeURIComponent(currentProjectSlug)}/sites/${encodeURIComponent(siteDrawerSlug)}`,
+      { method: 'DELETE' },
+    )
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(payload.detail || `HTTP ${res.status}`)
+
+    purgeMeshLinksTouchingSlugs(meshLinkSlugsAffectedByPatch({ sees: siteDrawerOriginal?.sees }, siteDrawerSlug))
+
+    closeSiteDrawer()
+    await loadContext(currentProjectSlug)
+    setSidebarTab('info')
+    setStatus('idle', 'site deleted')
+  } catch (err) {
+    if (siteDrawerErrorEl) {
+      siteDrawerErrorEl.textContent = String(err.message || err)
+      siteDrawerErrorEl.hidden = false
+    }
+    setStatus('error', 'delete failed')
+  } finally {
+    siteDrawerBusy = false
+    if (siteDrawerDeleteBtn) siteDrawerDeleteBtn.disabled = false
+  }
+}
+
+function handleMapSiteClick(ev) {
+  const layers = ['sites-layer', 'sites-labels-layer', 'goals-layer'].filter((id) => map.getLayer(id))
+  if (!layers.length) return
+  const features = map.queryRenderedFeatures(ev.point, { layers })
+  if (!features.length) return
+  const id = features[0]?.properties?.id
+  const slug = resolveEditableSiteSlug(id)
+  if (slug) openSiteDrawer(slug)
+  else if (id) showBundleGoalToast()
+}
+
+siteDrawerFormEl?.addEventListener('submit', saveSiteDrawer)
+siteDrawerDeleteBtn?.addEventListener('click', deleteSiteDrawer)
+sidebarTabInfoBtn?.addEventListener('click', () => setSidebarTab('info'))
+sidebarTabAgentBtn?.addEventListener('click', () => setSidebarTab('agent'))
+siteFieldTypeEl?.addEventListener('change', syncSiteDrawerTypeUi)
+siteSeesAddEl?.addEventListener('change', () => {
+  const slug = siteSeesAddEl.value
+  if (!slug || siteDrawerSees.includes(slug)) return
+  siteDrawerSees.push(slug)
+  siteSeesAddEl.value = ''
+  renderSiteSeesChips()
+  refreshSiteSeesAddOptions()
+})
 
 function removeBasemapReference() {
   if (map.getLayer(BASEMAP_REFERENCE_LAYER)) map.removeLayer(BASEMAP_REFERENCE_LAYER)
@@ -1769,10 +2211,12 @@ async function loadContext(slug) {
   if (projectChanged) {
     finalizePendingChatTurn()
     resetChatHistory()
+    closeSiteDrawer()
   }
   clearOverlayLayers()
   const res = await fetch(`/api/projects/${slug}/context`)
   const ctx = await res.json()
+  presetSiteSlugs = new Set((ctx.sites || []).map((s) => s.slug))
   resetSitesPanel(ctx.sites, ctx.goals)
 
   for (const g of ctx.goals || []) {
@@ -1994,6 +2438,7 @@ map.on('load', async () => {
   mapReady = true
   setBasemap(basemapSel.value)
   hookCompassReset()
+  map.on('click', handleMapSiteClick)
   try {
     await ensureMarkerImages()
   } catch (err) {

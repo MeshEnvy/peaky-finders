@@ -9,7 +9,14 @@ from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.bundle_build import load_composite_aoi_polygon
+from peaky_finders.site_suggestions.rf_link import rf_mutual_link_slug_pairs_from_site
 from peaky_finders.sites_job import SiteType, load_preset, peaky_projects_dir, resolved_preset_bundle_data_dir
+from peaky_finders.web.site_preset_io import (
+    delete_site_from_preset,
+    get_site_from_preset,
+    update_site_in_preset,
+)
+from peaky_finders.site_metadata_enrich import enrich_all_preset_sites, resolve_site_metadata
 
 _GEOCODE_AOI_CACHE: dict[str, tuple[float, list[float] | None, BaseGeometry | None]] = {}
 
@@ -58,6 +65,7 @@ def project_context(slug: str) -> dict[str, Any]:
     cfg = root / slug / "config.yaml"
     if not cfg.is_file():
         raise FileNotFoundError(f"project not found: {slug!r}")
+    enrich_all_preset_sites(cfg, allow_network_plss=True)
     preset = load_preset(cfg)
     sites = [
         {
@@ -149,3 +157,83 @@ def project_geocode_aoi(slug: str) -> tuple[list[float] | None, BaseGeometry | N
 
 def clear_project_geocode_aoi_cache() -> None:
     _GEOCODE_AOI_CACHE.clear()
+
+
+def _project_config_path(slug: str) -> Path:
+    cfg = peaky_projects_dir() / slug / "config.yaml"
+    if not cfg.is_file():
+        raise FileNotFoundError(f"project not found: {slug!r}")
+    return cfg
+
+
+def _sees_mutual_and_pending(
+    site_slug: str,
+    sees: list[str],
+    sees_by_slug: dict[str, list[str]],
+) -> tuple[list[str], list[str]]:
+    mutual: list[str] = []
+    pending: list[str] = []
+    for target in sees:
+        if target == site_slug:
+            continue
+        reciprocal = {str(t).strip() for t in sees_by_slug.get(target, ())}
+        if site_slug in reciprocal:
+            mutual.append(target)
+        else:
+            pending.append(target)
+    return sorted(mutual), sorted(pending)
+
+
+def _rf_peers_for_site(preset, site_slug: str) -> list[str]:
+    site = preset.sites.get(site_slug)
+    if site is None or not site.participates_in_rf:
+        return []
+    peers: set[str] = set()
+    for slug_a, slug_b in rf_mutual_link_slug_pairs_from_site(
+        preset,
+        from_slug=site_slug,
+        from_lat=float(site.lat),
+        from_lon=float(site.lon),
+    ):
+        peers.add(slug_b if slug_a == site_slug else slug_a)
+    return sorted(peers)
+
+
+def project_site_detail(slug: str, site_slug: str) -> dict[str, Any]:
+    """Full site record plus RF / ``sees`` helper lists."""
+    cfg = _project_config_path(slug)
+    base = get_site_from_preset(cfg, site_slug)
+    preset = load_preset(cfg)
+    sees_by_slug = {s: list(e.sees) for s, e in preset.sites.items()}
+    mutual, pending = _sees_mutual_and_pending(site_slug, base["sees"], sees_by_slug)
+    peer_slugs = sorted(
+        s for s, e in preset.sites.items() if s != site_slug and e.participates_in_rf
+    )
+    return {
+        **base,
+        "rf_peers": _rf_peers_for_site(preset, site_slug),
+        "sees_mutual": mutual,
+        "sees_pending": pending,
+        "peer_slugs": peer_slugs,
+    }
+
+
+def patch_project_site(slug: str, site_slug: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Update preset site; return refreshed detail."""
+    cfg = _project_config_path(slug)
+    patch = dict(body)
+    new_slug_raw = patch.pop("new_slug", None)
+    new_slug: str | None = None
+    if new_slug_raw is not None:
+        new_slug = str(new_slug_raw).strip() or None
+    loc_changed = "lat" in patch or "lon" in patch
+    effective = update_site_in_preset(cfg, site_slug, patch, new_slug=new_slug)
+    if loc_changed:
+        resolve_site_metadata(cfg, site_slug=effective, force=True, allow_network_plss=True)
+    return project_site_detail(slug, effective)
+
+
+def remove_project_site(slug: str, site_slug: str) -> None:
+    """Delete preset site."""
+    cfg = _project_config_path(slug)
+    delete_site_from_preset(cfg, site_slug)
