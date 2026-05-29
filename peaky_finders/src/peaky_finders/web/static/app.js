@@ -14,6 +14,7 @@ const chatContextPct = document.getElementById('chat-context-pct')
 const chatContextTrack = document.getElementById('chat-context-track')
 const chatContextNote = document.getElementById('chat-context-note')
 const chatSummarizeBtn = document.getElementById('chat-summarize')
+const chatCopyContextBtn = document.getElementById('chat-copy-context')
 
 const chatHistory = []
 const chatMapPins = new Map()
@@ -1009,6 +1010,55 @@ function chatContextPayload(pendingMessage = '') {
   }
 }
 
+function buildChatContextExport() {
+  const payload = {
+    exported_at: new Date().toISOString(),
+    ...chatContextPayload(),
+    context_window: { ...chatContextState },
+  }
+  if (pendingChatTurn && !pendingChatTurn.committed) {
+    payload.pending_turn = {
+      user: pendingChatTurn.userText,
+      assistant: pendingChatTurn.assistantText || null,
+      cancelled: pendingChatTurn.cancelled,
+      errored: pendingChatTurn.errored,
+    }
+  }
+  return payload
+}
+
+let chatCopyContextResetTimer = null
+
+function flashChatCopyContextFeedback() {
+  if (!chatCopyContextBtn) return
+  chatCopyContextBtn.classList.add('copied')
+  chatCopyContextBtn.title = 'Copied!'
+  if (chatCopyContextResetTimer) clearTimeout(chatCopyContextResetTimer)
+  chatCopyContextResetTimer = setTimeout(() => {
+    chatCopyContextResetTimer = null
+    chatCopyContextBtn.classList.remove('copied')
+    chatCopyContextBtn.title = 'Copy context as JSON'
+  }, 1500)
+}
+
+async function copyChatContextJson() {
+  const json = JSON.stringify(buildChatContextExport(), null, 2)
+  try {
+    await navigator.clipboard.writeText(json)
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = json
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    ta.remove()
+  }
+  flashChatCopyContextFeedback()
+}
+
 function formatTokenCount(n) {
   const v = Number(n)
   if (!Number.isFinite(v) || v < 0) return '—'
@@ -1333,6 +1383,10 @@ chatForm.addEventListener('submit', (ev) => {
 
 chatSummarizeBtn?.addEventListener('click', () => {
   void summarizeChatContext({ announce: true })
+})
+
+chatCopyContextBtn?.addEventListener('click', () => {
+  void copyChatContextJson()
 })
 
 chatInput?.addEventListener('input', () => {

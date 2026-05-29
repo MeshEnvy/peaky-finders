@@ -20,7 +20,7 @@
       href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
       rel="stylesheet"
     />
-    <link href="/styles.css?v=7" rel="stylesheet" />
+    <link href="/styles.css?v=8" rel="stylesheet" />
   </head>
   <body>
     <div class="app">
@@ -97,6 +97,15 @@
           <div id="chat-context" class="chat-context" aria-live="polite">
             <div class="chat-context-row">
               <span class="chat-context-label">Context</span>
+              <button
+                id="chat-copy-context"
+                type="button"
+                class="chat-copy-context"
+                title="Copy context as JSON"
+                aria-label="Copy context as JSON"
+              >
+                {}
+              </button>
               <span id="chat-context-detail" class="chat-context-detail">—</span>
               <span id="chat-context-pct" class="chat-context-pct">0%</span>
             </div>
@@ -129,6 +138,6 @@
     </div>
 
     <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-    <script src="/app.js?v=28"></script>
+    <script src="/app.js?v=29"></script>
   </body>
 </html>

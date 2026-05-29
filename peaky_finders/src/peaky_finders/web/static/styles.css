@@ -387,6 +387,35 @@ select option {
   color: var(--text-dim);
 }
 
+.chat-copy-context {
+  flex-shrink: 0;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.08);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.chat-copy-context:hover {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #bae6fd;
+}
+
+.chat-copy-context.copied {
+  border-color: rgba(74, 222, 128, 0.45);
+  color: #86efac;
+}
+
 .chat-context-detail {
   flex: 1;
   min-width: 0;
