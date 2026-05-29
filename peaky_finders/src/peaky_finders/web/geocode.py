@@ -7,7 +7,8 @@ from urllib.parse import urlencode
 
 import httpx
 
-NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "PeakyWeb/1.0 (mesh site planning)"
 
 PEAK_TYPES = frozenset({"peak", "volcano", "ridge", "hill", "mountain"})
@@ -103,7 +104,7 @@ def geocode_place(
             params["bounded"] = 1
 
     headers = {"User-Agent": USER_AGENT}
-    url = f"{NOMINATIM_URL}?{urlencode(params)}"
+    url = f"{NOMINATIM_SEARCH_URL}?{urlencode(params)}"
     try:
         with httpx.Client(timeout=timeout_s, headers=headers) as client:
             resp = client.get(url)
@@ -175,3 +176,55 @@ def geocode_place_ranked(
         "best": best,
         "hint": hint,
     }
+
+
+def reverse_geocode_label(
+    lat: float,
+    lon: float,
+    *,
+    timeout_s: float = 12.0,
+) -> str:
+    """Short OSM label for a coordinate (peak / place name when available)."""
+    params = {
+        "lat": f"{float(lat):.6f}",
+        "lon": f"{float(lon):.6f}",
+        "format": "json",
+        "zoom": 18,
+        "addressdetails": 1,
+    }
+    headers = {"User-Agent": USER_AGENT}
+    url = f"{NOMINATIM_REVERSE_URL}?{urlencode(params)}"
+    try:
+        with httpx.Client(timeout=timeout_s, headers=headers) as client:
+            resp = client.get(url)
+    except httpx.HTTPError as exc:
+        raise GeocodeError(f"reverse geocode request failed: {exc}") from exc
+
+    if resp.status_code >= 400:
+        raise GeocodeError(f"reverse geocode HTTP {resp.status_code}")
+
+    data = resp.json()
+    if not isinstance(data, dict):
+        raise GeocodeError("unexpected reverse geocode response")
+
+    osm_class = str(data.get("class") or "")
+    osm_type = str(data.get("type") or "")
+    if osm_class == "natural" and osm_type in PEAK_TYPES:
+        name = str(data.get("name") or "").strip()
+        if name:
+            return name
+
+    address = data.get("address")
+    if isinstance(address, dict):
+        for key in ("peak", "mountain", "ridge", "volcano", "hill"):
+            val = address.get(key)
+            if val:
+                return str(val).strip()
+
+    name = str(data.get("name") or "").strip()
+    if name and osm_type not in {"county", "state", "administrative"}:
+        return name
+    display = str(data.get("display_name") or "").strip()
+    if display:
+        return display.split(",")[0].strip()
+    raise GeocodeError("reverse geocode returned no label")

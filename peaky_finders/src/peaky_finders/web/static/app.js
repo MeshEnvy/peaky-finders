@@ -107,6 +107,7 @@ let projectMeshScopeBbox = null
 let terrainActive = false
 
 const MESH_SCOPE_LAYER_IDS = ['goals', 'sites', 'trials', 'committed', 'mesh_links', 'viewsheds']
+const MAP_PIN_LAYER_IDS = ['goals', 'sites', 'trials']
 const MESH_SCOPE_FIT = { padding: 64, bearing: 0, pitch: 0, maxZoom: 15 }
 
 function ensureTerrainSource() {
@@ -145,12 +146,17 @@ function removeTerrainSource() {
 function overlayLayerIds() {
   const ids = []
   for (const layerId of MESH_SCOPE_LAYER_IDS) {
+    if (MAP_PIN_LAYER_IDS.includes(layerId)) continue
     const entry = layers.get(layerId)
     if (entry?.layer && map.getLayer(entry.layer)) ids.push(entry.layer)
     if (entry?.outline && map.getLayer(entry.outline)) ids.push(entry.outline)
   }
   for (const { layerId } of viewshedRasterLayers) {
     if (map.getLayer(layerId)) ids.push(layerId)
+  }
+  for (const layerId of MAP_PIN_LAYER_IDS) {
+    const entry = layers.get(layerId)
+    if (entry?.layer && map.getLayer(entry.layer)) ids.push(entry.layer)
   }
   return ids
 }
@@ -490,6 +496,7 @@ function flushPinLayer(layerId) {
     if (key.startsWith(prefix)) features.push(feature)
   }
   map.getSource(ids.source).setData({ type: 'FeatureCollection', features })
+  raiseOverlayLayers()
 }
 
 function setStatus(state, label) {
@@ -903,6 +910,46 @@ function rememberChatTurn(userText, assistantText) {
   scheduleChatContextRefresh('')
 }
 
+let pendingChatTurn = null
+
+function startPendingChatTurn(userText) {
+  pendingChatTurn = {
+    userText: String(userText || '').trim(),
+    assistantText: '',
+    errored: false,
+    cancelled: false,
+    committed: false,
+  }
+}
+
+function syncPendingAssistantText(text) {
+  if (!pendingChatTurn || pendingChatTurn.committed) return
+  pendingChatTurn.assistantText = String(text || '').trim()
+}
+
+function markPendingChatTurnCancelled() {
+  if (pendingChatTurn) pendingChatTurn.cancelled = true
+}
+
+function markPendingChatTurnErrored() {
+  if (pendingChatTurn) pendingChatTurn.errored = true
+}
+
+function commitPendingChatTurn() {
+  if (!pendingChatTurn || pendingChatTurn.committed || pendingChatTurn.cancelled || pendingChatTurn.errored) {
+    return
+  }
+  const { userText, assistantText } = pendingChatTurn
+  if (!userText) return
+  pendingChatTurn.committed = true
+  rememberChatTurn(userText, assistantText)
+}
+
+function finalizePendingChatTurn() {
+  commitPendingChatTurn()
+  pendingChatTurn = null
+}
+
 function chatContextPayload(pendingMessage = '') {
   return {
     project_slug: projectSel.value || null,
@@ -1016,9 +1063,13 @@ async function loadProjects() {
 }
 
 async function loadContext(slug) {
+  const projectChanged = currentProjectSlug !== slug
   currentProjectSlug = slug
   projectMeshScopeBbox = null
-  resetChatHistory()
+  if (projectChanged) {
+    finalizePendingChatTurn()
+    resetChatHistory()
+  }
   clearOverlayLayers()
   const res = await fetch(`/api/projects/${slug}/context`)
   const ctx = await res.json()
@@ -1048,6 +1099,7 @@ function stopChatAgent() {
 }
 
 async function sendChatMessage(text) {
+  finalizePendingChatTurn()
   const mySeq = ++chatRequestSeq
   chatAbortController?.abort()
 
@@ -1066,6 +1118,7 @@ async function sendChatMessage(text) {
   finishPendingToolCalls('—')
 
   appendChat(text, 'user', 'You')
+  startPendingChatTurn(text)
   setChatComposerBusy(true)
   setChatPending(true)
   setStatus('thinking', 'thinking')
@@ -1089,16 +1142,38 @@ async function sendChatMessage(text) {
       signal: chatAbortController.signal,
     })
     if (!res.ok) {
+      markPendingChatTurnErrored()
       const payload = await res.json().catch(() => null)
       const detail = payload?.detail || res.statusText || 'Chat request failed'
       appendChat(String(detail), 'error', 'Error')
       return
     }
     await consumeChatStream(res, (msg) => {
+      if (msg.op === 'chat.cancelled') {
+        wasCancelled = true
+        markPendingChatTurnCancelled()
+        return
+      }
+      if (msg.op === 'chat.error') {
+        hadChatError = true
+        markPendingChatTurnErrored()
+        if (mySeq === chatRequestSeq) appendChat(String(msg.message), 'error', 'Error')
+        return
+      }
+      if (msg.op === 'chat.done') {
+        if (mySeq === chatRequestSeq) setChatPendingLabel('')
+        if (!wasCancelled && !hadChatError) {
+          syncPendingAssistantText(assistantBody?.textContent || '')
+          commitPendingChatTurn()
+        }
+        return
+      }
       if (mySeq !== chatRequestSeq) return
       if (msg.op === 'chat.started') {
         setChatPendingLabel('Waiting for model')
         if (msg.context) applyChatContext(msg.context)
+      } else if (msg.op === 'chat.status') {
+        setChatPendingLabel(String(msg.text || 'Working…'))
       } else if (msg.op === 'chat.thinking.delta') {
         if (!thinkingBody) {
           const block = beginThinkingBlock()
@@ -1110,12 +1185,8 @@ async function sendChatMessage(text) {
       } else if (msg.op === 'chat.delta') {
         if (!assistantBody) assistantBody = beginAssistantReply()
         assistantBody.textContent += msg.text
+        syncPendingAssistantText(assistantBody.textContent)
         chatEl.scrollTop = chatEl.scrollHeight
-      } else if (msg.op === 'chat.cancelled') {
-        wasCancelled = true
-      } else if (msg.op === 'chat.error') {
-        hadChatError = true
-        appendChat(String(msg.message), 'error', 'Error')
       } else if (msg.op.startsWith('map.')) {
         routeOp(msg)
       } else if (msg.op === 'chat.tool_call' || msg.op === 'chat.tool_result') {
@@ -1130,23 +1201,27 @@ async function sendChatMessage(text) {
       appendChat('Stopped.', 'system', 'System')
       scheduleChatContextRefresh('')
     } else if (!hadChatError) {
-      rememberChatTurn(text, assistantBody?.textContent || '')
+      syncPendingAssistantText(assistantBody?.textContent || '')
+      commitPendingChatTurn()
     } else {
       scheduleChatContextRefresh('')
     }
   } catch (err) {
     if (mySeq !== chatRequestSeq) return
     if (err?.name === 'AbortError') {
+      markPendingChatTurnCancelled()
       finishPendingToolCalls()
       thinkingDetails?.classList.remove('streaming')
       assistantBody?.closest('.msg')?.classList.remove('streaming')
       appendChat('Stopped.', 'system', 'System')
       scheduleChatContextRefresh('')
     } else {
+      markPendingChatTurnErrored()
       appendChat(String(err), 'error', 'Error')
     }
   } finally {
     if (mySeq !== chatRequestSeq) return
+    pendingChatTurn = null
     chatAbortController = null
     setChatPending(false)
     setChatComposerBusy(false)

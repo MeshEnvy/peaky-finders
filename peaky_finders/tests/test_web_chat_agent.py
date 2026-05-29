@@ -11,7 +11,13 @@ from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import 
     stream_chat_completions_turn,
 )
 from peaky_finders.web.chat_agent import stream_web_chat
-from peaky_finders.web.chat_tools import WebChatContext, dispatch_web_tool, lookup_map_pin, normalize_map_pins
+from peaky_finders.web.chat_tools import (
+    WebChatContext,
+    dispatch_web_tool,
+    lookup_map_pin,
+    normalize_map_pins,
+    web_chat_system_prompt,
+)
 from peaky_finders.web.geocode import geocode_place
 
 
@@ -100,6 +106,111 @@ def test_geocode_place_parses_nominatim_payload() -> None:
     assert hits[0]["bbox"] == [-119.98, 39.55, -119.91, 39.63]
 
 
+def test_web_chat_system_prompt_requires_dem_for_peaks() -> None:
+    prompt = web_chat_system_prompt(project_slug="nevada")
+    assert "query_project_dem_highest" in prompt
+    assert "Never state which peak is highest" in prompt
+
+
+def test_query_project_dem_highest_tool() -> None:
+    emitted: list[tuple[str, dict]] = []
+    ctx = WebChatContext(project_slug="nevada", emit=lambda op, **kw: emitted.append((op, kw)))
+    dem_hit = {
+        "scope": "project bundle AOI",
+        "project": "nevada",
+        "lat": 37.846,
+        "lon": -118.325,
+        "elev_m": 4005.0,
+        "elev_ft": 13140.0,
+        "place_label": "Boundary Peak",
+        "source": "Skadi SRTM (1 arc-second) highest cell in search polygon",
+    }
+    with patch(
+        "peaky_finders.web.chat_tools.query_project_dem_highest",
+        return_value=dem_hit,
+    ):
+        result = dispatch_web_tool("query_project_dem_highest", {}, ctx=ctx)
+    assert result["elev_ft"] == 13140.0
+    assert result["place_label"] == "Boundary Peak"
+    assert "pin_id" in result
+    assert any(op == "map.pin" for op, _ in emitted)
+
+
+def test_query_project_dem_highest_requires_project() -> None:
+    ctx = WebChatContext(project_slug=None)
+    result = dispatch_web_tool("query_project_dem_highest", {}, ctx=ctx)
+    assert "select a project" in result["error"]
+
+
+def test_stream_web_chat_dem_highest_tool_loop() -> None:
+    dem_payload = {
+        "scope": "project bundle AOI",
+        "project": "nevada",
+        "lat": 37.846,
+        "lon": -118.325,
+        "elev_m": 4005.0,
+        "elev_ft": 13140.0,
+        "place_label": "Boundary Peak",
+    }
+    responses = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "d1",
+                                "function": {
+                                    "name": "query_project_dem_highest",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        },
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            "Boundary Peak is the highest DEM point in the Nevada project AOI "
+                            "at about 13,140 ft."
+                        ),
+                    }
+                }
+            ]
+        },
+    ]
+
+    def fake_client(**kwargs: object) -> dict:
+        return responses.pop(0)
+
+    with patch("peaky_finders.web.chat_agent.ollama_health_ok", return_value=True), patch(
+        "peaky_finders.web.chat_agent.resolve_ollama_config",
+    ) as cfg, patch(
+        "peaky_finders.web.chat_tools.query_project_dem_highest",
+        return_value=dem_payload,
+    ):
+        cfg.return_value.ollama_base_url = "http://ollama"
+        cfg.return_value.ollama_model = "test"
+        cfg.return_value.temperature = 0.2
+        events = list(
+            stream_web_chat(
+                "what's the highest peak in NV?",
+                project_slug="nevada",
+                chat_client=fake_client,
+            )
+        )
+
+    assert any(e.get("op") == "chat.tool_call" and e.get("name") == "query_project_dem_highest" for e in events)
+    assert any(
+        e.get("op") == "chat.delta" and "Boundary" in e.get("text", "") for e in events
+    )
+
+
 def test_geocode_call_limit() -> None:
     ctx = WebChatContext(project_slug="nevada")
     hit = {
@@ -126,7 +237,7 @@ def test_show_on_map_ok_when_viewshed_fails() -> None:
         "peaky_finders.web.chat_tools.ensure_chat_site_in_preset",
         return_value="chat-abc",
     ), patch(
-        "peaky_finders.web.chat_tools.ensure_site_viewshed",
+        "peaky_finders.web.chat_tools.ensure_point_viewshed",
         side_effect=RuntimeError("viewshed boom"),
     ):
         result = dispatch_web_tool(
@@ -163,7 +274,7 @@ def test_show_on_map_emits_pin_and_viewshed() -> None:
         "peaky_finders.web.chat_tools.ensure_chat_site_in_preset",
         return_value="chat-peavine",
     ), patch(
-        "peaky_finders.web.chat_tools.ensure_site_viewshed",
+        "peaky_finders.web.chat_tools.ensure_point_viewshed",
         return_value=viewshed_rec,
     ):
         result = dispatch_web_tool(
@@ -276,7 +387,7 @@ def test_stream_web_chat_tool_loop() -> None:
         "peaky_finders.web.chat_tools.ensure_chat_site_in_preset",
         return_value="chat-x",
     ), patch(
-        "peaky_finders.web.chat_tools.ensure_site_viewshed",
+        "peaky_finders.web.chat_tools.ensure_point_viewshed",
         return_value={"slug": "chat-x", "url": "/u", "coordinates": []},
     ):
         cfg.return_value.ollama_base_url = "http://ollama"
@@ -332,7 +443,7 @@ def test_show_on_map_resolves_pin_id_from_map_state() -> None:
         "peaky_finders.web.chat_tools.ensure_chat_site_in_preset",
         return_value="chat-baf9c0cfa4c4",
     ), patch(
-        "peaky_finders.web.chat_tools.ensure_site_viewshed",
+        "peaky_finders.web.chat_tools.ensure_point_viewshed",
         return_value=viewshed_rec,
     ) as ensure:
         result = dispatch_web_tool(
@@ -344,7 +455,7 @@ def test_show_on_map_resolves_pin_id_from_map_state() -> None:
     assert result["ok"] is True
     assert result["lat"] == 36.2716284
     assert result["lon"] == -115.6954918
-    ensure.assert_called_once_with(project_slug="nevada", site_slug="chat-baf9c0cfa4c4")
+    ensure.assert_called_once_with(project_slug="nevada", lat=36.2716284, lon=-115.6954918)
     viewshed_emits = [payload for op, payload in emitted if op == "map.viewshed"]
     assert len(viewshed_emits) == 1
     assert viewshed_emits[0]["slug"] == viewshed_rec["slug"]

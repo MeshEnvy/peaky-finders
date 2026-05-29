@@ -10,9 +10,10 @@ from typing import Any, Callable
 
 from peaky_finders.site_suggestions.preset_io import chat_site_slug_for_pin, ensure_chat_site_in_preset
 from peaky_finders.sites_job import peaky_projects_dir
+from peaky_finders.web.chat_dem import query_project_dem_highest
 from peaky_finders.web.geocode import GeocodeError, geocode_place_ranked
 from peaky_finders.web.projects import project_context
-from peaky_finders.web.viewshed_service import ensure_site_viewshed
+from peaky_finders.web.viewshed_service import ensure_point_viewshed
 
 ToolResult = dict[str, Any]
 MapPinState = dict[str, Any]
@@ -57,12 +58,26 @@ WEB_TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     ),
     _tool(
+        "query_project_dem_highest",
+        (
+            "Highest Skadi DEM elevation in the active project's AOI (or site extent). "
+            "Required for questions about the tallest/highest peak or point in the project region — "
+            "never answer peak height or ranking from memory."
+        ),
+        {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    ),
+    _tool(
         "show_on_map",
         (
             "Drop a pin on the map, center the view, compute an RF viewshed overlay, and save the "
-            "location to the project preset YAML as a planned site. For follow-ups on an existing pin "
-            "('that one', 'add a viewshed there'), pass pin_id from map state instead of lat/lon — "
-            "never guess coordinates from memory."
+            "location to the project preset YAML as a planned site. Use for pin/viewshed requests — "
+            "pass lat/lon/label from a prior query_project_dem_highest result or pin_id from map state; "
+            "do not call query_project_dem_highest again just to place a pin."
         ),
         {
             "type": "object",
@@ -207,9 +222,48 @@ def _fit_bbox(lat: float, lon: float, *, padding_deg: float, place_bbox: list[fl
 def dispatch_web_tool(name: str, args: dict[str, Any], *, ctx: WebChatContext) -> ToolResult:
     if name == "geocode_place":
         return _geocode_place(ctx, args)
+    if name == "query_project_dem_highest":
+        return _query_project_dem_highest(ctx)
     if name == "show_on_map":
         return _show_on_map(ctx, args)
     return {"error": f"unknown tool {name!r}"}
+
+
+def _query_project_dem_highest(ctx: WebChatContext) -> ToolResult:
+    if not ctx.project_slug:
+        return {"error": "select a project before querying DEM elevations"}
+    result = query_project_dem_highest(project_slug=ctx.project_slug)
+    if "error" not in result and "lat" in result and "lon" in result:
+        lat = float(result["lat"])
+        lon = float(result["lon"])
+        elev_ft = result.get("elev_ft")
+        base_label = str(result.get("place_label") or "DEM highest point").strip()
+        if elev_ft is not None:
+            label = f"{base_label} ({int(elev_ft)} ft)"
+        else:
+            label = base_label
+        pin_id = _pin_id(label, lat, lon)
+        result["pin_id"] = pin_id
+        result["label"] = label
+        remember_map_pin(
+            ctx,
+            pin_id=pin_id,
+            label=label,
+            lat=lat,
+            lon=lon,
+            site_slug="",
+            has_viewshed=False,
+        )
+        if ctx.emit:
+            ctx.emit(
+                "map.pin",
+                layer_id="trials",
+                id=pin_id,
+                lat=lat,
+                lon=lon,
+                label=label,
+            )
+    return result
 
 
 def _geocode_place(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
@@ -307,9 +361,10 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
 
     viewshed: dict[str, Any] | None = None
     try:
-        viewshed = ensure_site_viewshed(
+        viewshed = ensure_point_viewshed(
             project_slug=ctx.project_slug,
-            site_slug=site_slug,
+            lat=lat,
+            lon=lon,
         )
         if ctx.emit:
             ctx.emit("map.viewshed", lat=lat, lon=lon, **viewshed)
@@ -405,10 +460,17 @@ def web_chat_system_prompt(
         "You are a helpful assistant for Peaky, a mesh radio site planning tool with an interactive map. "
         "Be concise, conversational, and friendly — talk to the user, not about them.\n\n"
         f"{project_line}\n\n"
-        "Answer general questions (geography, RF planning, how things work) directly in plain language. "
+        "Answer general questions (RF planning, how things work) directly in plain language. "
         "Do not narrate your reasoning, planning, or tool choices. Never say things like "
         "\"the user is asking\" or \"I should use a tool\".\n\n"
-        "Use tools only when the user wants something on the map: place a pin, show a place, compute a viewshed. "
+        "Peak and elevation facts (critical):\n"
+        "- Never state which peak is highest/tallest or quote elevations from memory.\n"
+        "- With an active project, call query_project_dem_highest once for "
+        "\"highest peak\" / tallest-point questions — report tool lat/lon/elev_m/elev_ft/place_label/pin_id.\n"
+        "- Pin or viewshed on that point: call show_on_map with those exact lat/lon (or pin_id) — "
+        "never re-run query_project_dem_highest for placement.\n"
+        "- Without a project, say you need a project selected (or offer to map a named peak via geocode).\n\n"
+        "Map tools: place a pin, show a place, compute a viewshed. "
         "show_on_map always saves a planned site to the project YAML and computes its viewshed.\n"
         "Coordinate rules (critical):\n"
         "- Never recall or invent lat/lon from memory.\n"
@@ -423,5 +485,5 @@ def web_chat_system_prompt(
         "- Do not retry geocode with rephrased queries; ask the user to clarify instead.\n"
         "- For mountains/peaks, include state in the query (e.g. 'Charleston Peak, Nevada').\n"
         "Confirm briefly what you placed.\n\n"
-        "If they only want facts, just answer — offer to map it only if that would be useful."
+        "After reporting DEM highest-point facts, offer show_on_map only if they want it on the map."
     )

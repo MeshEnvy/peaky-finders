@@ -25,6 +25,12 @@ from peaky_finders.web.chat_tools import (
 
 WEB_CHAT_MAX_STEPS = 12
 
+_TOOL_STATUS: dict[str, str] = {
+    "query_project_dem_highest": "Scanning Skadi DEM for highest point in project AOI…",
+    "show_on_map": "Placing pin and computing viewshed…",
+    "geocode_place": "Geocoding place name…",
+}
+
 
 def _run_model_turn(
     *,
@@ -185,6 +191,10 @@ def stream_web_chat(
             call_id = str(call.get("id") or name)
 
             yield {"op": "chat.tool_call", "call_id": call_id, "name": name, "arguments": args}
+
+            status = _TOOL_STATUS.get(name)
+            if status:
+                yield {"op": "chat.status", "text": status}
 
             result = dispatch_web_tool(name, args, ctx=ctx)
             yield {
