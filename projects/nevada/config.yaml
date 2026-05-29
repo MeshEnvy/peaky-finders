@@ -268,295 +268,15 @@ bundle:
       refine_top_n: 3
       refine_radius_m: 200.0
       refine_spacing_m: 50.0
-      goals:
-        russel-bridge:
-          loc: russell-peak
-        slpt-bridge:
-          loc: slpt-south-entrance
-        # alamo:
-        #   loc: [37.3771, -115.1678]
-        # amargosa-valley:
-        #   loc: [36.5424, -116.4877]
-        # austin:
-        #   loc: [39.4976, -117.074]
-        # baker:
-        #   loc: [39.015, -114.1233]
-        # battle-mountain:
-        #   loc: [40.6299, -116.9518]
-        # beatty:
-        #   loc: [36.9474, -116.7337]
-        # beaverdam:
-        #   loc: [37.6898, -114.4491]
-        # bennett-springs:
-        #   loc: [37.7141, -114.4667]
-        # blue-diamond:
-        #   loc: [36.04, -115.4128]
-        # boulder-city:
-        #   loc: [35.8407, -114.9257]
-        # bunkerville:
-        #   loc: [36.7594, -114.1412]
-        # cal-nev-ari:
-        #   loc: [35.2996, -114.8777]
-        # caliente:
-        #   loc: [37.6458, -114.4929]
-        # carlin:
-        #   loc: [40.719, -116.1081]
-        # carson-city:
-        #   loc: [39.1511, -119.7476]
-        # carter-springs:
-        #   loc: [38.8619, -119.6413]
-        # cold-springs:
-        #   loc: [39.6927, -119.9775]
-        # crescent-valley:
-        #   loc: [40.4198, -116.5753]
-        # crystal-bay:
-        #   loc: [39.2314, -120.0019]
-        # dayton:
-        #   loc: [39.2592, -119.5653]
-        # denio:
-        #   loc: [41.9888, -118.6375]
-        # double-spring:
-        #   loc: [38.7788, -119.6154]
-        # dry-valley:
-        #   loc: [37.8843, -114.3051]
-        # dyer:
-        #   loc: [37.6469, -118.0345]
-        # east-valley:
-        #   loc: [38.9452, -119.6993]
-        # elko:
-        #   loc: [40.8381, -115.7678]
-        # ely:
-        #   loc: [39.265, -114.8708]
-        # empire:
-        #   loc: [40.5759, -119.343]
-        # enterprise:
-        #   loc: [36.0091, -115.2278]
-        # eureka:
-        #   loc: [39.5112, -115.9658]
-        # fallon:
-        #   loc: [39.4737, -118.7779]
-        # fallon-station:
-        #   loc: [39.415, -118.7165]
-        # fernley:
-        #   loc: [39.5627, -119.1906]
-        # fish-springs:
-        #   loc: [38.9536, -119.6511]
-        # fort-mcdermitt:
-        #   loc: [41.9655, -117.6394]
-        # gabbs:
-        #   loc: [38.8621, -117.933]
-        # gardnerville:
-        #   loc: [38.939, -119.7369]
-        # gardnerville-ranchos:
-        #   loc: [38.8957, -119.7492]
-        # genoa:
-        #   loc: [39.0256, -119.8309]
-        # gerlach:
-        #   loc: [40.6452, -119.3614]
-        # glenbrook:
-        #   loc: [39.0986, -119.9341]
-        # golconda:
-        #   loc: [40.9522, -117.4997]
-        # golden-valley:
-        #   loc: [39.6178, -119.8231]
-        # goldfield:
-        #   loc: [37.7121, -117.2378]
-        # goodsprings:
-        #   loc: [35.8319, -115.4352]
-        # grass-valley:
-        #   loc: [40.7971, -117.7603]
-        # hawthorne:
-        #   loc: [38.5253, -118.626]
-        # henderson:
-        #   loc: [36.0133, -115.0381]
-        # hiko:
-        #   loc: [37.6063, -115.2018]
-        # humboldt-river-ranch:
-        #   loc: [40.4318, -118.2719]
-        # imlay:
-        #   loc: [40.6581, -118.1441]
-        # incline-village:
-        #   loc: [39.2639, -119.9455]
-        # indian-hills:
-        #   loc: [39.0894, -119.7977]
-        # indian-springs:
-        #   loc: [36.5719, -115.7204]
-        # jackpot:
-        #   loc: [41.9797, -114.6645]
-        # johnson-lane:
-        #   loc: [39.0489, -119.7245]
-        # kingsbury:
-        #   loc: [38.9909, -119.8837]
-        # kingston:
-        #   loc: [39.2101, -117.0679]
-        # lakeridge:
-        #   loc: [39.0382, -119.9397]
-        # lamoille:
-        #   loc: [40.7239, -115.479]
-        # laughlin:
-        #   loc: [35.1401, -114.6206]
-        # lemmon-valley:
-        #   loc: [39.6879, -119.8364]
-        # logan-creek:
-        #   loc: [39.0626, -119.9295]
-        # lovelock:
-        #   loc: [40.1787, -118.4775]
-        # lund:
-        #   loc: [38.8642, -115.0099]
-        # mcdermitt:
-        #   loc: [41.9903, -117.7209]
-        # mcgill:
-        #   loc: [39.4019, -114.7775]
-        # mercury:
-        #   loc: [36.66051, -115.99448]
-        # mesquite:
-        #   loc: [36.8032, -114.133]
-        # mina:
-        #   loc: [38.3898, -118.1115]
-        # minden:
-        #   loc: [38.9632, -119.7683]
-        # moapa-town:
-        #   loc: [36.6925, -114.6356]
-        # moapa-valley:
-        #   loc: [36.6078, -114.4566]
-        # mogul:
-        #   loc: [39.5164, -119.923]
-        # montello:
-        #   loc: [41.2671, -114.197]
-        # mount-charleston:
-        #   loc: [36.2625, -115.6138]
-        # mount-wilson:
-        #   loc: [38.235, -114.4504]
-        # mountain-city:
-        #   loc: [41.8374, -115.9633]
-        # nellis-afb:
-        #   loc: [36.2466, -115.0571]
-        # nelson:
-        #   loc: [35.7179, -114.8313]
-        # nixon:
-        #   loc: [39.828, -119.3589]
-        # north-las-vegas:
-        #   loc: [36.2883, -115.0888]
-        # oasis:
-        #   loc: [41.0286, -114.4763]
-        # orovada:
-        #   loc: [41.5492, -117.8235]
-        # osino:
-        #   loc: [40.9409, -115.6607]
-        # owyhee:
-        #   loc: [41.9165, -116.1825]
-        # pahrump:
-        #   loc: [36.2235, -115.9974]
-        # panaca:
-        #   loc: [37.7881, -114.4005]
-        # paradise:
-        #   loc: [36.0872, -115.1355]
-        # paradise-valley:
-        #   loc: [41.4937, -117.547]
-        # pioche:
-        #   loc: [37.9519, -114.4434]
-        # preston:
-        #   loc: [38.915, -115.0637]
-        # rachel:
-        #   loc: [37.6414, -115.7681]
-        # reno:
-        #   loc: [39.5497, -119.8483]
-        # round-hill-village:
-        #   loc: [38.9937, -119.9233]
-        # ruhenstroth:
-        #   loc: [38.8913, -119.6833]
-        # ruth:
-        #   loc: [39.2791, -114.9901]
-        # sandy-valley:
-        #   loc: [35.8423, -115.6304]
-        # schurz:
-        #   loc: [38.9673, -118.824]
-        # searchlight:
-        #   loc: [35.4555, -114.9204]
-        # silver-city:
-        #   loc: [39.2639, -119.6357]
-        # silver-peak:
-        #   loc: [37.7578, -117.6386]
-        # silver-springs:
-        #   loc: [39.3826, -119.2148]
-        # slpt:
-        #   loc: [41.5241667, -119.0522222] # 41°31′27″N 119°03′08″W
-        # skyland:
-        #   loc: [39.0265, -119.9221]
-        # smith-valley:
-        #   loc: [38.8109, -119.3517]
-        # spanish-springs:
-        #   loc: [39.6568, -119.6694]
-        # sparks:
-        #   loc: [39.5736, -119.7161]
-        # spring-creek:
-        #   loc: [40.745, -115.5983]
-        # spring-valley:
-        #   loc: [36.0952, -115.2636]
-        # stagecoach:
-        #   loc: [39.3656, -119.3832]
-        # stateline:
-        #   loc: [38.9678, -119.944]
-        # summerlin-south:
-        #   loc: [36.1242, -115.3324]
-        # sun-valley:
-        #   loc: [39.6104, -119.777]
-        # sunrise-manor:
-        #   loc: [36.1783, -115.0487]
-        # susanville:
-        #   loc: [40.41628, -120.65301]
-        # sutcliffe:
-        #   loc: [39.9461, -119.6305]
-        # tonopah:
-        #   loc: [38.0822, -117.2246]
-        # topaz-lake:
-        #   loc: [38.6976, -119.5427]
-        # topaz-ranch-estates:
-        #   loc: [38.7357, -119.5008]
-        # unionville:
-        #   loc: [40.4467, -118.1229]
-        # ursine:
-        #   loc: [37.9771, -114.2289]
-        # valmy:
-        #   loc: [40.7908, -117.1266]
-        # vegas:
-        #   loc: [36.2333, -115.2654]
-        # verdi:
-        #   loc: [39.5142, -119.9772]
-        # virginia-city:
-        #   loc: [39.3074, -119.6483]
-        # wadsworth:
-        #   loc: [39.6322, -119.2901]
-        # walker-lake:
-        #   loc: [38.6458, -118.7563]
-        # washoe-valley:
-        #   loc: [39.2923, -119.7767]
-        # wells:
-        #   loc: [41.1132, -114.9535]
-        # west-wendover:
-        #   loc: [40.7407, -114.0783]
-        # whitney:
-        #   loc: [36.1008, -115.0379]
-        # winchester:
-        #   loc: [36.1365, -115.137]
-        # winnemucca:
-        #   loc: [40.9645, -117.7247]
-        # yerington:
-        #   loc: [38.9554, -119.1101]
-        # zephyr-cove:
-        #   loc: [39.0082, -119.9307]
+      goals: {}
+
     # mesh-grow-ai: tool-driven agent (no corridor / frontier grids)
     mesh_grow_ai:
-      ollama_model: qwen3.5:9b
+      ollama_model: qwen3.6:35b
       # Host Ollama (brew install ollama && ollama pull qwen2.5:7b). ./peaky reaches the Mac via host.docker.internal.
       ollama_base_url: http://host.docker.internal:11434/v1
       temperature: 0.2
-      goals:
-        russel-bridge:
-          loc: russell-peak
-        slpt-bridge:
-          loc: slpt-south-entrance
-
+      goals: {}
 
   # doc.kml initial NetworkLink checkbox visibility inside aggregate KMZ
   kmz:
@@ -700,10 +420,846 @@ sites:
     plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 22 — CadNSDI 
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN220
     mlrs: NV210170N0210E0SN220
+
+  alamo:
+    type: goal
+    name: Alamo
+    loc:
+    - 37.3771
+    - -115.1678
+  amargosa-valley:
+    type: goal
+    name: Amargosa Valley
+    loc:
+    - 36.5424
+    - -116.4877
+  austin:
+    type: goal
+    name: Austin
+    loc:
+    - 39.4976
+    - -117.074
+  baker:
+    type: goal
+    name: Baker
+    loc:
+    - 39.015
+    - -114.1233
+  battle-mountain:
+    type: goal
+    name: Battle Mountain
+    loc:
+    - 40.6299
+    - -116.9518
+  beatty:
+    type: goal
+    name: Beatty
+    loc:
+    - 36.9474
+    - -116.7337
+  beaverdam:
+    type: goal
+    name: Beaverdam
+    loc:
+    - 37.6898
+    - -114.4491
+  bennett-springs:
+    type: goal
+    name: Bennett Springs
+    loc:
+    - 37.7141
+    - -114.4667
+  blue-diamond:
+    type: goal
+    name: Blue Diamond
+    loc:
+    - 36.04
+    - -115.4128
+  boulder-city:
+    type: goal
+    name: Boulder City
+    loc:
+    - 35.8407
+    - -114.9257
+  bunkerville:
+    type: goal
+    name: Bunkerville
+    loc:
+    - 36.7594
+    - -114.1412
+  cal-nev-ari:
+    type: goal
+    name: Cal Nev Ari
+    loc:
+    - 35.2996
+    - -114.8777
+  caliente:
+    type: goal
+    name: Caliente
+    loc:
+    - 37.6458
+    - -114.4929
+  carlin:
+    type: goal
+    name: Carlin
+    loc:
+    - 40.719
+    - -116.1081
+  carson-city:
+    type: goal
+    name: Carson City
+    loc:
+    - 39.1511
+    - -119.7476
+  carter-springs:
+    type: goal
+    name: Carter Springs
+    loc:
+    - 38.8619
+    - -119.6413
+  cold-springs:
+    type: goal
+    name: Cold Springs
+    loc:
+    - 39.6927
+    - -119.9775
+  crescent-valley:
+    type: goal
+    name: Crescent Valley
+    loc:
+    - 40.4198
+    - -116.5753
+  crystal-bay:
+    type: goal
+    name: Crystal Bay
+    loc:
+    - 39.2314
+    - -120.0019
+  dayton:
+    type: goal
+    name: Dayton
+    loc:
+    - 39.2592
+    - -119.5653
+  denio:
+    type: goal
+    name: Denio
+    loc:
+    - 41.9888
+    - -118.6375
+  double-spring:
+    type: goal
+    name: Double Spring
+    loc:
+    - 38.7788
+    - -119.6154
+  dry-valley:
+    type: goal
+    name: Dry Valley
+    loc:
+    - 37.8843
+    - -114.3051
+  dyer:
+    type: goal
+    name: Dyer
+    loc:
+    - 37.6469
+    - -118.0345
+  east-valley:
+    type: goal
+    name: East Valley
+    loc:
+    - 38.9452
+    - -119.6993
+  elko:
+    type: goal
+    name: Elko
+    loc:
+    - 40.8381
+    - -115.7678
+  ely:
+    type: goal
+    name: Ely
+    loc:
+    - 39.265
+    - -114.8708
+  empire:
+    type: goal
+    name: Empire
+    loc:
+    - 40.5759
+    - -119.343
+  enterprise:
+    type: goal
+    name: Enterprise
+    loc:
+    - 36.0091
+    - -115.2278
+  eureka:
+    type: goal
+    name: Eureka
+    loc:
+    - 39.5112
+    - -115.9658
+  fallon:
+    type: goal
+    name: Fallon
+    loc:
+    - 39.4737
+    - -118.7779
+  fallon-station:
+    type: goal
+    name: Fallon Station
+    loc:
+    - 39.415
+    - -118.7165
+  fernley:
+    type: goal
+    name: Fernley
+    loc:
+    - 39.5627
+    - -119.1906
+  fish-springs:
+    type: goal
+    name: Fish Springs
+    loc:
+    - 38.9536
+    - -119.6511
+  fort-mcdermitt:
+    type: goal
+    name: Fort Mcdermitt
+    loc:
+    - 41.9655
+    - -117.6394
+  gabbs:
+    type: goal
+    name: Gabbs
+    loc:
+    - 38.8621
+    - -117.933
+  gardnerville:
+    type: goal
+    name: Gardnerville
+    loc:
+    - 38.939
+    - -119.7369
+  gardnerville-ranchos:
+    type: goal
+    name: Gardnerville Ranchos
+    loc:
+    - 38.8957
+    - -119.7492
+  genoa:
+    type: goal
+    name: Genoa
+    loc:
+    - 39.0256
+    - -119.8309
+  gerlach:
+    type: goal
+    name: Gerlach
+    loc:
+    - 40.6452
+    - -119.3614
+  glenbrook:
+    type: goal
+    name: Glenbrook
+    loc:
+    - 39.0986
+    - -119.9341
+  golconda:
+    type: goal
+    name: Golconda
+    loc:
+    - 40.9522
+    - -117.4997
+  golden-valley:
+    type: goal
+    name: Golden Valley
+    loc:
+    - 39.6178
+    - -119.8231
+  goldfield:
+    type: goal
+    name: Goldfield
+    loc:
+    - 37.7121
+    - -117.2378
+  goodsprings:
+    type: goal
+    name: Goodsprings
+    loc:
+    - 35.8319
+    - -115.4352
+  grass-valley:
+    type: goal
+    name: Grass Valley
+    loc:
+    - 40.7971
+    - -117.7603
+  hawthorne:
+    type: goal
+    name: Hawthorne
+    loc:
+    - 38.5253
+    - -118.626
+  henderson:
+    type: goal
+    name: Henderson
+    loc:
+    - 36.0133
+    - -115.0381
+  hiko:
+    type: goal
+    name: Hiko
+    loc:
+    - 37.6063
+    - -115.2018
+  humboldt-river-ranch:
+    type: goal
+    name: Humboldt River Ranch
+    loc:
+    - 40.4318
+    - -118.2719
+  imlay:
+    type: goal
+    name: Imlay
+    loc:
+    - 40.6581
+    - -118.1441
+  incline-village:
+    type: goal
+    name: Incline Village
+    loc:
+    - 39.2639
+    - -119.9455
+  indian-hills:
+    type: goal
+    name: Indian Hills
+    loc:
+    - 39.0894
+    - -119.7977
+  indian-springs:
+    type: goal
+    name: Indian Springs
+    loc:
+    - 36.5719
+    - -115.7204
+  jackpot:
+    type: goal
+    name: Jackpot
+    loc:
+    - 41.9797
+    - -114.6645
+  johnson-lane:
+    type: goal
+    name: Johnson Lane
+    loc:
+    - 39.0489
+    - -119.7245
+  kingsbury:
+    type: goal
+    name: Kingsbury
+    loc:
+    - 38.9909
+    - -119.8837
+  kingston:
+    type: goal
+    name: Kingston
+    loc:
+    - 39.2101
+    - -117.0679
+  lakeridge:
+    type: goal
+    name: Lakeridge
+    loc:
+    - 39.0382
+    - -119.9397
+  lamoille:
+    type: goal
+    name: Lamoille
+    loc:
+    - 40.7239
+    - -115.479
+  laughlin:
+    type: goal
+    name: Laughlin
+    loc:
+    - 35.1401
+    - -114.6206
+  lemmon-valley:
+    type: goal
+    name: Lemmon Valley
+    loc:
+    - 39.6879
+    - -119.8364
+  logan-creek:
+    type: goal
+    name: Logan Creek
+    loc:
+    - 39.0626
+    - -119.9295
+  lovelock:
+    type: goal
+    name: Lovelock
+    loc:
+    - 40.1787
+    - -118.4775
+  lund:
+    type: goal
+    name: Lund
+    loc:
+    - 38.8642
+    - -115.0099
+  mcdermitt:
+    type: goal
+    name: Mcdermitt
+    loc:
+    - 41.9903
+    - -117.7209
+  mcgill:
+    type: goal
+    name: Mcgill
+    loc:
+    - 39.4019
+    - -114.7775
+  mercury:
+    type: goal
+    name: Mercury
+    loc:
+    - 36.66051
+    - -115.99448
+  mesquite:
+    type: goal
+    name: Mesquite
+    loc:
+    - 36.8032
+    - -114.133
+  mina:
+    type: goal
+    name: Mina
+    loc:
+    - 38.3898
+    - -118.1115
+  minden:
+    type: goal
+    name: Minden
+    loc:
+    - 38.9632
+    - -119.7683
+  moapa-town:
+    type: goal
+    name: Moapa Town
+    loc:
+    - 36.6925
+    - -114.6356
+  moapa-valley:
+    type: goal
+    name: Moapa Valley
+    loc:
+    - 36.6078
+    - -114.4566
+  mogul:
+    type: goal
+    name: Mogul
+    loc:
+    - 39.5164
+    - -119.923
+  montello:
+    type: goal
+    name: Montello
+    loc:
+    - 41.2671
+    - -114.197
+  mount-charleston:
+    type: goal
+    name: Mount Charleston
+    loc:
+    - 36.2625
+    - -115.6138
+  mount-wilson:
+    type: goal
+    name: Mount Wilson
+    loc:
+    - 38.235
+    - -114.4504
+  mountain-city:
+    type: goal
+    name: Mountain City
+    loc:
+    - 41.8374
+    - -115.9633
+  nellis-afb:
+    type: goal
+    name: Nellis Afb
+    loc:
+    - 36.2466
+    - -115.0571
+  nelson:
+    type: goal
+    name: Nelson
+    loc:
+    - 35.7179
+    - -114.8313
+  nixon:
+    type: goal
+    name: Nixon
+    loc:
+    - 39.828
+    - -119.3589
+  north-las-vegas:
+    type: goal
+    name: North Las Vegas
+    loc:
+    - 36.2883
+    - -115.0888
+  oasis:
+    type: goal
+    name: Oasis
+    loc:
+    - 41.0286
+    - -114.4763
+  orovada:
+    type: goal
+    name: Orovada
+    loc:
+    - 41.5492
+    - -117.8235
+  osino:
+    type: goal
+    name: Osino
+    loc:
+    - 40.9409
+    - -115.6607
+  owyhee:
+    type: goal
+    name: Owyhee
+    loc:
+    - 41.9165
+    - -116.1825
+  pahrump:
+    type: goal
+    name: Pahrump
+    loc:
+    - 36.2235
+    - -115.9974
+  panaca:
+    type: goal
+    name: Panaca
+    loc:
+    - 37.7881
+    - -114.4005
+  paradise:
+    type: goal
+    name: Paradise
+    loc:
+    - 36.0872
+    - -115.1355
+  paradise-valley:
+    type: goal
+    name: Paradise Valley
+    loc:
+    - 41.4937
+    - -117.547
+  pioche:
+    type: goal
+    name: Pioche
+    loc:
+    - 37.9519
+    - -114.4434
+  preston:
+    type: goal
+    name: Preston
+    loc:
+    - 38.915
+    - -115.0637
+  rachel:
+    type: goal
+    name: Rachel
+    loc:
+    - 37.6414
+    - -115.7681
+  reno:
+    type: goal
+    name: Reno
+    loc:
+    - 39.5497
+    - -119.8483
+  round-hill-village:
+    type: goal
+    name: Round Hill Village
+    loc:
+    - 38.9937
+    - -119.9233
+  ruhenstroth:
+    type: goal
+    name: Ruhenstroth
+    loc:
+    - 38.8913
+    - -119.6833
+  russel-bridge:
+    type: goal
+    name: Russell Bridge
+    loc:
+    - 39.90951
+    - -119.3289
+  ruth:
+    type: goal
+    name: Ruth
+    loc:
+    - 39.2791
+    - -114.9901
+  sandy-valley:
+    type: goal
+    name: Sandy Valley
+    loc:
+    - 35.8423
+    - -115.6304
+  schurz:
+    type: goal
+    name: Schurz
+    loc:
+    - 38.9673
+    - -118.824
+  searchlight:
+    type: goal
+    name: Searchlight
+    loc:
+    - 35.4555
+    - -114.9204
+  silver-city:
+    type: goal
+    name: Silver City
+    loc:
+    - 39.2639
+    - -119.6357
+  silver-peak:
+    type: goal
+    name: Silver Peak
+    loc:
+    - 37.7578
+    - -117.6386
+  silver-springs:
+    type: goal
+    name: Silver Springs
+    loc:
+    - 39.3826
+    - -119.2148
+  skyland:
+    type: goal
+    name: Skyland
+    loc:
+    - 39.0265
+    - -119.9221
+  slpt:
+    type: goal
+    name: SLPT
+    loc:
+    - 41.5241667
+    - -119.0522222
+  slpt-bridge:
+    type: goal
+    name: SLPT Bridge
+    loc:
+    - 41.49575
+    - -119.07732
+  smith-valley:
+    type: goal
+    name: Smith Valley
+    loc:
+    - 38.8109
+    - -119.3517
+  spanish-springs:
+    type: goal
+    name: Spanish Springs
+    loc:
+    - 39.6568
+    - -119.6694
+  sparks:
+    type: goal
+    name: Sparks
+    loc:
+    - 39.5736
+    - -119.7161
+  spring-creek:
+    type: goal
+    name: Spring Creek
+    loc:
+    - 40.745
+    - -115.5983
+  spring-valley:
+    type: goal
+    name: Spring Valley
+    loc:
+    - 36.0952
+    - -115.2636
+  stagecoach:
+    type: goal
+    name: Stagecoach
+    loc:
+    - 39.3656
+    - -119.3832
+  stateline:
+    type: goal
+    name: Stateline
+    loc:
+    - 38.9678
+    - -119.944
+  summerlin-south:
+    type: goal
+    name: Summerlin South
+    loc:
+    - 36.1242
+    - -115.3324
+  sun-valley:
+    type: goal
+    name: Sun Valley
+    loc:
+    - 39.6104
+    - -119.777
+  sunrise-manor:
+    type: goal
+    name: Sunrise Manor
+    loc:
+    - 36.1783
+    - -115.0487
+  susanville:
+    type: goal
+    name: Susanville
+    loc:
+    - 40.41628
+    - -120.65301
+  sutcliffe:
+    type: goal
+    name: Sutcliffe
+    loc:
+    - 39.9461
+    - -119.6305
+  tonopah:
+    type: goal
+    name: Tonopah
+    loc:
+    - 38.0822
+    - -117.2246
+  topaz-lake:
+    type: goal
+    name: Topaz Lake
+    loc:
+    - 38.6976
+    - -119.5427
+  topaz-ranch-estates:
+    type: goal
+    name: Topaz Ranch Estates
+    loc:
+    - 38.7357
+    - -119.5008
+  unionville:
+    type: goal
+    name: Unionville
+    loc:
+    - 40.4467
+    - -118.1229
+  ursine:
+    type: goal
+    name: Ursine
+    loc:
+    - 37.9771
+    - -114.2289
+  valmy:
+    type: goal
+    name: Valmy
+    loc:
+    - 40.7908
+    - -117.1266
+  vegas:
+    type: goal
+    name: Vegas
+    loc:
+    - 36.2333
+    - -115.2654
+  verdi:
+    type: goal
+    name: Verdi
+    loc:
+    - 39.5142
+    - -119.9772
+  virginia-city:
+    type: goal
+    name: Virginia City
+    loc:
+    - 39.3074
+    - -119.6483
+  wadsworth:
+    type: goal
+    name: Wadsworth
+    loc:
+    - 39.6322
+    - -119.2901
+  walker-lake:
+    type: goal
+    name: Walker Lake
+    loc:
+    - 38.6458
+    - -118.7563
+  washoe-valley:
+    type: goal
+    name: Washoe Valley
+    loc:
+    - 39.2923
+    - -119.7767
+  wells:
+    type: goal
+    name: Wells
+    loc:
+    - 41.1132
+    - -114.9535
+  west-wendover:
+    type: goal
+    name: West Wendover
+    loc:
+    - 40.7407
+    - -114.0783
+  whitney:
+    type: goal
+    name: Whitney
+    loc:
+    - 36.1008
+    - -115.0379
+  winchester:
+    type: goal
+    name: Winchester
+    loc:
+    - 36.1365
+    - -115.137
+  winnemucca:
+    type: goal
+    name: Winnemucca
+    loc:
+    - 40.9645
+    - -117.7247
+  yerington:
+    type: goal
+    name: Yerington
+    loc:
+    - 38.9554
+    - -119.1101
+  zephyr-cove:
+    type: goal
+    name: Zephyr Cove
+    loc:
+    - 39.0082
+    - -119.9307
   chat-d56da6864380:
     type: planned
     name: Virginia Peak (8356 ft)
     loc:
     - 39.755833333333335
     - -119.46138888888889
+    rationale: Chat agent map placement
+  chat-c9a3e1326e63:
+    type: planned
+    name: Goldfield Mining District
+    loc:
+    - 37.70777
+    - -117.234065
     rationale: Chat agent map placement
