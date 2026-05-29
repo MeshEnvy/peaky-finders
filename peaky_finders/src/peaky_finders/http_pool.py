@@ -48,3 +48,13 @@ class HttpPool:
             return fn()
         finally:
             self._sem.release()
+
+
+CADNSDI_HTTP_POOL = HttpPool(max_concurrent=10, min_interval_s=0.12)
+NOMINATIM_HTTP_POOL = HttpPool(max_concurrent=1, min_interval_s=1.0)
+ARCGIS_HTTP_POOL = HttpPool(max_concurrent=10, min_interval_s=0.12)
+SKADI_HTTP_POOL = HttpPool(max_concurrent=16, min_interval_s=0.0)
+
+
+def http_run(pool: HttpPool | None, default: HttpPool, fn: Callable[[], _T]) -> _T:
+    return (pool or default).run(fn)

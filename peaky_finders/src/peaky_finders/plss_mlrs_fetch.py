@@ -11,11 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from peaky_finders.content_keys import content_key_hex, read_content_key_hex, write_content_key
-from peaky_finders.http_pool import HttpPool
+from peaky_finders.http_pool import CADNSDI_HTTP_POOL, HttpPool
 from peaky_finders.sites_job import Preset, _slugify_files_segment, dump_preset_yaml_document, read_preset_yaml_tree
 
 CADNSDI_BASE = "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer"
-CADNSDI_HTTP_POOL = HttpPool(max_concurrent=10, min_interval_s=0.12)
 
 PLSS_MLRS_LOC_CACHE_FORMAT = "plss_mlrs_loc_cache/v1"
 PLSS_MLRS_LOC_CACHE_SUBDIR = "plss_mlrs"
@@ -347,6 +346,7 @@ def refresh_plss_mlrs_for_bundle(
         loc_cache=loc_cache,
         force_network=False,
         progress=None,
+        http_pool=CADNSDI_HTTP_POOL,
     )
     write_plss_mlrs_loc_cache(cache_base, loc_cache)
     write_content_key(plss_bundle_key_path(cache_base), plss_sites_loc_digest(preset))

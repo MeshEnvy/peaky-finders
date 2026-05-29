@@ -304,6 +304,7 @@ def fill_missing_site_metadata(
     site_slug: str,
     *,
     allow_network_plss: bool = True,
+    http_pool: HttpPool | None = None,
 ) -> bool:
     """Backfill one site when metadata fields are absent."""
     _, updated = resolve_site_metadata(
@@ -311,6 +312,7 @@ def fill_missing_site_metadata(
         site_slug=site_slug,
         force=False,
         allow_network_plss=allow_network_plss,
+        http_pool=http_pool,
     )
     return updated > 0
 

@@ -15,6 +15,8 @@ from botocore import UNSIGNED
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from peaky_finders.http_pool import SKADI_HTTP_POOL, HttpPool, http_run
+
 VOID_SRTM = -32768
 
 DEFAULT_SKADI_BUCKET = "elevation-tiles-prod"
@@ -65,7 +67,7 @@ def skadi_unsigned_s3_client():  # type: ignore[no-untyped-def]
     return boto3.client("s3", config=Config(signature_version=UNSIGNED))
 
 
-def fetch_skadi_hgt_gzip_bytes(
+def _fetch_skadi_hgt_gzip_bytes_impl(
     s3_client,
     tile_name: str,
     *,
@@ -82,6 +84,26 @@ def fetch_skadi_hgt_gzip_bytes(
             raise
     s3_key = f"skadi/{tile_dir_prefix}/{tile_name}"
     return s3_client.get_object(Bucket=bucket_name, Key=s3_key)["Body"].read()
+
+
+def fetch_skadi_hgt_gzip_bytes(
+    s3_client,
+    tile_name: str,
+    *,
+    bucket_name: str = DEFAULT_SKADI_BUCKET,
+    bucket_prefix: str = DEFAULT_SKADI_PREFIX,
+    http_pool: HttpPool | None = None,
+) -> bytes:
+    return http_run(
+        http_pool,
+        SKADI_HTTP_POOL,
+        lambda: _fetch_skadi_hgt_gzip_bytes_impl(
+            s3_client,
+            tile_name,
+            bucket_name=bucket_name,
+            bucket_prefix=bucket_prefix,
+        ),
+    )
 
 
 _SKADI_TILE_STEM_RE = re.compile(
@@ -194,12 +216,19 @@ def fetch_skadi_hgt_tile_always(
     *,
     bucket_name: str = DEFAULT_SKADI_BUCKET,
     bucket_prefix: str = DEFAULT_SKADI_PREFIX,
+    http_pool: HttpPool | None = None,
 ) -> None:
     """Download one Skadi ``*.hgt.gz`` tile and write to the mirror (overwrites)."""
     tn = tile_name if str(tile_name).endswith(".hgt.gz") else f"{tile_name}.hgt.gz"
     mirror_root = skadi_mirror_resolve_root(splat_tile_cache_dir)
     cli = skadi_unsigned_s3_client()
-    blob = fetch_skadi_hgt_gzip_bytes(cli, tn, bucket_name=bucket_name, bucket_prefix=bucket_prefix)
+    blob = fetch_skadi_hgt_gzip_bytes(
+        cli,
+        tn,
+        bucket_name=bucket_name,
+        bucket_prefix=bucket_prefix,
+        http_pool=http_pool,
+    )
     skadi_write_bytes_atomic(skadi_mirror_tile_gz_path(mirror_root, tn), blob)
 
 
@@ -215,6 +244,7 @@ def prefetch_skadi_hgt_for_bounds(
     bucket_prefix: str = DEFAULT_SKADI_PREFIX,
     verbose_log: Callable[[str], None] | None = None,
     log_parallel_errors: Callable[[str], None] | None = None,
+    http_pool: HttpPool | None = None,
 ) -> tuple[int, int, list[str]]:
     """Fetch Skadi tiles intersecting the bbox; skip non-empty mirror files.
 
@@ -247,7 +277,11 @@ def prefetch_skadi_hgt_for_bounds(
     def _pull_one(tile_name: str) -> tuple[str, bytes]:
         cli = skadi_unsigned_s3_client()
         return tile_name, fetch_skadi_hgt_gzip_bytes(
-            cli, tile_name, bucket_name=bucket_name, bucket_prefix=bucket_prefix
+            cli,
+            tile_name,
+            bucket_name=bucket_name,
+            bucket_prefix=bucket_prefix,
+            http_pool=http_pool,
         )
 
     n_downloaded = 0
@@ -283,6 +317,7 @@ def prefetch_skadi_hgt_for_bounds_fatal(
     max_workers: int = 16,
     verbose_log: Callable[[str], None] | None = None,
     log_parallel_errors: Callable[[str], None] | None = None,
+    http_pool: HttpPool | None = None,
 ) -> tuple[int, int, int]:
     """Prefetch tiles for bbox; return ``(tile_count, downloaded, skipped)``."""
     all_tiles = iter_skadi_tile_names_for_wgs84_bounds(minx, miny, maxx, maxy)
@@ -295,6 +330,7 @@ def prefetch_skadi_hgt_for_bounds_fatal(
         max_workers=max_workers,
         verbose_log=verbose_log,
         log_parallel_errors=log_parallel_errors,
+        http_pool=http_pool,
     )
     if errs:
         preview = errs[:10]

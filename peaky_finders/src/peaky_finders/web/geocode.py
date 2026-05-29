@@ -9,6 +9,8 @@ import httpx
 from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 
+from peaky_finders.http_pool import HttpPool, NOMINATIM_HTTP_POOL, http_run
+
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "PeakyWeb/1.0 (mesh site planning)"
@@ -152,6 +154,7 @@ def geocode_place(
     countrycodes: str | None = "us",
     limit: int = 5,
     timeout_s: float = 15.0,
+    http_pool: HttpPool | None = None,
 ) -> list[dict[str, Any]]:
     """Resolve a place name to candidate WGS-84 coordinates via OpenStreetMap Nominatim."""
     q = str(query).strip()
@@ -174,11 +177,15 @@ def geocode_place(
 
     headers = {"User-Agent": USER_AGENT}
     url = f"{NOMINATIM_SEARCH_URL}?{urlencode(params)}"
-    try:
-        with httpx.Client(timeout=timeout_s, headers=headers) as client:
-            resp = client.get(url)
-    except httpx.HTTPError as exc:
-        raise GeocodeError(f"geocode request failed: {exc}") from exc
+
+    def _fetch() -> httpx.Response:
+        try:
+            with httpx.Client(timeout=timeout_s, headers=headers) as client:
+                return client.get(url)
+        except httpx.HTTPError as exc:
+            raise GeocodeError(f"geocode request failed: {exc}") from exc
+
+    resp = http_run(http_pool, NOMINATIM_HTTP_POOL, _fetch)
 
     if resp.status_code >= 400:
         raise GeocodeError(f"geocode HTTP {resp.status_code}")
@@ -257,6 +264,7 @@ def reverse_geocode_label(
     lon: float,
     *,
     timeout_s: float = 12.0,
+    http_pool: HttpPool | None = None,
 ) -> str:
     """Short OSM label for a coordinate (peak / place name when available)."""
     params = {
@@ -268,11 +276,15 @@ def reverse_geocode_label(
     }
     headers = {"User-Agent": USER_AGENT}
     url = f"{NOMINATIM_REVERSE_URL}?{urlencode(params)}"
-    try:
-        with httpx.Client(timeout=timeout_s, headers=headers) as client:
-            resp = client.get(url)
-    except httpx.HTTPError as exc:
-        raise GeocodeError(f"reverse geocode request failed: {exc}") from exc
+
+    def _fetch() -> httpx.Response:
+        try:
+            with httpx.Client(timeout=timeout_s, headers=headers) as client:
+                return client.get(url)
+        except httpx.HTTPError as exc:
+            raise GeocodeError(f"reverse geocode request failed: {exc}") from exc
+
+    resp = http_run(http_pool, NOMINATIM_HTTP_POOL, _fetch)
 
     if resp.status_code >= 400:
         raise GeocodeError(f"reverse geocode HTTP {resp.status_code}")
