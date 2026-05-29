@@ -579,6 +579,7 @@ def write_pairwise_link_overlap_kml_pairs(
     site_pins: Mapping[str, tuple[float, float]] | None = None,
     viewshed_radius_m: float | None = None,
     progress_log: Callable[[str], None] | None = None,
+    on_pair_complete: Callable[[str, str], None] | None = None,
 ) -> tuple[list[tuple[str, Path, str]], list[tuple[str, Path, str]]]:
     """Pairwise link overlap plus optional reuse as plain ∩ eligible. One footprint read and one A∩B per pair.
 
@@ -674,13 +675,23 @@ def write_pairwise_link_overlap_kml_pairs(
         else:
             _pair_log(msg)
 
-    def log_pair_done(pair_idx: int, label_a: str, label_b: str, detail: str) -> None:
+    def log_pair_done(
+        pair_idx: int,
+        label_a: str,
+        label_b: str,
+        detail: str,
+        *,
+        slug_a: str,
+        slug_b: str,
+    ) -> None:
         msg = f"{_pair_log_prefix()} [{pair_idx}/{total_pairs}] {label_a} ↔ {label_b}: {detail}"
         if print_lock is not None:
             with print_lock:
                 _pair_log(msg)
         else:
             _pair_log(msg)
+        if on_pair_complete is not None:
+            on_pair_complete(slug_a, slug_b)
 
     def emit_one_pair(
         pair_idx: int,
@@ -696,7 +707,7 @@ def write_pairwise_link_overlap_kml_pairs(
             result: tuple[tuple[str, Path, str] | None, tuple[str, Path, str] | None],
         ) -> tuple[tuple[str, Path, str] | None, tuple[str, Path, str] | None]:
             detail = ", ".join(notes) if notes else "done"
-            log_pair_done(pair_idx, label_a, label_b, detail)
+            log_pair_done(pair_idx, label_a, label_b, detail, slug_a=slug_a, slug_b=slug_b)
             return result
 
         use_geom_cache = (
@@ -985,6 +996,7 @@ def write_pairwise_link_overlap_layers(
     site_pins: Mapping[str, tuple[float, float]] | None = None,
     viewshed_radius_m: float | None = None,
     progress_log: Callable[[str], None] | None = None,
+    on_pair_complete: Callable[[str, str], None] | None = None,
 ) -> list[tuple[str, Path, str]]:
     """Pairwise footprint ∩ footprint → flat KML under ``sites/mesh/coverage/pairwise/``."""
     emitted, _ = write_pairwise_link_overlap_kml_pairs(
@@ -1006,6 +1018,7 @@ def write_pairwise_link_overlap_layers(
         site_pins=site_pins,
         viewshed_radius_m=viewshed_radius_m,
         progress_log=progress_log,
+        on_pair_complete=on_pair_complete,
     )
     return emitted
 

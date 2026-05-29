@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -571,6 +572,8 @@ def run_mesh_rebuild(
     *,
     verbose_log: Callable[[str], None] | None = None,
     progress_log: Callable[[str], None] | None = None,
+    on_pair_complete: Callable[[str, str], None] | None = None,
+    on_depth_band_complete: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     def vlog(msg: str) -> None:
         if verbose_log:
@@ -636,23 +639,57 @@ def run_mesh_rebuild(
 
     with tempfile.TemporaryDirectory(prefix="peaky-mesh-") as scratch:
         scratch_dir = Path(scratch)
-        plog("mesh pairwise: plain overlaps…")
-        plain = write_pairwise_link_overlap_layers(
-            footprints=footprints,
-            scratch_dir=scratch_dir / "pairwise",
-            polygon_style=resolved_mesh_pairwise_kml_style(kml_overlay),
-            dem_mirror_root=dem_mirror,
-            emit_dem_peak_pins=emit_pins,
-            pairwise_peak_pin_style=None,
-            pairwise_overlap_workers=workers,
-            geometry_cache_root=pairwise_root,
-            slug_to_viewshed_digest=slug_to_digest,
-            site_pins=site_pins,
-            viewshed_radius_m=viewshed_radius_m,
-            progress_log=progress_log,
-        )
+
+        def run_plain_pairwise() -> list[tuple[str, Path, str]]:
+            plog("mesh pairwise: plain overlaps…")
+            return write_pairwise_link_overlap_layers(
+                footprints=footprints,
+                scratch_dir=scratch_dir / "pairwise",
+                polygon_style=resolved_mesh_pairwise_kml_style(kml_overlay),
+                dem_mirror_root=dem_mirror,
+                emit_dem_peak_pins=emit_pins,
+                pairwise_peak_pin_style=None,
+                pairwise_overlap_workers=workers,
+                geometry_cache_root=pairwise_root,
+                slug_to_viewshed_digest=slug_to_digest,
+                site_pins=site_pins,
+                viewshed_radius_m=viewshed_radius_m,
+                progress_log=progress_log,
+                on_pair_complete=on_pair_complete,
+            )
+
+        def run_depth_layers() -> tuple[
+            list[tuple[str, str, Path, str, str]],
+            list[tuple[str, str, Path, str, str]],
+        ]:
+            plog("mesh depth: raster bands…")
+            return write_mesh_depth_kml_layers(
+                footprints=footprints,
+                kml_overlay=kml_overlay,
+                scratch_depth_dir=scratch_dir / "depth",
+                scratch_depth_eligible_dir=scratch_dir / "depth_eligible",
+                eligible_ll=eligible_ll,
+                max_raster_dimension=max_raster,
+                mesh_depth_workers=depth_workers,
+                geometry_cache_root=depth_root,
+                slug_to_viewshed_digest=slug_to_digest,
+                bundle_kml_overlay_digest=overlay_digest,
+                bundle_land_use_inputs_digest=land_digest,
+                on_band_complete=on_depth_band_complete,
+            )
+
+        plog("mesh rebuild: plain pairwise + depth in parallel…")
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            fut_plain = ex.submit(run_plain_pairwise)
+            fut_depth = ex.submit(run_depth_layers)
+            plain = fut_plain.result()
+            plain_rows, elig_rows = fut_depth.result()
+
         pairwise_count = len(plain)
         plog(f"mesh pairwise plain done: {pairwise_count} pair(s)")
+        depth_plain = len(plain_rows)
+        depth_elig = len(elig_rows)
+        plog(f"mesh depth done: {depth_plain} plain slice(s), {depth_elig} eligible slice(s)")
 
         plog("mesh pairwise: eligible overlaps…")
         elig = write_pairwise_eligible_link_overlap_layers(
@@ -671,24 +708,6 @@ def run_mesh_rebuild(
             progress_log=progress_log,
         )
         plog(f"mesh pairwise eligible done: {len(elig)} pair(s)")
-
-        plog("mesh depth: raster bands…")
-        plain_rows, elig_rows = write_mesh_depth_kml_layers(
-            footprints=footprints,
-            kml_overlay=kml_overlay,
-            scratch_depth_dir=scratch_dir / "depth",
-            scratch_depth_eligible_dir=scratch_dir / "depth_eligible",
-            eligible_ll=eligible_ll,
-            max_raster_dimension=max_raster,
-            mesh_depth_workers=depth_workers,
-            geometry_cache_root=depth_root,
-            slug_to_viewshed_digest=slug_to_digest,
-            bundle_kml_overlay_digest=overlay_digest,
-            bundle_land_use_inputs_digest=land_digest,
-        )
-        depth_plain = len(plain_rows)
-        depth_elig = len(elig_rows)
-        plog(f"mesh depth done: {depth_plain} plain slice(s), {depth_elig} eligible slice(s)")
 
     vlog("mesh rebuild done")
     return {

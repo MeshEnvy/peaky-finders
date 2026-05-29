@@ -2758,9 +2758,45 @@ async function applyEligibleLayerMode(slug, mode, label = 'Eligible land') {
 
 function applyMapsBuildStatus(clips, mesh) {
   const panel = document.querySelector('.layers-panel')
-  if (!panel) return
-  panel.dataset.clipsPhase = clips?.phase || ''
-  panel.dataset.meshPhase = mesh?.phase || ''
+  const clipsPhase = clips?.phase || 'stale'
+  const meshPhase = mesh?.phase || 'idle'
+  if (panel) {
+    panel.dataset.clipsPhase = clipsPhase
+    panel.dataset.meshPhase = meshPhase
+  }
+
+  updateMapsLayerPhase('eligible', clipsPhase)
+
+  const listEl = document.getElementById('layers-list')
+  if (listEl) {
+    for (const row of listEl.querySelectorAll('.layers-row[data-layer-id]')) {
+      const id = row.dataset.layerId
+      if (id) updateMapsLayerPhase(id, clipsPhase)
+    }
+  }
+
+  const meshListEl = document.getElementById('layers-mesh-list')
+  if (meshListEl && meshPhase === 'building') {
+    for (const row of meshListEl.querySelectorAll('.layers-row[data-layer-id]')) {
+      const id = row.dataset.layerId
+      if (id) updateMapsLayerPhase(id, 'building')
+    }
+  }
+
+  const statusEl = document.getElementById('layers-status')
+  const messages = []
+  if (clips?.error) messages.push(`Clips: ${clips.error}`)
+  if (mesh?.error) messages.push(`Mesh: ${mesh.error}`)
+  if (messages.length) {
+    setLayersStatus(messages.join(' · '))
+    statusEl?.classList.add('layers-status--error')
+    return
+  }
+  statusEl?.classList.remove('layers-status--error')
+  const progress = []
+  if (clipsPhase === 'building') progress.push('Rebuilding clips…')
+  if (meshPhase === 'building') progress.push('Rebuilding mesh coverage…')
+  setLayersStatus(progress.length ? progress.join(' ') : '')
 }
 
 function updateMapsLayerPhase(layerId, phase) {

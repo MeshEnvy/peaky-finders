@@ -446,6 +446,7 @@ def write_mesh_depth_kml_layers(
     slug_to_viewshed_digest: dict[str, str] | None = None,
     bundle_kml_overlay_digest: str | None = None,
     bundle_land_use_inputs_digest: str | None = None,
+    on_band_complete: Callable[[str], None] | None = None,
 ) -> tuple[list[tuple[str, str, Path, str, str]], list[tuple[str, str, Path, str, str]]]:
     """Write per-site depth KMLs under ``depth/{band}/{slug}.kml`` (and eligible mirror).
 
@@ -841,6 +842,8 @@ def write_mesh_depth_kml_layers(
             f"  depth slice {band} done: {n_plain} plain, {n_elig} eligible ({band_elapsed:.1f}s)",
             flush=True,
         )
+        if on_band_complete is not None:
+            on_band_complete(band)
 
         for pr, er in band_rows:
             if pr is not None:

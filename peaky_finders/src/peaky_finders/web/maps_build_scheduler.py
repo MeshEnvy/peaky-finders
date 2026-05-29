@@ -184,35 +184,18 @@ def catalog_clips_row_phase(slug: str) -> str:
     return clips_phase
 
 
-def _merge_progress_logs(*loggers: Callable[[str], None] | None) -> Callable[[str], None] | None:
-    fns = [fn for fn in loggers if fn is not None]
-    if not fns:
-        return None
-
-    def plog(msg: str) -> None:
-        for fn in fns:
-            fn(msg)
-
-    return plog
-
-
 def _notify_build_status(slug: str) -> None:
     publish_build_status(slug, **maps_build_status(slug))
 
 
-def _mesh_progress_emit(slug: str) -> Callable[[str], None]:
-    from peaky_finders.mesh_depth_store import MESH_DEPTH_BAND_IDS
+def _mesh_rebuild_sse_callbacks(slug: str) -> tuple[Callable[[str, str], None], Callable[[str], None]]:
+    def on_pair_complete(sa: str, sb: str) -> None:
+        publish_layer_phase(slug, layer_id=f"mesh_pair:{mesh_pairwise_rel_dir(sa, sb)}", phase="built")
 
-    def plog(msg: str) -> None:
-        text = str(msg)
-        if text.startswith("mesh depth done:"):
-            for band in MESH_DEPTH_BAND_IDS:
-                publish_layer_phase(slug, layer_id=f"mesh_depth:{band}", phase="built")
-            publish_catalog_refresh(slug, reason="mesh_depth")
-        elif "mesh pairwise plain done:" in text:
-            publish_catalog_refresh(slug, reason="mesh_pairwise")
+    def on_depth_band_complete(band: str) -> None:
+        publish_layer_phase(slug, layer_id=f"mesh_depth:{band}", phase="built")
 
-    return plog
+    return on_pair_complete, on_depth_band_complete
 
 
 def _maintenance_prefix(slug: str) -> str:
@@ -253,11 +236,14 @@ def _run_mesh_job(slug: str) -> None:
     vlog = stderr_verbose_log()
     if vlog:
         vlog(f"{_maintenance_prefix(slug)} mesh rebuild start (background thread)")
+    on_pair, on_band = _mesh_rebuild_sse_callbacks(slug)
     try:
         run_mesh_rebuild(
             slug,
             verbose_log=vlog,
-            progress_log=_merge_progress_logs(vlog, _mesh_progress_emit(slug)),
+            progress_log=vlog,
+            on_pair_complete=on_pair,
+            on_depth_band_complete=on_band,
         )
         st.mesh = "built"
         publish_catalog_refresh(slug, reason="mesh")

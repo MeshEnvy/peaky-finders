@@ -27,6 +27,7 @@ from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
+from peaky_finders.gdal_io import coerce_gdf_columns_for_ogr_write, gdal_quiet
 from peaky_finders.google_earth_polygon import orient_for_kml
 from peaky_finders.geometry_preview_png import write_wgs84_geodataframe_preview_png
 from peaky_finders.sites_job import (
@@ -811,7 +812,9 @@ def _write_geodataframe_kml(
     # Some GDAL builds route driver="KML" to libkml, which APPENDS to an existing file
     # instead of overwriting (placemarks duplicate, file grows on every bundle rebuild).
     kml_path.unlink(missing_ok=True)
-    g.to_file(kml_path, driver="KML", layer=_kml_safe_name(layer_label))
+    g = coerce_gdf_columns_for_ogr_write(g)
+    with gdal_quiet():
+        g.to_file(kml_path, driver="KML", layer=_kml_safe_name(layer_label))
     _kml_inject_filled_overlay_style(kml_path, layer_label=layer_label, kml_overlay=kml_overlay)
     _kml_inject_ge_polygon_render_hints(kml_path, layer_label=layer_label)
     role_ll = _kml_overlay_role(kml_path, layer_label)
@@ -852,7 +855,9 @@ def _write_geodataframe_gpkg_and_kml(
 ) -> None:
     """Write one GeoPackage layer and optionally a sidecar KML (default: same basename as ``gpkg_path``)."""
     gpkg_path.parent.mkdir(parents=True, exist_ok=True)
-    gdf.to_file(gpkg_path, driver="GPKG", layer=gpkg_layer, mode=gpkg_mode)
+    safe = coerce_gdf_columns_for_ogr_write(gdf)
+    with gdal_quiet():
+        safe.to_file(gpkg_path, driver="GPKG", layer=gpkg_layer, mode=gpkg_mode)
     if write_sidecar_kml:
         kml = kml_path if kml_path is not None else gpkg_path.with_suffix(".kml")
         _write_geodataframe_kml(gdf, kml, layer_label=layer_label, kml_overlay=kml_overlay)

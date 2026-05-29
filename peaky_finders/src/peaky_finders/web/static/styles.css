@@ -1495,6 +1495,10 @@ select option {
   margin: 0;
 }
 
+.layers-status--error {
+  color: var(--error);
+}
+
 .layers-group-title {
   margin: 0.5rem 0 0.25rem;
   font-size: 0.7rem;
