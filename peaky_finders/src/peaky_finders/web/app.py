@@ -44,6 +44,7 @@ class MapPinTurn(BaseModel):
     label: str = Field(default="", max_length=256)
     lat: float
     lon: float
+    site_slug: str | None = Field(default=None, max_length=128)
     has_viewshed: bool = False
 
 

@@ -864,12 +864,13 @@ function clearChat() {
   resetChatHistory()
 }
 
-function rememberChatTrialPin({ id, label, lat, lon }) {
+function rememberChatTrialPin({ id, label, lat, lon, site_slug = null }) {
   chatMapPins.set(id, {
     pin_id: id,
     label: label || id,
     lat,
     lon,
+    site_slug: site_slug || chatMapPins.get(id)?.site_slug || null,
     has_viewshed: chatMapPins.get(id)?.has_viewshed || false,
   })
 }

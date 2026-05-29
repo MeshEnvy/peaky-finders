@@ -13,7 +13,12 @@ from shapely.geometry import Point, box
 
 from peaky_finders.site_suggestions.depth_grid import build_coverage_depth_grid
 from peaky_finders.site_suggestions.planner import plan_greedy_site_suggestions, planned_to_preset_entries
-from peaky_finders.site_suggestions.preset_io import append_suggested_sites_to_preset, remove_suggested_sites_from_preset
+from peaky_finders.site_suggestions.preset_io import (
+    append_suggested_sites_to_preset,
+    chat_site_slug_for_pin,
+    ensure_chat_site_in_preset,
+    remove_suggested_sites_from_preset,
+)
 from peaky_finders.sites_job import SiteType, load_preset, write_preset_document
 
 
@@ -346,6 +351,43 @@ def test_append_and_remove_suggested_sites(tmp_path: Path) -> None:
     assert remove_suggested_sites_from_preset(p) == 1
     job2 = load_preset(p)
     assert slugs[0] not in job2.sites
+
+
+def test_ensure_chat_site_in_preset(tmp_path: Path) -> None:
+    p = tmp_path / "job.yaml"
+    write_preset_document(
+        p,
+        {
+            "simulation": dict(_SUGGEST_SIMULATION),
+            "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
+            "sites": {},
+        },
+    )
+    pin_id = "abc123"
+    slug = ensure_chat_site_in_preset(
+        p,
+        pin_id=pin_id,
+        name="Peavine Mountain",
+        lat=39.591,
+        lon=-119.947,
+    )
+    assert slug == chat_site_slug_for_pin(pin_id)
+    job = load_preset(p)
+    assert slug in job.sites
+    assert job.sites[slug].type == SiteType.PLANNED
+    assert job.sites[slug].name == "Peavine Mountain"
+    assert job.sites[slug].lat == 39.591
+    assert job.sites[slug].lon == -119.947
+
+    again = ensure_chat_site_in_preset(
+        p,
+        pin_id=pin_id,
+        name="Peavine Mountain",
+        lat=39.591,
+        lon=-119.947,
+    )
+    assert again == slug
+    assert len(load_preset(p).sites) == 1
 
 
 def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:

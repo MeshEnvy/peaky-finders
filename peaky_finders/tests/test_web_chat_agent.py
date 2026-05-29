@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import PropertyMock, patch
 
 from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import (
     assemble_streamed_assistant_message,
@@ -116,8 +117,16 @@ def test_geocode_call_limit() -> None:
 
 def test_show_on_map_ok_when_viewshed_fails() -> None:
     ctx = WebChatContext(project_slug="nevada", emit=lambda *a, **k: None)
-    with patch(
-        "peaky_finders.web.chat_tools.ensure_point_viewshed",
+    with patch.object(
+        WebChatContext,
+        "preset_path",
+        new_callable=PropertyMock,
+        return_value=Path("/projects/nevada/config.yaml"),
+    ), patch(
+        "peaky_finders.web.chat_tools.ensure_chat_site_in_preset",
+        return_value="chat-abc",
+    ), patch(
+        "peaky_finders.web.chat_tools.ensure_site_viewshed",
         side_effect=RuntimeError("viewshed boom"),
     ):
         result = dispatch_web_tool(
@@ -126,6 +135,8 @@ def test_show_on_map_ok_when_viewshed_fails() -> None:
             ctx=ctx,
         )
     assert result["ok"] is True
+    assert result["saved_to_preset"] is True
+    assert result["site_slug"] == "chat-abc"
     assert "viewshed_error" in result
 
 
@@ -143,8 +154,16 @@ def test_show_on_map_emits_pin_and_viewshed() -> None:
         "bounds": [-120.0, 39.0, -119.0, 40.0],
         "opacity": 0.5,
     }
-    with patch(
-        "peaky_finders.web.chat_tools.ensure_point_viewshed",
+    with patch.object(
+        WebChatContext,
+        "preset_path",
+        new_callable=PropertyMock,
+        return_value=Path("/projects/nevada/config.yaml"),
+    ), patch(
+        "peaky_finders.web.chat_tools.ensure_chat_site_in_preset",
+        return_value="chat-peavine",
+    ), patch(
+        "peaky_finders.web.chat_tools.ensure_site_viewshed",
         return_value=viewshed_rec,
     ):
         result = dispatch_web_tool(
@@ -248,9 +267,17 @@ def test_stream_web_chat_tool_loop() -> None:
     ) as cfg, patch(
         "peaky_finders.web.chat_tools.geocode_place_ranked",
         return_value=geocode_payload,
+    ), patch.object(
+        WebChatContext,
+        "preset_path",
+        new_callable=PropertyMock,
+        return_value=Path("/projects/nevada/config.yaml"),
     ), patch(
-        "peaky_finders.web.chat_tools.ensure_point_viewshed",
-        return_value={"slug": "at-x", "url": "/u", "coordinates": []},
+        "peaky_finders.web.chat_tools.ensure_chat_site_in_preset",
+        return_value="chat-x",
+    ), patch(
+        "peaky_finders.web.chat_tools.ensure_site_viewshed",
+        return_value={"slug": "chat-x", "url": "/u", "coordinates": []},
     ):
         cfg.return_value.ollama_base_url = "http://ollama"
         cfg.return_value.ollama_model = "test"
@@ -296,21 +323,32 @@ def test_show_on_map_resolves_pin_id_from_map_state() -> None:
         "coordinates": [[-116, 37], [-115, 37], [-115, 36], [-116, 36]],
         "bounds": [-116.0, 36.0, -115.0, 37.0],
     }
-    with patch(
-        "peaky_finders.web.chat_tools.ensure_point_viewshed",
+    with patch.object(
+        WebChatContext,
+        "preset_path",
+        new_callable=PropertyMock,
+        return_value=Path("/projects/nevada/config.yaml"),
+    ), patch(
+        "peaky_finders.web.chat_tools.ensure_chat_site_in_preset",
+        return_value="chat-baf9c0cfa4c4",
+    ), patch(
+        "peaky_finders.web.chat_tools.ensure_site_viewshed",
         return_value=viewshed_rec,
     ) as ensure:
         result = dispatch_web_tool(
             "show_on_map",
-            {"pin_id": "baf9c0cfa4c4", "include_viewshed": True},
+            {"pin_id": "baf9c0cfa4c4"},
             ctx=ctx,
         )
 
     assert result["ok"] is True
     assert result["lat"] == 36.2716284
     assert result["lon"] == -115.6954918
-    ensure.assert_called_once_with(project_slug="nevada", lat=36.2716284, lon=-115.6954918, verbose=False)
-    assert ("map.viewshed", viewshed_rec) in [(op, payload) for op, payload in emitted if op == "map.viewshed"]
+    ensure.assert_called_once_with(project_slug="nevada", site_slug="chat-baf9c0cfa4c4")
+    viewshed_emits = [payload for op, payload in emitted if op == "map.viewshed"]
+    assert len(viewshed_emits) == 1
+    assert viewshed_emits[0]["slug"] == viewshed_rec["slug"]
+    assert viewshed_emits[0]["lat"] == 36.2716284
     assert emitted[-1] == ("map.fit_bounds", {"bbox": viewshed_rec["bounds"]})
 
 

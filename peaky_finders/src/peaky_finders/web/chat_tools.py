@@ -8,10 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from peaky_finders.site_suggestions.preset_io import chat_site_slug_for_pin, ensure_chat_site_in_preset
 from peaky_finders.sites_job import peaky_projects_dir
 from peaky_finders.web.geocode import GeocodeError, geocode_place_ranked
 from peaky_finders.web.projects import project_context
-from peaky_finders.web.viewshed_service import ensure_point_viewshed
+from peaky_finders.web.viewshed_service import ensure_site_viewshed
 
 ToolResult = dict[str, Any]
 MapPinState = dict[str, Any]
@@ -58,9 +59,10 @@ WEB_TOOL_SCHEMAS: list[dict[str, Any]] = [
     _tool(
         "show_on_map",
         (
-            "Drop a pin on the map, center the view, and optionally compute an RF viewshed overlay. "
-            "For follow-ups on an existing pin ('that one', 'add a viewshed there'), pass pin_id "
-            "from map state instead of lat/lon — never guess coordinates from memory."
+            "Drop a pin on the map, center the view, compute an RF viewshed overlay, and save the "
+            "location to the project preset YAML as a planned site. For follow-ups on an existing pin "
+            "('that one', 'add a viewshed there'), pass pin_id from map state instead of lat/lon — "
+            "never guess coordinates from memory."
         ),
         {
             "type": "object",
@@ -72,11 +74,6 @@ WEB_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "lat": {"type": "number", "description": "WGS-84 latitude (required for new pins)"},
                 "lon": {"type": "number", "description": "WGS-84 longitude (required for new pins)"},
                 "label": {"type": "string", "description": "Pin label shown on the map"},
-                "include_viewshed": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": "Compute and display RF viewshed at this point",
-                },
                 "padding_deg": {
                     "type": "number",
                     "default": 0.08,
@@ -142,6 +139,9 @@ def normalize_map_pins(raw: list[MapPinState] | None) -> list[MapPinState]:
         }
         if item.get("has_viewshed") is True:
             pin["has_viewshed"] = True
+        site_slug = str(item.get("site_slug") or "").strip()
+        if site_slug:
+            pin["site_slug"] = site_slug
         out.append(pin)
     return out
 
@@ -156,13 +156,23 @@ def lookup_map_pin(pins: list[MapPinState], pin_id: str) -> MapPinState | None:
     return None
 
 
-def remember_map_pin(ctx: WebChatContext, *, pin_id: str, label: str, lat: float, lon: float, has_viewshed: bool) -> None:
+def remember_map_pin(
+    ctx: WebChatContext,
+    *,
+    pin_id: str,
+    label: str,
+    lat: float,
+    lon: float,
+    site_slug: str,
+    has_viewshed: bool,
+) -> None:
     pins = normalize_map_pins(ctx.map_pins)
     updated = {
         "pin_id": pin_id,
         "label": label,
         "lat": lat,
         "lon": lon,
+        "site_slug": site_slug,
         "has_viewshed": has_viewshed,
     }
     ctx.map_pins = [pin for pin in pins if str(pin.get("pin_id") or "") != pin_id] + [updated]
@@ -177,8 +187,9 @@ def format_map_pins_for_prompt(pins: list[MapPinState] | None) -> str:
     ]
     for pin in normalized:
         viewshed_note = ", viewshed shown" if pin.get("has_viewshed") else ""
+        site_slug = str(pin.get("site_slug") or chat_site_slug_for_pin(str(pin["pin_id"])))
         lines.append(
-            f"- pin_id={pin['pin_id']!r} label={pin['label']!r} "
+            f"- pin_id={pin['pin_id']!r} site_slug={site_slug!r} label={pin['label']!r} "
             f"lat={float(pin['lat']):.6f} lon={float(pin['lon']):.6f}{viewshed_note}"
         )
     return "\n".join(lines)
@@ -255,7 +266,10 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
         return resolved
     lat, lon, label, pin_id = resolved
 
-    include_viewshed = bool(args.get("include_viewshed", True))
+    preset_path = ctx.preset_path
+    if preset_path is None:
+        return {"error": "project preset config.yaml not found"}
+
     padding_deg = float(args.get("padding_deg") or 0.08)
     place_bbox = args.get("bbox")
     bbox = _fit_bbox(lat, lon, padding_deg=padding_deg, place_bbox=place_bbox if isinstance(place_bbox, list) else None)
@@ -270,38 +284,73 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
             label=label,
         )
 
-    viewshed: dict[str, Any] | None = None
-    if include_viewshed:
-        try:
-            viewshed = ensure_point_viewshed(
-                project_slug=ctx.project_slug,
-                lat=lat,
-                lon=lon,
-                verbose=False,
-            )
-            if ctx.emit:
-                ctx.emit("map.viewshed", **viewshed)
-                viewshed_bounds = viewshed.get("bounds")
-                if isinstance(viewshed_bounds, list) and len(viewshed_bounds) == 4:
-                    ctx.emit("map.fit_bounds", bbox=viewshed_bounds)
-                else:
-                    ctx.emit("map.fit_bounds", bbox=bbox)
-        except Exception as exc:
-            if ctx.emit:
-                ctx.emit("map.fit_bounds", bbox=bbox)
-            return {
-                "ok": True,
-                "lat": lat,
-                "lon": lon,
-                "label": label,
-                "pin_id": pin_id,
-                "bbox": bbox,
-                "viewshed_error": str(exc),
-            }
-    elif ctx.emit:
-        ctx.emit("map.fit_bounds", bbox=bbox)
+    try:
+        site_slug = ensure_chat_site_in_preset(
+            preset_path,
+            pin_id=pin_id,
+            name=label,
+            lat=lat,
+            lon=lon,
+        )
+    except Exception as exc:
+        if ctx.emit:
+            ctx.emit("map.fit_bounds", bbox=bbox)
+        return {
+            "ok": False,
+            "lat": lat,
+            "lon": lon,
+            "label": label,
+            "pin_id": pin_id,
+            "bbox": bbox,
+            "preset_error": str(exc),
+        }
 
-    remember_map_pin(ctx, pin_id=pin_id, label=label, lat=lat, lon=lon, has_viewshed=viewshed is not None)
+    viewshed: dict[str, Any] | None = None
+    try:
+        viewshed = ensure_site_viewshed(
+            project_slug=ctx.project_slug,
+            site_slug=site_slug,
+        )
+        if ctx.emit:
+            ctx.emit("map.viewshed", lat=lat, lon=lon, **viewshed)
+            viewshed_bounds = viewshed.get("bounds")
+            if isinstance(viewshed_bounds, list) and len(viewshed_bounds) == 4:
+                ctx.emit("map.fit_bounds", bbox=viewshed_bounds)
+            else:
+                ctx.emit("map.fit_bounds", bbox=bbox)
+    except Exception as exc:
+        if ctx.emit:
+            ctx.emit("map.fit_bounds", bbox=bbox)
+        remember_map_pin(
+            ctx,
+            pin_id=pin_id,
+            label=label,
+            lat=lat,
+            lon=lon,
+            site_slug=site_slug,
+            has_viewshed=False,
+        )
+        return {
+            "ok": True,
+            "lat": lat,
+            "lon": lon,
+            "label": label,
+            "pin_id": pin_id,
+            "site_slug": site_slug,
+            "bbox": bbox,
+            "saved_to_preset": True,
+            "viewshed_error": str(exc),
+        }
+
+    remember_map_pin(
+        ctx,
+        pin_id=pin_id,
+        label=label,
+        lat=lat,
+        lon=lon,
+        site_slug=site_slug,
+        has_viewshed=True,
+    )
 
     return {
         "ok": True,
@@ -309,7 +358,9 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
         "lon": lon,
         "label": label,
         "pin_id": pin_id,
+        "site_slug": site_slug,
         "bbox": bbox,
+        "saved_to_preset": True,
         "viewshed": viewshed,
     }
 
@@ -357,7 +408,8 @@ def web_chat_system_prompt(
         "Answer general questions (geography, RF planning, how things work) directly in plain language. "
         "Do not narrate your reasoning, planning, or tool choices. Never say things like "
         "\"the user is asking\" or \"I should use a tool\".\n\n"
-        "Use tools only when the user wants something on the map: place a pin, show a place, compute a viewshed.\n"
+        "Use tools only when the user wants something on the map: place a pin, show a place, compute a viewshed. "
+        "show_on_map always saves a planned site to the project YAML and computes its viewshed.\n"
         "Coordinate rules (critical):\n"
         "- Never recall or invent lat/lon from memory.\n"
         "- New places: geocode_place once, then show_on_map with the returned best lat/lon/label/bbox.\n"

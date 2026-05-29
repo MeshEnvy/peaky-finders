@@ -58,6 +58,57 @@ def _unique_suggest_slug(existing: set[str], *, iteration: int, name: str) -> st
     return slug
 
 
+def chat_site_slug_for_pin(pin_id: str) -> str:
+    """Stable preset ``sites`` key for a chat-placed map pin."""
+    needle = str(pin_id or "").strip()
+    if not needle:
+        raise ValueError("pin_id is required")
+    return f"chat-{needle}"
+
+
+def ensure_chat_site_in_preset(
+    preset_path: Path,
+    *,
+    pin_id: str,
+    name: str,
+    lat: float,
+    lon: float,
+) -> str:
+    """Ensure a chat-placed pin exists in ``sites`` as ``type: planned``; return slug."""
+    slug = chat_site_slug_for_pin(pin_id)
+    yaml_rt, root = read_preset_yaml_tree(preset_path)
+    sites_raw = root.get("sites")
+    if sites_raw is None:
+        sites_raw = {}
+        root["sites"] = sites_raw
+    if not isinstance(sites_raw, dict):
+        raise ValueError("preset sites must be a mapping")
+
+    lat_f = float(lat)
+    lon_f = float(lon)
+    name_s = str(name or slug).strip() or slug
+    existing = sites_raw.get(slug)
+    if isinstance(existing, dict):
+        loc = existing.get("loc")
+        if isinstance(loc, (list, tuple)) and len(loc) == 2:
+            try:
+                same = abs(float(loc[0]) - lat_f) < 1e-6 and abs(float(loc[1]) - lon_f) < 1e-6
+            except (TypeError, ValueError):
+                same = False
+            if same:
+                return slug
+        raise ValueError(f"preset site {slug!r} already exists at different coordinates")
+
+    sites_raw[slug] = {
+        "type": SiteType.PLANNED.value,
+        "name": name_s,
+        "loc": [lat_f, lon_f],
+        "rationale": "Chat agent map placement",
+    }
+    dump_preset_yaml_document(yaml_rt, root, preset_path)
+    return slug
+
+
 def append_suggested_sites_to_preset(
     preset_path: Path,
     entries: list[dict[str, Any]],
