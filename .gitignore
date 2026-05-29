@@ -13,8 +13,7 @@ dist/
 
 .local
 *.kmz
-share
+*.log
 build
 projects
-*.log
-!projects/**/config.yaml
+projects/**/data
