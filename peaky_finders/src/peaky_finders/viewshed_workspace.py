@@ -9,6 +9,7 @@ when those change materially.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from peaky_finders.models import SplatCoverageRequest
@@ -40,3 +41,17 @@ def resolved_viewshed_workdir_for_coords(
     req = preset_to_request(preset, float(lat), float(lon))
     digest = viewshed_workspace_digest(request=req)
     return resolved_viewshed_workdir(digest=digest, viewshed_root=viewshed_root)
+
+
+def viewshed_request_digest_matches(workdir: Path, *, expected_workspace_digest: str) -> bool:
+    """True when ``workdir/request.json`` hashes to the expected workspace digest."""
+    p = Path(workdir).expanduser().resolve() / "request.json"
+    if not p.is_file():
+        return False
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        req = SplatCoverageRequest.model_validate(raw)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    got = splat_input_sha256(req)
+    return str(got) == str(expected_workspace_digest)

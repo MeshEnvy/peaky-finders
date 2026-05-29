@@ -1,19 +1,17 @@
-"""PLSS/MLRS cache, input keys, and incremental build freshness."""
+"""PLSS/MLRS cache, input keys, and bundle freshness."""
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from fixture_paths import SAMPLE_PROJECT_CONFIG
-from peaky_finders.build_keys import write_build_key
+from peaky_finders.content_keys import write_content_key
 from peaky_finders.plss_mlrs_fetch import (
     loc_plss_resolved,
     loc_stamp,
-    plss_bundle_build_stale,
+    plss_bundle_cache_stale,
     plss_bundle_key_path,
     plss_mlrs_loc_cache_path,
     plss_sites_loc_digest,
@@ -22,7 +20,6 @@ from peaky_finders.plss_mlrs_fetch import (
     refresh_plss_mlrs_for_bundle,
     write_plss_mlrs_loc_cache,
 )
-from peaky_finders.preset_stamps import stamp_file_is_current, write_stamp
 from peaky_finders.sites_job import dump_preset_yaml_document, load_preset, read_preset_yaml_tree
 
 
@@ -45,12 +42,12 @@ def test_loc_plss_resolved() -> None:
     assert not loc_plss_resolved({"plss": "", "mlrs": ""})
 
 
-def test_plss_bundle_build_stale_when_key_missing(tmp_path: Path) -> None:
+def test_plss_bundle_cache_stale_when_key_missing(tmp_path: Path) -> None:
     preset = load_preset(SAMPLE_PROJECT_CONFIG)
-    assert plss_bundle_build_stale(cache_base=tmp_path, preset=preset)
+    assert plss_bundle_cache_stale(cache_base=tmp_path, preset=preset)
 
 
-def test_plss_bundle_build_fresh_after_refresh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plss_bundle_cache_fresh_after_refresh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     preset_path = tmp_path / "job.yaml"
     preset_path.write_text(
         SAMPLE_PROJECT_CONFIG.read_text(encoding="utf-8"),
@@ -68,7 +65,7 @@ def test_plss_bundle_build_fresh_after_refresh(tmp_path: Path, monkeypatch: pyte
         preset=preset,
     )
     preset = load_preset(preset_path)
-    assert not plss_bundle_build_stale(cache_base=tmp_path, preset=preset)
+    assert not plss_bundle_cache_stale(cache_base=tmp_path, preset=preset)
     assert plss_bundle_key_path(tmp_path).is_file()
     assert plss_mlrs_loc_cache_path(tmp_path).is_file()
 
@@ -131,19 +128,6 @@ def test_populate_fetches_only_unresolved(tmp_path: Path, monkeypatch: pytest.Mo
     assert calls[0] == (unresolved_ent.lon, unresolved_ent.lat)
 
 
-def test_stamp_current_after_yaml_touch_without_content_change(tmp_path: Path) -> None:
-    preset_path = tmp_path / "job.yaml"
-    preset_path.write_text(
-        SAMPLE_PROJECT_CONFIG.read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    write_stamp("simulation", preset_path, quiet=True)
-    before = preset_path.read_text(encoding="utf-8")
-    time.sleep(0.02)
-    preset_path.write_text(before, encoding="utf-8")
-    assert stamp_file_is_current("simulation", preset_path)
-
-
 def test_plss_sites_loc_digest_changes_when_coords_change(tmp_path: Path) -> None:
     preset_path = tmp_path / "job.yaml"
     preset_path.write_text(
@@ -177,6 +161,6 @@ def test_plss_bundle_stale_when_coords_change_after_refresh(tmp_path: Path, monk
         cache_base=tmp_path,
         preset=preset,
     )
-    write_build_key(plss_bundle_key_path(tmp_path), "0" * 64)
+    write_content_key(plss_bundle_key_path(tmp_path), "0" * 64)
     preset = load_preset(preset_path)
-    assert plss_bundle_build_stale(cache_base=tmp_path, preset=preset)
+    assert plss_bundle_cache_stale(cache_base=tmp_path, preset=preset)

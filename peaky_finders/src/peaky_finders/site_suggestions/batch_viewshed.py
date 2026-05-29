@@ -9,8 +9,8 @@ from pathlib import Path
 
 from shapely.geometry.base import BaseGeometry
 
-from peaky_finders.build_configure import PlannedViewshedWorkspace
-from peaky_finders.build_fresh_checks import viewshed_request_digest_matches
+from peaky_finders.workspace_plan import PlannedViewshedWorkspace
+from peaky_finders.viewshed_workspace import viewshed_request_digest_matches
 from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.models import SplatCoverageRequest
 from peaky_finders.preset_mapping import preset_to_request

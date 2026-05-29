@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dev-only: build/run peaky:dev with live peaky_finders mount.
+# Dev-only: run Peaky Web GUI in peaky:dev with port 8765 published.
 set -euo pipefail
 
 SCRIPT="$0"
@@ -31,34 +31,23 @@ fi
 CACHE_DIR="${PEAKY_CACHE_DIR:-$HOME/.peaky/splat_cache}"
 mkdir -p "$CACHE_DIR"
 
-filtered=()
-if [ $# -gt 0 ]; then
-  for arg in "$@"; do
-    if [ "$arg" != "--build" ]; then
-      filtered+=("$arg")
-    fi
-  done
-fi
+PROJECTS_MOUNT="${PEAKY_PROJECTS_DIR:-$PWD/projects}"
+mkdir -p "$PROJECTS_MOUNT"
 
 DOCKER_FLAGS=(--rm)
 if [ -t 0 ] && [ -t 1 ]; then
   DOCKER_FLAGS+=(-it)
 fi
 
-run_cmd=(docker run "${DOCKER_FLAGS[@]}" \
+exec docker run "${DOCKER_FLAGS[@]}" \
+  --add-host=host.docker.internal:host-gateway \
   -e POETRY_VIRTUALENVS_CREATE=false \
-  -v "$PWD:/project" \
+  -e PEAKY_PROJECTS=/projects \
+  -p 8765:8765 \
   -v "$ROOT/peaky_finders:/app/peaky_finders" \
-  -v "$ROOT/peaky_finders/tests/fixtures/peaky_home/projects:/app/projects" \
+  -v "$PROJECTS_MOUNT:/projects" \
   -v "$CACHE_DIR:/.peaky/splat_cache" \
-  -w /project \
+  -w /app/peaky_finders \
   --entrypoint bash \
   "$IMAGE" \
-  -lc 'cd /app/peaky_finders && poetry install --no-interaction && cd /project && exec peaky "$@"' \
-  _)
-
-if [ ${#filtered[@]} -gt 0 ]; then
-  exec "${run_cmd[@]}" "${filtered[@]}"
-else
-  exec "${run_cmd[@]}"
-fi
+  -lc 'cd /app/peaky_finders && poetry install --no-interaction && exec poetry run peaky --host 0.0.0.0 --port 8765'

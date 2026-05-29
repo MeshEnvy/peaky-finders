@@ -1,5 +1,13 @@
 """Greedy AOI site suggestion planner."""
 
-from peaky_finders.site_suggestions.runner import run_site_suggestion_pass
+from peaky_finders.site_suggestions.planner import (
+    PlannedSuggestion,
+    plan_greedy_site_suggestions,
+    planned_to_preset_entries,
+)
 
-__all__ = ["run_site_suggestion_pass"]
+__all__ = [
+    "PlannedSuggestion",
+    "plan_greedy_site_suggestions",
+    "planned_to_preset_entries",
+]

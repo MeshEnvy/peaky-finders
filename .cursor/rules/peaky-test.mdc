@@ -9,7 +9,7 @@ Python tests for `peaky_finders` run **inside the `peaky:dev` Docker image**, no
 
 ## Do this
 
-- Run tests with **`./peaky-test`** from the repo root (same image/build knobs as `./peaky`: `--build`, `PEAKY_DEV_IMAGE`, `PEAKY_CACHE_DIR`).
+- Run tests with **`./peaky-test`** from the repo root (same image/build knobs as `./peaky` web server: `--build`, `PEAKY_DEV_IMAGE`, `PEAKY_CACHE_DIR`).
 - Pass pytest args through: `./peaky-test tests/test_mesh_connectivity.py`, `./peaky-test -k foo`, `./peaky-test --build`.
 - When verifying changes, use `./peaky-test` (or a targeted path) instead of `poetry run pytest` on the host.
 
@@ -20,4 +20,4 @@ Python tests for `peaky_finders` run **inside the `peaky:dev` Docker image**, no
 
 ## Why
 
-`./peaky` bind-mounts `peaky_finders/` into the container. The in-project `.venv` must stay **Linux-only**. `./peaky-test` keeps test runs on the same contract as `./peaky`.
+`./peaky` runs the web server in Docker with `peaky_finders/` bind-mounted. The in-project `.venv` must stay **Linux-only**. `./peaky-test` keeps test runs on the same contract.

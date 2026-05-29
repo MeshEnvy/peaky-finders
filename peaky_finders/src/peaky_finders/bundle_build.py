@@ -71,7 +71,7 @@ def require_bundle_config(preset: Preset) -> BundleConfig:
     if not pre.include:
         raise ValueError(
             'Preset needs non-empty "bundle.include". Layer names:'
-            "\n  peaky inspect <path_to.gdb>"
+            "\n  list GDB layers with ogrinfo or pyogrio"
             "\nthen edit the preset JSON bundle.include / bundle.exclude arrays."
         )
     return pre
@@ -893,7 +893,7 @@ def gdb_layer_group_specs(g: GdbLayerGroup, data_dir: Path) -> list[GdbLayerSpec
     if not names:
         raise ValueError(
             f"No polygon layers found for bundle path {g.path!r} ({resolved}); "
-            "set layers explicitly or use peaky inspect."
+            "set layers explicitly in preset bundle.include / bundle.exclude."
         )
     return [GdbLayerSpec(name=n) for n in names]
 
@@ -1293,7 +1293,8 @@ def require_cached_gpkg(
     )
     if not gpkg.is_file():
         hint = (
-            f'  poetry run peaky build "{Path(preset_path).expanduser().resolve()}"'
+            f"  eligible land-use GPKG not found; check bundle GDB paths in preset "
+            f"({Path(preset_path).expanduser().resolve()})"
         )
         raise FileNotFoundError(
             "No AOI bundle cache for this preset's inputs. Run:\n" + hint

@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "peaky-finders"
 version = "0.1.0"
-description = "LoRa viewshed CLI (splatter, KML output)"
+description = "Peaky Finders web app (mesh site planner, splatter viewsheds)"
 authors = []
 packages = [{ include = "peaky_finders", from = "src" }]
 
@@ -27,7 +27,7 @@ uvicorn = { version = "^0.32", extras = ["standard"] }
 pytest = "^8.3"
 
 [tool.poetry.scripts]
-peaky = "peaky_finders.peaky_cli:main"
+peaky = "peaky_finders.web.main:main"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

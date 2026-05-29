@@ -21,7 +21,6 @@ from peaky_finders.web.chat import list_chat_models, stream_chat
 from peaky_finders.web.chat_context import measure_chat_context, summarize_chat_history
 from peaky_finders.web.chat_history import ChatTurn
 from peaky_finders.web.dem_contours import load_dem_contours
-from peaky_finders.web.jobs import JOB_MANAGER
 from peaky_finders.web.mesh_links import (
     project_mesh_links_at_geojson,
     project_mesh_links_from_site_geojson,
@@ -47,14 +46,6 @@ from peaky_finders.web.viewshed_service import (
 from peaky_finders.web.viewshed_tiles import ensure_point_viewshed_tile, ensure_viewshed_tile
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-
-
-class BuildRequest(BaseModel):
-    project_slug: str
-    suggest_n: int | None = Field(default=None)
-    replace_suggested: bool = False
-    force: bool = False
-    jobs: int = Field(default=1, ge=1, le=64)
 
 
 class MapPinTurn(BaseModel):
@@ -406,48 +397,6 @@ def create_app() -> FastAPI:
                 "X-Accel-Buffering": "no",
             },
         )
-
-    @app.post("/api/build")
-    def api_build(body: BuildRequest) -> dict[str, str]:
-        try:
-            job = JOB_MANAGER.start_build(
-                project_slug=body.project_slug,
-                suggest_n=body.suggest_n,
-                replace_suggested=body.replace_suggested,
-                force=body.force,
-                jobs=body.jobs,
-            )
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return {"job_id": job.job_id}
-
-    @app.get("/api/jobs/{job_id}")
-    def api_job_status(job_id: str) -> dict[str, Any]:
-        job = JOB_MANAGER.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="job not found")
-        return {
-            "job_id": job.job_id,
-            "project": job.project_slug,
-            "phase": job.phase,
-            "ok": job.ok,
-            "exit_code": job.exit_code,
-            "error": job.error,
-        }
-
-    @app.get("/api/jobs/{job_id}/events")
-    def api_job_events(job_id: str) -> StreamingResponse:
-        job = JOB_MANAGER.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="job not found")
-
-        def sse_iter():
-            for msg in job.stream.events():
-                yield f"data: {json.dumps(msg, default=str)}\n\n"
-
-        return StreamingResponse(sse_iter(), media_type="text/event-stream")
 
     if STATIC_DIR.is_dir():
         app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

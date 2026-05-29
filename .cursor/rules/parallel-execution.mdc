@@ -28,8 +28,7 @@ Default to **parallel or multi-core** approaches when work is embarrassingly par
 
 ## Patterns in this repo
 
-- `ThreadPoolExecutor` + `as_completed` for tile/site/raster fan-out (`skadi_dem`, `pairwise_dem_peak`, `mesh_coverage_depth`, `build_executor`).
-- **Wave scheduling** when dependencies exist (`build_executor` runnable waves).
+- `ThreadPoolExecutor` + `as_completed` for tile/site/raster fan-out (`skadi_dem`, `pairwise_dem_peak`, `mesh_coverage_depth`, web viewshed service).
 - Expose **`max_workers` / `jobs`** on hot paths; default to `1` only when parallelism is opt-in via preset or CLI.
 
 ## Implementation checklist

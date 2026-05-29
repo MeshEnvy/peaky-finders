@@ -405,7 +405,7 @@ def test_ensure_chat_site_in_preset(tmp_path: Path) -> None:
 
 
 def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
-    from peaky_finders.build_configure import PlannedComposite, PlannedViewshedWorkspace
+    from peaky_finders.workspace_plan import PlannedComposite, PlannedViewshedWorkspace
 
     aoi = box(-115.05, 39.00, -114.98, 39.05)
     eligible = box(-115.04, 39.01, -114.99, 39.04)
@@ -489,7 +489,7 @@ def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
 
 
 def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
-    from peaky_finders.build_configure import PlannedComposite, PlannedViewshedWorkspace
+    from peaky_finders.workspace_plan import PlannedComposite, PlannedViewshedWorkspace
 
     aoi = box(-115.05, 39.00, -114.98, 39.05)
     eligible = box(-115.04, 39.01, -114.99, 39.04)
@@ -591,7 +591,7 @@ def test_resolve_land_grab_strategy() -> None:
 
 
 def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> None:
-    from peaky_finders.build_configure import PlannedComposite, PlannedViewshedWorkspace
+    from peaky_finders.workspace_plan import PlannedComposite, PlannedViewshedWorkspace
 
     aoi = box(-115.05, 39.00, -114.98, 39.05)
     eligible = box(-115.04, 39.01, -114.99, 39.04)
@@ -674,7 +674,7 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
 
 
 def test_suggest_cli_n_stops_after_goal_budget(monkeypatch, tmp_path: Path) -> None:
-    from peaky_finders.build_configure import PlannedComposite, PlannedViewshedWorkspace
+    from peaky_finders.workspace_plan import PlannedComposite, PlannedViewshedWorkspace
     from peaky_finders.site_suggestions import planner as planner_mod
     from peaky_finders.site_suggestions.candidates import SiteCandidate
     from peaky_finders.site_suggestions.planner import PlannedSuggestion
@@ -812,7 +812,7 @@ def test_suggest_iteration_helpers(tmp_path: Path) -> None:
 
 
 def test_suggest_cli_n_adds_new_sites_when_prior_suggested_exist(monkeypatch, tmp_path: Path) -> None:
-    from peaky_finders.build_configure import PlannedComposite, PlannedViewshedWorkspace
+    from peaky_finders.workspace_plan import PlannedComposite, PlannedViewshedWorkspace
     from peaky_finders.site_suggestions import planner as planner_mod
     from peaky_finders.site_suggestions.candidates import SiteCandidate
     from peaky_finders.site_suggestions.planner import PlannedSuggestion
@@ -933,7 +933,7 @@ def test_suggest_cli_n_adds_new_sites_when_prior_suggested_exist(monkeypatch, tm
 
 
 def test_on_pick_writes_each_site_to_preset(monkeypatch, tmp_path: Path) -> None:
-    from peaky_finders.build_configure import PlannedComposite, PlannedViewshedWorkspace
+    from peaky_finders.workspace_plan import PlannedComposite, PlannedViewshedWorkspace
     from peaky_finders.site_suggestions import planner as planner_mod
     from peaky_finders.site_suggestions.candidates import SiteCandidate
     from peaky_finders.site_suggestions.planner import PlannedSuggestion

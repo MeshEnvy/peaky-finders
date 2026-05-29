@@ -173,24 +173,6 @@ def _offline_used_tokens(
     return _estimate_messages_tokens(messages, WEB_TOOL_SCHEMAS)
 
 
-def estimate_chat_context(
-    *,
-    project_slug: str | None,
-    history: list | None,
-    summary: str | None = None,
-    message: str = "",
-    map_pins: list | None = None,
-) -> dict[str, Any]:
-    """Backward-compatible alias for :func:`measure_chat_context`."""
-    return measure_chat_context(
-        project_slug=project_slug,
-        history=history,
-        summary=summary,
-        message=message,
-        map_pins=map_pins,
-    )
-
-
 SUMMARIZE_SYSTEM_PROMPT = (
     "You compress chat transcripts for a mesh radio site planning assistant. "
     "Produce a concise summary the assistant can use as memory in later turns. "

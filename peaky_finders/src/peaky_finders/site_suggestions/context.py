@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from shapely.geometry.base import BaseGeometry
 
-from peaky_finders.build_configure import BuildConfigurePlan
+from peaky_finders.workspace_plan import WorkspacePlan
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid
 from peaky_finders.sites_job import BundleSiteSuggestionsConfig, Preset
 
@@ -26,7 +26,7 @@ class BackboneSite:
 @dataclass
 class SiteSuggestionContext:
     preset: Preset
-    plan: BuildConfigurePlan
+    plan: WorkspacePlan
     grid: CoverageDepthGrid
     eligible_ll: BaseGeometry
     aoi_ll: BaseGeometry

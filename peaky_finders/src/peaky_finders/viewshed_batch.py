@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from peaky_finders.build_configure import PlannedViewshedWorkspace
+from peaky_finders.workspace_plan import PlannedViewshedWorkspace
 from peaky_finders.models import SplatCoverageRequest
 from peaky_finders.sites_job import Preset, resolved_viewshed_coverage_kml_style
 from peaky_finders.splat_pipeline import (

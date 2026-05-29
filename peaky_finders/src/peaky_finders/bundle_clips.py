@@ -658,7 +658,7 @@ def list_exclude_layer_kmz_entries(
     if not resolve_path.is_file():
         raise FileNotFoundError(
             f"bundle resolve manifest missing: {resolve_path}. "
-            "Run ``peaky bundle resolve PRESET.yaml`` (Makefile bundle target)."
+            "Bundle resolve manifest missing — ensure bundle GDB paths in preset are valid."
         )
 
     rows: list[tuple[str, Path, str]] = []
@@ -725,7 +725,7 @@ def list_include_layer_kmz_entries(
     if not resolve_path.is_file():
         raise FileNotFoundError(
             f"bundle resolve manifest missing: {resolve_path}. "
-            "Run ``peaky bundle resolve PRESET.yaml`` (Makefile bundle target)."
+            "Bundle resolve manifest missing — ensure bundle GDB paths in preset are valid."
         )
 
     rows: list[tuple[str, Path, str]] = []
@@ -902,7 +902,7 @@ def list_eligible_layer_kmz_entries(
     if not resolve_path.is_file():
         raise FileNotFoundError(
             f"bundle resolve manifest missing: {resolve_path}. "
-            "Run ``peaky bundle resolve PRESET.yaml`` (Makefile bundle target)."
+            "Bundle resolve manifest missing — ensure bundle GDB paths in preset are valid."
         )
 
     resolve = read_bundle_resolve(bundle_dir)
@@ -1130,7 +1130,7 @@ def _clip_shas_for_composite(
             shas.append(sha)
         else:
             raise FileNotFoundError(
-                f"{role} clip missing: {gpkg} (run `peaky bundle clip {role} {layer_name}` first)"
+                f"{role} clip missing: {gpkg} (bundle clip for {role}/{layer_name} not materialized)"
             )
     return shas
 

@@ -1,7 +1,6 @@
 """Human-readable filesystem labels for preset build artifact directories.
 
-Incremental rebuilds rely on Makefile stamps under ``build/stamps/``; directories here are
-labeled by site slug, pair of slugs, or fixed role names—not content hashes.
+Directories are labeled by site slug, pair of slugs, or fixed role names—not content hashes.
 """
 
 from __future__ import annotations

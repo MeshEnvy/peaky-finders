@@ -253,7 +253,3 @@ def mesh_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
         if not captors or not (captors & reachable):
             return False
     return True
-
-
-# Back-compat alias used by strategy module
-mesh_backbone_planning_complete = mesh_grow_planning_complete

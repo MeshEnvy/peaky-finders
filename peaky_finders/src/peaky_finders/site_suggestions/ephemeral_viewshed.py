@@ -6,7 +6,7 @@ from pathlib import Path
 
 from shapely.geometry.base import BaseGeometry
 
-from peaky_finders.build_fresh_checks import viewshed_request_digest_matches
+from peaky_finders.viewshed_workspace import viewshed_request_digest_matches
 from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.preset_mapping import preset_to_request
 from peaky_finders.sites_job import Preset
@@ -58,7 +58,7 @@ def candidate_viewshed_workdir(
     lat: float,
     lon: float,
 ) -> Path:
-    """Shared viewshed cache path for a candidate coordinate (same layout as ``peaky build``)."""
+    """Shared viewshed cache path for a candidate coordinate (under ``build/viewsheds/``)."""
     return resolved_viewshed_workdir_for_coords(
         preset=preset,
         viewshed_root=viewshed_root,

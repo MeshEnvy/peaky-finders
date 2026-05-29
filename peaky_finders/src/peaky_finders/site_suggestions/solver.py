@@ -1,4 +1,4 @@
-"""Solver step budget constants for ``peaky build --suggest``."""
+"""Solver step budget constants for site suggestion planner."""
 
 from __future__ import annotations
 

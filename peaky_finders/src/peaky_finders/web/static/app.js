@@ -1784,23 +1784,6 @@ async function consumeChatStream(res, onEvent) {
 }
 
 const handlers = {
-  'build.started': (m) => {
-    setStatus('running', 'building')
-    appendChat(`Project: ${m.project}`, 'build', 'Build started')
-  },
-  'build.phase': (m) => {
-    setStatus('running', m.name)
-    appendChat(m.name, 'build', 'Phase')
-  },
-  'build.finished': (m) => {
-    setStatus(m.ok ? 'done' : 'error', m.ok ? 'complete' : 'failed')
-    appendChat(m.ok ? 'Build finished successfully.' : `Exit code ${m.exit_code}`, 'build', 'Finished')
-  },
-  'build.error': (m) => {
-    setStatus('error', 'error')
-    appendChat(m.message, 'error', 'Error')
-  },
-  'build.target': (m) => appendChat(`${m.target} — ${m.status}`, 'tool', 'Target'),
   'chat.system': (m) => appendChat(m.text, 'system', 'System'),
   'chat.user': (m) => appendChat(m.text, 'user', 'User'),
   'chat.assistant': (m) => appendChat(m.text, 'assistant', 'Assistant'),
@@ -2159,8 +2142,7 @@ async function summarizeChatContext({ announce = true } = {}) {
   } finally {
     chatSummarizeInFlight = false
     if (chatSummarizeBtn) chatSummarizeBtn.disabled = false
-    if (!buildBtn.disabled) setStatus('', 'idle')
-    else setStatus('running', 'building')
+    setStatus('', 'idle')
   }
 }
 

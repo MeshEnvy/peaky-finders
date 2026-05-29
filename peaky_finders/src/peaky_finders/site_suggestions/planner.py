@@ -11,7 +11,7 @@ import geopandas as gpd
 from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 
-from peaky_finders.build_configure import BuildConfigurePlan
+from peaky_finders.workspace_plan import WorkspacePlan
 from peaky_finders.bundle_clips import ELIGIBLE_LAYER
 from peaky_finders.site_suggestions.batch_viewshed import run_candidate_batch_viewsheds
 from peaky_finders.site_suggestions.candidates import SiteCandidate, generate_refine_candidates
@@ -99,7 +99,7 @@ class _CandidateTrialEval:
     pick: PlannedSuggestion | None
 
 
-def _composite_by_role(plan: BuildConfigurePlan, role: str):
+def _composite_by_role(plan: WorkspacePlan, role: str):
     for c in plan.composites:
         if c.role == role:
             return c
@@ -116,7 +116,7 @@ def _read_union_geometry(gpkg: Path, layer: str) -> BaseGeometry:
     return geom
 
 
-def _footprint_paths_for_seed_sites(plan: BuildConfigurePlan, preset: Preset) -> list[Path]:
+def _footprint_paths_for_seed_sites(plan: WorkspacePlan, preset: Preset) -> list[Path]:
     del preset
     paths: list[Path] = []
     for ws in plan.viewshed_workspaces:
@@ -947,7 +947,7 @@ def _run_candidate_trials(
     target_label: str,
     preset: Preset,
     preset_path: Path,
-    plan: BuildConfigurePlan,
+    plan: WorkspacePlan,
     refine: StrategyRefineSettings,
     eligible_ll: BaseGeometry,
     footprint_runner,
@@ -1197,7 +1197,7 @@ def plan_greedy_site_suggestions(
     *,
     preset: Preset,
     preset_path: Path,
-    plan: BuildConfigurePlan,
+    plan: WorkspacePlan,
     suggest_cli_n: int,
     suggest_root: Path,
     footprint_runner=None,

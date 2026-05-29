@@ -49,7 +49,7 @@ def test_write_batch_request_json(tmp_path: Path) -> None:
     (ws_a / "request.json").write_text(json.dumps(req_a), encoding="utf-8")
     (ws_b / "request.json").write_text(json.dumps(req_b), encoding="utf-8")
 
-    from peaky_finders.build_configure import PlannedViewshedWorkspace
+    from peaky_finders.workspace_plan import PlannedViewshedWorkspace
 
     workspaces = (
         PlannedViewshedWorkspace(

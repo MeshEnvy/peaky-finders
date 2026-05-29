@@ -6,8 +6,8 @@ import argparse
 from pathlib import Path
 
 
-def run_web(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="peaky web")
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="peaky")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
@@ -22,4 +22,7 @@ def run_web(argv: list[str] | None = None) -> int:
         reload=True,
         reload_dirs=[str(Path(__file__).resolve().parents[1])],
     )
-    return 0
+
+
+if __name__ == "__main__":
+    main()

@@ -35,7 +35,7 @@ def require_cwd_config_yaml(*, cwd: Path | None = None) -> Path:
     base = Path.cwd() if cwd is None else Path(cwd)
     path = (base / "config.yaml").resolve()
     if not path.is_file():
-        raise FileNotFoundError(f"config.yaml not found in {base} — run peaky from your project directory")
+        raise FileNotFoundError(f"config.yaml not found in {base} — expected projects/<slug>/config.yaml")
     require_preset_yaml_path(path)
     return path
 
@@ -165,7 +165,7 @@ def resolved_aggregate_kmz_path(preset_path: Path) -> Path:
 
 
 def resolved_mesh_site_links_kml(preset_path: Path) -> Path:
-    """Stable mesh linkage KML emitted by ``peaky mesh links``."""
+    """Stable mesh linkage KML under ``build/mesh/links``."""
     path = Path(preset_path).expanduser().resolve()
     return resolved_preset_build_dir(path) / "mesh" / "links" / "site_to_site.kml"
 
@@ -256,7 +256,7 @@ class CoverageProvider(StrEnum):
 
 
 class SimulationMaxWorkers(BaseModel):
-    """Optional parallelism hints for mesh/coverage-heavy steps (fan-out primarily from ``peaky build``)."""
+    """Optional parallelism hints for mesh/coverage-heavy steps."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -679,7 +679,7 @@ class SiteSuggestionCoverageTarget(StrEnum):
 
 
 class SiteSuggestionStrategy(StrEnum):
-    """Candidate-generation strategy for ``peaky build --suggest``."""
+    """Candidate-generation strategy for site suggestion planner."""
 
     LAND_GRAB = "land-grab"
     MESH_BACKBONE = "mesh-backbone"
@@ -961,7 +961,7 @@ class MeshGrowAiStrategyConfig(BaseModel):
 
 
 class BundleSiteSuggestionsConfig(BaseModel):
-    """Site suggestion planner (``peaky build --suggest``)."""
+    """Site suggestion planner configuration."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -1116,7 +1116,7 @@ class BundleKmzConfig(BaseModel):
 
 
 class BundleConfig(BaseModel):
-    """GDB-driven AOI polygon plus land-use include / exclude for ``peaky build`` bundle stages."""
+    """GDB-driven AOI polygon plus land-use include / exclude for bundle stages."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -1148,7 +1148,7 @@ class BundleConfig(BaseModel):
     )
     site_suggestions: BundleSiteSuggestionsConfig | None = Field(
         default=None,
-        description="Greedy site planner knobs for ``peaky build --suggest``.",
+        description="Greedy site planner knobs.",
     )
 
 

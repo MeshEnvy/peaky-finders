@@ -65,7 +65,7 @@ COPY docker/peaky-entrypoint.sh /usr/local/bin/peaky-entrypoint
 RUN chmod +x /usr/local/bin/peaky-entrypoint
 
 ENTRYPOINT ["/usr/local/bin/peaky-entrypoint"]
-CMD ["--help"]
+CMD ["--host", "0.0.0.0", "--port", "8765"]
 
 
 FROM runtime-base AS dev

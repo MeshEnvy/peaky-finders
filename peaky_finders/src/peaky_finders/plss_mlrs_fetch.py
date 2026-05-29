@@ -10,7 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from peaky_finders.build_keys import build_key_hex, read_build_key_hex, write_build_key
+from peaky_finders.content_keys import content_key_hex, read_content_key_hex, write_content_key
 from peaky_finders.http_pool import HttpPool
 from peaky_finders.sites_job import Preset, _slugify_files_segment, dump_preset_yaml_document, read_preset_yaml_tree
 
@@ -87,15 +87,15 @@ def plss_sites_loc_digest(preset: Preset) -> str:
     """Stable hash of site slugs and coordinates that drive PLSS/MLRS lookup."""
     rows = [(slug, loc_stamp(ent.lat, ent.lon)) for slug, ent in sorted(preset.sites.items())]
     body = json.dumps({"format": PLSS_SITES_DIGEST_FORMAT, "sites": rows}, sort_keys=True, ensure_ascii=False)
-    return build_key_hex(body)
+    return content_key_hex(body)
 
 
-def plss_bundle_build_stale(*, cache_base: Path, preset: Preset) -> bool:
+def plss_bundle_cache_stale(*, cache_base: Path, preset: Preset) -> bool:
     """True when site coords changed, cache misses, or preset PLSS fields are out of sync."""
 
     cache_base = Path(cache_base).expanduser().resolve()
     want = plss_sites_loc_digest(preset)
-    if read_build_key_hex(plss_bundle_key_path(cache_base)) != want:
+    if read_content_key_hex(plss_bundle_key_path(cache_base)) != want:
         return True
     if not plss_mlrs_loc_cache_path(cache_base).is_file():
         return True
@@ -349,7 +349,7 @@ def refresh_plss_mlrs_for_bundle(
         progress=None,
     )
     write_plss_mlrs_loc_cache(cache_base, loc_cache)
-    write_build_key(plss_bundle_key_path(cache_base), plss_sites_loc_digest(preset))
+    write_content_key(plss_bundle_key_path(cache_base), plss_sites_loc_digest(preset))
     if network_count:
         print(f"plss/mlrs: {network_count} CadNSDI quer{'y' if network_count == 1 else 'ies'}", flush=True)
 
