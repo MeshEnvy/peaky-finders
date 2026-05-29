@@ -1105,14 +1105,6 @@ class BundleMeshCoverageConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    pairwise: bool = Field(
-        default=True,
-        description="Run pairwise footprint intersection analysis (``mesh:pair:*`` build targets).",
-    )
-    depth: bool = Field(
-        default=True,
-        description="Run mesh footprint depth band analysis (``mesh:depth`` build target).",
-    )
     max_raster_dimension: int = Field(
         default=4096,
         ge=256,
@@ -1303,20 +1295,6 @@ def resolved_viewshed_coverage_kml_style(kml_overlay: BundleKmlOverlayStyles | N
     if kml_overlay is None or kml_overlay.viewshed_coverage is None:
         return DEFAULT_VIEWSHED_COVERAGE_KML_STYLE
     return kml_overlay.viewshed_coverage
-
-
-def resolved_mesh_pairwise_enabled(mesh_coverage: BundleMeshCoverageConfig | None) -> bool:
-    """Preset ``bundle.mesh_coverage.pairwise``; default enabled."""
-    if mesh_coverage is None:
-        return True
-    return mesh_coverage.pairwise
-
-
-def resolved_mesh_depth_enabled(mesh_coverage: BundleMeshCoverageConfig | None) -> bool:
-    """Preset ``bundle.mesh_coverage.depth``; default enabled."""
-    if mesh_coverage is None:
-        return True
-    return mesh_coverage.depth
 
 
 def resolved_mesh_pairwise_kml_style(kml_overlay: BundleKmlOverlayStyles | None) -> BundleKmlLayerStyle:

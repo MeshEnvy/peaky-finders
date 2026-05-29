@@ -17,9 +17,7 @@ from peaky_finders.sites_job import (
     load_preset,
     resolved_bundle_dir,
     resolved_mesh_depth_dir,
-    resolved_mesh_depth_enabled,
     resolved_mesh_pairwise_dir,
-    resolved_mesh_pairwise_enabled,
     resolved_preset_clips_dir,
 )
 from peaky_finders.web.project_events import publish_build_status, publish_catalog_refresh, publish_layer_phase
@@ -72,13 +70,6 @@ def _snapshot_phases(slug: str) -> tuple[LayerBuildPhase, str | None, LayerBuild
         return st.clips, st.clips_error, st.mesh, st.mesh_error
 
 
-def _mesh_phase_for_preset(preset: Preset, mesh_phase: LayerBuildPhase) -> LayerBuildPhase:
-    mesh_cfg = preset.bundle.mesh_coverage if preset.bundle else None
-    if not (resolved_mesh_pairwise_enabled(mesh_cfg) or resolved_mesh_depth_enabled(mesh_cfg)):
-        return "unavailable"
-    return mesh_phase
-
-
 def clips_need_rebuild(slug: str) -> bool:
     preset_path = _preset_path(slug)
     preset = load_preset(preset_path)
@@ -96,9 +87,6 @@ def mesh_need_rebuild(slug: str) -> bool:
     preset_path = _preset_path(slug)
     preset = load_preset(preset_path)
     mesh_cfg = preset.bundle.mesh_coverage if preset.bundle else None
-    if not resolved_mesh_pairwise_enabled(mesh_cfg) and not resolved_mesh_depth_enabled(mesh_cfg):
-        return False
-
     bundle_dir = resolved_bundle_dir(preset_path=preset_path)
     sites_items = _rf_sites_with_footprints(preset, preset_path, bundle_dir)
     if len(sites_items) < 2:
@@ -128,28 +116,26 @@ def mesh_need_rebuild(slug: str) -> bool:
     max_dim = int(mesh_cfg.max_raster_dimension) if mesh_cfg is not None else 4096
     vds = [slug_to_digest[s] for s in footprints]
 
-    if resolved_mesh_depth_enabled(mesh_cfg):
-        rel = mesh_depth_network_rel_dir(max_raster_dimension=max_dim)
-        set_dir = resolved_mesh_depth_dir(bundle_dir) / rel
-        kind = mesh_depth_set_update_kind(
-            set_dir=set_dir,
-            viewshed_digests=vds,
-            site_slugs=footprints,
-            max_raster_dimension=max_dim,
-            site_slug_to_digest=slug_to_digest,
-        )
-        if kind != "current":
-            return True
+    rel = mesh_depth_network_rel_dir(max_raster_dimension=max_dim)
+    set_dir = resolved_mesh_depth_dir(bundle_dir) / rel
+    kind = mesh_depth_set_update_kind(
+        set_dir=set_dir,
+        viewshed_digests=vds,
+        site_slugs=footprints,
+        max_raster_dimension=max_dim,
+        site_slug_to_digest=slug_to_digest,
+    )
+    if kind != "current":
+        return True
 
-    if resolved_mesh_pairwise_enabled(mesh_cfg):
-        pairwise_root = resolved_mesh_pairwise_dir(bundle_dir)
-        for i, sa in enumerate(footprints):
-            vd_a = slug_to_digest[sa]
-            for sb in footprints[i + 1 :]:
-                vd_b = slug_to_digest[sb]
-                pair_dir = pairwise_root / mesh_pairwise_rel_dir(sa, sb)
-                if not pairwise_complete_digest_matches(pair_dir, vd_a=vd_a, vd_b=vd_b):
-                    return True
+    pairwise_root = resolved_mesh_pairwise_dir(bundle_dir)
+    for i, sa in enumerate(footprints):
+        vd_a = slug_to_digest[sa]
+        for sb in footprints[i + 1 :]:
+            vd_b = slug_to_digest[sb]
+            pair_dir = pairwise_root / mesh_pairwise_rel_dir(sa, sb)
+            if not pairwise_complete_digest_matches(pair_dir, vd_a=vd_a, vd_b=vd_b):
+                return True
     return False
 
 
@@ -175,11 +161,6 @@ def layer_build_phase(slug: str, *, built: bool, mesh_layer: bool = False) -> La
 def maps_build_status(slug: str) -> dict[str, Any]:
     """In-memory build phases only (no staleness scan, no job scheduling)."""
     clips_phase, clips_err, mesh_phase, mesh_err = _snapshot_phases(slug)
-    try:
-        preset = load_preset(_preset_path(slug))
-        mesh_phase = _mesh_phase_for_preset(preset, mesh_phase)
-    except FileNotFoundError:
-        mesh_phase = "unavailable"
     return {
         "clips": {"phase": clips_phase, "error": clips_err},
         "mesh": {"phase": mesh_phase, "error": mesh_err},
@@ -189,7 +170,6 @@ def maps_build_status(slug: str) -> dict[str, Any]:
 def maps_build_status_for_preset(slug: str, preset: Preset) -> dict[str, Any]:
     """Like ``maps_build_status`` but reuses an already-loaded preset (catalog path)."""
     clips_phase, clips_err, mesh_phase, mesh_err = _snapshot_phases(slug)
-    mesh_phase = _mesh_phase_for_preset(preset, mesh_phase)
     return {
         "clips": {"phase": clips_phase, "error": clips_err},
         "mesh": {"phase": mesh_phase, "error": mesh_err},
@@ -347,22 +327,11 @@ def _maintenance_planner(slug: str) -> None:
             vlog(f"{prefix} scan failed: {exc}")
         return
 
-    mesh_cfg_ok = False
-    if auto_rebuild_enabled():
-        try:
-            preset = load_preset(_preset_path(slug))
-            mesh_cfg = preset.bundle.mesh_coverage if preset.bundle else None
-            mesh_cfg_ok = resolved_mesh_pairwise_enabled(mesh_cfg) or resolved_mesh_depth_enabled(mesh_cfg)
-        except FileNotFoundError:
-            mesh_cfg_ok = False
-
     if vlog:
         auto = auto_rebuild_enabled()
         mesh_note = "stale" if mesh_stale else "current"
         if not auto:
             mesh_note = "auto_rebuild off"
-        elif not mesh_cfg_ok:
-            mesh_note = "unavailable (pairwise and depth disabled in preset)"
         vlog(
             f"{prefix} clips={'stale' if clips_stale else 'current'}, "
             f"mesh={mesh_note}"
@@ -383,20 +352,17 @@ def _maintenance_planner(slug: str) -> None:
             st.clips = "built"
         notify = True
 
-        if not auto_rebuild_enabled():
-            pass
-        elif not mesh_cfg_ok:
-            st.mesh = "unavailable"
-        elif mesh_stale:
-            st.mesh = "stale" if st.mesh != "building" else st.mesh
-        elif st.mesh != "building":
-            st.mesh = "built"
+        if auto_rebuild_enabled():
+            if mesh_stale:
+                st.mesh = "stale" if st.mesh != "building" else st.mesh
+            elif st.mesh != "building":
+                st.mesh = "built"
 
         if auto_rebuild_enabled():
             if clips_stale:
                 enqueue_clips = True
                 _start_clips_job_locked(slug, st)
-            elif mesh_stale and mesh_cfg_ok:
+            elif mesh_stale:
                 enqueue_mesh = True
                 _start_mesh_job_locked(slug, st)
 

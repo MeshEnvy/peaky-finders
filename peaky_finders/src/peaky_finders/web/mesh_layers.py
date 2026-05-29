@@ -35,10 +35,8 @@ from peaky_finders.sites_job import (
     resolved_kmz_document_layers,
     resolved_mesh_depth_band_kml_style,
     resolved_mesh_depth_dir,
-    resolved_mesh_depth_enabled,
     resolved_mesh_pairwise_dir,
     resolved_mesh_pairwise_eligible_kml_style,
-    resolved_mesh_pairwise_enabled,
     resolved_mesh_pairwise_kml_style,
     resolved_preset_clips_dir,
 )
@@ -355,10 +353,6 @@ def _enumerate_pairwise_entries(
     bundle_dir: Path,
     yaml_root: Any,
 ) -> list[dict[str, Any]]:
-    mesh_cfg = preset.bundle.mesh_coverage if preset.bundle else None
-    if not resolved_mesh_pairwise_enabled(mesh_cfg):
-        return []
-
     kml_overlay = preset.bundle.kml_overlay if preset.bundle else None
     mesh_yaml = _mesh_kmz_block(yaml_root)
 
@@ -408,10 +402,6 @@ def _enumerate_depth_band_entries(
     bundle_dir: Path,
     yaml_root: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    mesh_cfg = preset.bundle.mesh_coverage if preset.bundle else None
-    if not resolved_mesh_depth_enabled(mesh_cfg):
-        return []
-
     kml_overlay = preset.bundle.kml_overlay if preset.bundle else None
     vis = resolved_kmz_document_layers(preset.bundle)
     mesh_yaml = _mesh_kmz_block(yaml_root)
@@ -596,11 +586,6 @@ def run_mesh_rebuild(
     mesh_cfg = preset.bundle.mesh_coverage if preset.bundle else None
     kml_overlay = preset.bundle.kml_overlay if preset.bundle else None
 
-    pairwise_on = resolved_mesh_pairwise_enabled(mesh_cfg)
-    depth_on = resolved_mesh_depth_enabled(mesh_cfg)
-    if not pairwise_on and not depth_on:
-        raise ValueError("bundle.mesh_coverage pairwise and depth are both disabled")
-
     sites_items = _rf_sites_with_footprints(preset, preset_path, bundle_dir)
     if len(sites_items) < 2:
         raise ValueError("need at least two RF sites with polygonized viewshed footprints")
@@ -642,7 +627,7 @@ def run_mesh_rebuild(
     site_pins = {slug: (float(site.lat), float(site.lon)) for slug, site in sites_items}
     viewshed_radius_m = float(preset.simulation.radius_km) * 1000.0
 
-    plog(f"mesh rebuild: {len(footprints)} footprint(s), pairwise={pairwise_on}, depth={depth_on}")
+    plog(f"mesh rebuild: {len(footprints)} footprint(s)")
     vlog(f"mesh rebuild start: workers={workers}, depth_workers={depth_workers}")
 
     pairwise_count = 0
@@ -651,61 +636,59 @@ def run_mesh_rebuild(
 
     with tempfile.TemporaryDirectory(prefix="peaky-mesh-") as scratch:
         scratch_dir = Path(scratch)
-        if pairwise_on:
-            plog("mesh pairwise: plain overlaps…")
-            plain = write_pairwise_link_overlap_layers(
-                footprints=footprints,
-                scratch_dir=scratch_dir / "pairwise",
-                polygon_style=resolved_mesh_pairwise_kml_style(kml_overlay),
-                dem_mirror_root=dem_mirror,
-                emit_dem_peak_pins=emit_pins,
-                pairwise_peak_pin_style=None,
-                pairwise_overlap_workers=workers,
-                geometry_cache_root=pairwise_root,
-                slug_to_viewshed_digest=slug_to_digest,
-                site_pins=site_pins,
-                viewshed_radius_m=viewshed_radius_m,
-                progress_log=progress_log,
-            )
-            pairwise_count = len(plain)
-            plog(f"mesh pairwise plain done: {pairwise_count} pair(s)")
+        plog("mesh pairwise: plain overlaps…")
+        plain = write_pairwise_link_overlap_layers(
+            footprints=footprints,
+            scratch_dir=scratch_dir / "pairwise",
+            polygon_style=resolved_mesh_pairwise_kml_style(kml_overlay),
+            dem_mirror_root=dem_mirror,
+            emit_dem_peak_pins=emit_pins,
+            pairwise_peak_pin_style=None,
+            pairwise_overlap_workers=workers,
+            geometry_cache_root=pairwise_root,
+            slug_to_viewshed_digest=slug_to_digest,
+            site_pins=site_pins,
+            viewshed_radius_m=viewshed_radius_m,
+            progress_log=progress_log,
+        )
+        pairwise_count = len(plain)
+        plog(f"mesh pairwise plain done: {pairwise_count} pair(s)")
 
-            plog("mesh pairwise: eligible overlaps…")
-            elig = write_pairwise_eligible_link_overlap_layers(
-                footprints=footprints,
-                scratch_dir=scratch_dir / "pairwise_eligible",
-                polygon_style=resolved_mesh_pairwise_eligible_kml_style(kml_overlay),
-                eligible_ll=eligible_ll,
-                dem_mirror_root=dem_mirror,
-                emit_dem_peak_pins=emit_pins,
-                eligible_peak_pin_style=None,
-                pairwise_overlap_workers=workers,
-                geometry_cache_root=pairwise_root,
-                slug_to_viewshed_digest=slug_to_digest,
-                site_pins=site_pins,
-                viewshed_radius_m=viewshed_radius_m,
-                progress_log=progress_log,
-            )
-            plog(f"mesh pairwise eligible done: {len(elig)} pair(s)")
+        plog("mesh pairwise: eligible overlaps…")
+        elig = write_pairwise_eligible_link_overlap_layers(
+            footprints=footprints,
+            scratch_dir=scratch_dir / "pairwise_eligible",
+            polygon_style=resolved_mesh_pairwise_eligible_kml_style(kml_overlay),
+            eligible_ll=eligible_ll,
+            dem_mirror_root=dem_mirror,
+            emit_dem_peak_pins=emit_pins,
+            eligible_peak_pin_style=None,
+            pairwise_overlap_workers=workers,
+            geometry_cache_root=pairwise_root,
+            slug_to_viewshed_digest=slug_to_digest,
+            site_pins=site_pins,
+            viewshed_radius_m=viewshed_radius_m,
+            progress_log=progress_log,
+        )
+        plog(f"mesh pairwise eligible done: {len(elig)} pair(s)")
 
-        if depth_on:
-            plog("mesh depth: raster bands…")
-            plain_rows, elig_rows = write_mesh_depth_kml_layers(
-                footprints=footprints,
-                kml_overlay=kml_overlay,
-                scratch_depth_dir=scratch_dir / "depth",
-                scratch_depth_eligible_dir=scratch_dir / "depth_eligible",
-                eligible_ll=eligible_ll,
-                max_raster_dimension=max_raster,
-                mesh_depth_workers=depth_workers,
-                geometry_cache_root=depth_root,
-                slug_to_viewshed_digest=slug_to_digest,
-                bundle_kml_overlay_digest=overlay_digest,
-                bundle_land_use_inputs_digest=land_digest,
-            )
-            depth_plain = len(plain_rows)
-            depth_elig = len(elig_rows)
-            plog(f"mesh depth done: {depth_plain} plain slice(s), {depth_elig} eligible slice(s)")
+        plog("mesh depth: raster bands…")
+        plain_rows, elig_rows = write_mesh_depth_kml_layers(
+            footprints=footprints,
+            kml_overlay=kml_overlay,
+            scratch_depth_dir=scratch_dir / "depth",
+            scratch_depth_eligible_dir=scratch_dir / "depth_eligible",
+            eligible_ll=eligible_ll,
+            max_raster_dimension=max_raster,
+            mesh_depth_workers=depth_workers,
+            geometry_cache_root=depth_root,
+            slug_to_viewshed_digest=slug_to_digest,
+            bundle_kml_overlay_digest=overlay_digest,
+            bundle_land_use_inputs_digest=land_digest,
+        )
+        depth_plain = len(plain_rows)
+        depth_elig = len(elig_rows)
+        plog(f"mesh depth done: {depth_plain} plain slice(s), {depth_elig} eligible slice(s)")
 
     vlog("mesh rebuild done")
     return {
