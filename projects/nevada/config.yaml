@@ -48,6 +48,12 @@ simulation:
   #   los: 1
   #   splat: 8
 
+# --- Ollama (web chat + mesh-grow-ai agent) ---
+ai:
+  endpoint: http://host.docker.internal:11434/v1
+  model: qwen3.6:35b
+  temperature: 0.2
+
 # --- Raster / KMZ visualization (not physical RF inputs to the solver beyond min/max clamp.) ---
 display:
   colormap: plasma
@@ -272,10 +278,6 @@ bundle:
 
     # mesh-grow-ai: tool-driven agent (no corridor / frontier grids)
     mesh_grow_ai:
-      ollama_model: qwen3.6:35b
-      # Host Ollama (brew install ollama && ollama pull qwen2.5:7b). ./peaky reaches the Mac via host.docker.internal.
-      ollama_base_url: http://host.docker.internal:11434/v1
-      temperature: 0.2
       goals: {}
 
   # doc.kml initial NetworkLink checkbox visibility inside aggregate KMZ

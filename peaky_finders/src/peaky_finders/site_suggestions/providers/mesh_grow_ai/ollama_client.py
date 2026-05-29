@@ -30,6 +30,27 @@ def ollama_health_ok(base_url: str, *, timeout_s: float = 5.0) -> bool:
         return False
 
 
+def fetch_ollama_models(base_url: str, *, timeout_s: float = 5.0) -> list[str]:
+    """Return sorted model names from Ollama ``/api/tags``."""
+    root = _ollama_root_url(base_url)
+    try:
+        with httpx.Client(timeout=timeout_s) as client:
+            resp = client.get(f"{root}/api/tags")
+    except httpx.HTTPError as exc:
+        raise OllamaError(f"Ollama request failed: {exc}") from exc
+    if resp.status_code >= 400:
+        raise OllamaError(f"Ollama HTTP {resp.status_code}: {resp.text[:500]}")
+    data = resp.json()
+    if not isinstance(data, dict):
+        raise OllamaError("Ollama returned non-object JSON from /api/tags")
+    models = data.get("models") or []
+    names: list[str] = []
+    for entry in models:
+        if isinstance(entry, dict) and entry.get("name"):
+            names.append(str(entry["name"]))
+    return sorted(set(names))
+
+
 def _chat_body(
     *,
     model: str,

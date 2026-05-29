@@ -69,7 +69,8 @@ class MeshGrowAiStrategy:
     ) -> None:
         if not verbose:
             return
-        ai = cfg.mesh_grow_ai
+        mesh_ai = cfg.mesh_grow_ai
+        ollama = preset.ai
         uncovered = grid.uncovered_fraction(goal_depth=goal)
         uncovered_cells = int(grid.uncovered_mask(goal_depth=goal).sum())
         by_type: dict[str, int] = {}
@@ -78,14 +79,14 @@ class MeshGrowAiStrategy:
 
         suggest_log(verbose, "site suggest: ── planner configuration ──")
         suggest_log(verbose, f"  strategy: {self.name}")
-        suggest_log(verbose, f"  ollama_model: {ai.ollama_model}")
-        suggest_log(verbose, f"  ollama_base_url: {ai.ollama_base_url}")
-        suggest_log(verbose, f"  max_agent_steps: {ai.max_agent_steps}")
-        suggest_log(verbose, f"  max_viewshed_evals_per_episode: {ai.max_viewshed_evals_per_episode}")
-        suggest_log(verbose, f"  max_candidates_per_round: {ai.max_candidates_per_round}")
-        suggest_log(verbose, f"  configured goals: {len(ai.goals)}")
-        if ai.max_nodes is not None:
-            suggest_log(verbose, f"  max_nodes: {ai.max_nodes}")
+        suggest_log(verbose, f"  ollama_model: {ollama.model}")
+        suggest_log(verbose, f"  ollama_endpoint: {ollama.endpoint}")
+        suggest_log(verbose, f"  max_agent_steps: {mesh_ai.max_agent_steps}")
+        suggest_log(verbose, f"  max_viewshed_evals_per_episode: {mesh_ai.max_viewshed_evals_per_episode}")
+        suggest_log(verbose, f"  max_candidates_per_round: {mesh_ai.max_candidates_per_round}")
+        suggest_log(verbose, f"  configured goals: {len(mesh_ai.goals)}")
+        if mesh_ai.max_nodes is not None:
+            suggest_log(verbose, f"  max_nodes: {mesh_ai.max_nodes}")
         suggest_log(verbose, f"  suggest_parallelism: {max(1, int(jobs))}")
         suggest_log(verbose, "site suggest: ── seed sites ──")
         for slug, ent in sorted(preset.sites.items()):

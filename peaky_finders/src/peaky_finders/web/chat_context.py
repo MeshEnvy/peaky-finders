@@ -14,7 +14,7 @@ from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_context import
     ollama_count_tokens,
     usage_prompt_tokens,
 )
-from peaky_finders.web.chat import resolve_ollama_config, resolve_ollama_limits
+from peaky_finders.web.chat import resolve_ollama_limits, resolve_web_ai_config
 from peaky_finders.web.chat_history import build_chat_messages, normalize_chat_history
 from peaky_finders.web.chat_tools import WEB_TOOL_SCHEMAS, normalize_map_pins, web_chat_system_prompt
 
@@ -87,12 +87,13 @@ def measure_chat_context(
     map_pins: list | None = None,
     messages: list[dict[str, Any]] | None = None,
     measured_prompt_tokens: int | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Measure context usage using Ollama model limits and tokenization."""
-    ai = resolve_ollama_config(project_slug)
-    limits = resolve_ollama_limits(project_slug)
+    ai = resolve_web_ai_config(project_slug, model_override=model)
+    limits = resolve_ollama_limits(project_slug, model_override=model)
 
-    if not ollama_health_ok(ai.ollama_base_url):
+    if not ollama_health_ok(ai.endpoint):
         used = measured_prompt_tokens if measured_prompt_tokens is not None else _offline_used_tokens(
             project_slug=project_slug,
             history=history,
@@ -126,8 +127,8 @@ def measure_chat_context(
         source = "ollama_usage"
     else:
         used, source = ollama_count_tokens(
-            base_url=ai.ollama_base_url,
-            model=ai.ollama_model,
+            base_url=ai.endpoint,
+            model=ai.model,
             messages=messages,
             tools=WEB_TOOL_SCHEMAS,
             num_ctx=limits.num_ctx,
@@ -213,21 +214,22 @@ def summarize_chat_history(
     project_slug: str | None,
     history: list | None,
     summary: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     turns = normalize_chat_history(history)
     if not turns and not (summary and summary.strip()):
         raise ValueError("nothing to summarize")
 
-    ai = resolve_ollama_config(project_slug)
-    if not ollama_health_ok(ai.ollama_base_url):
-        raise OllamaError(f"Ollama not reachable at {ai.ollama_base_url!r}")
+    ai = resolve_web_ai_config(project_slug, model_override=model)
+    if not ollama_health_ok(ai.endpoint):
+        raise OllamaError(f"Ollama not reachable at {ai.endpoint!r}")
 
-    limits = resolve_ollama_limits(project_slug)
+    limits = resolve_ollama_limits(project_slug, model_override=model)
 
     transcript = _transcript_for_summary(history=turns, summary=summary)
     resp = chat_completions(
-        base_url=ai.ollama_base_url,
-        model=ai.ollama_model,
+        base_url=ai.endpoint,
+        model=ai.model,
         messages=[
             {"role": "system", "content": SUMMARIZE_SYSTEM_PROMPT},
             {"role": "user", "content": transcript},
@@ -245,9 +247,9 @@ def summarize_chat_history(
     if not text:
         raise OllamaError("Ollama returned empty summary")
 
-    ctx = measure_chat_context(project_slug=project_slug, history=[], summary=text, message="")
+    ctx = measure_chat_context(project_slug=project_slug, history=[], summary=text, message="", model=model)
     return {
         "summary": text,
-        "model": ai.ollama_model,
+        "model": ai.model,
         "context": ctx,
     }

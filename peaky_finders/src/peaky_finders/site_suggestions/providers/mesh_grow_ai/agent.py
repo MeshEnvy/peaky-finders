@@ -36,9 +36,10 @@ def run_mesh_grow_agent(
     chat_client: Callable[..., dict[str, Any]] | None = None,
 ) -> list[SiteCandidate]:
     """Run one planner-iteration agent episode; return accepted proposals."""
-    ai = ctx.cfg.mesh_grow_ai
-    if not ollama_health_ok(ai.ollama_base_url):
-        raise OllamaError(f"Ollama not reachable at {ai.ollama_base_url!r}")
+    ai_cfg = ctx.cfg.mesh_grow_ai
+    ollama = ctx.preset.ai
+    if not ollama_health_ok(ollama.endpoint):
+        raise OllamaError(f"Ollama not reachable at {ollama.endpoint!r}")
 
     agent_session = session or AgentSession(iteration=iteration)
     agent_session.reset_for_iteration(iteration)
@@ -52,21 +53,21 @@ def run_mesh_grow_agent(
         {
             "role": "user",
             "content": (
-                f"Planner iteration {iteration}. Find up to {ai.max_candidates_per_round} "
+                f"Planner iteration {iteration}. Find up to {ai_cfg.max_candidates_per_round} "
                 f"repeater sites toward configured goals. Start with snapshot."
             ),
         },
     ]
 
     client = chat_client or chat_completions
-    max_steps = int(ai.max_agent_steps)
+    max_steps = int(ai_cfg.max_agent_steps)
     prefix = "mesh-grow-ai: "
 
     if ctx.verbose:
         suggest_log(
             ctx.verbose,
             f"{prefix}episode start iteration={iteration} max_steps={max_steps} "
-            f"viewshed_budget={ai.max_viewshed_evals_per_episode}",
+            f"viewshed_budget={ai_cfg.max_viewshed_evals_per_episode}",
         )
 
     for step in range(max_steps):
@@ -78,11 +79,11 @@ def run_mesh_grow_agent(
 
         try:
             resp = client(
-                base_url=ai.ollama_base_url,
-                model=ai.ollama_model,
+                base_url=ollama.endpoint,
+                model=ollama.model,
                 messages=messages,
                 tools=TOOL_SCHEMAS,
-                temperature=float(ai.temperature),
+                temperature=float(ollama.temperature),
             )
         except OllamaError:
             raise
@@ -141,7 +142,7 @@ def run_mesh_grow_agent(
                     result=truncate_tool_result_for_stream(result),
                 )
             if ctx.verbose and name == "evaluate_site":
-                budget_left = int(ai.max_viewshed_evals_per_episode) - agent_session.viewshed_evals_used
+                budget_left = int(ai_cfg.max_viewshed_evals_per_episode) - agent_session.viewshed_evals_used
                 suggest_log(
                     ctx.verbose,
                     f"{prefix}evaluate_site done viewshed_budget_remaining={budget_left}",

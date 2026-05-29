@@ -189,13 +189,13 @@ def test_stream_web_chat_dem_highest_tool_loop() -> None:
         return responses.pop(0)
 
     with patch("peaky_finders.web.chat_agent.ollama_health_ok", return_value=True), patch(
-        "peaky_finders.web.chat_agent.resolve_ollama_config",
+        "peaky_finders.web.chat_agent.resolve_web_ai_config",
     ) as cfg, patch(
         "peaky_finders.web.chat_tools.query_project_dem_highest",
         return_value=dem_payload,
     ):
-        cfg.return_value.ollama_base_url = "http://ollama"
-        cfg.return_value.ollama_model = "test"
+        cfg.return_value.endpoint = "http://ollama"
+        cfg.return_value.model = "test"
         cfg.return_value.temperature = 0.2
         events = list(
             stream_web_chat(
@@ -317,13 +317,13 @@ def test_stream_web_chat_forwards_thinking_deltas() -> None:
         yield "done", {"role": "assistant", "content": "Boundary Peak."}
 
     with patch("peaky_finders.web.chat_agent.ollama_health_ok", return_value=True), patch(
-        "peaky_finders.web.chat_agent.resolve_ollama_config",
+        "peaky_finders.web.chat_agent.resolve_web_ai_config",
     ) as cfg, patch(
         "peaky_finders.web.chat_agent.stream_chat_completions_turn",
         side_effect=lambda **kwargs: fake_turn(**kwargs),
     ):
-        cfg.return_value.ollama_base_url = "http://ollama"
-        cfg.return_value.ollama_model = "test"
+        cfg.return_value.endpoint = "http://ollama"
+        cfg.return_value.model = "test"
         cfg.return_value.temperature = 0.2
         events = list(stream_web_chat("tallest peak?", project_slug="nevada"))
 
@@ -393,7 +393,7 @@ def test_stream_web_chat_tool_loop() -> None:
         "hint": None,
     }
     with patch("peaky_finders.web.chat_agent.ollama_health_ok", return_value=True), patch(
-        "peaky_finders.web.chat_agent.resolve_ollama_config",
+        "peaky_finders.web.chat_agent.resolve_web_ai_config",
     ) as cfg, patch(
         "peaky_finders.web.chat_tools.geocode_place_ranked",
         return_value=geocode_payload,
@@ -409,8 +409,8 @@ def test_stream_web_chat_tool_loop() -> None:
         "peaky_finders.web.chat_tools.ensure_point_viewshed",
         return_value={"slug": "chat-x", "url": "/u", "coordinates": []},
     ):
-        cfg.return_value.ollama_base_url = "http://ollama"
-        cfg.return_value.ollama_model = "test"
+        cfg.return_value.endpoint = "http://ollama"
+        cfg.return_value.model = "test"
         cfg.return_value.temperature = 0.2
         events = list(
             stream_web_chat(
@@ -514,13 +514,13 @@ def test_stream_web_chat_cancelled() -> None:
         yield "delta", "ignored"
 
     with patch("peaky_finders.web.chat_agent.ollama_health_ok", return_value=True), patch(
-        "peaky_finders.web.chat_agent.resolve_ollama_config",
+        "peaky_finders.web.chat_agent.resolve_web_ai_config",
     ) as cfg, patch(
         "peaky_finders.web.chat_agent.stream_chat_completions_turn",
         side_effect=lambda **kwargs: fake_turn(**kwargs),
     ):
-        cfg.return_value.ollama_base_url = "http://ollama"
-        cfg.return_value.ollama_model = "test"
+        cfg.return_value.endpoint = "http://ollama"
+        cfg.return_value.model = "test"
         cfg.return_value.temperature = 0.2
         events = list(
             stream_web_chat(

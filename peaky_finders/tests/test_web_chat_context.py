@@ -91,7 +91,7 @@ def test_summarize_chat_history() -> None:
         request_num_ctx=None,
     )
     with patch("peaky_finders.web.chat_context.ollama_health_ok", return_value=True), patch(
-        "peaky_finders.web.chat_context.resolve_ollama_config",
+        "peaky_finders.web.chat_context.resolve_web_ai_config",
     ) as cfg, patch(
         "peaky_finders.web.chat_context.chat_completions",
         return_value=fake_resp,
@@ -102,8 +102,8 @@ def test_summarize_chat_history() -> None:
         "peaky_finders.web.chat_context.measure_chat_context",
         return_value={"status": "ok", "used_tokens": 10, "num_ctx": 32768},
     ):
-        cfg.return_value.ollama_base_url = "http://ollama"
-        cfg.return_value.ollama_model = "test"
+        cfg.return_value.endpoint = "http://ollama"
+        cfg.return_value.model = "test"
         out = summarize_chat_history(
             project_slug="nevada",
             history=[{"role": "user", "content": "pin peavine"}],

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
+from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import fetch_ollama_models
 from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_context import (
     OllamaModelLimits,
     clear_model_limits_cache,
@@ -60,6 +61,26 @@ def test_fetch_running_context_length() -> None:
             fetch_running_context_length("http://localhost:11434/v1", "gemma4:31b")
             == 262144
         )
+
+
+def test_fetch_ollama_models() -> None:
+    tags_resp = MagicMock()
+    tags_resp.status_code = 200
+    tags_resp.json.return_value = {
+        "models": [
+            {"name": "llama3:8b"},
+            {"name": "qwen3.5:9b"},
+        ],
+    }
+
+    with patch("httpx.Client") as client_cls:
+        client = MagicMock()
+        client_cls.return_value.__enter__.return_value = client
+        client.get.return_value = tags_resp
+
+        models = fetch_ollama_models("http://host.docker.internal:11434/v1")
+
+    assert models == ["llama3:8b", "qwen3.5:9b"]
 
 
 def test_fetch_ollama_model_limits_prefers_ps() -> None:

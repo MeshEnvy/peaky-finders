@@ -6,6 +6,7 @@ const statusEl = document.getElementById('status')
 const chatEl = document.getElementById('chat')
 const chatEmptyEl = document.getElementById('chat-empty')
 const chatForm = document.getElementById('chat-form')
+const chatModelSel = document.getElementById('chat-model')
 const chatInput = document.getElementById('chat-input')
 const chatSendBtn = document.getElementById('chat-send')
 const chatContextFill = document.getElementById('chat-context-fill')
@@ -953,6 +954,7 @@ function setChatComposerBusy(active) {
   chatSendBtn.textContent = active ? 'Stop' : 'Send'
   chatSendBtn.classList.toggle('stop', active)
   chatSendBtn.disabled = false
+  if (chatModelSel) chatModelSel.disabled = active
 }
 
 function setChatPending(active) {
@@ -1347,9 +1349,15 @@ function finalizePendingChatTurn() {
   pendingChatTurn = null
 }
 
+function selectedChatModel() {
+  if (!chatModelSel?.value) return null
+  return chatModelSel.value
+}
+
 function chatContextPayload(pendingMessage = '') {
   return {
     project_slug: projectSel.value || null,
+    model: selectedChatModel(),
     history: chatHistory,
     summary: chatSummary,
     map_pins: trialMapPinsPayload(),
@@ -1537,6 +1545,33 @@ async function loadProjects() {
   if (projects[0]) await loadContext(projects[0].slug)
 }
 
+async function loadChatModels(slug) {
+  if (!chatModelSel) return
+  chatModelSel.disabled = true
+  chatModelSel.replaceChildren()
+  try {
+    const qs = slug ? `?project_slug=${encodeURIComponent(slug)}` : ''
+    const res = await fetch(`/api/chat/models${qs}`)
+    if (!res.ok) return
+    const payload = await res.json()
+    const models = payload.models || []
+    const defaultModel = payload.default_model || ''
+    for (const name of models) {
+      const opt = document.createElement('option')
+      opt.value = name
+      opt.textContent = name
+      chatModelSel.appendChild(opt)
+    }
+    if (defaultModel) {
+      chatModelSel.value = defaultModel
+    }
+  } catch (err) {
+    console.warn('loadChatModels failed:', err)
+  } finally {
+    if (!chatInFlight) chatModelSel.disabled = false
+  }
+}
+
 async function loadContext(slug) {
   const projectChanged = currentProjectSlug !== slug
   currentProjectSlug = slug
@@ -1579,6 +1614,7 @@ async function loadContext(slug) {
   }
   void loadProjectViewsheds(slug, rfSites(ctx.sites))
   await loadProjectMeshLinks(slug)
+  await loadChatModels(slug)
   scheduleChatContextRefresh('')
 }
 
@@ -1637,6 +1673,7 @@ async function sendChatMessage(text) {
       body: JSON.stringify({
         message: text,
         project_slug: projectSel.value || null,
+        model: selectedChatModel(),
         history: chatHistory,
         summary: chatSummary,
         map_pins: trialMapPinsPayload(),
@@ -1757,6 +1794,10 @@ chatCopyContextBtn?.addEventListener('click', () => {
 
 chatInput?.addEventListener('input', () => {
   scheduleChatContextRefresh(chatInput.value.trim())
+})
+
+chatModelSel?.addEventListener('change', () => {
+  scheduleChatContextRefresh(chatInput?.value.trim() || '')
 })
 
 map.on('load', async () => {

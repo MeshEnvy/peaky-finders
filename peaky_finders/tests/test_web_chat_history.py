@@ -49,13 +49,13 @@ def test_stream_web_chat_passes_history() -> None:
         yield "done", {"role": "assistant", "content": "Sure."}
 
     with patch("peaky_finders.web.chat_agent.ollama_health_ok", return_value=True), patch(
-        "peaky_finders.web.chat_agent.resolve_ollama_config",
+        "peaky_finders.web.chat_agent.resolve_web_ai_config",
     ) as cfg, patch(
         "peaky_finders.web.chat_agent.stream_chat_completions_turn",
         side_effect=lambda **kwargs: fake_turn(**kwargs),
     ):
-        cfg.return_value.ollama_base_url = "http://ollama"
-        cfg.return_value.ollama_model = "test"
+        cfg.return_value.endpoint = "http://ollama"
+        cfg.return_value.model = "test"
         cfg.return_value.temperature = 0.2
         list(
             stream_web_chat(

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import iterate_in_threadpool
 
 from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import OllamaError
-from peaky_finders.web.chat import stream_chat
+from peaky_finders.web.chat import list_chat_models, stream_chat
 from peaky_finders.web.chat_context import measure_chat_context, summarize_chat_history
 from peaky_finders.web.chat_history import ChatTurn
 from peaky_finders.web.dem_contours import load_dem_contours
@@ -55,6 +55,7 @@ class MapPinTurn(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     project_slug: str | None = None
+    model: str | None = Field(default=None, max_length=256)
     history: list[ChatTurn] = Field(default_factory=list)
     summary: str | None = Field(default=None, max_length=24000)
     map_pins: list[MapPinTurn] = Field(default_factory=list)
@@ -62,6 +63,7 @@ class ChatRequest(BaseModel):
 
 class ChatContextRequest(BaseModel):
     project_slug: str | None = None
+    model: str | None = Field(default=None, max_length=256)
     history: list[ChatTurn] = Field(default_factory=list)
     summary: str | None = Field(default=None, max_length=24000)
     message: str | None = Field(default=None, max_length=8000)
@@ -70,6 +72,7 @@ class ChatContextRequest(BaseModel):
 
 class ChatSummarizeRequest(BaseModel):
     project_slug: str | None = None
+    model: str | None = Field(default=None, max_length=256)
     history: list[ChatTurn] = Field(default_factory=list)
     summary: str | None = Field(default=None, max_length=24000)
 
@@ -226,6 +229,10 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.get("/api/chat/models")
+    def api_chat_models(project_slug: str | None = None) -> dict[str, Any]:
+        return list_chat_models(project_slug)
+
     @app.post("/api/chat/context")
     def api_chat_context(body: ChatContextRequest) -> dict[str, Any]:
         return measure_chat_context(
@@ -234,6 +241,7 @@ def create_app() -> FastAPI:
             summary=body.summary,
             message=body.message or "",
             map_pins=[pin.model_dump() for pin in body.map_pins],
+            model=body.model,
         )
 
     @app.post("/api/chat/summarize")
@@ -243,6 +251,7 @@ def create_app() -> FastAPI:
                 project_slug=body.project_slug,
                 history=body.history,
                 summary=body.summary,
+                model=body.model,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -270,6 +279,7 @@ def create_app() -> FastAPI:
                 history=body.history,
                 summary=body.summary,
                 map_pins=[pin.model_dump() for pin in body.map_pins],
+                model=body.model,
                 should_cancel=cancel.is_set,
             )
             try:

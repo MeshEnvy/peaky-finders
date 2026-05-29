@@ -28,6 +28,25 @@ def test_projects_and_stream() -> None:
     assert events[0]["op"] == "build.started"
 
 
+def test_chat_models_endpoint() -> None:
+    app = create_app()
+    client = TestClient(app)
+    with patch(
+        "peaky_finders.web.app.list_chat_models",
+        return_value={
+            "models": ["qwen3.5:9b", "llama3:8b"],
+            "default_model": "qwen3.5:9b",
+            "endpoint": "http://ollama/v1",
+            "reachable": True,
+        },
+    ):
+        res = client.get("/api/chat/models", params={"project_slug": "nevada"})
+    assert res.status_code == 200
+    payload = res.json()
+    assert payload["default_model"] == "qwen3.5:9b"
+    assert "llama3:8b" in payload["models"]
+
+
 def test_chat_stream() -> None:
     app = create_app()
     client = TestClient(app)
@@ -39,6 +58,7 @@ def test_chat_stream() -> None:
         history=None,
         summary=None,
         map_pins=None,
+        model=None,
         should_cancel=None,
     ):
         assert message == "hello"
@@ -71,6 +91,7 @@ def test_chat_stream_does_not_block_other_requests() -> None:
         history=None,
         summary=None,
         map_pins=None,
+        model=None,
         should_cancel=None,
     ):
         gate.wait(timeout=5.0)

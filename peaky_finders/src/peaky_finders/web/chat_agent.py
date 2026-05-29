@@ -11,7 +11,7 @@ from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import 
     ollama_health_ok,
     stream_chat_completions_turn,
 )
-from peaky_finders.web.chat import resolve_ollama_config, resolve_ollama_limits, resolve_request_num_ctx
+from peaky_finders.web.chat import resolve_ollama_limits, resolve_request_num_ctx, resolve_web_ai_config
 from peaky_finders.web.chat_context import measure_chat_context
 from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_context import usage_prompt_tokens
 from peaky_finders.web.chat_history import build_chat_messages
@@ -48,8 +48,8 @@ def _run_model_turn(
     if chat_client is not None:
         try:
             resp = chat_client(
-                base_url=ai.ollama_base_url,
-                model=ai.ollama_model,
+                base_url=ai.endpoint,
+                model=ai.model,
                 messages=messages,
                 tools=WEB_TOOL_SCHEMAS,
                 temperature=float(ai.temperature),
@@ -76,8 +76,8 @@ def _run_model_turn(
 
     try:
         for kind, payload in stream_chat_completions_turn(
-            base_url=ai.ollama_base_url,
-            model=ai.ollama_model,
+            base_url=ai.endpoint,
+            model=ai.model,
             messages=messages,
             tools=WEB_TOOL_SCHEMAS,
             temperature=float(ai.temperature),
@@ -105,24 +105,26 @@ def stream_web_chat(
     history: list | None = None,
     summary: str | None = None,
     map_pins: list | None = None,
+    model: str | None = None,
     chat_client: Callable[..., dict[str, Any]] | None = None,
     should_cancel: Callable[[], bool] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Run a map-aware tool loop; yield SSE ops (chat + map)."""
-    ai = resolve_ollama_config(project_slug)
-    if not ollama_health_ok(ai.ollama_base_url):
-        yield {"op": "chat.error", "message": f"Ollama not reachable at {ai.ollama_base_url!r}"}
+    ai = resolve_web_ai_config(project_slug, model_override=model)
+    if not ollama_health_ok(ai.endpoint):
+        yield {"op": "chat.error", "message": f"Ollama not reachable at {ai.endpoint!r}"}
         return
 
-    request_num_ctx = resolve_request_num_ctx(project_slug)
+    request_num_ctx = resolve_request_num_ctx(project_slug, model_override=model)
     context = measure_chat_context(
         project_slug=project_slug,
         history=history,
         summary=summary,
         message=message,
         map_pins=map_pins,
+        model=model,
     )
-    yield {"op": "chat.started", "model": ai.ollama_model, "context": context}
+    yield {"op": "chat.started", "model": ai.model, "context": context}
 
     pending: list[dict[str, Any]] = []
 
@@ -176,6 +178,7 @@ def stream_web_chat(
                             project_slug=project_slug,
                             messages=list(messages),
                             measured_prompt_tokens=prompt_tokens,
+                            model=model,
                         ),
                     }
             elif kind == "_assistant":
@@ -240,6 +243,7 @@ def stream_web_chat(
             "context": measure_chat_context(
                 project_slug=project_slug,
                 messages=list(messages),
+                model=model,
             ),
         }
 
@@ -251,6 +255,10 @@ def stream_web_chat(
 
     yield {
         "op": "chat.context",
-        "context": measure_chat_context(project_slug=project_slug, messages=list(messages)),
+        "context": measure_chat_context(
+            project_slug=project_slug,
+            messages=list(messages),
+            model=model,
+        ),
     }
-    yield {"op": "chat.done", "model": ai.ollama_model}
+    yield {"op": "chat.done", "model": ai.model}

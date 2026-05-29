@@ -901,6 +901,28 @@ class LandGrabStrategyConfig(BaseModel):
     )
 
 
+class AiConfig(BaseModel):
+    """Top-level Ollama settings for web chat and mesh-grow-ai."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    endpoint: str = Field(
+        default="http://host.docker.internal:11434/v1",
+        description="OpenAI-compatible Ollama base URL (typically ends with ``/v1``).",
+    )
+    model: str = Field(default="qwen3.5:9b", description="Default chat / agent model name.")
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    num_ctx: int | None = Field(
+        default=None,
+        ge=2048,
+        le=262144,
+        description=(
+            "Optional cap on Ollama context window for web chat. "
+            "When unset, Peaky uses the runtime value from ``/api/ps`` or ``/api/show``."
+        ),
+    )
+
+
 class MeshGrowAiStrategyConfig(BaseModel):
     """AI mesh grower: goals + Ollama agent (tool-driven search)."""
 
@@ -934,20 +956,8 @@ class MeshGrowAiStrategyConfig(BaseModel):
     refine_peak_radius_m: float = Field(default=400.0, ge=25.0)
     refine_peak_bin_size_m: float = Field(default=150.0, ge=25.0)
     refine_peaks_per_seed: int = Field(default=8, ge=0, le=64)
-    ollama_model: str = Field(default="qwen3.5:9b")
-    ollama_base_url: str = Field(default="http://host.docker.internal:11434/v1")
     max_agent_steps: int = Field(default=40, ge=1, le=200)
     max_viewshed_evals_per_episode: int = Field(default=16, ge=1, le=64)
-    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    web_chat_num_ctx: int | None = Field(
-        default=None,
-        ge=2048,
-        le=262144,
-        description=(
-            "Optional cap on Ollama context window for web chat. "
-            "When unset, Peaky uses the runtime value from ``/api/ps`` or ``/api/show``."
-        ),
-    )
 
 
 class BundleSiteSuggestionsConfig(BaseModel):
@@ -1321,6 +1331,7 @@ class Preset(BaseModel):
     simulation: SimulationConfig
     display: dict[str, Any]
     sites: dict[str, SiteEntry]
+    ai: AiConfig = Field(default_factory=AiConfig)
     bundle: BundleConfig | None = None
 
     @model_validator(mode="after")

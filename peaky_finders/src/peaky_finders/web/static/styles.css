@@ -644,6 +644,14 @@ select option {
   background: var(--bg-panel);
 }
 
+#chat-model {
+  flex: 0 0 auto;
+  max-width: 9.5rem;
+  min-width: 5.5rem;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.72rem;
+}
+
 .chat-context {
   flex-shrink: 0;
   padding: 0.55rem 1.15rem 0.65rem;
