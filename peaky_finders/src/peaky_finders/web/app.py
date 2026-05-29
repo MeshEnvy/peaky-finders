@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,7 @@ from peaky_finders.web.mesh_links import (
     project_mesh_links_geojson,
 )
 from peaky_finders.web.projects import (
+    enrich_all_project_sites,
     list_projects,
     patch_project_site,
     project_context,
@@ -99,8 +102,25 @@ class SitePatchRequest(BaseModel):
     sees: list[str] | None = None
 
 
+async def _run_boot_site_enrich() -> None:
+    try:
+        await asyncio.to_thread(enrich_all_project_sites, allow_network_plss=True)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(f"boot site enrich: failed ({exc})", flush=True)
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Peaky Web", version="1")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        enrich_task = asyncio.create_task(_run_boot_site_enrich())
+        yield
+        enrich_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await enrich_task
+
+    app = FastAPI(title="Peaky Web", version="1", lifespan=lifespan)
 
     @app.middleware("http")
     async def _no_cache_ui_assets(request: Request, call_next):

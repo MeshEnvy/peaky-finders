@@ -58,7 +58,7 @@ def test_plss_bundle_build_fresh_after_refresh(tmp_path: Path, monkeypatch: pyte
     )
     preset = load_preset(preset_path)
 
-    def fake_plss(_lon: float, _lat: float) -> tuple[str, str]:
+    def fake_plss(_lon: float, _lat: float, **_: object) -> tuple[str, str]:
         return "NV; Sec. 1", "NV123"
 
     monkeypatch.setattr("peaky_finders.plss_mlrs_fetch.plss_mlrs_for_point", fake_plss)
@@ -84,7 +84,7 @@ def test_populate_uses_cache_without_network(tmp_path: Path, monkeypatch: pytest
     for ent in preset.sites.values():
         loc_cache[loc_stamp(ent.lat, ent.lon)] = {"plss": "cached", "mlrs": "CACHED"}
 
-    def boom(_lon: float, _lat: float) -> tuple[str, str]:
+    def boom(_lon: float, _lat: float, **_: object) -> tuple[str, str]:
         raise AssertionError("CadNSDI should not be queried for resolved locs")
 
     monkeypatch.setattr("peaky_finders.plss_mlrs_fetch.plss_mlrs_for_point", boom)
@@ -114,7 +114,7 @@ def test_populate_fetches_only_unresolved(tmp_path: Path, monkeypatch: pytest.Mo
 
     calls: list[tuple[float, float]] = []
 
-    def fake_plss(lon: float, lat: float) -> tuple[str, str]:
+    def fake_plss(lon: float, lat: float, **_: object) -> tuple[str, str]:
         calls.append((lon, lat))
         return "NV; Sec. 2", "NV456"
 
@@ -170,7 +170,7 @@ def test_plss_bundle_stale_when_coords_change_after_refresh(tmp_path: Path, monk
 
     monkeypatch.setattr(
         "peaky_finders.plss_mlrs_fetch.plss_mlrs_for_point",
-        lambda _lon, _lat: ("NV; Sec. 1", "NV123"),
+        lambda _lon, _lat, **_: ("NV; Sec. 1", "NV123"),
     )
     refresh_plss_mlrs_for_bundle(
         preset_path=preset_path,

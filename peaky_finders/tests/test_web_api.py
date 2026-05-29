@@ -12,6 +12,17 @@ from peaky_finders.web.app import create_app
 from peaky_finders.web.stream import BuildStream
 
 
+def test_app_boot_enriches_all_projects() -> None:
+    with patch("peaky_finders.web.app.enrich_all_project_sites", return_value=(2, 0, 3)) as enrich:
+        with TestClient(create_app()) as client:
+            res = client.get("/api/projects")
+            assert res.status_code == 200
+        deadline = time.monotonic() + 5.0
+        while not enrich.called and time.monotonic() < deadline:
+            time.sleep(0.05)
+        enrich.assert_called_once_with(allow_network_plss=True)
+
+
 def test_projects_and_stream() -> None:
     app = create_app()
     client = TestClient(app)

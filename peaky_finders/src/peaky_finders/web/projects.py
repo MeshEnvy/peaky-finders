@@ -9,6 +9,8 @@ from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.bundle_build import load_composite_aoi_polygon
+from peaky_finders.http_pool import HttpPool
+from peaky_finders.site_metadata_enrich import enrich_all_preset_sites, resolve_site_metadata
 from peaky_finders.site_suggestions.rf_link import rf_mutual_link_slug_pairs_from_site
 from peaky_finders.sites_job import SiteType, load_preset, peaky_projects_dir, resolved_preset_bundle_data_dir
 from peaky_finders.web.site_preset_io import (
@@ -16,9 +18,75 @@ from peaky_finders.web.site_preset_io import (
     get_site_from_preset,
     update_site_in_preset,
 )
-from peaky_finders.site_metadata_enrich import enrich_all_preset_sites, resolve_site_metadata
 
 _GEOCODE_AOI_CACHE: dict[str, tuple[float, list[float] | None, BaseGeometry | None]] = {}
+
+
+def _iter_project_config_paths() -> list[tuple[str, Path]]:
+    """Return ``(slug, config_path)`` for each valid project preset."""
+    root = peaky_projects_dir()
+    out: list[tuple[str, Path]] = []
+    if not root.is_dir():
+        return out
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir():
+            continue
+        cfg = entry / "config.yaml"
+        if not cfg.is_file():
+            yml = entry / "config.yml"
+            cfg = yml if yml.is_file() else cfg
+        if not cfg.is_file():
+            continue
+        out.append((entry.name, cfg))
+    return out
+
+
+def enrich_all_project_sites(
+    *,
+    allow_network_plss: bool = True,
+    http_pool: HttpPool | None = None,
+    log_fp: Any = None,
+) -> tuple[int, int, int]:
+    """Backfill missing PLSS / MLRS / elevation for every project preset.
+
+    Returns ``(projects_processed, network_plss_lookups, sites_updated)``.
+    """
+    configs = _iter_project_config_paths()
+    prefix = "boot site enrich:"
+    print(f"{prefix} start: {len(configs)} project(s)", flush=True)
+
+    projects_processed = 0
+    total_network = 0
+    total_updated = 0
+
+    for index, (slug, cfg) in enumerate(configs, start=1):
+        print(f"{prefix} [{index}/{len(configs)}] {slug}", flush=True)
+        try:
+            network_count, updated = enrich_all_preset_sites(
+                cfg,
+                allow_network_plss=allow_network_plss,
+                http_pool=http_pool,
+                log_fp=log_fp,
+            )
+        except Exception as exc:
+            print(f"{prefix} [{index}/{len(configs)}] {slug}: skipped ({exc})", flush=True)
+            continue
+        projects_processed += 1
+        total_network += network_count
+        total_updated += updated
+        if updated or network_count:
+            print(
+                f"{prefix} [{index}/{len(configs)}] {slug}: "
+                f"{updated} site(s) updated, {network_count} PLSS lookup(s)",
+                flush=True,
+            )
+
+    print(
+        f"{prefix} done: {projects_processed}/{len(configs)} project(s), "
+        f"{total_updated} site(s) updated, {total_network} PLSS lookup(s)",
+        flush=True,
+    )
+    return projects_processed, total_network, total_updated
 
 
 def list_projects() -> list[dict[str, Any]]:

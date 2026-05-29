@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from peaky_finders.http_pool import HttpPool
 from peaky_finders.pairwise_dem_peak import skadi_elevation_at_point
 from peaky_finders.plss_mlrs_fetch import (
+    CADNSDI_HTTP_POOL,
     loc_plss_resolved,
     loc_stamp,
     plss_mlrs_for_point,
@@ -48,25 +51,43 @@ def lookup_plss_mlrs_for_loc(
     *,
     loc_cache: dict[str, dict[str, str]],
     allow_network: bool,
-    request_delay_s: float = 0.12,
+    http_pool: HttpPool | None = None,
+    loc_cache_lock: threading.Lock | None = None,
 ) -> tuple[str | None, str | None, bool]:
     """Resolve PLSS/MLRS for a coordinate. Returns ``(plss, mlrs, from_network)``."""
     stamp = loc_stamp(lat, lon)
-    cached = loc_cache.get(stamp)
-    if cached is not None and loc_plss_resolved(cached):
-        plss = (cached.get("plss") or "").strip() or None
-        mlrs = (cached.get("mlrs") or "").strip() or None
-        return plss, mlrs, False
+
+    def _cached_hit() -> tuple[str | None, str | None] | None:
+        cached = loc_cache.get(stamp)
+        if cached is not None and loc_plss_resolved(cached):
+            plss = (cached.get("plss") or "").strip() or None
+            mlrs = (cached.get("mlrs") or "").strip() or None
+            return plss, mlrs
+        return None
+
+    if loc_cache_lock is not None:
+        with loc_cache_lock:
+            hit = _cached_hit()
+    else:
+        hit = _cached_hit()
+    if hit is not None:
+        return hit[0], hit[1], False
 
     if not allow_network:
         return None, None, False
 
-    plss_s, mlrs_s = plss_mlrs_for_point(lon, lat)
+    plss_s, mlrs_s = plss_mlrs_for_point(lon, lat, http_pool=http_pool)
     plss = plss_s.strip() or None
     mlrs = mlrs_s.strip() or None
-    loc_cache[stamp] = {"plss": plss or "", "mlrs": mlrs or ""}
-    if request_delay_s > 0:
-        time.sleep(request_delay_s)
+
+    if loc_cache_lock is not None:
+        with loc_cache_lock:
+            hit = _cached_hit()
+            if hit is not None:
+                return hit[0], hit[1], False
+            loc_cache[stamp] = {"plss": plss or "", "mlrs": mlrs or ""}
+    else:
+        loc_cache[stamp] = {"plss": plss or "", "mlrs": mlrs or ""}
     return plss, mlrs, True
 
 
@@ -116,7 +137,8 @@ def enrich_site_entry_metadata(
     loc_cache: dict[str, dict[str, str]],
     dem_dir: Path | None,
     allow_network_plss: bool,
-    request_delay_s: float = 0.12,
+    http_pool: HttpPool | None = None,
+    loc_cache_lock: threading.Lock | None = None,
     force: bool = False,
 ) -> tuple[bool, bool]:
     """Resolve ``plss`` / ``mlrs`` / ``elevation_m`` from site coordinates.
@@ -140,7 +162,8 @@ def enrich_site_entry_metadata(
             lon,
             loc_cache=loc_cache,
             allow_network=allow_network_plss,
-            request_delay_s=request_delay_s,
+            http_pool=http_pool,
+            loc_cache_lock=loc_cache_lock,
         )
         if from_network:
             plss_from_network = True
@@ -186,10 +209,12 @@ def resolve_site_metadata(
     site_slugs: set[str] | None = None,
     force: bool = False,
     allow_network_plss: bool = True,
-    request_delay_s: float = 0.12,
+    http_pool: HttpPool | None = None,
     log_fp: Any = None,
 ) -> tuple[int, int]:
     """Resolve coordinate-derived metadata and persist YAML updates.
+
+    Saves preset YAML after each updated site so a crash mid-batch does not lose progress.
 
     Returns ``(network_plss_lookups, sites_updated)``.
     """
@@ -206,34 +231,52 @@ def resolve_site_metadata(
     cache_base = resolved_preset_build_dir(preset_path)
     loc_cache = read_plss_mlrs_loc_cache(cache_base)
     dem_dir = resolved_dem_mirror_for_preset(preset_path)
+    pool = http_pool or CADNSDI_HTTP_POOL
+    cache_lock = threading.Lock()
+    persist_lock = threading.Lock()
 
     network_count = 0
     updated = 0
-    any_changed = False
 
-    for slug in slugs:
+    def _enrich_slug(slug: str) -> tuple[str, bool, bool]:
         ent = sites_raw.get(slug)
         if not isinstance(ent, dict):
-            continue
+            return slug, False, False
         changed, from_network = enrich_site_entry_metadata(
             ent,
             loc_cache=loc_cache,
             dem_dir=dem_dir,
             allow_network_plss=allow_network_plss,
-            request_delay_s=request_delay_s,
+            http_pool=pool,
+            loc_cache_lock=cache_lock,
             force=force,
         )
-        if from_network:
-            network_count += 1
-        if changed:
-            updated += 1
-            any_changed = True
-            if log_fp is not None:
-                print(f"site metadata: {slug} updated", file=log_fp, flush=True)
+        return slug, changed, from_network
 
-    if any_changed:
-        parse_preset_dict(root)
-        dump_preset_yaml_document(yaml_rt, root, preset_path)
+    def _persist(slug: str, changed: bool, from_network: bool) -> None:
+        nonlocal network_count, updated
+        with persist_lock:
+            if from_network:
+                network_count += 1
+                write_plss_mlrs_loc_cache(cache_base, loc_cache)
+            if changed:
+                updated += 1
+                parse_preset_dict(root)
+                dump_preset_yaml_document(yaml_rt, root, preset_path)
+                if log_fp is not None:
+                    print(f"site metadata: {slug} updated", file=log_fp, flush=True)
+
+    workers = min(pool.max_concurrent, len(slugs))
+    if workers <= 1:
+        for slug in slugs:
+            slug, changed, from_network = _enrich_slug(slug)
+            _persist(slug, changed, from_network)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_enrich_slug, slug) for slug in slugs]
+            for fut in as_completed(futures):
+                slug, changed, from_network = fut.result()
+                _persist(slug, changed, from_network)
 
     write_plss_mlrs_loc_cache(cache_base, loc_cache)
     return network_count, updated
@@ -243,7 +286,7 @@ def enrich_all_preset_sites(
     preset_path: Path,
     *,
     allow_network_plss: bool = True,
-    request_delay_s: float = 0.12,
+    http_pool: HttpPool | None = None,
     log_fp: Any = None,
 ) -> tuple[int, int]:
     """Resolve missing PLSS / MLRS / elevation for every preset site; rewrite YAML when needed."""
@@ -251,7 +294,7 @@ def enrich_all_preset_sites(
         preset_path,
         force=False,
         allow_network_plss=allow_network_plss,
-        request_delay_s=request_delay_s,
+        http_pool=http_pool,
         log_fp=log_fp,
     )
 
@@ -277,7 +320,7 @@ def populate_preset_missing_metadata(
     *,
     site_slugs: set[str] | None = None,
     allow_network_plss: bool = False,
-    request_delay_s: float = 0.12,
+    http_pool: HttpPool | None = None,
     log_fp: Any = None,
 ) -> tuple[int, int]:
     """Backfill missing metadata for selected sites (default: all)."""
@@ -286,6 +329,6 @@ def populate_preset_missing_metadata(
         site_slugs=site_slugs,
         force=False,
         allow_network_plss=allow_network_plss,
-        request_delay_s=request_delay_s,
+        http_pool=http_pool,
         log_fp=log_fp,
     )

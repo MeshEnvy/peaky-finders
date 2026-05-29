@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -12,9 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from peaky_finders.build_keys import build_key_hex, read_build_key_hex, write_build_key
+from peaky_finders.http_pool import HttpPool
 from peaky_finders.sites_job import Preset, _slugify_files_segment, dump_preset_yaml_document, read_preset_yaml_tree
 
 CADNSDI_BASE = "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer"
+CADNSDI_HTTP_POOL = HttpPool(max_concurrent=10, min_interval_s=0.12)
 
 PLSS_MLRS_LOC_CACHE_FORMAT = "plss_mlrs_loc_cache/v1"
 PLSS_MLRS_LOC_CACHE_SUBDIR = "plss_mlrs"
@@ -133,7 +134,17 @@ def _attrs(feat: dict) -> dict:
     return (feat or {}).get("attributes") or {}
 
 
-def plss_mlrs_for_point(lon: float, lat: float) -> tuple[str, str]:
+def plss_mlrs_for_point(
+    lon: float,
+    lat: float,
+    *,
+    http_pool: HttpPool | None = None,
+) -> tuple[str, str]:
+    pool = http_pool or CADNSDI_HTTP_POOL
+    return pool.run(lambda: _plss_mlrs_for_point_impl(lon, lat))
+
+
+def _plss_mlrs_for_point_impl(lon: float, lat: float) -> tuple[str, str]:
     sec = _query(2, lon, lat)
     twp = _query(1, lon, lat)
 
@@ -215,11 +226,11 @@ def populate_preset_plss_mlrs_file(
     preset_path: Path,
     *,
     site_slugs: set[str],
-    request_delay_s: float = 0.12,
     log_fp: Any = sys.stdout,
     loc_cache: dict[str, dict[str, str]] | None = None,
     force_network: bool = False,
     progress: Callable[[str], None] | None = None,
+    http_pool: HttpPool | None = None,
 ) -> int:
     """Update ``plss`` / ``mlrs`` in ``preset_path`` for ``site_slugs`` from coordinates (CadNSDI).
 
@@ -273,7 +284,7 @@ def populate_preset_plss_mlrs_file(
                 plss, mlrs = cached.get("plss", ""), cached.get("mlrs", "")
             else:
                 _emit(f"PLSS/MLRS: [{i}/{total}] {slug} …")
-                plss, mlrs = plss_mlrs_for_point(lon, lat)
+                plss, mlrs = plss_mlrs_for_point(lon, lat, http_pool=http_pool)
                 from_network = True
                 network_count += 1
                 if loc_cache is not None:
@@ -293,8 +304,6 @@ def populate_preset_plss_mlrs_file(
                 ent["mlrs"] = None
                 dump_preset_yaml_document(yaml_rt, root, preset_path)
             from_network = False
-        if request_delay_s > 0 and from_network:
-            time.sleep(request_delay_s)
     return network_count
 
 

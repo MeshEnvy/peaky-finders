@@ -14,7 +14,7 @@ from peaky_finders.site_metadata_enrich import (
     populate_preset_missing_metadata,
     resolve_site_metadata,
 )
-from peaky_finders.sites_job import load_preset
+from peaky_finders.sites_job import dump_preset_yaml_document, load_preset
 
 
 def test_enrich_site_entry_fills_missing_fields() -> None:
@@ -163,7 +163,7 @@ def test_fill_missing_site_metadata_persists(tmp_path: Path) -> None:
     assert ent.elevation_m == 1500.0
 
 
-def test_enrich_all_preset_sites_writes_yaml_once(tmp_path: Path) -> None:
+def test_enrich_all_preset_sites_writes_yaml_per_site(tmp_path: Path) -> None:
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         yaml.safe_dump(
@@ -220,11 +220,15 @@ def test_enrich_all_preset_sites_writes_yaml_once(tmp_path: Path) -> None:
         return_value={},
     ), patch(
         "peaky_finders.site_metadata_enrich.write_plss_mlrs_loc_cache",
-    ):
+    ), patch(
+        "peaky_finders.site_metadata_enrich.dump_preset_yaml_document",
+        wraps=dump_preset_yaml_document,
+    ) as dump_yaml:
         network_count, updated = enrich_all_preset_sites(cfg, allow_network_plss=False)
 
     assert network_count == 0
     assert updated == 2
+    assert dump_yaml.call_count == 2
     preset = load_preset(cfg)
     assert preset.sites["a"].plss == "NV; Sec. 1"
     assert preset.sites["b"].elevation_m == 1200.0
