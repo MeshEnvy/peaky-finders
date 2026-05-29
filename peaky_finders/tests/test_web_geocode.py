@@ -53,3 +53,26 @@ def test_geocode_place_ranked_retries_without_bounded_box(monkeypatch) -> None:
     payload = geocode_place_ranked("Charleston Peak, Nevada", viewbox=[-120, 39, -119, 40])
     assert calls == [True, False]
     assert payload["best"]["type"] == "peak"
+
+
+def test_rank_geocode_hits_prefers_in_viewbox_peak() -> None:
+    hits = [
+        {
+            "display_name": "Virginia Peak, Tuolumne County, California, United States",
+            "lat": 38.0658896,
+            "lon": -119.3579863,
+            "category": "natural",
+            "type": "peak",
+            "importance": 0.14389741120638372,
+        },
+        {
+            "display_name": "Virginia Peak, Washoe County, Nevada, United States",
+            "lat": 39.7560209,
+            "lon": -119.4604554,
+            "category": "natural",
+            "type": "peak",
+            "importance": 0.10540294855860563,
+        },
+    ]
+    ranked = rank_geocode_hits(hits, query="Virginia Peak", project_slug="nevada")
+    assert ranked[0]["display_name"].endswith("Nevada, United States")

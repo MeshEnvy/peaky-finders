@@ -377,7 +377,8 @@ async function loadProjectViewsheds(projectSlug, sites) {
 function addViewshedRaster(r) {
   const sourceId = `viewshed-raster-${r.slug}`
   const layerId = `${sourceId}-layer`
-  const useTiles = Boolean(r.tile_url && r.bounds)
+  const useImage = Boolean(r.url && r.coordinates)
+  const useTiles = Boolean(!useImage && r.tile_url && r.bounds)
 
   if (map.getLayer(layerId)) map.removeLayer(layerId)
   if (map.getSource(sourceId)) map.removeSource(sourceId)

@@ -432,8 +432,8 @@ def test_show_on_map_resolves_pin_id_from_map_state() -> None:
     )
     viewshed_rec = {
         "slug": "at-x",
-        "lat": 36.2716284,
-        "lon": -115.6954918,
+        "lat": 36.271628,
+        "lon": -115.695492,
         "url": "/u",
         "coordinates": [[-116, 37], [-115, 37], [-115, 36], [-116, 36]],
         "bounds": [-116.0, 36.0, -115.0, 37.0],
@@ -457,13 +457,13 @@ def test_show_on_map_resolves_pin_id_from_map_state() -> None:
         )
 
     assert result["ok"] is True
-    assert result["lat"] == 36.2716284
-    assert result["lon"] == -115.6954918
-    ensure.assert_called_once_with(project_slug="nevada", lat=36.2716284, lon=-115.6954918)
+    assert result["lat"] == 36.271628
+    assert result["lon"] == -115.695492
+    ensure.assert_called_once_with(project_slug="nevada", lat=36.271628, lon=-115.695492)
     viewshed_emits = [payload for op, payload in emitted if op == "map.viewshed"]
     assert len(viewshed_emits) == 1
     assert viewshed_emits[0]["slug"] == viewshed_rec["slug"]
-    assert viewshed_emits[0]["lat"] == 36.2716284
+    assert viewshed_emits[0]["lat"] == 36.271628
     assert emitted[-1] == ("map.fit_bounds", {"bbox": viewshed_rec["bounds"]})
 
 

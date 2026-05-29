@@ -14,6 +14,7 @@ from peaky_finders.web.chat_dem import query_project_dem_highest
 from peaky_finders.web.geocode import GeocodeError, geocode_place_ranked
 from peaky_finders.web.projects import project_context
 from peaky_finders.web.viewshed_service import ensure_point_viewshed
+from peaky_finders.web.viewshed_rasters import normalize_point_coords
 
 ToolResult = dict[str, Any]
 MapPinState = dict[str, Any]
@@ -276,7 +277,7 @@ def _geocode_place(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
         }
     ctx.geocode_calls += 1
     try:
-        payload = geocode_place_ranked(query, viewbox=ctx.geocode_viewbox)
+        payload = geocode_place_ranked(query, viewbox=ctx.geocode_viewbox, project_slug=ctx.project_slug)
     except GeocodeError as exc:
         return {"error": str(exc)}
     if not payload["results"]:
@@ -319,6 +320,7 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
     if isinstance(resolved, dict):
         return resolved
     lat, lon, label, pin_id = resolved
+    lat, lon = normalize_point_coords(lat, lon)
 
     preset_path = ctx.preset_path
     if preset_path is None:

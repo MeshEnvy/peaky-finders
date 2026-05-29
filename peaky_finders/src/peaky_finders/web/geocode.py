@@ -59,11 +59,37 @@ def _quality_label(hit: dict[str, Any], *, wants_peak: bool) -> str:
     return "place"
 
 
-def rank_geocode_hits(hits: list[dict[str, Any]], *, query: str) -> list[dict[str, Any]]:
+def _in_viewbox(lat: float, lon: float, viewbox: list[float]) -> bool:
+    if len(viewbox) != 4:
+        return False
+    west, south, east, north = viewbox
+    return west <= float(lon) <= east and south <= float(lat) <= north
+
+
+def _project_region_boost(hit: dict[str, Any], *, project_slug: str | None) -> float:
+    slug = str(project_slug or "").strip().lower()
+    if not slug:
+        return 0.0
+    name = str(hit.get("display_name") or "").lower()
+    if slug in name:
+        return 5.0
+    return 0.0
+
+
+def rank_geocode_hits(
+    hits: list[dict[str, Any]],
+    *,
+    query: str,
+    viewbox: list[float] | None = None,
+    project_slug: str | None = None,
+) -> list[dict[str, Any]]:
     wants_peak = _query_wants_peak(query)
     ranked: list[dict[str, Any]] = []
     for hit in hits:
         score = _geocode_score(hit, wants_peak=wants_peak)
+        score += _project_region_boost(hit, project_slug=project_slug)
+        if viewbox and _in_viewbox(float(hit["lat"]), float(hit["lon"]), viewbox):
+            score += 2.0
         ranked.append(
             {
                 **hit,
@@ -153,6 +179,7 @@ def geocode_place_ranked(
     query: str,
     *,
     viewbox: list[float] | None = None,
+    project_slug: str | None = None,
     limit: int = 5,
 ) -> dict[str, Any]:
     """Geocode with soft project bias, US filter, ranking, and a single best pick."""
@@ -160,7 +187,7 @@ def geocode_place_ranked(
     hits = geocode_place(q, viewbox=viewbox, bounded=False, limit=limit)
     if not hits:
         hits = geocode_place(q, viewbox=None, bounded=False, limit=limit)
-    ranked = rank_geocode_hits(hits, query=q)
+    ranked = rank_geocode_hits(hits, query=q, viewbox=viewbox, project_slug=project_slug)
     best = ranked[0] if ranked else None
     hint = None
     if best and best.get("quality") == "likely_street_not_peak":

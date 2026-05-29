@@ -11,6 +11,13 @@ from peaky_finders.kml_bundle import load_bounds_from_manifest, parse_lat_lon_bo
 from peaky_finders.sites_job import Preset, load_preset, peaky_projects_dir, resolved_bundle_dir, resolved_viewshed_dir
 from peaky_finders.viewshed_workspace import resolved_viewshed_workdir_for_coords
 
+POINT_COORD_DECIMALS = 6
+
+
+def normalize_point_coords(lat: float, lon: float) -> tuple[float, float]:
+    """Round WGS-84 coords for point viewshed cache keys and tile URLs."""
+    return (round(float(lat), POINT_COORD_DECIMALS), round(float(lon), POINT_COORD_DECIMALS))
+
 
 def preset_path_for_project(project_slug: str) -> Path:
     cfg = peaky_projects_dir() / project_slug / "config.yaml"
@@ -20,6 +27,7 @@ def preset_path_for_project(project_slug: str) -> Path:
 
 
 def resolve_point_workdir(*, project_slug: str, lat: float, lon: float) -> Path:
+    lat_n, lon_n = normalize_point_coords(lat, lon)
     cfg = preset_path_for_project(project_slug)
     preset = load_preset(cfg)
     viewsheds_root = _viewsheds_root_for_preset(cfg)
@@ -28,8 +36,8 @@ def resolve_point_workdir(*, project_slug: str, lat: float, lon: float) -> Path:
     return resolved_viewshed_workdir_for_coords(
         preset=preset,
         viewshed_root=viewsheds_root,
-        lat=float(lat),
-        lon=float(lon),
+        lat=lat_n,
+        lon=lon_n,
     )
 
 

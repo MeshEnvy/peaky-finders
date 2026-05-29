@@ -16,6 +16,7 @@ from peaky_finders.web.viewshed_rasters import (
     _raster_opacity,
     _viewsheds_root_for_preset,
     latlonbox_image_coordinates,
+    normalize_point_coords,
     preset_path_for_project,
     resolve_point_workdir,
     resolve_splat_png_path,
@@ -148,7 +149,8 @@ def get_site_viewshed(
 
 
 def _point_coord_key(lat: float, lon: float) -> tuple[str, str]:
-    return (f"{float(lat):.6f}", f"{float(lon):.6f}")
+    lat_n, lon_n = normalize_point_coords(lat, lon)
+    return (f"{lat_n:.6f}", f"{lon_n:.6f}")
 
 
 def _point_ensure_lock(project_slug: str, lat: float, lon: float) -> threading.Lock:
@@ -224,6 +226,7 @@ def ensure_point_viewshed(
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Ensure ``splat.png`` exists for arbitrary WGS-84 coordinates."""
+    lat_n, lon_n = normalize_point_coords(lat, lon)
     cfg = preset_path_for_project(project_slug)
     preset = load_preset(cfg)
     viewsheds_root = _viewsheds_root_for_preset(cfg)
@@ -233,36 +236,36 @@ def ensure_point_viewshed(
     workdir = resolved_viewshed_workdir_for_coords(
         preset=preset,
         viewshed_root=viewsheds_root,
-        lat=float(lat),
-        lon=float(lon),
+        lat=lat_n,
+        lon=lon_n,
     )
     computed = False
-    lock = _point_ensure_lock(project_slug, lat, lon)
+    lock = _point_ensure_lock(project_slug, lat_n, lon_n)
     with lock:
         png = workdir / "splat.png"
         if force or not png.is_file():
             if verbose:
                 print(
-                    f"viewshed at: {float(lat):.5f},{float(lon):.5f} workdir={workdir.name}",
+                    f"viewshed at: {lat_n:.6f},{lon_n:.6f} workdir={workdir.name}",
                     flush=True,
                 )
             run_ephemeral_viewshed_footprint(
                 preset=preset,
                 preset_path=cfg,
-                lat=float(lat),
-                lon=float(lon),
+                lat=lat_n,
+                lon=lon_n,
                 workdir=workdir,
                 verbose=verbose,
             )
-            ensure_splat_raster_png(site_name=f"web {lat:.5f},{lon:.5f}", data_dir=workdir)
+            ensure_splat_raster_png(site_name=f"web {lat_n:.6f},{lon_n:.6f}", data_dir=workdir)
             if not png.is_file():
-                raise RuntimeError(f"viewshed raster missing after compute at {lat:.5f},{lon:.5f}")
+                raise RuntimeError(f"viewshed raster missing after compute at {lat_n:.6f},{lon_n:.6f}")
             computed = True
 
     return point_viewshed_raster_record(
         project_slug=project_slug,
-        lat=lat,
-        lon=lon,
+        lat=lat_n,
+        lon=lon_n,
         computed=computed,
     )
 
@@ -276,14 +279,15 @@ def get_point_viewshed(
     force: bool = False,
     verbose: bool = False,
 ) -> dict[str, Any]:
+    lat_n, lon_n = normalize_point_coords(lat, lon)
     if ensure:
         return ensure_point_viewshed(
             project_slug=project_slug,
-            lat=lat,
-            lon=lon,
+            lat=lat_n,
+            lon=lon_n,
             force=force,
             verbose=verbose,
         )
-    if not point_viewshed_is_cached(project_slug=project_slug, lat=lat, lon=lon):
-        raise FileNotFoundError(f"viewshed not cached for {lat:.5f},{lon:.5f}")
-    return point_viewshed_raster_record(project_slug=project_slug, lat=lat, lon=lon, computed=False)
+    if not point_viewshed_is_cached(project_slug=project_slug, lat=lat_n, lon=lon_n):
+        raise FileNotFoundError(f"viewshed not cached for {lat_n:.6f},{lon_n:.6f}")
+    return point_viewshed_raster_record(project_slug=project_slug, lat=lat_n, lon=lon_n, computed=False)

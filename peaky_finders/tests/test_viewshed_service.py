@@ -84,3 +84,53 @@ def test_viewshed_raster_record_shape() -> None:
     assert rec["digest"] == "abc123"
     assert rec["url"].endswith("/splat.png")
     assert "tile_url" in rec
+
+
+def test_normalize_point_coords_matches_tile_query() -> None:
+    from peaky_finders.web.viewshed_rasters import normalize_point_coords
+    from peaky_finders.web.viewshed_service import _point_query
+
+    lat, lon = 39.7560209, -119.4604554
+    lat_n, lon_n = normalize_point_coords(lat, lon)
+    q = _point_query(lat, lon)
+    assert q == f"lat={lat_n:.6f}&lon={lon_n:.6f}"
+    assert lat_n == 39.756021
+    assert lon_n == -119.460455
+
+
+def test_get_point_viewshed_normalizes_lookup_coords(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
+    seen: list[tuple[float, float]] = []
+
+    def fake_record(*, project_slug: str, lat: float, lon: float, computed: bool = False):
+        seen.append((lat, lon))
+        return {
+            "slug": "at-abc",
+            "lat": lat,
+            "lon": lon,
+            "url": f"/api/projects/{project_slug}/viewsheds/at/splat.png?lat={lat:.6f}&lon={lon:.6f}",
+            "coordinates": [[-120, 40], [-119, 40], [-119, 39], [-120, 39]],
+            "bounds": [-120.0, 39.0, -119.0, 40.0],
+            "opacity": 0.5,
+            "cached": True,
+            "computed": computed,
+        }
+
+    with patch(
+        "peaky_finders.web.viewshed_service.point_viewshed_is_cached",
+        return_value=True,
+    ), patch(
+        "peaky_finders.web.viewshed_service.point_viewshed_raster_record",
+        side_effect=fake_record,
+    ):
+        from peaky_finders.web.viewshed_service import get_point_viewshed
+
+        rec = get_point_viewshed(
+            project_slug="demo",
+            lat=39.7560209,
+            lon=-119.4604554,
+            ensure=False,
+        )
+
+    assert seen == [(39.756021, -119.460455)]
+    assert rec["lat"] == 39.756021
