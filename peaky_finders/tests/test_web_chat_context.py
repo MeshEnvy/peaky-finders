@@ -12,10 +12,12 @@ from peaky_finders.web.chat_context import (
     WEB_CHAT_FULL_PCT,
     WEB_CHAT_WARN_PCT,
     build_chat_context_payload,
+    build_web_chat_llm_export,
     measure_chat_context,
     summarize_chat_history,
 )
 from peaky_finders.web.chat_history import build_chat_messages
+from peaky_finders.web.chat_tools import WEB_TOOL_SCHEMAS
 
 
 def test_build_chat_messages_with_summary() -> None:
@@ -112,6 +114,88 @@ def test_summarize_chat_history() -> None:
 
     assert "Peavine" in out["summary"]
     assert out["context"]["status"] == "ok"
+
+
+def test_build_web_chat_llm_export_includes_preamble_and_turns() -> None:
+    limits = OllamaModelLimits(
+        model="test",
+        num_ctx=8192,
+        model_context_length=None,
+        modelfile_num_ctx=None,
+        limit_source="ollama_ps",
+        request_num_ctx=None,
+    )
+    llm_turn = [
+        {"role": "user", "content": "pin peavine"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "c1", "function": {"name": "geocode_place", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "name": "geocode_place", "content": "{}"},
+        {"role": "assistant", "content": "Placed Peavine Mountain."},
+    ]
+    with patch("peaky_finders.web.chat_context.resolve_web_ai_config") as cfg, patch(
+        "peaky_finders.web.chat_context.resolve_ollama_limits",
+        return_value=limits,
+    ):
+        cfg.return_value.endpoint = "http://ollama"
+        cfg.return_value.model = "test"
+        cfg.return_value.temperature = 0.2
+        out = build_web_chat_llm_export(
+            project_slug="nevada",
+            summary="User asked about peaks earlier.",
+            llm_messages=llm_turn,
+            message="what next?",
+        )
+
+    assert out["endpoint"] == "http://ollama"
+    assert out["model"] == "test"
+    assert out["temperature"] == 0.2
+    assert out["tools"] == WEB_TOOL_SCHEMAS
+    assert "query_project_dem_highest" in out["system_prompt"]
+    assert out["messages"][0]["role"] == "system"
+    assert "summary" in out["messages"][1]["content"].lower()
+    assert out["messages"][-1] == {"role": "user", "content": "what next?"}
+    assert any(m.get("role") == "tool" for m in out["messages"])
+
+
+def test_chat_export_endpoint() -> None:
+    app = create_app()
+    client = TestClient(app)
+    fake_llm = {
+        "endpoint": "http://ollama",
+        "model": "test",
+        "temperature": 0.2,
+        "num_ctx": 8192,
+        "request_num_ctx": None,
+        "system_prompt": "system",
+        "tools": WEB_TOOL_SCHEMAS,
+        "messages": [{"role": "system", "content": "system"}],
+    }
+    with patch(
+        "peaky_finders.web.app.export_chat_context",
+        return_value={
+            "llm": fake_llm,
+            "context": {
+                "num_ctx": 8192,
+                "used_tokens": 100,
+                "available_tokens": 8092,
+                "usage_pct": 1.2,
+                "status": "ok",
+                "warn_pct": WEB_CHAT_WARN_PCT,
+                "full_pct": WEB_CHAT_FULL_PCT,
+            },
+        },
+    ):
+        res = client.post(
+            "/api/chat/export",
+            json={"project_slug": "nevada", "llm_messages": [], "message": "hi"},
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["llm"]["system_prompt"] == "system"
+    assert body["context"]["status"] == "ok"
 
 
 def test_chat_context_endpoint() -> None:

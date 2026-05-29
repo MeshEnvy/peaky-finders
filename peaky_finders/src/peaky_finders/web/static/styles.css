@@ -1006,8 +1006,10 @@ select option {
 }
 
 .chat-copy-context.copied {
-  border-color: rgba(74, 222, 128, 0.45);
-  color: #86efac;
+  border-color: rgba(74, 222, 128, 0.7);
+  background: rgba(74, 222, 128, 0.2);
+  color: #bbf7d0;
+  box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.35);
 }
 
 .chat-context-detail {

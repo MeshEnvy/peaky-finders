@@ -426,6 +426,9 @@ def test_stream_web_chat_tool_loop() -> None:
     assert "map.pin" in ops
     assert "map.viewshed" in ops
     assert any(e.get("op") == "chat.delta" and "Peavine" in e.get("text", "") for e in events)
+    transcript = next(e for e in events if e.get("op") == "chat.transcript")
+    assert transcript["messages"][0]["role"] == "user"
+    assert any(m.get("role") == "tool" for m in transcript["messages"])
     assert "chat.done" in ops
 
 

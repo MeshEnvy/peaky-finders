@@ -40,6 +40,120 @@ def build_context_messages(
     )
 
 
+def _build_llm_preamble_messages(
+    *,
+    system_prompt: str,
+    summary: str | None,
+) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+    summary_text = str(summary or "").strip()
+    if summary_text:
+        messages.append(
+            {
+                "role": "user",
+                "content": f"Conversation summary from earlier in this session:\n{summary_text}",
+            }
+        )
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "Understood — I'll treat that summary as our prior context.",
+            }
+        )
+    return messages
+
+
+def build_web_chat_llm_messages(
+    *,
+    project_slug: str | None,
+    summary: str | None = None,
+    map_pins: list | None = None,
+    llm_messages: list[dict[str, Any]] | None = None,
+    message: str = "",
+    pending_llm_turn: list[dict[str, Any]] | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Assemble the full Ollama ``messages`` array for export or metering."""
+    pins = normalize_map_pins(map_pins)
+    system_prompt = web_chat_system_prompt(project_slug=project_slug, map_pins=pins)
+    messages = _build_llm_preamble_messages(system_prompt=system_prompt, summary=summary)
+    if llm_messages:
+        messages.extend(llm_messages)
+    if pending_llm_turn:
+        messages.extend(pending_llm_turn)
+    draft = str(message or "").strip()
+    if draft:
+        messages.append({"role": "user", "content": draft})
+    return system_prompt, messages
+
+
+def build_web_chat_llm_export(
+    *,
+    project_slug: str | None,
+    summary: str | None = None,
+    map_pins: list | None = None,
+    llm_messages: list[dict[str, Any]] | None = None,
+    message: str = "",
+    pending_llm_turn: list[dict[str, Any]] | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    ai = resolve_web_ai_config(project_slug, model_override=model)
+    limits = resolve_ollama_limits(project_slug, model_override=model)
+    system_prompt, messages = build_web_chat_llm_messages(
+        project_slug=project_slug,
+        summary=summary,
+        map_pins=map_pins,
+        llm_messages=llm_messages,
+        message=message,
+        pending_llm_turn=pending_llm_turn,
+    )
+    return {
+        "endpoint": ai.endpoint,
+        "model": ai.model,
+        "temperature": float(ai.temperature),
+        "num_ctx": limits.num_ctx,
+        "request_num_ctx": limits.request_num_ctx,
+        "system_prompt": system_prompt,
+        "tools": WEB_TOOL_SCHEMAS,
+        "messages": messages,
+    }
+
+
+def export_chat_context(
+    *,
+    project_slug: str | None,
+    summary: str | None = None,
+    message: str = "",
+    map_pins: list | None = None,
+    llm_messages: list[dict[str, Any]] | None = None,
+    pending_llm_turn: list[dict[str, Any]] | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    llm = build_web_chat_llm_export(
+        project_slug=project_slug,
+        summary=summary,
+        map_pins=map_pins,
+        llm_messages=llm_messages,
+        message=message,
+        pending_llm_turn=pending_llm_turn,
+        model=model,
+    )
+    try:
+        context = measure_chat_context(
+            project_slug=project_slug,
+            messages=llm["messages"],
+            model=model,
+        )
+    except Exception:
+        limits = resolve_ollama_limits(project_slug, model_override=model)
+        context = build_chat_context_payload(
+            num_ctx=limits.num_ctx,
+            used_tokens=0,
+            limit_source=limits.limit_source,
+            token_count_source="export_fallback",
+        )
+    return {"llm": llm, "context": context}
+
+
 def _context_status(usage_pct: float) -> ContextStatus:
     if usage_pct >= WEB_CHAT_FULL_PCT:
         return "full"

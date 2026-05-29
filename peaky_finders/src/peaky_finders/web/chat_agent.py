@@ -145,11 +145,19 @@ def stream_web_chat(
         summary=summary,
         system_prompt=web_chat_system_prompt(project_slug=project_slug, map_pins=ctx.map_pins),
     )
+    turn_start = len(messages) - 1
+
+    def turn_transcript_op() -> dict[str, Any] | None:
+        if turn_start >= len(messages):
+            return None
+        return {"op": "chat.transcript", "messages": messages[turn_start:]}
 
     got_assistant_text = False
 
     for _step in range(WEB_CHAT_MAX_STEPS):
         if should_cancel and should_cancel():
+            if op := turn_transcript_op():
+                yield op
             yield {"op": "chat.cancelled"}
             return
 
@@ -164,9 +172,13 @@ def stream_web_chat(
             should_cancel=should_cancel,
         ):
             if should_cancel and should_cancel():
+                if op := turn_transcript_op():
+                    yield op
                 yield {"op": "chat.cancelled"}
                 return
             if kind == "error":
+                if op := turn_transcript_op():
+                    yield op
                 yield {"op": "chat.error", "message": str(payload)}
                 return
             if kind == "delta":
@@ -190,6 +202,8 @@ def stream_web_chat(
                 assistant = payload if isinstance(payload, dict) else None
 
         if should_cancel and should_cancel():
+            if op := turn_transcript_op():
+                yield op
             yield {"op": "chat.cancelled"}
             return
 
@@ -204,6 +218,8 @@ def stream_web_chat(
 
         for call in tool_calls:
             if should_cancel and should_cancel():
+                if op := turn_transcript_op():
+                    yield op
                 yield {"op": "chat.cancelled"}
                 return
             fn = call.get("function") or {}
@@ -266,4 +282,6 @@ def stream_web_chat(
             model=model,
         ),
     }
+    if op := turn_transcript_op():
+        yield op
     yield {"op": "chat.done", "model": ai.model}

@@ -18,7 +18,7 @@ from starlette.concurrency import iterate_in_threadpool
 
 from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import OllamaError
 from peaky_finders.web.chat import list_chat_models, stream_chat
-from peaky_finders.web.chat_context import measure_chat_context, summarize_chat_history
+from peaky_finders.web.chat_context import export_chat_context, measure_chat_context, summarize_chat_history
 from peaky_finders.web.chat_history import ChatTurn
 from peaky_finders.web.dem_contours import load_dem_contours
 from peaky_finders.web.mesh_links import (
@@ -105,6 +105,17 @@ class ChatSummarizeRequest(BaseModel):
     model: str | None = Field(default=None, max_length=256)
     history: list[ChatTurn] = Field(default_factory=list)
     summary: str | None = Field(default=None, max_length=24000)
+
+
+class ChatExportRequest(BaseModel):
+    project_slug: str | None = None
+    model: str | None = Field(default=None, max_length=256)
+    history: list[ChatTurn] = Field(default_factory=list)
+    summary: str | None = Field(default=None, max_length=24000)
+    message: str | None = Field(default=None, max_length=8000)
+    map_pins: list[MapPinTurn] = Field(default_factory=list)
+    llm_messages: list[dict[str, Any]] = Field(default_factory=list)
+    pending_llm_turn: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SitePatchRequest(BaseModel):
@@ -563,6 +574,19 @@ def create_app() -> FastAPI:
             summary=body.summary,
             message=body.message or "",
             map_pins=[pin.model_dump() for pin in body.map_pins],
+            model=body.model,
+        )
+
+    @app.post("/api/chat/export")
+    def api_chat_export(body: ChatExportRequest) -> dict[str, Any]:
+        pending = body.pending_llm_turn or None
+        return export_chat_context(
+            project_slug=body.project_slug,
+            summary=body.summary,
+            message=body.message or "",
+            map_pins=[pin.model_dump() for pin in body.map_pins],
+            llm_messages=body.llm_messages,
+            pending_llm_turn=pending,
             model=body.model,
         )
 

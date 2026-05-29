@@ -16,6 +16,7 @@ const chatContextTrack = document.getElementById('chat-context-track')
 const chatContextNote = document.getElementById('chat-context-note')
 const chatSummarizeBtn = document.getElementById('chat-summarize')
 const chatCopyContextBtn = document.getElementById('chat-copy-context')
+const CHAT_COPY_CONTEXT_LABEL = '{}'
 
 const sitesPanel = document.getElementById('sites-panel')
 const sitesPanelToggle = document.getElementById('sites-panel-toggle')
@@ -107,6 +108,8 @@ function rfSites(sites) {
 }
 
 const chatHistory = []
+const chatLlmMessages = []
+let pendingLlmTurn = null
 const chatMapPins = new Map()
 let chatSummary = null
 let chatContextState = { usage_pct: 0, status: 'ok', full_pct: 92 }
@@ -1958,6 +1961,8 @@ function trialMapPinsPayload() {
 
 function resetChatHistory() {
   chatHistory.length = 0
+  chatLlmMessages.length = 0
+  pendingLlmTurn = null
   chatMapPins.clear()
   chatSummary = null
   scheduleChatContextRefresh('')
@@ -2018,11 +2023,31 @@ function chatContextPayload(pendingMessage = '') {
   }
 }
 
-function buildChatContextExport() {
+function chatExportPayload(pendingMessage = '') {
+  return {
+    ...chatContextPayload(pendingMessage),
+    llm_messages: chatLlmMessages,
+    pending_llm_turn: pendingLlmTurn?.length ? pendingLlmTurn : undefined,
+  }
+}
+
+function commitPendingLlmTurn() {
+  if (!pendingLlmTurn?.length) return
+  chatLlmMessages.push(...pendingLlmTurn)
+  pendingLlmTurn = null
+}
+
+function clearPendingLlmTurn() {
+  pendingLlmTurn = null
+}
+
+function buildChatContextExport(serverPayload = null) {
+  const draftMessage = chatInput?.value?.trim() || ''
   const payload = {
     exported_at: new Date().toISOString(),
-    ...chatContextPayload(),
-    context_window: { ...chatContextState },
+    ...chatContextPayload(draftMessage),
+    context_window: serverPayload?.context || { ...chatContextState },
+    llm: serverPayload?.llm || null,
   }
   if (pendingChatTurn && !pendingChatTurn.committed) {
     payload.pending_turn = {
@@ -2032,39 +2057,106 @@ function buildChatContextExport() {
       errored: pendingChatTurn.errored,
     }
   }
+  if (pendingLlmTurn?.length) {
+    payload.pending_llm_turn = pendingLlmTurn
+  }
   return payload
 }
 
 let chatCopyContextResetTimer = null
 
+async function buildExportJsonString(draftMessage = '') {
+  let serverPayload = null
+  try {
+    const res = await fetch('/api/chat/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(chatExportPayload(draftMessage)),
+    })
+    if (res.ok) {
+      serverPayload = await res.json()
+      if (serverPayload?.context) applyChatContext(serverPayload.context)
+    } else {
+      console.warn('copyChatContextJson export HTTP', res.status)
+    }
+  } catch (err) {
+    console.warn('copyChatContextJson export failed:', err)
+  }
+  return JSON.stringify(buildChatContextExport(serverPayload), null, 2)
+}
+
+async function copyTextToClipboard(textOrPromise) {
+  const textPromise =
+    textOrPromise instanceof Promise ? textOrPromise : Promise.resolve(String(textOrPromise))
+
+  if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': textPromise.then((text) => new Blob([text], { type: 'text/plain' })),
+        }),
+      ])
+      return true
+    } catch (err) {
+      console.warn('copyTextToClipboard ClipboardItem failed:', err)
+    }
+  }
+
+  const text = await textPromise
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch (err) {
+    console.warn('copyTextToClipboard writeText failed:', err)
+  }
+
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.setAttribute('readonly', '')
+  ta.style.position = 'fixed'
+  ta.style.top = '0'
+  ta.style.left = '0'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.focus()
+  ta.select()
+  const ok = document.execCommand('copy')
+  ta.remove()
+  return ok
+}
+
 function flashChatCopyContextFeedback() {
   if (!chatCopyContextBtn) return
   chatCopyContextBtn.classList.add('copied')
+  chatCopyContextBtn.textContent = '✓'
   chatCopyContextBtn.title = 'Copied!'
+  chatCopyContextBtn.setAttribute('aria-label', 'Copied to clipboard')
   if (chatCopyContextResetTimer) clearTimeout(chatCopyContextResetTimer)
   chatCopyContextResetTimer = setTimeout(() => {
     chatCopyContextResetTimer = null
     chatCopyContextBtn.classList.remove('copied')
-    chatCopyContextBtn.title = 'Copy context as JSON'
+    chatCopyContextBtn.textContent = CHAT_COPY_CONTEXT_LABEL
+    chatCopyContextBtn.title = 'Copy full LLM context as JSON'
+    chatCopyContextBtn.setAttribute('aria-label', 'Copy full LLM context as JSON')
   }, 1500)
 }
 
 async function copyChatContextJson() {
-  const json = JSON.stringify(buildChatContextExport(), null, 2)
-  try {
-    await navigator.clipboard.writeText(json)
-  } catch {
-    const ta = document.createElement('textarea')
-    ta.value = json
-    ta.setAttribute('readonly', '')
-    ta.style.position = 'fixed'
-    ta.style.left = '-9999px'
-    document.body.appendChild(ta)
-    ta.select()
-    document.execCommand('copy')
-    ta.remove()
+  if (!chatCopyContextBtn) return
+  const draftMessage = chatInput?.value?.trim() || ''
+  const ok = await copyTextToClipboard(buildExportJsonString(draftMessage))
+  if (ok) {
+    flashChatCopyContextFeedback()
+    return
   }
-  flashChatCopyContextFeedback()
+  chatCopyContextBtn.title = 'Copy failed — check browser permissions'
+  if (chatCopyContextResetTimer) clearTimeout(chatCopyContextResetTimer)
+  chatCopyContextResetTimer = setTimeout(() => {
+    chatCopyContextResetTimer = null
+    chatCopyContextBtn.title = 'Copy full LLM context as JSON'
+  }, 2000)
 }
 
 function formatTokenCount(n) {
@@ -2169,6 +2261,8 @@ async function summarizeChatContext({ announce = true } = {}) {
     }
     chatSummary = payload.summary || chatSummary
     chatHistory.length = 0
+    chatLlmMessages.length = 0
+    pendingLlmTurn = null
     if (announce) {
       appendChat('Earlier conversation summarized and compressed into context memory.', 'divider', 'Context')
     }
@@ -2314,6 +2408,7 @@ async function sendChatMessage(text) {
     committed: false,
   }
   pendingChatTurn = turn
+  pendingLlmTurn = null
   setChatComposerBusy(true)
   setChatPending(true)
   setStatus('thinking', 'thinking')
@@ -2360,12 +2455,15 @@ async function sendChatMessage(text) {
         if (mySeq === chatRequestSeq) setChatPendingLabel('')
         if (!wasCancelled && !hadChatError) {
           syncPendingAssistantText(assistantBody?.textContent || '', turn)
+          commitPendingLlmTurn()
           commitPendingChatTurn(turn)
         }
         return
       }
       if (mySeq !== chatRequestSeq) return
-      if (msg.op === 'chat.started' || msg.op === 'chat.context') {
+      if (msg.op === 'chat.transcript' && Array.isArray(msg.messages)) {
+        pendingLlmTurn = msg.messages
+      } else if (msg.op === 'chat.started' || msg.op === 'chat.context') {
         if (msg.op === 'chat.started') setChatPendingLabel('Waiting for model')
         if (msg.context) applyChatContext(msg.context)
       } else if (msg.op === 'chat.status') {
@@ -2398,6 +2496,7 @@ async function sendChatMessage(text) {
       scheduleChatContextRefresh('')
     } else if (!hadChatError) {
       syncPendingAssistantText(assistantBody?.textContent || '', turn)
+      commitPendingLlmTurn()
       commitPendingChatTurn(turn)
     } else {
       scheduleChatContextRefresh('')
