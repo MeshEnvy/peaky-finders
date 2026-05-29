@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from unittest.mock import patch
 
+from peaky_finders.site_suggestions.rf_link import clear_rf_link_cache
 from peaky_finders.web.rf_links import (
-    clear_rf_link_cache,
     rf_link_line_features_for_preset,
     rf_link_line_features_from_site,
 )
@@ -34,15 +34,15 @@ def test_rf_link_line_features_uses_cache() -> None:
         },
         simulation=object(),
     )
-    with patch("peaky_finders.web.rf_links.max_hop_range_m", return_value=200_000.0), patch(
-        "peaky_finders.web.rf_links.rf_json_for_preset",
+    with patch("peaky_finders.site_suggestions.rf_link.max_hop_range_m", return_value=200_000.0), patch(
+        "peaky_finders.site_suggestions.rf_link.rf_json_for_preset",
         return_value='{"rf":"test"}',
     ), patch(
-        "peaky_finders.web.rf_links.splatter_session",
+        "peaky_finders.site_suggestions.rf_link.splatter_session",
     ) as session_fn, patch(
-        "peaky_finders.web.rf_links.ensure_dem_for_points",
+        "peaky_finders.site_suggestions.rf_link.ensure_dem_for_points",
     ), patch(
-        "peaky_finders.web.rf_links.mutual_hop_batch",
+        "peaky_finders.site_suggestions.rf_link.mutual_hop_batch",
         return_value=[True],
     ) as batch:
         first = rf_link_line_features_from_site(
@@ -74,10 +74,10 @@ def test_rf_link_line_features_skips_out_of_range() -> None:
         sites={"site-b": _FakeSite("Bravo", 50.0, -100.0)},
         simulation=object(),
     )
-    with patch("peaky_finders.web.rf_links.max_hop_range_m", return_value=1000.0), patch(
-        "peaky_finders.web.rf_links.rf_json_for_preset",
+    with patch("peaky_finders.site_suggestions.rf_link.max_hop_range_m", return_value=1000.0), patch(
+        "peaky_finders.site_suggestions.rf_link.rf_json_for_preset",
         return_value='{"rf":"test"}',
-    ), patch("peaky_finders.web.rf_links.mutual_hop_batch") as batch:
+    ), patch("peaky_finders.site_suggestions.rf_link.mutual_hop_batch") as batch:
         features = rf_link_line_features_from_site(
             preset,  # type: ignore[arg-type]
             from_slug="site-a",
@@ -100,15 +100,15 @@ def test_rf_link_line_features_for_preset_deduplicates_pairs() -> None:
         },
         simulation=object(),
     )
-    with patch("peaky_finders.web.rf_links.max_hop_range_m", return_value=200_000.0), patch(
-        "peaky_finders.web.rf_links.rf_json_for_preset",
+    with patch("peaky_finders.site_suggestions.rf_link.max_hop_range_m", return_value=200_000.0), patch(
+        "peaky_finders.site_suggestions.rf_link.rf_json_for_preset",
         return_value='{"rf":"test"}',
     ), patch(
-        "peaky_finders.web.rf_links.splatter_session",
+        "peaky_finders.site_suggestions.rf_link.splatter_session",
     ), patch(
-        "peaky_finders.web.rf_links.ensure_dem_for_points",
+        "peaky_finders.site_suggestions.rf_link.ensure_dem_for_points",
     ), patch(
-        "peaky_finders.web.rf_links.mutual_hop_batch",
+        "peaky_finders.site_suggestions.rf_link.mutual_hop_batch",
         return_value=[True],
     ) as batch:
         features = rf_link_line_features_for_preset(preset)  # type: ignore[arg-type]

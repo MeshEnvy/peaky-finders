@@ -71,7 +71,7 @@ def run_mesh_links(preset_path: Path) -> int:
     outp.parent.mkdir(parents=True, exist_ok=True)
     sees_by_slug = {slug: entry.sees for slug, entry in job.sites.items()}
     if write_site_links_kml(
-        coverage_gpkg_by_slug=assets.coverage_gpkg_by_slug,
+        preset=job,
         sites=assets.overlays,
         sees_by_slug=sees_by_slug,
         out_kml=outp,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Sequence
 
@@ -11,6 +13,101 @@ from peaky_finders.sites_job import Preset, ensure_skadi_mirror_dir
 
 if TYPE_CHECKING:
     from splatter import Session
+
+_EARTH_R_M = 6_371_000.0
+_COORD_DECIMALS = 6
+
+_rf_link_cache: dict[str, bool] = {}
+
+
+def clear_rf_link_cache() -> None:
+    _rf_link_cache.clear()
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    rlat1, rlon1, rlat2, rlon2 = map(math.radians, (lat1, lon1, lat2, lon2))
+    dlat = rlat2 - rlat1
+    dlon = rlon2 - rlon1
+    a = math.sin(dlat / 2) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlon / 2) ** 2
+    return 2 * _EARTH_R_M * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _round_coord(value: float) -> float:
+    return round(float(value), _COORD_DECIMALS)
+
+
+def _rf_cache_key(rf_key: str, lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> str:
+    a = (_round_coord(lat_a), _round_coord(lon_a))
+    b = (_round_coord(lat_b), _round_coord(lon_b))
+    if a <= b:
+        pair = f"{a[0]},{a[1]}|{b[0]},{b[1]}"
+    else:
+        pair = f"{b[0]},{b[1]}|{a[0]},{a[1]}"
+    return f"{rf_key}:{pair}"
+
+
+def _canonical_slug_pair(a: str, b: str) -> tuple[str, str]:
+    return (a, b) if a <= b else (b, a)
+
+
+def rf_mutual_link_slug_pairs_from_site(
+    preset: Preset,
+    *,
+    from_slug: str,
+    from_lat: float,
+    from_lon: float,
+) -> list[tuple[str, str]]:
+    """Mutual RF-viable slug pairs involving ``from_slug`` (canonical order)."""
+    rf_json = rf_json_for_preset(preset)
+    rf_key = hashlib.sha256(rf_json.encode()).hexdigest()[:16]
+    max_hop_m = max_hop_range_m(preset)
+    out: list[tuple[str, str]] = []
+    pending: list[tuple[str, float, float, str]] = []
+
+    for slug, site in sorted(preset.sites.items()):
+        if slug == from_slug:
+            continue
+        lat_b = float(site.lat)
+        lon_b = float(site.lon)
+        if _haversine_m(from_lat, from_lon, lat_b, lon_b) > max_hop_m:
+            continue
+        cache_key = _rf_cache_key(rf_key, from_lat, from_lon, lat_b, lon_b)
+        cached = _rf_link_cache.get(cache_key)
+        if cached is True:
+            out.append(_canonical_slug_pair(from_slug, slug))
+            continue
+        if cached is False:
+            continue
+        pending.append((slug, lat_b, lon_b, cache_key))
+
+    if pending:
+        session = splatter_session(verbose=False)
+        points = [(from_lat, from_lon)]
+        points.extend((lat_b, lon_b) for _, lat_b, lon_b, _ in pending)
+        ensure_dem_for_points(session, points, buffer_m=5000.0)
+        pairs = [(from_lat, from_lon, lat_b, lon_b) for _, lat_b, lon_b, _ in pending]
+        viable = mutual_hop_batch(session, pairs, rf_json=rf_json)
+        for (slug, _lat_b, _lon_b, cache_key), ok in zip(pending, viable, strict=True):
+            _rf_link_cache[cache_key] = bool(ok)
+            if ok:
+                out.append(_canonical_slug_pair(from_slug, slug))
+
+    return out
+
+
+def rf_mutual_link_slug_pairs(preset: Preset) -> list[tuple[str, str]]:
+    """All mutual RF-viable site slug pairs for a preset (canonical order)."""
+    merged: set[tuple[str, str]] = set()
+    for slug, site in sorted(preset.sites.items()):
+        merged.update(
+            rf_mutual_link_slug_pairs_from_site(
+                preset,
+                from_slug=slug,
+                from_lat=float(site.lat),
+                from_lon=float(site.lon),
+            )
+        )
+    return sorted(merged)
 
 
 def propagation_request_json(preset: Preset, *, lat: float = 0.0, lon: float = 0.0) -> str:

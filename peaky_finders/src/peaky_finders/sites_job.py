@@ -391,9 +391,8 @@ class SiteEntry(BaseModel):
         default_factory=list,
         description=(
             "Field-confirmed site slugs this location can reach (boots-on-the-ground override). "
-            "Mesh edges are the union of RF checks, mutual viewshed footprints, and mutual "
-            "``sees`` pairs; listing a slug here adds guaranteed links and does not exclude "
-            "model-derived ones."
+            "Mesh edges are the union of RF mutual-hop checks and mutual ``sees`` pairs; "
+            "listing a slug here adds guaranteed links and does not exclude model-derived ones."
         ),
     )
 
@@ -1458,7 +1457,7 @@ def viewshed_polygon_coverage_kml_arcname(site_slug: str) -> str:
 
 
 def mesh_edges_site_to_site_kml_arcname() -> str:
-    """Path inside KMZ for mutual site link LineStrings (viewshed and/or ``sites.*.sees``)."""
+    """Path inside KMZ for mutual site link LineStrings (RF and/or ``sites.*.sees``)."""
     return "sites/mesh/edges/site_to_site.kml"
 
 

@@ -114,11 +114,11 @@ def footprints_all(plan: BuildConfigurePlan, preset: Preset) -> tuple[Path, ...]
 
 
 def mesh_links_mtime_prereqs(plan: BuildConfigurePlan, preset: Preset) -> tuple[Path, ...]:
-    """Makefile mesh links: footprints + stamps + mesh_depth_extra (no mesh:depth edge)."""
+    """Makefile mesh links: RF propagation inputs (preset, simulation, DEM) + ``sees``."""
 
     preset_f = Path(plan.preset_path).expanduser().resolve()
-    parts = list(footprints_all(plan, preset))
-    for sec in ("topology", "sites_sees", "bundle_kml_overlay", "bundle_mesh_coverage"):
+    parts: list[Path] = [preset_f]
+    for sec in ("simulation", "topology", "sites_sees"):
         parts.append(stamp_path(preset_f, sec).resolve())
     if plan.has_bundle:
         parts.append(dem_bulk_stamp_path(plan))

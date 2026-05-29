@@ -1,4 +1,4 @@
-"""Mutual site–site links from coverage footprints and/or preset ``sites.*.sees``."""
+"""Mutual site–site links from RF splatter checks and preset ``sites.*.sees`` overrides."""
 
 from __future__ import annotations
 
@@ -7,12 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from shapely import make_valid
-from shapely.geometry import Point
-from shapely.geometry.base import BaseGeometry
-
-from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.kml_bundle import AggregateSiteOverlay
+from peaky_finders.site_suggestions.rf_link import rf_mutual_link_slug_pairs
+from peaky_finders.sites_job import Preset
 from peaky_finders.splat_polygonize import (
     GX_DRAW_ORDER_MESH_SITE_TO_SITE,
     GX_NS,
@@ -28,7 +25,6 @@ class _SiteLinkNode:
     lat: float
     lon: float
     antenna_height_agl_m: float
-    footprint: BaseGeometry | None = None
 
 
 def _canonical_pair(a: str, b: str) -> tuple[str, str]:
@@ -54,73 +50,47 @@ def mutual_sees_slug_pairs(sees_by_slug: Mapping[str, Sequence[str]]) -> list[tu
     return out
 
 
-def mutual_footprint_link_pairs(sites: Sequence[_SiteLinkNode]) -> list[tuple[int, int]]:
-    """Indices (i, j) with i < j where each pin lies in the other's footprint."""
-    n = len(sites)
-    out: list[tuple[int, int]] = []
-    for i in range(n):
-        fi = sites[i].footprint
-        if fi is None:
-            continue
-        pi = Point(sites[i].lon, sites[i].lat)
-        for j in range(i + 1, n):
-            fj = sites[j].footprint
-            if fj is None:
-                continue
-            pj = Point(sites[j].lon, sites[j].lat)
-            if fi.covers(pj) and fj.covers(pi):
-                out.append((i, j))
-    return out
-
-
 def mutual_site_link_slug_pairs(
     *,
-    footprint_nodes: Sequence[_SiteLinkNode],
+    preset: Preset,
     sees_by_slug: Mapping[str, Sequence[str]],
 ) -> list[tuple[str, str]]:
-    """Union of mutual footprint coverage and mutual ``sees`` override pairs (canonical slug order)."""
-    pairs: set[tuple[str, str]] = set()
-    for i, j in mutual_footprint_link_pairs(footprint_nodes):
-        pairs.add(_canonical_pair(footprint_nodes[i].slug, footprint_nodes[j].slug))
+    """Union of mutual RF links and mutual ``sees`` field-override pairs."""
+    pairs: set[tuple[str, str]] = set(rf_mutual_link_slug_pairs(preset))
     pairs.update(mutual_sees_slug_pairs(sees_by_slug))
     return sorted(pairs)
 
 
+def _site_link_nodes(
+    sites: Sequence[AggregateSiteOverlay],
+) -> list[_SiteLinkNode]:
+    return [
+        _SiteLinkNode(
+            slug=s.slug,
+            folder_name=s.folder_name,
+            lat=float(s.center_lat),
+            lon=float(s.center_lon),
+            antenna_height_agl_m=float(s.antenna_height_agl_m),
+        )
+        for s in sites
+    ]
+
+
 def site_links_geojson(
     *,
-    coverage_gpkg_by_slug: Mapping[str, Path],
+    preset: Preset,
     sites: Sequence[AggregateSiteOverlay],
     sees_by_slug: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """GeoJSON FeatureCollection of LineStrings for mutual site links."""
     overlay_by_slug = {s.slug: s for s in sites}
-    footprint_nodes: list[_SiteLinkNode] = []
-    for s in sites:
-        gpkg = coverage_gpkg_by_slug.get(s.slug)
-        fp: BaseGeometry | None = None
-        if gpkg is not None:
-            loaded = read_coverage_footprint(Path(gpkg))
-            if loaded is not None and not loaded.is_empty:
-                fp = make_valid(loaded) if not loaded.is_valid else loaded
-                if fp.is_empty:
-                    fp = None
-        footprint_nodes.append(
-            _SiteLinkNode(
-                slug=s.slug,
-                folder_name=s.folder_name,
-                lat=float(s.center_lat),
-                lon=float(s.center_lon),
-                antenna_height_agl_m=float(s.antenna_height_agl_m),
-                footprint=fp,
-            ),
-        )
-
+    link_nodes = _site_link_nodes(sites)
     pair_slugs = mutual_site_link_slug_pairs(
-        footprint_nodes=footprint_nodes,
+        preset=preset,
         sees_by_slug=sees_by_slug or {},
     )
     features: list[dict[str, Any]] = []
-    node_by_slug = {n.slug: n for n in footprint_nodes}
+    node_by_slug = {n.slug: n for n in link_nodes}
     for slug_a, slug_b in pair_slugs:
         if slug_a not in overlay_by_slug or slug_b not in overlay_by_slug:
             continue
@@ -149,47 +119,27 @@ def site_links_geojson(
 
 def write_site_links_kml(
     *,
-    coverage_gpkg_by_slug: Mapping[str, Path],
+    preset: Preset,
     sites: Sequence[AggregateSiteOverlay],
     sees_by_slug: Mapping[str, Sequence[str]] | None = None,
     out_kml: Path,
 ) -> bool:
     """Write LineString KML for mutual site links; False if none.
 
-    A pair is linked when footprints mutually cover both pins **or** both sites list each
+    A pair is linked when splatter RF mutual-hop checks pass **or** both sites list each
     other under ``sites.<slug>.sees`` in the preset.
     """
     overlay_by_slug = {s.slug: s for s in sites}
-    footprint_nodes: list[_SiteLinkNode] = []
-    for s in sites:
-        gpkg = coverage_gpkg_by_slug.get(s.slug)
-        fp: BaseGeometry | None = None
-        if gpkg is not None:
-            loaded = read_coverage_footprint(Path(gpkg))
-            if loaded is not None and not loaded.is_empty:
-                fp = make_valid(loaded) if not loaded.is_valid else loaded
-                if fp.is_empty:
-                    fp = None
-        footprint_nodes.append(
-            _SiteLinkNode(
-                slug=s.slug,
-                folder_name=s.folder_name,
-                lat=float(s.center_lat),
-                lon=float(s.center_lon),
-                antenna_height_agl_m=float(s.antenna_height_agl_m),
-                footprint=fp,
-            ),
-        )
-
+    link_nodes = _site_link_nodes(sites)
     pair_slugs = mutual_site_link_slug_pairs(
-        footprint_nodes=footprint_nodes,
+        preset=preset,
         sees_by_slug=sees_by_slug or {},
     )
     if not pair_slugs:
         return False
 
     endpoints: list[tuple[_SiteLinkNode, _SiteLinkNode]] = []
-    node_by_slug = {n.slug: n for n in footprint_nodes}
+    node_by_slug = {n.slug: n for n in link_nodes}
     for slug_a, slug_b in pair_slugs:
         if slug_a not in overlay_by_slug or slug_b not in overlay_by_slug:
             continue
