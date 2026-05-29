@@ -423,450 +423,747 @@ sites:
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN220
     mlrs: NV210170N0210E0SN220
 
+    elevation_m: 1997.0
   alamo:
     type: goal
     name: Alamo
     loc:
     - 37.3771
     - -115.1678
+    plss: NV; Mount Diablo Meridian; T.6S R.61E; Sec. 32 — CadNSDI 
+      PLSSID=NV210060S0610E0 | FRSTDIVID=NV210060S0610E0SN320
+    mlrs: NV210060S0610E0SN320
+    elevation_m: 1054.0
   amargosa-valley:
     type: goal
     name: Amargosa Valley
     loc:
     - 36.5424
     - -116.4877
+    plss: NV; Mount Diablo Meridian; T.16S R.49E; Sec. 20 — CadNSDI 
+      PLSSID=NV210160S0490E0 | FRSTDIVID=NV210160S0490E0SN200
+    mlrs: NV210160S0490E0SN200
+    elevation_m: 719.0
   austin:
     type: goal
     name: Austin
     loc:
     - 39.4976
     - -117.074
+    plss: NV; Mount Diablo Meridian; T.19N R.44E; Sec. 19 — CadNSDI 
+      PLSSID=NV210190N0440E0 | FRSTDIVID=NV210190N0440E0SN190
+    mlrs: NV210190N0440E0SN190
+    elevation_m: 1998.0
   baker:
     type: goal
     name: Baker
     loc:
     - 39.015
     - -114.1233
+    plss: NV; Mount Diablo Meridian; T.13N R.70E; Sec. 09 — CadNSDI 
+      PLSSID=NV210130N0700E0 | FRSTDIVID=NV210130N0700E0SN090
+    mlrs: NV210130N0700E0SN090
+    elevation_m: 1618.0
   battle-mountain:
     type: goal
     name: Battle Mountain
     loc:
     - 40.6299
     - -116.9518
+    plss: NV; Mount Diablo Meridian; T.32N R.45E; Sec. 19 — CadNSDI 
+      PLSSID=NV210320N0450E0 | FRSTDIVID=NV210320N0450E0SN190
+    mlrs: NV210320N0450E0SN190
+    elevation_m: 1377.0
   beatty:
     type: goal
     name: Beatty
     loc:
     - 36.9474
     - -116.7337
+    plss: NV; Mount Diablo Meridian; T.11S R.47E; Sec. 28 — CadNSDI 
+      PLSSID=NV210110S0470E0 | FRSTDIVID=NV210110S0470E0SN280
+    mlrs: NV210110S0470E0SN280
+    elevation_m: 1143.0
   beaverdam:
     type: goal
     name: Beaverdam
     loc:
     - 37.6898
     - -114.4491
+    plss: NV; Mount Diablo Meridian; T.3S R.67E; Sec. 14 — CadNSDI 
+      PLSSID=NV210030S0670E0 | FRSTDIVID=NV210030S0670E0SN140
+    mlrs: NV210030S0670E0SN140
+    elevation_m: 1401.0
   bennett-springs:
     type: goal
     name: Bennett Springs
     loc:
     - 37.7141
     - -114.4667
+    plss: NV; Mount Diablo Meridian; T.3S R.67E; Sec. 03 — CadNSDI 
+      PLSSID=NV210030S0670E0 | FRSTDIVID=NV210030S0670E0SN030
+    mlrs: NV210030S0670E0SN030
+    elevation_m: 1434.0
   blue-diamond:
     type: goal
     name: Blue Diamond
     loc:
     - 36.04
     - -115.4128
+    plss: NV; Mount Diablo Meridian; T.22S R.59E; Sec. 18 — CadNSDI 
+      PLSSID=NV210220S0590E0 | FRSTDIVID=NV210220S0590E0SN180
+    mlrs: NV210220S0590E0SN180
+    elevation_m: 1125.0
   boulder-city:
     type: goal
     name: Boulder City
     loc:
     - 35.8407
     - -114.9257
+    plss: NV; Mount Diablo Meridian; T.24S R.63E; Sec. 22 — CadNSDI 
+      PLSSID=NV210240S0630E0 | FRSTDIVID=NV210240S0630E0SN220
+    mlrs: NV210240S0630E0SN220
+    elevation_m: 563.0
   bunkerville:
     type: goal
     name: Bunkerville
     loc:
     - 36.7594
     - -114.1412
+    plss: NV; Mount Diablo Meridian; T.13S R.70E; Sec. 35 — CadNSDI 
+      PLSSID=NV210130S0700E0 | FRSTDIVID=NV210130S0700E0SN350
+    mlrs: NV210130S0700E0SN350
+    elevation_m: 485.0
   cal-nev-ari:
     type: goal
     name: Cal Nev Ari
     loc:
     - 35.2996
     - -114.8777
+    plss: NV; Mount Diablo Meridian; T.30S R.64E; Sec. 30 — CadNSDI 
+      PLSSID=NV210300S0640E0 | FRSTDIVID=NV210300S0640E0SN300
+    mlrs: NV210300S0640E0SN300
+    elevation_m: 777.0
   caliente:
     type: goal
     name: Caliente
     loc:
     - 37.6458
     - -114.4929
+    plss: NV; Mount Diablo Meridian; T.3S R.67E; Sec. 33 — CadNSDI 
+      PLSSID=NV210030S0670E0 | FRSTDIVID=NV210030S0670E0SN330
+    mlrs: NV210030S0670E0SN330
+    elevation_m: 1558.0
   carlin:
     type: goal
     name: Carlin
     loc:
     - 40.719
     - -116.1081
+    plss: NV; Mount Diablo Meridian; T.33N R.52E; Sec. 27 — CadNSDI 
+      PLSSID=NV210330N0520E0 | FRSTDIVID=NV210330N0520E0SN270
+    mlrs: NV210330N0520E0SN270
+    elevation_m: 1509.0
   carson-city:
     type: goal
     name: Carson City
     loc:
     - 39.1511
     - -119.7476
+    plss: NV; Mount Diablo Meridian; T.15N R.20E; Sec. 21 — CadNSDI 
+      PLSSID=NV210150N0200E0 | FRSTDIVID=NV210150N0200E0SN210
+    mlrs: NV210150N0200E0SN210
+    elevation_m: 1419.0
   carter-springs:
     type: goal
     name: Carter Springs
     loc:
     - 38.8619
     - -119.6413
+    plss: NV; Mount Diablo Meridian; T.12N R.21E; Sec. 33 — CadNSDI 
+      PLSSID=NV210120N0210E0 | FRSTDIVID=NV210120N0210E0SN330
+    mlrs: NV210120N0210E0SN330
+    elevation_m: 1683.0
   cold-springs:
     type: goal
     name: Cold Springs
     loc:
     - 39.6927
     - -119.9775
+    plss: NV; Mount Diablo Meridian; T.21N R.18E; Sec. 16 — CadNSDI 
+      PLSSID=NV210210N0180E0 | FRSTDIVID=NV210210N0180E0SN160
+    mlrs: NV210210N0180E0SN160
+    elevation_m: 1548.0
   crescent-valley:
     type: goal
     name: Crescent Valley
     loc:
     - 40.4198
     - -116.5753
+    plss: NV; Mount Diablo Meridian; T.29N R.48E; Sec. 05 — CadNSDI 
+      PLSSID=NV210290N0480E0 | FRSTDIVID=NV210290N0480E0SN050
+    mlrs: NV210290N0480E0SN050
+    elevation_m: 1466.0
   crystal-bay:
     type: goal
     name: Crystal Bay
     loc:
     - 39.2314
     - -120.0019
+    plss: NV; Mount Diablo Meridian; T.16N R.18E; Sec. 19 — CadNSDI 
+      PLSSID=NV210160N0180E0 | FRSTDIVID=NV210160N0180E0SN190
+    mlrs: NV210160N0180E0SN190
+    elevation_m: 1922.0
   dayton:
     type: goal
     name: Dayton
     loc:
     - 39.2592
     - -119.5653
+    plss: NV; Mount Diablo Meridian; T.16N R.22E; Sec. 07 — CadNSDI 
+      PLSSID=NV210160N0220E0 | FRSTDIVID=NV210160N0220E0SN070
+    mlrs: NV210160N0220E0SN070
+    elevation_m: 1314.0
   denio:
     type: goal
     name: Denio
     loc:
     - 41.9888
     - -118.6375
+    plss: NV; Mount Diablo Meridian; T.47N R.30E; Sec. 00 — CadNSDI 
+      PLSSID=NV210470N0300E0 | FRSTDIVID=NV210470N0300E0SN000
+    mlrs: NV210470N0300E0SN000
+    elevation_m: 1282.0
   double-spring:
     type: goal
     name: Double Spring
     loc:
     - 38.7788
     - -119.6154
+    plss: NV; Mount Diablo Meridian; T.11N R.21E; Sec. 34 — CadNSDI 
+      PLSSID=NV210110N0210E0 | FRSTDIVID=NV210110N0210E0SN340
+    mlrs: NV210110N0210E0SN340
+    elevation_m: 2017.0
   dry-valley:
     type: goal
     name: Dry Valley
     loc:
     - 37.8843
     - -114.3051
+    plss: NV; Mount Diablo Meridian; T.1S R.69E; Sec. 06 — CadNSDI 
+      PLSSID=NV210010S0690E0 | FRSTDIVID=NV210010S0690E0SN060
+    mlrs: NV210010S0690E0SN060
+    elevation_m: 1569.0
   dyer:
     type: goal
     name: Dyer
     loc:
     - 37.6469
     - -118.0345
+    plss: NV; Mount Diablo Meridian; T.3S R.35E; Sec. 25 — CadNSDI 
+      PLSSID=NV210030S0350E0 | FRSTDIVID=NV210030S0350E0SN250
+    mlrs: NV210030S0350E0SN250
+    elevation_m: 1471.0
   east-valley:
     type: goal
     name: East Valley
     loc:
     - 38.9452
     - -119.6993
+    plss: NV; Mount Diablo Meridian; T.13N R.20E; Sec. 35 — CadNSDI 
+      PLSSID=NV210130N0200E0 | FRSTDIVID=NV210130N0200E0SN350
+    mlrs: NV210130N0200E0SN350
+    elevation_m: 1491.0
   elko:
     type: goal
     name: Elko
     loc:
     - 40.8381
     - -115.7678
+    plss: NV; Mount Diablo Meridian; T.34N R.55E; Sec. 15 — CadNSDI 
+      PLSSID=NV210340N0550E0 | FRSTDIVID=NV210340N0550E0SN150
+    mlrs: NV210340N0550E0SN150
+    elevation_m: 1558.0
   ely:
     type: goal
     name: Ely
     loc:
     - 39.265
     - -114.8708
+    plss: NV; Mount Diablo Meridian; T.16N R.63E; Sec. 10 — CadNSDI 
+      PLSSID=NV210160N0630E0 | FRSTDIVID=NV210160N0630E0SN100
+    mlrs: NV210160N0630E0SN100
+    elevation_m: 1931.0
   empire:
     type: goal
     name: Empire
     loc:
     - 40.5759
     - -119.343
+    plss: NV; Mount Diablo Meridian; T.31N R.23E; Sec. 11 — CadNSDI 
+      PLSSID=NV210310N0230E0 | FRSTDIVID=NV210310N0230E0SN110
+    mlrs: NV210310N0230E0SN110
+    elevation_m: 1230.0
   enterprise:
     type: goal
     name: Enterprise
     loc:
     - 36.0091
     - -115.2278
+    plss: NV; Mount Diablo Meridian; T.22S R.60E; Sec. 26 — CadNSDI 
+      PLSSID=NV210220S0600E0 | FRSTDIVID=NV210220S0600E0SN260
+    mlrs: NV210220S0600E0SN260
+    elevation_m: 751.0
   eureka:
     type: goal
     name: Eureka
     loc:
     - 39.5112
     - -115.9658
+    plss: NV; Mount Diablo Meridian; T.19N R.53E; Sec. 14 — CadNSDI 
+      PLSSID=NV210190N0530E0 | FRSTDIVID=NV210190N0530E0SN140
+    mlrs: NV210190N0530E0SN140
+    elevation_m: 2032.0
   fallon:
     type: goal
     name: Fallon
     loc:
     - 39.4737
     - -118.7779
+    plss: NV; Mount Diablo Meridian; T.19N R.29E; Sec. 31 — CadNSDI 
+      PLSSID=NV210190N0290E0 | FRSTDIVID=NV210190N0290E0SN310
+    mlrs: NV210190N0290E0SN310
+    elevation_m: 1207.0
   fallon-station:
     type: goal
     name: Fallon Station
     loc:
     - 39.415
     - -118.7165
+    plss: NV; Mount Diablo Meridian; T.18N R.29E; Sec. 22 — CadNSDI 
+      PLSSID=NV210180N0290E0 | FRSTDIVID=NV210180N0290E0SN220
+    mlrs: NV210180N0290E0SN220
+    elevation_m: 1197.0
   fernley:
     type: goal
     name: Fernley
     loc:
     - 39.5627
     - -119.1906
+    plss: NV; Mount Diablo Meridian; T.20N R.25E; Sec. 33 — CadNSDI 
+      PLSSID=NV210200N0250E0 | FRSTDIVID=NV210200N0250E0SN330
+    mlrs: NV210200N0250E0SN330
+    elevation_m: 1418.0
   fish-springs:
     type: goal
     name: Fish Springs
     loc:
     - 38.9536
     - -119.6511
+    plss: NV; Mount Diablo Meridian; T.13N R.21E; Sec. 32 — CadNSDI 
+      PLSSID=NV210130N0210E0 | FRSTDIVID=NV210130N0210E0SN320
+    mlrs: NV210130N0210E0SN320
+    elevation_m: 1579.0
   fort-mcdermitt:
     type: goal
     name: Fort Mcdermitt
     loc:
     - 41.9655
     - -117.6394
+    plss: NV; Mount Diablo Meridian; T.47N R.38E; Sec. 12 — CadNSDI 
+      PLSSID=NV210470N0380E0 | FRSTDIVID=NV210470N0380E0SN120
+    mlrs: NV210470N0380E0SN120
+    elevation_m: 1397.0
   gabbs:
     type: goal
     name: Gabbs
     loc:
     - 38.8621
     - -117.933
+    plss: NV; Mount Diablo Meridian; T.12N R.36E; Sec. 33 — CadNSDI 
+      PLSSID=NV210120N0360E0 | FRSTDIVID=NV210120N0360E0SN330
+    mlrs: NV210120N0360E0SN330
+    elevation_m: 1404.0
   gardnerville:
     type: goal
     name: Gardnerville
     loc:
     - 38.939
     - -119.7369
+    plss: NV; Mount Diablo Meridian; T.12N R.20E; Sec. 04 — CadNSDI 
+      PLSSID=NV210120N0200E0 | FRSTDIVID=NV210120N0200E0SN040
+    mlrs: NV210120N0200E0SN040
+    elevation_m: 1455.0
   gardnerville-ranchos:
     type: goal
     name: Gardnerville Ranchos
     loc:
     - 38.8957
     - -119.7492
+    plss: NV; Mount Diablo Meridian; T.12N R.20E; Sec. 21 — CadNSDI 
+      PLSSID=NV210120N0200E0 | FRSTDIVID=NV210120N0200E0SN210
+    mlrs: NV210120N0200E0SN210
+    elevation_m: 1471.0
   genoa:
     type: goal
     name: Genoa
     loc:
     - 39.0256
     - -119.8309
+    plss: NV; Mount Diablo Meridian; T.13N R.19E; Sec. 03 — CadNSDI 
+      PLSSID=NV210130N0190E0 | FRSTDIVID=NV210130N0190E0SN030
+    mlrs: NV210130N0190E0SN030
+    elevation_m: 1423.0
   gerlach:
     type: goal
     name: Gerlach
     loc:
     - 40.6452
     - -119.3614
+    plss: NV; Mount Diablo Meridian; T.32N R.23E; Sec. 22 — CadNSDI 
+      PLSSID=NV210320N0230E0 | FRSTDIVID=NV210320N0230E0SN220
+    mlrs: NV210320N0230E0SN220
+    elevation_m: 1195.0
   glenbrook:
     type: goal
     name: Glenbrook
     loc:
     - 39.0986
     - -119.9341
+    plss: NV; Mount Diablo Meridian; T.14N R.18E; Sec. 02 — CadNSDI 
+      PLSSID=NV210140N0180E0 | FRSTDIVID=NV210140N0180E0SN020
+    mlrs: NV210140N0180E0SN020
+    elevation_m: 1959.0
   golconda:
     type: goal
     name: Golconda
     loc:
     - 40.9522
     - -117.4997
+    plss: NV; Mount Diablo Meridian; T.36N R.40E; Sec. 32 — CadNSDI 
+      PLSSID=NV210360N0400E0 | FRSTDIVID=NV210360N0400E0SN320
+    mlrs: NV210360N0400E0SN320
+    elevation_m: 1348.0
   golden-valley:
     type: goal
     name: Golden Valley
     loc:
     - 39.6178
     - -119.8231
+    plss: NV; Mount Diablo Meridian; T.20N R.19E; Sec. 11 — CadNSDI 
+      PLSSID=NV210200N0190E0 | FRSTDIVID=NV210200N0190E0SN110
+    mlrs: NV210200N0190E0SN110
+    elevation_m: 1565.0
   goldfield:
     type: goal
     name: Goldfield
     loc:
     - 37.7121
     - -117.2378
+    plss: NV; Mount Diablo Meridian; T.3S R.42E; Sec. 02 — CadNSDI 
+      PLSSID=NV210030S0420E0 | FRSTDIVID=NV210030S0420E0SN020
+    mlrs: NV210030S0420E0SN020
+    elevation_m: 1720.0
   goodsprings:
     type: goal
     name: Goodsprings
     loc:
     - 35.8319
     - -115.4352
+    plss: NV; Mount Diablo Meridian; T.24S R.58E; Sec. 26 — CadNSDI 
+      PLSSID=NV210240S0580E0 | FRSTDIVID=NV210240S0580E0SN260
+    mlrs: NV210240S0580E0SN260
+    elevation_m: 1133.0
   grass-valley:
     type: goal
     name: Grass Valley
     loc:
     - 40.7971
     - -117.7603
+    plss: NV; Mount Diablo Meridian; T.34N R.37E; Sec. 25 — CadNSDI 
+      PLSSID=NV210340N0370E0 | FRSTDIVID=NV210340N0370E0SN250
+    mlrs: NV210340N0370E0SN250
+    elevation_m: 1347.0
   hawthorne:
     type: goal
     name: Hawthorne
     loc:
     - 38.5253
     - -118.626
+    plss: NV; Mount Diablo Meridian; T.8N R.30E; Sec. 27 — CadNSDI 
+      PLSSID=NV210080N0300E0 | FRSTDIVID=NV210080N0300E0SN270
+    mlrs: NV210080N0300E0SN270
+    elevation_m: 1318.0
   henderson:
     type: goal
     name: Henderson
     loc:
     - 36.0133
     - -115.0381
+    plss: NV; Mount Diablo Meridian; T.22S R.62E; Sec. 22 — CadNSDI 
+      PLSSID=NV210220S0620E0 | FRSTDIVID=NV210220S0620E0SN220
+    mlrs: NV210220S0620E0SN220
+    elevation_m: 699.0
   hiko:
     type: goal
     name: Hiko
     loc:
     - 37.6063
     - -115.2018
+    plss: NV; Mount Diablo Meridian; T.4S R.60E; Sec. 13 — CadNSDI 
+      PLSSID=NV210040S0600E0 | FRSTDIVID=NV210040S0600E0SN130
+    mlrs: NV210040S0600E0SN130
+    elevation_m: 1319.0
   humboldt-river-ranch:
     type: goal
     name: Humboldt River Ranch
     loc:
     - 40.4318
     - -118.2719
+    plss: NV; Mount Diablo Meridian; T.30N R.33E; Sec. 28 — CadNSDI 
+      PLSSID=NV210300N0330E0 | FRSTDIVID=NV210300N0330E0SN280
+    mlrs: NV210300N0330E0SN280
+    elevation_m: 1320.0
   imlay:
     type: goal
     name: Imlay
     loc:
     - 40.6581
     - -118.1441
+    plss: NV; Mount Diablo Meridian; T.32N R.34E; Sec. 09 — CadNSDI 
+      PLSSID=NV210320N0340E0 | FRSTDIVID=NV210320N0340E0SN090
+    mlrs: NV210320N0340E0SN090
+    elevation_m: 1293.0
   incline-village:
     type: goal
     name: Incline Village
     loc:
     - 39.2639
     - -119.9455
+    plss: NV; Mount Diablo Meridian; T.16N R.18E; Sec. 10 — CadNSDI 
+      PLSSID=NV210160N0180E0 | FRSTDIVID=NV210160N0180E0SN100
+    mlrs: NV210160N0180E0SN100
+    elevation_m: 2061.0
   indian-hills:
     type: goal
     name: Indian Hills
     loc:
     - 39.0894
     - -119.7977
+    plss: NV; Mount Diablo Meridian; T.14N R.19E; Sec. 12 — CadNSDI 
+      PLSSID=NV210140N0190E0 | FRSTDIVID=NV210140N0190E0SN120
+    mlrs: NV210140N0190E0SN120
+    elevation_m: 1503.0
   indian-springs:
     type: goal
     name: Indian Springs
     loc:
     - 36.5719
     - -115.7204
+    plss: NV; Mount Diablo Meridian; T.16S R.55.5E; Sec. 12 — CadNSDI 
+      PLSSID=NV210160S0552E0 | FRSTDIVID=NV210160S0552E0SN120
+    mlrs: NV210160S0552E0SN120
+    elevation_m: 995.0
   jackpot:
     type: goal
     name: Jackpot
     loc:
     - 41.9797
     - -114.6645
+    plss: NV; Mount Diablo Meridian; T.47N R.64E; Sec. 12 — CadNSDI 
+      PLSSID=NV210470N0640E0 | FRSTDIVID=NV210470N0640E0SN120
+    mlrs: NV210470N0640E0SN120
+    elevation_m: 1586.0
   johnson-lane:
     type: goal
     name: Johnson Lane
     loc:
     - 39.0489
     - -119.7245
+    plss: NV; Mount Diablo Meridian; T.14N R.20E; Sec. 27 — CadNSDI 
+      PLSSID=NV210140N0200E0 | FRSTDIVID=NV210140N0200E0SN270
+    mlrs: NV210140N0200E0SN270
+    elevation_m: 1468.0
   kingsbury:
     type: goal
     name: Kingsbury
     loc:
     - 38.9909
     - -119.8837
+    plss: NV; Mount Diablo Meridian; T.13N R.19E; Sec. 18 — CadNSDI 
+      PLSSID=NV210130N0190E0 | FRSTDIVID=NV210130N0190E0SN180
+    mlrs: NV210130N0190E0SN180
+    elevation_m: 2431.0
   kingston:
     type: goal
     name: Kingston
     loc:
     - 39.2101
     - -117.0679
+    plss: NV; Mount Diablo Meridian; T.16N R.44E; Sec. 31 — CadNSDI 
+      PLSSID=NV210160N0440E0 | FRSTDIVID=NV210160N0440E0SN310
+    mlrs: NV210160N0440E0SN310
+    elevation_m: 1815.0
   lakeridge:
     type: goal
     name: Lakeridge
     loc:
     - 39.0382
     - -119.9397
+    plss: NV; Mount Diablo Meridian; T.14N R.18E; Sec. 34 — CadNSDI 
+      PLSSID=NV210140N0180E0 | FRSTDIVID=NV210140N0180E0SN340
+    mlrs: NV210140N0180E0SN340
+    elevation_m: 2008.0
   lamoille:
     type: goal
     name: Lamoille
     loc:
     - 40.7239
     - -115.479
+    plss: NV; Mount Diablo Meridian; T.33N R.58E; Sec. 19 — CadNSDI 
+      PLSSID=NV210330N0580E0 | FRSTDIVID=NV210330N0580E0SN190
+    mlrs: NV210330N0580E0SN190
+    elevation_m: 1804.0
   laughlin:
     type: goal
     name: Laughlin
     loc:
     - 35.1401
     - -114.6206
+    plss: NV; Mount Diablo Meridian; T.32S R.66E; Sec. 21 — CadNSDI 
+      PLSSID=NV210320S0660E0 | FRSTDIVID=NV210320S0660E0SN210
+    mlrs: NV210320S0660E0SN210
+    elevation_m: 228.0
   lemmon-valley:
     type: goal
     name: Lemmon Valley
     loc:
     - 39.6879
     - -119.8364
+    plss: NV; Mount Diablo Meridian; T.21N R.19E; Sec. 15 — CadNSDI 
+      PLSSID=NV210210N0190E0 | FRSTDIVID=NV210210N0190E0SN150
+    mlrs: NV210210N0190E0SN150
+    elevation_m: 1520.0
   logan-creek:
     type: goal
     name: Logan Creek
     loc:
     - 39.0626
     - -119.9295
+    plss: NV; Mount Diablo Meridian; T.14N R.18E; Sec. 23 — CadNSDI 
+      PLSSID=NV210140N0180E0 | FRSTDIVID=NV210140N0180E0SN230
+    mlrs: NV210140N0180E0SN230
+    elevation_m: 2166.0
   lovelock:
     type: goal
     name: Lovelock
     loc:
     - 40.1787
     - -118.4775
+    plss: NV; Mount Diablo Meridian; T.27N R.31E; Sec. 27 — CadNSDI 
+      PLSSID=NV210270N0310E0 | FRSTDIVID=NV210270N0310E0SN270
+    mlrs: NV210270N0310E0SN270
+    elevation_m: 1212.0
   lund:
     type: goal
     name: Lund
     loc:
     - 38.8642
     - -115.0099
+    plss: NV; Mount Diablo Meridian; T.12N R.62E; Sec. 33 — CadNSDI 
+      PLSSID=NV210120N0620E0 | FRSTDIVID=NV210120N0620E0SN330
+    mlrs: NV210120N0620E0SN330
+    elevation_m: 1698.0
   mcdermitt:
     type: goal
     name: Mcdermitt
     loc:
     - 41.9903
     - -117.7209
+    plss: NV; Mount Diablo Meridian; T.47N R.38E; Sec. 05 — CadNSDI 
+      PLSSID=NV210470N0380E0 | FRSTDIVID=NV210470N0380E0SN050
+    mlrs: NV210470N0380E0SN050
+    elevation_m: 1347.0
   mcgill:
     type: goal
     name: Mcgill
     loc:
     - 39.4019
     - -114.7775
+    plss: NV; Mount Diablo Meridian; T.18N R.64E; Sec. 28 — CadNSDI 
+      PLSSID=NV210180N0640E0 | FRSTDIVID=NV210180N0640E0SN280
+    mlrs: NV210180N0640E0SN280
+    elevation_m: 1904.0
   mercury:
     type: goal
     name: Mercury
     loc:
     - 36.66051
     - -115.99448
+    plss: NV; Mount Diablo Meridian; T.15S R.53E; Sec. 11 — CadNSDI 
+      PLSSID=NV210150S0530E0 | FRSTDIVID=NV210150S0530E0UP110
+    mlrs: NV210150S0530E0UP110
+    elevation_m: 1156.0
   mesquite:
     type: goal
     name: Mesquite
     loc:
     - 36.8032
     - -114.133
+    plss: NV; Mount Diablo Meridian; T.13S R.70E; Sec. 14 — CadNSDI 
+      PLSSID=NV210130S0700E0 | FRSTDIVID=NV210130S0700E0SN140
+    mlrs: NV210130S0700E0SN140
+    elevation_m: 531.0
   mina:
     type: goal
     name: Mina
     loc:
     - 38.3898
     - -118.1115
+    plss: NV; Mount Diablo Meridian; T.6N R.35E; Sec. 08 — CadNSDI 
+      PLSSID=NV210060N0350E0 | FRSTDIVID=NV210060N0350E0SN080
+    mlrs: NV210060N0350E0SN080
+    elevation_m: 1396.0
   minden:
     type: goal
     name: Minden
     loc:
     - 38.9632
     - -119.7683
+    plss: NV; Mount Diablo Meridian; T.13N R.20E; Sec. 29 — CadNSDI 
+      PLSSID=NV210130N0200E0 | FRSTDIVID=NV210130N0200E0SN290
+    mlrs: NV210130N0200E0SN290
+    elevation_m: 1437.0
   moapa-town:
     type: goal
     name: Moapa Town
     loc:
     - 36.6925
     - -114.6356
+    plss: NV; Mount Diablo Meridian; T.14S R.66E; Sec. 29 — CadNSDI 
+      PLSSID=NV210140S0660E0 | FRSTDIVID=NV210140S0660E0SN290
+    mlrs: NV210140S0660E0SN290
+    elevation_m: 535.0
   moapa-valley:
     type: goal
     name: Moapa Valley
     loc:
     - 36.6078
     - -114.4566
+    plss: NV; Mount Diablo Meridian; T.15S R.67E; Sec. 25 — CadNSDI 
+      PLSSID=NV210150S0670E0 | FRSTDIVID=NV210150S0670E0SN250
+    mlrs: NV210150S0670E0SN250
+    elevation_m: 463.0
   mogul:
     type: goal
     name: Mogul
     loc:
     - 39.5164
     - -119.923
+    plss: NV; Mount Diablo Meridian; T.19N R.18E; Sec. 14 — CadNSDI 
+      PLSSID=NV210190N0180E0 | FRSTDIVID=NV210190N0180E0SN140
+    mlrs: NV210190N0180E0SN140
+    elevation_m: 1432.0
   montello:
     type: goal
     name: Montello
@@ -883,42 +1180,70 @@ sites:
     loc:
     - 36.2625
     - -115.6138
+    plss: NV; Mount Diablo Meridian; T.19S R.57E; Sec. 32 — CadNSDI 
+      PLSSID=NV210190S0570E0 | FRSTDIVID=NV210190S0570E0SN320
+    mlrs: NV210190S0570E0SN320
+    elevation_m: 2117.0
   mount-wilson:
     type: goal
     name: Mount Wilson
     loc:
     - 38.235
     - -114.4504
+    plss: NV; Mount Diablo Meridian; T.4N R.67E; Sec. 03 — CadNSDI 
+      PLSSID=NV210040N0670E0 | FRSTDIVID=NV210040N0670E0SN030
+    mlrs: NV210040N0670E0SN030
+    elevation_m: 2003.0
   mountain-city:
     type: goal
     name: Mountain City
     loc:
     - 41.8374
     - -115.9633
+    plss: NV; Mount Diablo Meridian; T.46N R.53E; Sec. 36 — CadNSDI 
+      PLSSID=NV210460N0530E0 | FRSTDIVID=NV210460N0530E0SN360
+    mlrs: NV210460N0530E0SN360
+    elevation_m: 1723.0
   nellis-afb:
     type: goal
     name: Nellis Afb
     loc:
     - 36.2466
     - -115.0571
+    plss: NV; Mount Diablo Meridian; T.20S R.62E; Sec. 04 — CadNSDI 
+      PLSSID=NV210200S0620E0 | FRSTDIVID=NV210200S0620E0SN040
+    mlrs: NV210200S0620E0SN040
+    elevation_m: 576.0
   nelson:
     type: goal
     name: Nelson
     loc:
     - 35.7179
     - -114.8313
+    plss: NV; Mount Diablo Meridian; T.26S R.64E; Sec. 04 — CadNSDI 
+      PLSSID=NV210260S0640E0 | FRSTDIVID=NV210260S0640E0SN040
+    mlrs: NV210260S0640E0SN040
+    elevation_m: 1007.0
   nixon:
     type: goal
     name: Nixon
     loc:
     - 39.828
     - -119.3589
+    plss: NV; Mount Diablo Meridian; T.23N R.23E; Sec. 25 — CadNSDI 
+      PLSSID=NV210230N0230E0 | FRSTDIVID=NV210230N0230E0SN250
+    mlrs: NV210230N0230E0SN250
+    elevation_m: 1184.0
   north-las-vegas:
     type: goal
     name: North Las Vegas
     loc:
     - 36.2883
     - -115.0888
+    plss: NV; Mount Diablo Meridian; T.19S R.62E; Sec. 19 — CadNSDI 
+      PLSSID=NV210190S0620E0 | FRSTDIVID=NV210190S0620E0SN190
+    mlrs: NV210190S0620E0SN190
+    elevation_m: 639.0
   oasis:
     type: goal
     name: Oasis
@@ -935,288 +1260,480 @@ sites:
     loc:
     - 41.5492
     - -117.8235
+    plss: NV; Mount Diablo Meridian; T.42N R.37E; Sec. 04 — CadNSDI 
+      PLSSID=NV210420N0370E0 | FRSTDIVID=NV210420N0370E0SN040
+    mlrs: NV210420N0370E0SN040
+    elevation_m: 1291.0
   osino:
     type: goal
     name: Osino
     loc:
     - 40.9409
     - -115.6607
+    plss: NV; Mount Diablo Meridian; T.35N R.56E; Sec. 10 — CadNSDI 
+      PLSSID=NV210350N0560E0 | FRSTDIVID=NV210350N0560E0SN100
+    mlrs: NV210350N0560E0SN100
+    elevation_m: 1572.0
   owyhee:
     type: goal
     name: Owyhee
     loc:
     - 41.9165
     - -116.1825
+    plss: NV; Mount Diablo Meridian; T.46N R.52E; Sec. 06 — CadNSDI 
+      PLSSID=NV210460N0520E0 | FRSTDIVID=NV210460N0520E0SN060
+    mlrs: NV210460N0520E0SN060
+    elevation_m: 1643.0
   pahrump:
     type: goal
     name: Pahrump
     loc:
     - 36.2235
     - -115.9974
+    plss: NV; Mount Diablo Meridian; T.20S R.53E; Sec. 10 — CadNSDI 
+      PLSSID=NV210200S0530E0 | FRSTDIVID=NV210200S0530E0SN100
+    mlrs: NV210200S0530E0SN100
+    elevation_m: 800.0
   panaca:
     type: goal
     name: Panaca
     loc:
     - 37.7881
     - -114.4005
+    plss: NV; Mount Diablo Meridian; T.2S R.68E; Sec. 08 — CadNSDI 
+      PLSSID=NV210020S0680E0 | FRSTDIVID=NV210020S0680E0SN080
+    mlrs: NV210020S0680E0SN080
+    elevation_m: 1439.0
   paradise:
     type: goal
     name: Paradise
     loc:
     - 36.0872
     - -115.1355
+    plss: NV; Mount Diablo Meridian; T.21S R.61E; Sec. 26 — CadNSDI 
+      PLSSID=NV210210S0610E0 | FRSTDIVID=NV210210S0610E0SN260
+    mlrs: NV210210S0610E0SN260
+    elevation_m: 622.0
   paradise-valley:
     type: goal
     name: Paradise Valley
     loc:
     - 41.4937
     - -117.547
+    plss: NV; Mount Diablo Meridian; T.42N R.39E; Sec. 26 — CadNSDI 
+      PLSSID=NV210420N0390E0 | FRSTDIVID=NV210420N0390E0SN260
+    mlrs: NV210420N0390E0SN260
+    elevation_m: 1388.0
   pioche:
     type: goal
     name: Pioche
     loc:
     - 37.9519
     - -114.4434
+    plss: NV; Mount Diablo Meridian; T.1N R.67E; Sec. 14 — CadNSDI 
+      PLSSID=NV210010N0670E0 | FRSTDIVID=NV210010N0670E0SN140
+    mlrs: NV210010N0670E0SN140
+    elevation_m: 1726.0
   preston:
     type: goal
     name: Preston
     loc:
     - 38.915
     - -115.0637
+    plss: NV; Mount Diablo Meridian; T.12N R.61E; Sec. 12 — CadNSDI 
+      PLSSID=NV210120N0610E0 | FRSTDIVID=NV210120N0610E0SN120
+    mlrs: NV210120N0610E0SN120
+    elevation_m: 1720.0
   rachel:
     type: goal
     name: Rachel
     loc:
     - 37.6414
     - -115.7681
+    plss: NV; Mount Diablo Meridian; T.3S R.55E; Sec. 35 — CadNSDI 
+      PLSSID=NV210030S0550E0 | FRSTDIVID=NV210030S0550E0SN350
+    mlrs: NV210030S0550E0SN350
+    elevation_m: 1461.0
   reno:
     type: goal
     name: Reno
     loc:
     - 39.5497
     - -119.8483
+    plss: NV; Mount Diablo Meridian; T.20N R.19E; Sec. 33 — CadNSDI 
+      PLSSID=NV210200N0190E0 | FRSTDIVID=NV210200N0190E0SN330
+    mlrs: NV210200N0190E0SN330
+    elevation_m: 1494.0
   round-hill-village:
     type: goal
     name: Round Hill Village
     loc:
     - 38.9937
     - -119.9233
+    plss: NV; Mount Diablo Meridian; T.13N R.18E; Sec. 14 — CadNSDI 
+      PLSSID=NV210130N0180E0 | FRSTDIVID=NV210130N0180E0SN140
+    mlrs: NV210130N0180E0SN140
+    elevation_m: 2211.0
   ruhenstroth:
     type: goal
     name: Ruhenstroth
     loc:
     - 38.8913
     - -119.6833
+    plss: NV; Mount Diablo Meridian; T.12N R.20E; Sec. 24 — CadNSDI 
+      PLSSID=NV210120N0200E0 | FRSTDIVID=NV210120N0200E0SN240
+    mlrs: NV210120N0200E0SN240
+    elevation_m: 1517.0
   russel-bridge:
     type: goal
     name: Russell Bridge
     loc:
     - 39.90951
     - -119.3289
+    plss: NV; Mount Diablo Meridian; T.24N R.24E; Sec. 31 — CadNSDI 
+      PLSSID=NV210240N0240E0 | FRSTDIVID=NV210240N0240E0SN310
+    mlrs: NV210240N0240E0SN310
+    elevation_m: 1420.0
   ruth:
     type: goal
     name: Ruth
     loc:
     - 39.2791
     - -114.9901
+    plss: NV; Mount Diablo Meridian; T.16N R.62E; Sec. 04 — CadNSDI 
+      PLSSID=NV210160N0620E0 | FRSTDIVID=NV210160N0620E0SN040
+    mlrs: NV210160N0620E0SN040
+    elevation_m: 2094.0
   sandy-valley:
     type: goal
     name: Sandy Valley
     loc:
     - 35.8423
     - -115.6304
+    plss: NV; Mount Diablo Meridian; T.24S R.57E; Sec. 19 — CadNSDI 
+      PLSSID=NV210240S0570E0 | FRSTDIVID=NV210240S0570E0SN190
+    mlrs: NV210240S0570E0SN190
+    elevation_m: 843.0
   schurz:
     type: goal
     name: Schurz
     loc:
     - 38.9673
     - -118.824
+    plss: NV; Mount Diablo Meridian; T.13N R.28E; Sec. 26 — CadNSDI 
+      PLSSID=NV210130N0280E0 | FRSTDIVID=NV210130N0280E0SN260
+    mlrs: NV210130N0280E0SN260
+    elevation_m: 1257.0
   searchlight:
     type: goal
     name: Searchlight
     loc:
     - 35.4555
     - -114.9204
+    plss: NV; Mount Diablo Meridian; T.29S R.63E; Sec. 02 — CadNSDI 
+      PLSSID=NV210290S0630E0 | FRSTDIVID=NV210290S0630E0SN020
+    mlrs: NV210290S0630E0SN020
+    elevation_m: 1085.0
   silver-city:
     type: goal
     name: Silver City
     loc:
     - 39.2639
     - -119.6357
+    plss: NV; Mount Diablo Meridian; T.16N R.21E; Sec. 09 — CadNSDI 
+      PLSSID=NV210160N0210E0 | FRSTDIVID=NV210160N0210E0SN090
+    mlrs: NV210160N0210E0SN090
+    elevation_m: 1553.0
   silver-peak:
     type: goal
     name: Silver Peak
     loc:
     - 37.7578
     - -117.6386
+    plss: NV; Mount Diablo Meridian; T.2S R.39E; Sec. 22 — CadNSDI 
+      PLSSID=NV210020S0390E0 | FRSTDIVID=NV210020S0390E0SN220
+    mlrs: NV210020S0390E0SN220
+    elevation_m: 1346.0
   silver-springs:
     type: goal
     name: Silver Springs
     loc:
     - 39.3826
     - -119.2148
+    plss: NV; Mount Diablo Meridian; T.18N R.25E; Sec. 31 — CadNSDI 
+      PLSSID=NV210180N0250E0 | FRSTDIVID=NV210180N0250E0SN310
+    mlrs: NV210180N0250E0SN310
+    elevation_m: 1273.0
   skyland:
     type: goal
     name: Skyland
     loc:
     - 39.0265
     - -119.9221
+    plss: NV; Mount Diablo Meridian; T.14N R.18E; Sec. 35 — CadNSDI 
+      PLSSID=NV210140N0180E0 | FRSTDIVID=NV210140N0180E0SN350
+    mlrs: NV210140N0180E0SN350
+    elevation_m: 2234.0
   slpt:
     type: goal
     name: SLPT
     loc:
     - 41.5241667
     - -119.0522222
+    plss: NV; Mount Diablo Meridian; T.42N R.26E; Sec. 30 — CadNSDI 
+      PLSSID=NV210420N0260E0 | FRSTDIVID=NV210420N0260E0SN300
+    mlrs: NV210420N0260E0SN300
+    elevation_m: 1785.0
   slpt-bridge:
     type: goal
     name: SLPT Bridge
     loc:
     - 41.49575
     - -119.07732
+    plss: NV; Mount Diablo Meridian; T.41N R.25E; Sec. 01 — CadNSDI 
+      PLSSID=NV210410N0250E0 | FRSTDIVID=NV210410N0250E0SN010
+    mlrs: NV210410N0250E0SN010
+    elevation_m: 1817.0
   smith-valley:
     type: goal
     name: Smith Valley
     loc:
     - 38.8109
     - -119.3517
+    plss: NV; Mount Diablo Meridian; T.11N R.23E; Sec. 13 — CadNSDI 
+      PLSSID=NV210110N0230E0 | FRSTDIVID=NV210110N0230E0SN130
+    mlrs: NV210110N0230E0SN130
+    elevation_m: 1442.0
   spanish-springs:
     type: goal
     name: Spanish Springs
     loc:
     - 39.6568
     - -119.6694
+    plss: NV; Mount Diablo Meridian; T.21N R.21E; Sec. 30 — CadNSDI 
+      PLSSID=NV210210N0210E0 | FRSTDIVID=NV210210N0210E0SN300
+    mlrs: NV210210N0210E0SN300
+    elevation_m: 1442.0
   sparks:
     type: goal
     name: Sparks
     loc:
     - 39.5736
     - -119.7161
+    plss: NV; Mount Diablo Meridian; T.20N R.20E; Sec. 27 — CadNSDI 
+      PLSSID=NV210200N0200E0 | FRSTDIVID=NV210200N0200E0SN270
+    mlrs: NV210200N0200E0SN270
+    elevation_m: 1383.0
   spring-creek:
     type: goal
     name: Spring Creek
     loc:
     - 40.745
     - -115.5983
+    plss: NV; Mount Diablo Meridian; T.33N R.57E; Sec. 18 — CadNSDI 
+      PLSSID=NV210330N0570E0 | FRSTDIVID=NV210330N0570E0SN180
+    mlrs: NV210330N0570E0SN180
+    elevation_m: 1660.0
   spring-valley:
     type: goal
     name: Spring Valley
     loc:
     - 36.0952
     - -115.2636
+    plss: NV; Mount Diablo Meridian; T.21S R.60E; Sec. 28 — CadNSDI 
+      PLSSID=NV210210S0600E0 | FRSTDIVID=NV210210S0600E0SN280
+    mlrs: NV210210S0600E0SN280
+    elevation_m: 742.0
   stagecoach:
     type: goal
     name: Stagecoach
     loc:
     - 39.3656
     - -119.3832
+    plss: NV; Mount Diablo Meridian; T.17N R.23E; Sec. 03 — CadNSDI 
+      PLSSID=NV210170N0230E0 | FRSTDIVID=NV210170N0230E0SN030
+    mlrs: NV210170N0230E0SN030
+    elevation_m: 1309.0
   stateline:
     type: goal
     name: Stateline
     loc:
     - 38.9678
     - -119.944
+    plss: NV; Mount Diablo Meridian; T.13N R.18E; Sec. 27 — CadNSDI 
+      PLSSID=NV210130N0180E0 | FRSTDIVID=NV210130N0180E0SN270
+    mlrs: NV210130N0180E0SN270
+    elevation_m: 1904.0
   summerlin-south:
     type: goal
     name: Summerlin South
     loc:
     - 36.1242
     - -115.3324
+    plss: NV; Mount Diablo Meridian; T.21S R.59E; Sec. 13 — CadNSDI 
+      PLSSID=NV210210S0590E0 | FRSTDIVID=NV210210S0590E0SN130
+    mlrs: NV210210S0590E0SN130
+    elevation_m: 881.0
   sun-valley:
     type: goal
     name: Sun Valley
     loc:
     - 39.6104
     - -119.777
+    plss: NV; Mount Diablo Meridian; T.20N R.20E; Sec. 07 — CadNSDI 
+      PLSSID=NV210200N0200E0 | FRSTDIVID=NV210200N0200E0SN070
+    mlrs: NV210200N0200E0SN070
+    elevation_m: 1494.0
   sunrise-manor:
     type: goal
     name: Sunrise Manor
     loc:
     - 36.1783
     - -115.0487
+    plss: NV; Mount Diablo Meridian; T.20S R.62E; Sec. 28 — CadNSDI 
+      PLSSID=NV210200S0620E0 | FRSTDIVID=NV210200S0620E0SN280
+    mlrs: NV210200S0620E0SN280
+    elevation_m: 537.0
   susanville:
     type: goal
     name: Susanville
     loc:
     - 40.41628
     - -120.65301
+    plss: CA; Mount Diablo Meridian; T.30N R.12E; Sec. 32 — CadNSDI 
+      PLSSID=CA210300N0120E0 | FRSTDIVID=CA210300N0120E0SN320
+    mlrs: CA210300N0120E0SN320
+    elevation_m: 1276.0
   sutcliffe:
     type: goal
     name: Sutcliffe
     loc:
     - 39.9461
     - -119.6305
+    plss: NV; Mount Diablo Meridian; T.24N R.21E; Sec. 16 — CadNSDI 
+      PLSSID=NV210240N0210E0 | FRSTDIVID=NV210240N0210E0SN160
+    mlrs: NV210240N0210E0SN160
+    elevation_m: 1396.0
   tonopah:
     type: goal
     name: Tonopah
     loc:
     - 38.0822
     - -117.2246
+    plss: NV; Mount Diablo Meridian; T.3N R.42E; Sec. 26 — CadNSDI 
+      PLSSID=NV210030N0420E0 | FRSTDIVID=NV210030N0420E0SN260
+    mlrs: NV210030N0420E0SN260
+    elevation_m: 1867.0
   topaz-lake:
     type: goal
     name: Topaz Lake
     loc:
     - 38.6976
     - -119.5427
+    plss: NV; Mount Diablo Meridian; T.10N R.22E; Sec. 29 — CadNSDI 
+      PLSSID=NV210100N0220E0 | FRSTDIVID=NV210100N0220E0SN290
+    mlrs: NV210100N0220E0SN290
+    elevation_m: 1541.0
   topaz-ranch-estates:
     type: goal
     name: Topaz Ranch Estates
     loc:
     - 38.7357
     - -119.5008
+    plss: NV; Mount Diablo Meridian; T.10N R.22E; Sec. 15 — CadNSDI 
+      PLSSID=NV210100N0220E0 | FRSTDIVID=NV210100N0220E0SN150
+    mlrs: NV210100N0220E0SN150
+    elevation_m: 1562.0
   unionville:
     type: goal
     name: Unionville
     loc:
     - 40.4467
     - -118.1229
+    plss: NV; Mount Diablo Meridian; T.30N R.34E; Sec. 26 — CadNSDI 
+      PLSSID=NV210300N0340E0 | FRSTDIVID=NV210300N0340E0SN260
+    mlrs: NV210300N0340E0SN260
+    elevation_m: 1560.0
   ursine:
     type: goal
     name: Ursine
     loc:
     - 37.9771
     - -114.2289
+    plss: NV; Mount Diablo Meridian; T.1N R.69E; Sec. 03 — CadNSDI 
+      PLSSID=NV210010N0690E0 | FRSTDIVID=NV210010N0690E0SN030
+    mlrs: NV210010N0690E0SN030
+    elevation_m: 1794.0
   valmy:
     type: goal
     name: Valmy
     loc:
     - 40.7908
     - -117.1266
+    plss: NV; Mount Diablo Meridian; T.34N R.43E; Sec. 27 — CadNSDI 
+      PLSSID=NV210340N0430E0 | FRSTDIVID=NV210340N0430E0SN270
+    mlrs: NV210340N0430E0SN270
+    elevation_m: 1378.0
   vegas:
     type: goal
     name: Vegas
     loc:
     - 36.2333
     - -115.2654
+    plss: NV; Mount Diablo Meridian; T.20S R.60E; Sec. 04 — CadNSDI 
+      PLSSID=NV210200S0600E0 | FRSTDIVID=NV210200S0600E0SN040
+    mlrs: NV210200S0600E0SN040
+    elevation_m: 717.0
   verdi:
     type: goal
     name: Verdi
     loc:
     - 39.5142
     - -119.9772
+    plss: NV; Mount Diablo Meridian; T.19N R.18E; Sec. 17 — CadNSDI 
+      PLSSID=NV210190N0180E0 | FRSTDIVID=NV210190N0180E0SN170
+    mlrs: NV210190N0180E0SN170
+    elevation_m: 1508.0
   virginia-city:
     type: goal
     name: Virginia City
     loc:
     - 39.3074
     - -119.6483
+    plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 29 — CadNSDI 
+      PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN290
+    mlrs: NV210170N0210E0SN290
+    elevation_m: 1865.0
   wadsworth:
     type: goal
     name: Wadsworth
     loc:
     - 39.6322
     - -119.2901
+    plss: NV; Mount Diablo Meridian; T.20N R.24E; Sec. 04 — CadNSDI 
+      PLSSID=NV210200N0240E0 | FRSTDIVID=NV210200N0240E0SN040
+    mlrs: NV210200N0240E0SN040
+    elevation_m: 1243.0
   walker-lake:
     type: goal
     name: Walker Lake
     loc:
     - 38.6458
     - -118.7563
+    plss: NV; Mount Diablo Meridian; T.9N R.29E; Sec. 16 — CadNSDI 
+      PLSSID=NV210090N0290E0 | FRSTDIVID=NV210090N0290E0SN160
+    mlrs: NV210090N0290E0SN160
+    elevation_m: 1251.0
   washoe-valley:
     type: goal
     name: Washoe Valley
     loc:
     - 39.2923
     - -119.7767
+    plss: NV; Mount Diablo Meridian; T.17N R.20E; Sec. 31 — CadNSDI 
+      PLSSID=NV210170N0200E0 | FRSTDIVID=NV210170N0200E0SN310
+    mlrs: NV210170N0200E0SN310
+    elevation_m: 1550.0
   wells:
     type: goal
     name: Wells
@@ -1243,30 +1760,50 @@ sites:
     loc:
     - 36.1008
     - -115.0379
+    plss: NV; Mount Diablo Meridian; T.21S R.62E; Sec. 22 — CadNSDI 
+      PLSSID=NV210210S0620E0 | FRSTDIVID=NV210210S0620E0SN220
+    mlrs: NV210210S0620E0SN220
+    elevation_m: 504.0
   winchester:
     type: goal
     name: Winchester
     loc:
     - 36.1365
     - -115.137
+    plss: NV; Mount Diablo Meridian; T.21S R.61E; Sec. 10 — CadNSDI 
+      PLSSID=NV210210S0610E0 | FRSTDIVID=NV210210S0610E0SN100
+    mlrs: NV210210S0610E0SN100
+    elevation_m: 610.0
   winnemucca:
     type: goal
     name: Winnemucca
     loc:
     - 40.9645
     - -117.7247
+    plss: NV; Mount Diablo Meridian; T.36N R.38E; Sec. 29 — CadNSDI 
+      PLSSID=NV210360N0380E0 | FRSTDIVID=NV210360N0380E0SN290
+    mlrs: NV210360N0380E0SN290
+    elevation_m: 1350.0
   yerington:
     type: goal
     name: Yerington
     loc:
     - 38.9554
     - -119.1101
+    plss: NV; Mount Diablo Meridian; T.13N R.26E; Sec. 30 — CadNSDI 
+      PLSSID=NV210130N0260E0 | FRSTDIVID=NV210130N0260E0SN300
+    mlrs: NV210130N0260E0SN300
+    elevation_m: 1396.0
   zephyr-cove:
     type: goal
     name: Zephyr Cove
     loc:
     - 39.0082
     - -119.9307
+    plss: NV; Mount Diablo Meridian; T.13N R.18E; Sec. 11 — CadNSDI 
+      PLSSID=NV210130N0180E0 | FRSTDIVID=NV210130N0180E0SN110
+    mlrs: NV210130N0180E0SN110
+    elevation_m: 2057.0
   chat-d56da6864380:
     type: planned
     name: Virginia Peak (8356 ft)
@@ -1274,6 +1811,10 @@ sites:
     - 39.755833333333335
     - -119.46138888888889
     rationale: Chat agent map placement
+    plss: NV; Mount Diablo Meridian; T.22N R.22E; Sec. 24 — CadNSDI 
+      PLSSID=NV210220N0220E0 | FRSTDIVID=NV210220N0220E0SN240
+    mlrs: NV210220N0220E0SN240
+    elevation_m: 2547.0
   chat-c9a3e1326e63:
     type: planned
     name: Goldfield Mining District
@@ -1281,3 +1822,7 @@ sites:
     - 37.70777
     - -117.234065
     rationale: Chat agent map placement
+    plss: NV; Mount Diablo Meridian; T.3S R.42E; Sec. 02 — CadNSDI 
+      PLSSID=NV210030S0420E0 | FRSTDIVID=NV210030S0420E0SN020
+    mlrs: NV210030S0420E0SN020
+    elevation_m: 1736.0
