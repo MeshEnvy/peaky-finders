@@ -121,7 +121,7 @@ def create_app() -> FastAPI:
         slug: str,
         lat: float,
         lon: float,
-        ensure: bool = True,
+        ensure: bool = False,
         force: bool = False,
     ) -> FileResponse:
         try:
@@ -184,7 +184,7 @@ def create_app() -> FastAPI:
     def api_viewshed_raster(
         slug: str,
         site_slug: str,
-        ensure: bool = True,
+        ensure: bool = False,
         force: bool = False,
         jobs: int = 1,
     ) -> FileResponse:

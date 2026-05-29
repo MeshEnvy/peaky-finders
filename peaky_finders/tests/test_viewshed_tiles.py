@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from peaky_finders.web.viewshed_tiles import (
     axis_aligned_bounds,
+    load_viewshed_rgba,
     render_viewshed_tile,
     zoom_range_for_raster,
 )
@@ -19,6 +22,20 @@ def _tile_xyz_for_lat_lon(lat: float, lon: float, z: int) -> tuple[int, int, int
     lat_rad = math.radians(lat)
     y = int((1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * n)
     return z, x, y
+
+
+def test_load_viewshed_rgba_prefers_splat_png(tmp_path: Path) -> None:
+    ppm = np.full((4, 4, 3), 255, dtype=np.uint8)
+    ppm[1, 1] = [255, 0, 0]
+    Image.fromarray(ppm, "RGB").save(tmp_path / "output.ppm")
+
+    rgba = np.zeros((4, 4, 4), dtype=np.uint8)
+    rgba[2, 2] = [0, 255, 0, 255]
+    Image.fromarray(rgba, "RGBA").save(tmp_path / "splat.png")
+
+    loaded, source = load_viewshed_rgba(tmp_path)
+    assert source.name == "splat.png"
+    assert loaded[2, 2, 1] == 255
 
 
 def test_axis_aligned_bounds() -> None:

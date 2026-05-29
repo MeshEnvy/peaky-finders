@@ -354,18 +354,12 @@ async function loadProjectViewsheds(projectSlug, sites) {
 function addViewshedRaster(r) {
   const sourceId = `viewshed-raster-${r.slug}`
   const layerId = `${sourceId}-layer`
-  const useImage = Boolean(r.url && r.coordinates)
+  const useTiles = Boolean(r.tile_url && r.bounds)
 
   if (map.getLayer(layerId)) map.removeLayer(layerId)
   if (map.getSource(sourceId)) map.removeSource(sourceId)
 
-  if (useImage) {
-    map.addSource(sourceId, {
-      type: 'image',
-      url: r.url,
-      coordinates: r.coordinates,
-    })
-  } else if (r.tile_url && r.bounds) {
+  if (useTiles) {
     map.addSource(sourceId, {
       type: 'raster',
       tiles: [r.tile_url],
@@ -373,6 +367,12 @@ function addViewshedRaster(r) {
       bounds: r.bounds,
       minzoom: r.minzoom ?? 0,
       maxzoom: r.maxzoom ?? 22,
+    })
+  } else if (r.url && r.coordinates) {
+    map.addSource(sourceId, {
+      type: 'image',
+      url: r.url,
+      coordinates: r.coordinates,
     })
   } else {
     return

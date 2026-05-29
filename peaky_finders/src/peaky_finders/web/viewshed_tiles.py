@@ -32,14 +32,14 @@ def _ppm_to_rgba(ppm_path: Path) -> np.ndarray:
 
 
 def load_viewshed_rgba(workdir: Path) -> tuple[np.ndarray, Path]:
-    """Full-resolution SPLAT grid for web tiling (prefers ``output.ppm`` over capped ``splat.png``)."""
-    ppm = workdir / "output.ppm"
+    """Full-resolution SPLAT grid for web tiling (prefers ``splat.png`` with alpha)."""
     png = workdir / "splat.png"
-    if ppm.is_file():
-        return _ppm_to_rgba(ppm), ppm
+    ppm = workdir / "output.ppm"
     if png.is_file():
         with Image.open(png) as img:
             return np.asarray(img.convert("RGBA"), dtype=np.uint8), png
+    if ppm.is_file():
+        return _ppm_to_rgba(ppm), ppm
     raise FileNotFoundError(f"no viewshed raster under {workdir}")
 
 

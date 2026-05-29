@@ -704,6 +704,6 @@ sites:
     type: planned
     name: Boundary Peak (13127 ft)
     loc:
-    - 37.846111
-    - -118.351389
+    - 37.846111111111114
+    - -118.35138888888888
     rationale: Chat agent map placement

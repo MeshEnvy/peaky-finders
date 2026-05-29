@@ -73,7 +73,7 @@ def test_viewshed_raster_record_shape() -> None:
             "minzoom": 8,
             "maxzoom": 14,
             "source_pixels": [500, 500],
-            "source_path": "output.ppm",
+            "source_path": "splat.png",
         },
     ):
         preset = load_preset.return_value
