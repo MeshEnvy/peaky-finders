@@ -16,6 +16,7 @@ from peaky_finders.sites_job import (
     load_preset,
     mesh_edges_site_to_site_kml_arcname,
     require_cwd_config_yaml,
+    require_preset_yaml_path,
     resolved_aggregate_kmz_path,
     resolved_bundle_dir,
     resolved_kmz_document_layers,
@@ -294,6 +295,18 @@ def build_granular_viewshed_argument_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _job_path_from_args(args: argparse.Namespace) -> Path:
+    """Preset YAML from ``--preset-path`` / ``preset_path`` on *args*, else ``./config.yaml`` in cwd."""
+    raw = getattr(args, "preset_path", None)
+    if raw:
+        path = Path(raw).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"preset not found: {path}")
+        require_preset_yaml_path(path)
+        return path
+    return require_cwd_config_yaml()
+
+
 def run_splat(args: argparse.Namespace) -> int:
     """One viewshed workspace phase under ``build/viewsheds/`` (``peaky build`` stage)."""
 
@@ -316,7 +329,7 @@ def run_splat(args: argparse.Namespace) -> int:
     slug_key = str(granular_slug).strip()
 
     try:
-        job_path = require_cwd_config_yaml()
+        job_path = _job_path_from_args(args)
     except FileNotFoundError as e:
         print(str(e), file=sys.stderr)
         return 2

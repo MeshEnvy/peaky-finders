@@ -341,6 +341,7 @@ class SiteType(StrEnum):
     INSTALLED = "installed"
     PLANNED = "planned"
     SUGGESTED = "suggested"
+    GOAL = "goal"
 
 
 class SiteEntry(BaseModel):
@@ -371,7 +372,7 @@ class SiteEntry(BaseModel):
             return SiteType(s)
         except ValueError as e:
             raise ValueError(
-                f"type must be one of: installed, planned, suggested (got {v!r})"
+                f"type must be one of: installed, planned, suggested, goal (got {v!r})"
             ) from e
 
     @property
@@ -381,6 +382,11 @@ class SiteEntry(BaseModel):
     @property
     def lon(self) -> float:
         return float(self.loc[1])
+
+    @property
+    def participates_in_rf(self) -> bool:
+        """Goals are map targets only — no viewshed overlays or mesh RF links."""
+        return self.type != SiteType.GOAL
 
     elevation_m: float | None = None
     description: str | None = None

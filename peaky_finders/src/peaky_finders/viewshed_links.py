@@ -50,15 +50,20 @@ def mutual_sees_slug_pairs(sees_by_slug: Mapping[str, Sequence[str]]) -> list[tu
     return out
 
 
+def _rf_site_slugs(preset: Preset) -> frozenset[str]:
+    return frozenset(slug for slug, ent in preset.sites.items() if ent.participates_in_rf)
+
+
 def mutual_site_link_slug_pairs(
     *,
     preset: Preset,
     sees_by_slug: Mapping[str, Sequence[str]],
 ) -> list[tuple[str, str]]:
     """Union of mutual RF links and mutual ``sees`` field-override pairs."""
+    rf_slugs = _rf_site_slugs(preset)
     pairs: set[tuple[str, str]] = set(rf_mutual_link_slug_pairs(preset))
     pairs.update(mutual_sees_slug_pairs(sees_by_slug))
-    return sorted(pairs)
+    return sorted(p for p in pairs if p[0] in rf_slugs and p[1] in rf_slugs)
 
 
 def _site_link_nodes(

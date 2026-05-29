@@ -8,7 +8,12 @@ from unittest.mock import patch
 
 from peaky_finders import kml_bundle
 from peaky_finders.splat_polygonize import GX_DRAW_ORDER_MESH_SITE_TO_SITE
-from peaky_finders.viewshed_links import mutual_sees_slug_pairs, site_links_geojson, write_site_links_kml
+from peaky_finders.viewshed_links import (
+    mutual_sees_slug_pairs,
+    mutual_site_link_slug_pairs,
+    site_links_geojson,
+    write_site_links_kml,
+)
 
 
 @dataclass
@@ -16,6 +21,7 @@ class _FakeSite:
     name: str
     lat: float
     lon: float
+    participates_in_rf: bool = True
 
 
 @dataclass
@@ -135,6 +141,21 @@ def test_mutual_sees_slug_pairs_requires_both_directions() -> None:
     assert mutual_sees_slug_pairs({"a": ["b"], "b": ["a"]}) == [("a", "b")]
     assert mutual_sees_slug_pairs({"a": ["b"], "b": []}) == []
     assert mutual_sees_slug_pairs({"a": ["b"], "b": ["c"], "c": ["b"]}) == [("b", "c")]
+
+
+def test_mutual_site_link_slug_pairs_skips_goals() -> None:
+    preset = _FakePreset(
+        sites={
+            "hub": _FakeSite("Hub", 39.0, -119.0),
+            "target": _FakeSite("Target", 39.1, -119.1, participates_in_rf=False),
+        }
+    )
+    with patch(
+        "peaky_finders.viewshed_links.rf_mutual_link_slug_pairs",
+        return_value=[("hub", "target")],
+    ):
+        pairs = mutual_site_link_slug_pairs(preset=preset, sees_by_slug={})  # type: ignore[arg-type]
+    assert pairs == []
 
 
 def test_write_site_links_mutual_sees_without_rf(tmp_path: Path) -> None:

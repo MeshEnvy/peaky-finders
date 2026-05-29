@@ -144,6 +144,8 @@ def load_site_viewshed_rasters(*, preset_path: Path, preset: Preset, project_slu
     out: list[dict[str, Any]] = []
 
     for slug, site in sorted(preset.sites.items()):
+        if not site.participates_in_rf:
+            continue
         workdir = resolved_viewshed_workdir_for_coords(
             preset=preset,
             viewshed_root=viewsheds_root,

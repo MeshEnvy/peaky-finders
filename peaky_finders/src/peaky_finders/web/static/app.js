@@ -29,6 +29,14 @@ function siteDisplayLabel(site) {
   return (site.name || '').trim() || site.slug
 }
 
+function isGoalSite(site) {
+  return String(site?.type || '').toLowerCase() === 'goal'
+}
+
+function rfSites(sites) {
+  return (sites || []).filter((s) => !isGoalSite(s))
+}
+
 const chatHistory = []
 const chatMapPins = new Map()
 let chatSummary = null
@@ -55,6 +63,54 @@ function terrainDemSourceSpec() {
 
 const PITCH_TERRAIN_ON = 12
 const PITCH_TERRAIN_OFF = 6
+
+const MARKER_ICON_PX = 48
+const MARKER_ICON_LAYOUT = {
+  'icon-size': 0.72,
+  'icon-allow-overlap': true,
+  'icon-anchor': 'center',
+}
+
+const MARKER_SVGS = {
+  'marker-goal': `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${MARKER_ICON_PX}" height="${MARKER_ICON_PX}"><path fill="#fb923c" d="m10.95 14l4.95-4.95l-1.425-1.4l-3.525 3.525L9.525 9.75L8.1 11.175zM5 21V5q0-.825.588-1.412T7 3h10q.825 0 1.413.588T19 5v16l-7-3z"/></svg>`,
+  'marker-planned': `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${MARKER_ICON_PX}" height="${MARKER_ICON_PX}"><g fill="none" stroke="#fbbf24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="m13.6 21.076l5.46-3.152c.584-.337.875-.505 1.087-.74a2 2 0 0 0 .416-.72c.097-.301.097-.637.097-1.307V8.843c0-.67 0-1.006-.098-1.307a2 2 0 0 0-.416-.72c-.21-.234-.5-.402-1.079-.736L13.6 2.924c-.583-.337-.874-.505-1.184-.57a2 2 0 0 0-.832 0c-.31.065-.601.233-1.184.57L4.938 6.077c-.582.336-.873.504-1.084.739a2 2 0 0 0-.416.72c-.098.302-.098.638-.098 1.311v6.305c0 .673 0 1.01.098 1.311a2 2 0 0 0 .416.72c.211.236.503.404 1.085.74l5.46 3.153c.584.337.875.505 1.185.57c.274.059.558.059.832 0c.31-.065.602-.233 1.185-.57"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0-6 0"/></g></svg>`,
+  'marker-installed': `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${MARKER_ICON_PX}" height="${MARKER_ICON_PX}"><path fill="#60a5fa" d="M6 20.5V5h7.192l.4 2H19v8h-5.192l-.4-2H7v7.5z"/></svg>`,
+}
+
+let markerImagesReady = false
+
+function svgMarkupToImageData(svgMarkup) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' }))
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = MARKER_ICON_PX
+      canvas.height = MARKER_ICON_PX
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0, MARKER_ICON_PX, MARKER_ICON_PX)
+      URL.revokeObjectURL(url)
+      resolve(ctx.getImageData(0, 0, MARKER_ICON_PX, MARKER_ICON_PX))
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('marker SVG failed to load'))
+    }
+    img.src = url
+  })
+}
+
+async function ensureMarkerImages() {
+  if (markerImagesReady) return
+  await Promise.all(
+    Object.entries(MARKER_SVGS).map(async ([id, svg]) => {
+      if (map.hasImage(id)) return
+      const imageData = await svgMarkupToImageData(svg)
+      map.addImage(id, imageData, { pixelRatio: 2 })
+    }),
+  )
+  markerImagesReady = true
+}
 
 const BASEMAP_REFERENCE_SOURCE = 'basemap-reference'
 const BASEMAP_REFERENCE_LAYER = 'basemap-reference'
@@ -358,12 +414,6 @@ function firstOverlayLayerId() {
   return undefined
 }
 
-async function loadSiteViewshed(projectSlug, siteSlug) {
-  const res = await fetch(`/api/projects/${projectSlug}/viewsheds/${siteSlug}?ensure=false`)
-  if (!res.ok) return null
-  return res.json()
-}
-
 async function loadProjectMeshLinks(projectSlug) {
   const res = await fetch(`/api/projects/${projectSlug}/mesh-links`)
   if (!res.ok) return
@@ -381,15 +431,31 @@ async function loadProjectMeshLinks(projectSlug) {
 }
 
 async function loadProjectViewsheds(projectSlug, sites) {
-  const seenUrl = new Set()
-  const results = await Promise.all((sites || []).map((s) => loadSiteViewshed(projectSlug, s.slug)))
-  for (const r of results) {
-    if (!r || seenUrl.has(r.url)) continue
-    seenUrl.add(r.url)
-    if (mapReady) addViewshedRaster(r, false)
-    else pendingRasters.push(r)
+  const eligible = rfSites(sites)
+  for (const s of eligible) {
+    const entry = siteRegistry.get(s.slug)
+    if (entry) entry.viewshedPending = true
   }
   renderSitesPanel()
+
+  const seenUrl = new Set()
+  try {
+    for (const s of eligible) {
+      const res = await fetch(`/api/projects/${projectSlug}/viewsheds/${s.slug}?ensure=false`)
+      if (!res.ok) continue
+      const r = await res.json()
+      if (!r?.url || seenUrl.has(r.url)) continue
+      seenUrl.add(r.url)
+      if (mapReady) addViewshedRaster(r, false)
+      else pendingRasters.push(r)
+    }
+  } finally {
+    for (const s of eligible) {
+      const entry = siteRegistry.get(s.slug)
+      if (entry?.viewshedPending) entry.viewshedPending = false
+    }
+    renderSitesPanel()
+  }
 }
 
 function addViewshedRaster(r, refreshPanel = true) {
@@ -422,7 +488,9 @@ function addViewshedRaster(r, refreshPanel = true) {
 
   const slug = r.slug || null
   if (slug && siteRegistry.has(slug)) {
-    siteRegistry.get(slug).hasViewshed = true
+    const entry = siteRegistry.get(slug)
+    entry.hasViewshed = true
+    entry.viewshedPending = false
   }
 
   const entry = slug ? siteRegistry.get(slug) : null
@@ -461,6 +529,7 @@ function clearViewshedRasters() {
   viewshedRasterLayers.length = 0
   for (const entry of siteRegistry.values()) {
     entry.hasViewshed = false
+    entry.viewshedPending = false
   }
   renderSitesPanel()
 }
@@ -496,13 +565,14 @@ function flyToSite(slug) {
 
 function resetSitesPanel(sites) {
   siteRegistry.clear()
-  for (const s of sites || []) {
+  for (const s of rfSites(sites)) {
     siteRegistry.set(s.slug, {
       slug: s.slug,
       label: siteDisplayLabel(s),
       lat: s.lat,
       lon: s.lon,
       hasViewshed: false,
+      viewshedPending: false,
       visible: true,
     })
   }
@@ -524,25 +594,29 @@ function renderSitesPanel() {
 
   for (const site of sites) {
     const li = document.createElement('li')
-    li.className = `site-row${site.hasViewshed ? '' : ' no-viewshed'}`
+    li.className = `site-row${site.hasViewshed ? '' : site.viewshedPending ? ' viewshed-pending' : ' no-viewshed'}`
 
     const visBtn = document.createElement('button')
     visBtn.type = 'button'
     visBtn.className = `site-visibility${site.hasViewshed && !site.visible ? ' hidden' : ''}`
     visBtn.disabled = !site.hasViewshed
     visBtn.innerHTML = site.hasViewshed && site.visible ? EYE_OPEN_SVG : EYE_CLOSED_SVG
-    visBtn.title = site.hasViewshed
-      ? site.visible
-        ? 'Hide viewshed'
-        : 'Show viewshed'
-      : 'No viewshed loaded'
+    visBtn.title = site.viewshedPending
+      ? 'Computing viewshed…'
+      : site.hasViewshed
+        ? site.visible
+          ? 'Hide viewshed'
+          : 'Show viewshed'
+        : 'Viewshed pending'
     visBtn.setAttribute(
       'aria-label',
-      site.hasViewshed
-        ? site.visible
-          ? `Hide viewshed for ${site.label}`
-          : `Show viewshed for ${site.label}`
-        : `No viewshed for ${site.label}`,
+      site.viewshedPending
+        ? `Computing viewshed for ${site.label}`
+        : site.hasViewshed
+          ? site.visible
+            ? `Hide viewshed for ${site.label}`
+            : `Show viewshed for ${site.label}`
+          : `Viewshed pending for ${site.label}`,
     )
     visBtn.addEventListener('click', (ev) => {
       ev.stopPropagation()
@@ -617,21 +691,43 @@ function ensureLayer(layerId) {
   if (!map.getSource(ids.source)) {
     map.addSource(ids.source, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
     const isLine = layerId === 'mesh_links'
-    const isCircle = layerId === 'sites' || layerId === 'goals' || layerId === 'trials'
-    map.addLayer({
-      id: ids.layer,
-      type: isLine ? 'line' : isCircle ? 'circle' : 'fill',
-      source: ids.source,
-      paint:
-        layerId === 'mesh_links'
-          ? { 'line-color': '#38bdf8', 'line-width': 2.5, 'line-opacity': 0.85 }
-          : layerId === 'goals'
-            ? {
-                'circle-radius': 8,
-                'circle-color': '#fb923c',
-                'circle-stroke-width': 2,
-                'circle-stroke-color': '#fff',
-              }
+    const isSymbol = layerId === 'sites' || layerId === 'goals'
+    const isCircle = layerId === 'trials'
+    if (isSymbol) {
+      map.addLayer({
+        id: ids.layer,
+        type: 'symbol',
+        source: ids.source,
+        layout:
+          layerId === 'goals'
+            ? { ...MARKER_ICON_LAYOUT, 'icon-image': 'marker-goal' }
+            : {
+                ...MARKER_ICON_LAYOUT,
+                'icon-image': [
+                  'match',
+                  ['get', 'site_type'],
+                  'goal',
+                  'marker-goal',
+                  'planned',
+                  'marker-planned',
+                  'suggested',
+                  'marker-planned',
+                  'marker-installed',
+                ],
+              },
+        paint: {
+          'icon-halo-color': '#0f172a',
+          'icon-halo-width': 1.25,
+        },
+      })
+    } else {
+      map.addLayer({
+        id: ids.layer,
+        type: isLine ? 'line' : isCircle ? 'circle' : 'fill',
+        source: ids.source,
+        paint:
+          layerId === 'mesh_links'
+            ? { 'line-color': '#38bdf8', 'line-width': 2.5, 'line-opacity': 0.85 }
             : layerId === 'trials'
               ? {
                   'circle-radius': 7,
@@ -639,21 +735,15 @@ function ensureLayer(layerId) {
                   'circle-stroke-width': 2,
                   'circle-stroke-color': '#fff',
                 }
-              : layerId === 'sites'
+              : layerId === 'viewsheds'
                 ? {
-                    'circle-radius': 6,
-                    'circle-color': '#60a5fa',
-                    'circle-stroke-width': 2,
-                    'circle-stroke-color': '#fff',
+                    'fill-color': '#38bdf8',
+                    'fill-opacity': 0.28,
+                    'fill-outline-color': '#7dd3fc',
                   }
-                : layerId === 'viewsheds'
-                  ? {
-                      'fill-color': '#38bdf8',
-                      'fill-opacity': 0.28,
-                      'fill-outline-color': '#7dd3fc',
-                    }
-                  : { 'fill-color': '#34d399', 'fill-opacity': 0.22, 'fill-outline-color': '#34d399' },
-    })
+                : { 'fill-color': '#34d399', 'fill-opacity': 0.22, 'fill-outline-color': '#34d399' },
+      })
+    }
     if (layerId === 'viewsheds') {
       map.addLayer({
         id: `${layerId}-outline`,
@@ -676,7 +766,7 @@ function ensureLayer(layerId) {
         layout: {
           'text-field': ['get', 'label'],
           'text-anchor': 'top',
-          'text-offset': [0, 0.8],
+          'text-offset': [0, 1.15],
           'text-size': 11,
           'text-font': ['Open Sans Regular'],
           'text-allow-overlap': true,
@@ -1005,7 +1095,11 @@ const handlers = {
     const layerId = m.layer_id
     const feature = {
       type: 'Feature',
-      properties: { id: m.id, label: m.label || m.id },
+      properties: {
+        id: m.id,
+        label: m.label || m.id,
+        site_type: m.site_type || (layerId === 'sites' ? 'installed' : ''),
+      },
       geometry: { type: 'Point', coordinates: [m.lon, m.lat] },
     }
     pinFeatureCache.set(`${layerId}:${m.id}`, feature)
@@ -1358,15 +1452,23 @@ async function loadContext(slug) {
   resetSitesPanel(ctx.sites)
 
   for (const g of ctx.goals || []) {
-    handlers['map.pin']({ layer_id: 'goals', id: g.key, lat: g.lat, lon: g.lon, label: g.key })
+    handlers['map.pin']({
+      layer_id: 'goals',
+      id: g.key,
+      lat: g.lat,
+      lon: g.lon,
+      label: g.key,
+    })
   }
   for (const s of ctx.sites || []) {
+    if (s.type === 'goal') continue
     handlers['map.pin']({
       layer_id: 'sites',
       id: s.slug,
       lat: s.lat,
       lon: s.lon,
       label: siteDisplayLabel(s),
+      site_type: s.type || 'installed',
     })
   }
   raiseOverlayLayers()
@@ -1376,7 +1478,7 @@ async function loadContext(slug) {
   } catch (err) {
     console.warn('fitMapToMeshScope failed:', err)
   }
-  await loadProjectViewsheds(slug, ctx.sites)
+  void loadProjectViewsheds(slug, rfSites(ctx.sites))
   await loadProjectMeshLinks(slug)
   scheduleChatContextRefresh('')
 }
@@ -1558,10 +1660,15 @@ chatInput?.addEventListener('input', () => {
   scheduleChatContextRefresh(chatInput.value.trim())
 })
 
-map.on('load', () => {
+map.on('load', async () => {
   mapReady = true
   setBasemap(basemapSel.value)
   hookCompassReset()
+  try {
+    await ensureMarkerImages()
+  } catch (err) {
+    console.warn('ensureMarkerImages failed:', err)
+  }
   for (const pin of pendingPins) handlers['map.pin'](pin)
   pendingPins.length = 0
   for (const r of pendingRasters) addViewshedRaster(r, false)

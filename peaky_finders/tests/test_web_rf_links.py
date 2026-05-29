@@ -17,6 +17,7 @@ class _FakeSite:
     name: str
     lat: float
     lon: float
+    participates_in_rf: bool = True
 
 
 @dataclass

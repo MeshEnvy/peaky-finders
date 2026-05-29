@@ -9,7 +9,13 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from peaky_finders import kml_bundle
-from peaky_finders.sites_job import BundleKmlLayerStyle, ensure_skadi_mirror_dir
+from peaky_finders.preset_mapping import preset_to_request
+from peaky_finders.sites_job import (
+    BundleKmlLayerStyle,
+    Preset,
+    ensure_skadi_mirror_dir,
+    resolved_viewshed_coverage_kml_style,
+)
 from peaky_finders.splat_ppm_to_png import write_splat_png_from_ppm
 from peaky_finders.splat_polygonize import (
     SPLAT_GPKG_NAME,
@@ -121,7 +127,8 @@ def run_splatter_batch(
 ) -> int:
     """Run in-process splatter batch at *viewshed_root*."""
     root = Path(viewshed_root).expanduser().resolve()
-    print("Coverage batch: splatter run-batch", flush=True)
+    if coverage_verbose:
+        print("Coverage batch: splatter run-batch", flush=True)
     session = _splatter_session(coverage_verbose=coverage_verbose)
     workers = max(1, int(batch_jobs))
     try:
@@ -141,6 +148,46 @@ def run_viewshed_coverage(
     """Run splatter in *data_dir*; leaves ``output.ppm`` (+ sidecars from the engine)."""
     print(f"Coverage: {site_name.strip()}", flush=True)
     return run_splatter_site(data_dir=data_dir, coverage_verbose=coverage_verbose)
+
+
+def run_viewshed_workspace(
+    *,
+    preset: Preset,
+    lat: float,
+    lon: float,
+    workdir: Path,
+    site_label: str,
+    coverage_verbose: bool = False,
+    raster: bool = True,
+    footprint: bool = True,
+) -> None:
+    """Run one viewshed workspace: request → splatter (all cores) → raster + footprint."""
+    if preset.bundle is None:
+        raise ValueError("viewshed requires preset bundle.*")
+
+    wd = Path(workdir).expanduser().resolve()
+    wd.mkdir(parents=True, exist_ok=True)
+    req = preset_to_request(preset, float(lat), float(lon))
+    (wd / "request.json").write_text(
+        req.model_dump_json(indent=2, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    rc = run_viewshed_coverage(
+        site_name=site_label,
+        data_dir=wd,
+        coverage_verbose=coverage_verbose,
+    )
+    if rc != 0:
+        raise RuntimeError(f"Viewshed coverage failed with exit code {rc}")
+
+    if raster:
+        ensure_splat_raster_png(site_name=site_label, data_dir=wd)
+
+    if footprint:
+        kml_ov = preset.bundle.kml_overlay if preset.bundle else None
+        style = resolved_viewshed_coverage_kml_style(kml_ov)
+        write_coverage_footprints(data_dir=wd, polygon_style=style)
 
 
 def load_splat_bbox(data_dir: Path) -> dict[str, float]:

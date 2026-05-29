@@ -375,12 +375,15 @@ def execute_target(
     if tid.startswith("viewshed:"):
         tail = tid.removeprefix("viewshed:")
         rep, phase = tail.rsplit(":", 1)
+        if phase == "coverage":
+            raise RuntimeError(f"viewshed coverage must run via splatter run-batch, not {tid!r}")
         ws = _workspace_by_digest(plan, rep)
         vs = argparse.Namespace(
             granular_viewshed_slug=ws.site_slugs[0],
             viewshed_workspace_only=True,
             viewshed_phase=phase,
             verbose=verbose,
+            preset_path=str(preset_path_r),
         )
         return run_splat(vs)
 
@@ -418,6 +421,10 @@ def _viewshed_coverage_digest(tid: str) -> str | None:
     return tid.removeprefix("viewshed:").removesuffix(":coverage")
 
 
+def _has_pending_viewshed_requests(pending: set[str]) -> bool:
+    return any(t.startswith("viewshed:") and t.endswith(":request") for t in pending)
+
+
 def _flush_viewshed_coverage_batch(
     *,
     plan: BuildConfigurePlan,
@@ -430,6 +437,7 @@ def _flush_viewshed_coverage_batch(
 ) -> dict[str, int]:
     """Run one splatter ``run-batch`` for every stale ``viewshed:*:coverage`` still pending."""
     stale_coverage: list[str] = []
+    fresh_coverage: list[str] = []
     for tid in sorted(pending):
         digest = _viewshed_coverage_digest(tid)
         if digest is None:
@@ -439,31 +447,40 @@ def _flush_viewshed_coverage_batch(
             continue
         if force or target_stale(plan, preset, node):
             stale_coverage.append(tid)
+        else:
+            fresh_coverage.append(tid)
 
-    if not stale_coverage:
+    if not stale_coverage and not fresh_coverage:
         return {}
 
-    workspaces: list[PlannedViewshedWorkspace] = []
-    for tid in stale_coverage:
-        digest = _viewshed_coverage_digest(tid)
-        assert digest is not None
-        workspaces.append(_workspace_by_digest(plan, digest))
+    rc = 0
+    if stale_coverage:
+        workspaces: list[PlannedViewshedWorkspace] = []
+        seen_digest: set[str] = set()
+        for tid in stale_coverage:
+            digest = _viewshed_coverage_digest(tid)
+            assert digest is not None
+            if digest in seen_digest:
+                continue
+            seen_digest.add(digest)
+            workspaces.append(_workspace_by_digest(plan, digest))
 
-    workers = resolved_splatter_batch_jobs(
-        preset=preset,
-        workspace_count=len(workspaces),
-        build_jobs=jobs,
-    )
-    if verbose:
-        _log(f"build: viewshed coverage batch ({len(workspaces)} workspace(s), workers={workers})")
-    rc = run_viewshed_batch(
-        preset=preset,
-        viewshed_root=plan.viewsheds_root,
-        workspaces=workspaces,
-        coverage_verbose=verbose,
-        build_jobs=jobs,
-    )
-    return dict.fromkeys(stale_coverage, rc)
+        workers = resolved_splatter_batch_jobs(
+            preset=preset,
+            workspace_count=len(workspaces),
+            build_jobs=jobs,
+        )
+        if verbose:
+            _log(f"build: viewshed coverage batch ({len(workspaces)} workspace(s), workers={workers})")
+        rc = run_viewshed_batch(
+            preset=preset,
+            viewshed_root=plan.viewsheds_root,
+            workspaces=workspaces,
+            coverage_verbose=verbose,
+            build_jobs=jobs,
+        )
+
+    return dict.fromkeys([*stale_coverage, *fresh_coverage], rc)
 
 
 def _subgraph_without_target(
@@ -498,7 +515,7 @@ def _run_target_subgraph(
     parallel = max(1, jobs)
     while pending:
         batched_codes: dict[str, int] = {}
-        if not dry_run:
+        if not dry_run and not _has_pending_viewshed_requests(pending):
             batched_codes = _flush_viewshed_coverage_batch(
                 plan=plan,
                 preset=preset,
@@ -516,7 +533,12 @@ def _run_target_subgraph(
             pending.difference_update(batched_codes)
 
         runnable = sorted(
-            (tid for tid in pending if all(d not in pending for d in subset[tid].depends_on)),
+            (
+                tid
+                for tid in pending
+                if not (tid.startswith("viewshed:") and tid.endswith(":coverage"))
+                and all(d not in pending for d in subset[tid].depends_on)
+            ),
         )
         if not runnable and not batched_codes:
             print("build: internal error — stalled waiting on unresolved nodes", file=sys.stderr)

@@ -58,6 +58,9 @@ def rf_mutual_link_slug_pairs_from_site(
     from_lon: float,
 ) -> list[tuple[str, str]]:
     """Mutual RF-viable slug pairs involving ``from_slug`` (canonical order)."""
+    from_site = preset.sites.get(from_slug)
+    if from_site is None or not from_site.participates_in_rf:
+        return []
     rf_json = rf_json_for_preset(preset)
     rf_key = hashlib.sha256(rf_json.encode()).hexdigest()[:16]
     max_hop_m = max_hop_range_m(preset)
@@ -65,7 +68,7 @@ def rf_mutual_link_slug_pairs_from_site(
     pending: list[tuple[str, float, float, str]] = []
 
     for slug, site in sorted(preset.sites.items()):
-        if slug == from_slug:
+        if slug == from_slug or not site.participates_in_rf:
             continue
         lat_b = float(site.lat)
         lon_b = float(site.lon)
@@ -99,6 +102,8 @@ def rf_mutual_link_slug_pairs(preset: Preset) -> list[tuple[str, str]]:
     """All mutual RF-viable site slug pairs for a preset (canonical order)."""
     merged: set[tuple[str, str]] = set()
     for slug, site in sorted(preset.sites.items()):
+        if not site.participates_in_rf:
+            continue
         merged.update(
             rf_mutual_link_slug_pairs_from_site(
                 preset,

@@ -15,6 +15,7 @@
   --error: #f87171;
   --goal: #fb923c;
   --site: #60a5fa;
+  --planned: #fbbf24;
   --trial: #c084fc;
   --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -264,6 +265,32 @@ select option {
   background: var(--goal);
 }
 
+.legend-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.legend-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.legend-icon.goal {
+  color: var(--goal);
+}
+
+.legend-icon.installed {
+  color: var(--site);
+}
+
+.legend-icon.planned {
+  color: var(--planned);
+}
+
 .legend-dot.viewshed {
   background: var(--site);
   opacity: 0.45;
@@ -456,6 +483,11 @@ select option {
 
 .site-row.no-viewshed .site-label {
   color: var(--text-muted);
+}
+
+.site-row.viewshed-pending .site-label {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* ── Sidebar / chat ── */

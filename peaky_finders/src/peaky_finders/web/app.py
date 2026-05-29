@@ -108,7 +108,6 @@ def create_app() -> FastAPI:
         slug: str,
         lat: float,
         lon: float,
-        ensure: bool = True,
         force: bool = False,
     ) -> dict[str, Any]:
         try:
@@ -116,7 +115,6 @@ def create_app() -> FastAPI:
                 project_slug=slug,
                 lat=lat,
                 lon=lon,
-                ensure=ensure,
                 force=force,
             )
         except FileNotFoundError as exc:
@@ -129,23 +127,18 @@ def create_app() -> FastAPI:
         slug: str,
         lat: float,
         lon: float,
-        ensure: bool = False,
         force: bool = False,
     ) -> FileResponse:
         try:
-            if ensure:
-                get_point_viewshed(
-                    project_slug=slug,
-                    lat=lat,
-                    lon=lon,
-                    ensure=True,
-                    force=force,
-                )
+            get_point_viewshed(
+                project_slug=slug,
+                lat=lat,
+                lon=lon,
+                force=force,
+            )
             from peaky_finders.web.viewshed_rasters import resolve_point_workdir
 
             path = resolve_point_workdir(project_slug=slug, lat=lat, lon=lon) / "splat.png"
-            if not path.is_file():
-                raise FileNotFoundError(f"missing splat.png for {lat:.5f},{lon:.5f}")
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:
@@ -171,17 +164,13 @@ def create_app() -> FastAPI:
     def api_site_viewshed(
         slug: str,
         site_slug: str,
-        ensure: bool = True,
         force: bool = False,
-        jobs: int = 1,
     ) -> dict[str, Any]:
         try:
             return get_site_viewshed(
                 project_slug=slug,
                 site_slug=site_slug,
-                ensure=ensure,
                 force=force,
-                jobs=jobs,
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -192,18 +181,14 @@ def create_app() -> FastAPI:
     def api_viewshed_raster(
         slug: str,
         site_slug: str,
-        ensure: bool = False,
         force: bool = False,
-        jobs: int = 1,
     ) -> FileResponse:
         try:
-            if ensure:
-                ensure_site_viewshed(
-                    project_slug=slug,
-                    site_slug=site_slug,
-                    force=force,
-                    jobs=jobs,
-                )
+            ensure_site_viewshed(
+                project_slug=slug,
+                site_slug=site_slug,
+                force=force,
+            )
             path = resolve_splat_png_path(project_slug=slug, site_slug=site_slug)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

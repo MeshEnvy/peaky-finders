@@ -9,7 +9,7 @@ from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.bundle_build import load_composite_aoi_polygon
-from peaky_finders.sites_job import load_preset, peaky_projects_dir, resolved_preset_bundle_data_dir
+from peaky_finders.sites_job import SiteType, load_preset, peaky_projects_dir, resolved_preset_bundle_data_dir
 
 _GEOCODE_AOI_CACHE: dict[str, tuple[float, list[float] | None, BaseGeometry | None]] = {}
 
@@ -33,14 +33,14 @@ def list_projects() -> list[dict[str, Any]]:
         except Exception:
             continue
         strategy = "land-grab"
-        goal_count = 0
+        goal_count = sum(1 for e in preset.sites.values() if e.type == SiteType.GOAL)
         if preset.bundle and preset.bundle.site_suggestions:
             ss = preset.bundle.site_suggestions
             strategy = ss.strategy.value
             if strategy == "mesh-grow-ai":
-                goal_count = len(ss.mesh_grow_ai.goals)
+                goal_count += len(ss.mesh_grow_ai.goals)
             elif strategy == "mesh-backbone":
-                goal_count = len(ss.mesh_backbone.goals)
+                goal_count += len(ss.mesh_backbone.goals)
         out.append(
             {
                 "slug": entry.name,
@@ -69,7 +69,11 @@ def project_context(slug: str) -> dict[str, Any]:
         }
         for s, e in sorted(preset.sites.items())
     ]
-    goals: list[dict[str, Any]] = []
+    goals: list[dict[str, Any]] = [
+        {"key": slug, "lat": e.lat, "lon": e.lon}
+        for slug, e in sorted(preset.sites.items())
+        if e.type == SiteType.GOAL
+    ]
     if preset.bundle and preset.bundle.site_suggestions:
         ss = preset.bundle.site_suggestions
         if ss.strategy.value == "mesh-grow-ai":

@@ -150,9 +150,11 @@ def ensure_viewshed_tile(
     y: int,
 ) -> Path:
     """Return cached XYZ tile PNG (render on miss)."""
+    from peaky_finders.web.viewshed_service import wait_for_site_viewshed
+
     if z < 0 or z > 22:
         raise FileNotFoundError("tile zoom out of range")
-    resolve_splat_png_path(project_slug=project_slug, site_slug=site_slug)
+    wait_for_site_viewshed(project_slug=project_slug, site_slug=site_slug)
     workdir = resolve_site_workdir(project_slug=project_slug, site_slug=site_slug)
     bounds = _bounds_for_workdir(workdir)
     if bounds is None:
@@ -217,11 +219,12 @@ def ensure_point_viewshed_tile(
     x: int,
     y: int,
 ) -> Path:
+    from peaky_finders.web.viewshed_service import get_point_viewshed
+
     if z < 0 or z > 22:
         raise FileNotFoundError("tile zoom out of range")
+    get_point_viewshed(project_slug=project_slug, lat=lat, lon=lon)
     workdir = resolve_point_workdir(project_slug=project_slug, lat=lat, lon=lon)
-    if not (workdir / "splat.png").is_file() and not (workdir / "output.ppm").is_file():
-        raise FileNotFoundError(f"missing viewshed raster for {lat:.5f},{lon:.5f}")
     bounds = _bounds_for_workdir(workdir)
     if bounds is None:
         raise FileNotFoundError(f"missing viewshed bounds for {lat:.5f},{lon:.5f}")

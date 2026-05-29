@@ -67,6 +67,20 @@ def test_site_type_defaults_to_installed(tmp_path: Path) -> None:
     assert job.sites["a"].type == SiteType.INSTALLED
 
 
+def test_site_type_goal(tmp_path: Path) -> None:
+    p = tmp_path / "job.yaml"
+    write_preset_document(
+        p,
+        {
+            "simulation": dict(_SUGGEST_SIMULATION),
+            "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
+            "sites": {"g1": {"type": "goal", "name": "Goal", "loc": [39.0, -119.0]}},
+        },
+    )
+    job = load_preset(p)
+    assert job.sites["g1"].type == SiteType.GOAL
+
+
 def test_depth_grid_marginal_gain(tmp_path: Path) -> None:
     a = tmp_path / "a.gpkg"
     _write_gpkg(a, box(-115.02, 39.01, -115.00, 39.03), layer="coverage")

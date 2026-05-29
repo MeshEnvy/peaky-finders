@@ -17,6 +17,8 @@ def _site_overlays(preset: Preset) -> list[kml_bundle.AggregateSiteOverlay]:
     tx_antenna_agl_m = max(1.0, float(preset.simulation.transmitter["height_m"]))
     overlays: list[kml_bundle.AggregateSiteOverlay] = []
     for site_slug, site in sorted(preset.sites.items()):
+        if not site.participates_in_rf:
+            continue
         pin_lat, pin_lon = float(site.lat), float(site.lon)
         overlays.append(
             kml_bundle.AggregateSiteOverlay(
@@ -45,7 +47,11 @@ def project_mesh_links_geojson(slug: str) -> dict[str, Any]:
 
     preset = load_preset(cfg)
     overlays = _site_overlays(preset)
-    sees_by_slug = {site_slug: entry.sees for site_slug, entry in preset.sites.items()}
+    sees_by_slug = {
+        site_slug: entry.sees
+        for site_slug, entry in preset.sites.items()
+        if entry.participates_in_rf
+    }
     return site_links_geojson(
         preset=preset,
         sites=overlays,

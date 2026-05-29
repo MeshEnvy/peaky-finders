@@ -8,7 +8,11 @@ from pathlib import Path
 from peaky_finders.build_configure import PlannedViewshedWorkspace
 from peaky_finders.models import SplatCoverageRequest
 from peaky_finders.sites_job import Preset, resolved_viewshed_coverage_kml_style
-from peaky_finders.splat_pipeline import run_splatter_batch, vectorize_coverage_footprints_parallel
+from peaky_finders.splat_pipeline import (
+    run_splatter_batch,
+    run_splatter_site,
+    vectorize_coverage_footprints_parallel,
+)
 
 
 def resolved_splatter_batch_jobs(
@@ -56,33 +60,44 @@ def run_viewshed_batch(
         return 0
 
     viewshed_root_r = Path(viewshed_root).expanduser().resolve()
-    batch_req = write_batch_request_json(viewshed_root=viewshed_root_r, workspaces=workspaces)
-
     n = len(workspaces)
     workers = resolved_splatter_batch_jobs(preset=preset, workspace_count=n, build_jobs=build_jobs)
-    if coverage_verbose:
-        print(
-            f"Coverage batch: {n} workspace(s) via splatter run-batch (workers={workers})",
-            flush=True,
-        )
-    requests_json = batch_req.read_text(encoding="utf-8")
-    try:
-        rc = run_splatter_batch(
-            viewshed_root=viewshed_root_r,
-            batch_jobs=workers,
-            coverage_verbose=coverage_verbose,
-            requests_json=requests_json,
-        )
-        if rc == 0:
-            kml_ov = preset.bundle.kml_overlay if preset.bundle else None
-            style = resolved_viewshed_coverage_kml_style(kml_ov)
-            vectorize_coverage_footprints_parallel(
-                workdirs=[ws.workdir for ws in workspaces],
-                polygon_style=style,
-                jobs=workers,
-                verbose=coverage_verbose,
+
+    if n == 1:
+        # run-batch disables per-viewshed row parallelism; session.run uses all cores.
+        ws = workspaces[0]
+        if coverage_verbose:
+            print(
+                f"Coverage: 1 workspace via splatter run ({ws.workdir.name})",
+                flush=True,
             )
-        return rc
-    finally:
-        if batch_req.is_file():
-            batch_req.unlink()
+        rc = run_splatter_site(data_dir=ws.workdir, coverage_verbose=coverage_verbose)
+    else:
+        batch_req = write_batch_request_json(viewshed_root=viewshed_root_r, workspaces=workspaces)
+        if coverage_verbose:
+            print(
+                f"Coverage batch: {n} workspace(s) via splatter run-batch (workers={workers})",
+                flush=True,
+            )
+        requests_json = batch_req.read_text(encoding="utf-8")
+        try:
+            rc = run_splatter_batch(
+                viewshed_root=viewshed_root_r,
+                batch_jobs=workers,
+                coverage_verbose=coverage_verbose,
+                requests_json=requests_json,
+            )
+        finally:
+            if batch_req.is_file():
+                batch_req.unlink()
+
+    if rc == 0:
+        kml_ov = preset.bundle.kml_overlay if preset.bundle else None
+        style = resolved_viewshed_coverage_kml_style(kml_ov)
+        vectorize_coverage_footprints_parallel(
+            workdirs=[ws.workdir for ws in workspaces],
+            polygon_style=style,
+            jobs=workers,
+            verbose=coverage_verbose,
+        )
+    return rc

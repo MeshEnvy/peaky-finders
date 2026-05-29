@@ -11,18 +11,37 @@ from peaky_finders.web.app import create_app
 from peaky_finders.web.viewshed_service import viewshed_raster_record
 
 
-def test_site_viewshed_endpoint_cached_only_404(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
-    app = create_app()
-    client = TestClient(app)
+def test_site_viewshed_build_uses_direct_splatter_run(tmp_path) -> None:
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from peaky_finders.web.viewshed_service import _run_site_viewshed_build
+
+    workdir = tmp_path / "abc"
+    workdir.mkdir()
+    (workdir / "splat.png").write_bytes(b"x")
+    calls: list[str] = []
 
     with patch(
-        "peaky_finders.web.app.get_site_viewshed",
-        side_effect=FileNotFoundError("viewshed not cached for site 'foo'"),
+        "peaky_finders.web.viewshed_service.run_viewshed_workspace",
+        side_effect=lambda **kwargs: calls.append("run"),
+    ), patch(
+        "peaky_finders.web.viewshed_service.preset_path_for_project",
+        return_value=Path("/tmp/config.yaml"),
+    ), patch(
+        "peaky_finders.web.viewshed_service.load_preset",
+    ) as load_preset, patch(
+        "peaky_finders.web.viewshed_service._viewsheds_root_for_preset",
+        return_value=tmp_path,
+    ), patch(
+        "peaky_finders.web.viewshed_service.resolved_viewshed_workdir_for_coords",
+        return_value=workdir,
     ):
-        res = client.get("/api/projects/demo/viewsheds/foo?ensure=false")
+        preset = load_preset.return_value
+        preset.sites = {"foo": SimpleNamespace(name="Foo", lat=39.5, lon=-115.5)}
+        _run_site_viewshed_build(project_slug="demo", site_slug="foo")
 
-    assert res.status_code == 404
+    assert calls == ["run"]
 
 
 def test_site_viewshed_endpoint_ensure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,7 +121,7 @@ def test_get_point_viewshed_normalizes_lookup_coords(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
     seen: list[tuple[float, float]] = []
 
-    def fake_record(*, project_slug: str, lat: float, lon: float, computed: bool = False):
+    def fake_record(*, project_slug: str, lat: float, lon: float, computed: bool = False, **_kwargs):
         seen.append((lat, lon))
         return {
             "slug": "at-abc",
@@ -117,10 +136,7 @@ def test_get_point_viewshed_normalizes_lookup_coords(monkeypatch: pytest.MonkeyP
         }
 
     with patch(
-        "peaky_finders.web.viewshed_service.point_viewshed_is_cached",
-        return_value=True,
-    ), patch(
-        "peaky_finders.web.viewshed_service.point_viewshed_raster_record",
+        "peaky_finders.web.viewshed_service.ensure_point_viewshed",
         side_effect=fake_record,
     ):
         from peaky_finders.web.viewshed_service import get_point_viewshed
@@ -129,7 +145,6 @@ def test_get_point_viewshed_normalizes_lookup_coords(monkeypatch: pytest.MonkeyP
             project_slug="demo",
             lat=39.7560209,
             lon=-119.4604554,
-            ensure=False,
         )
 
     assert seen == [(39.756021, -119.460455)]
