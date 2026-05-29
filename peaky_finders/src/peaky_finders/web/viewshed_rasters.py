@@ -19,6 +19,20 @@ def preset_path_for_project(project_slug: str) -> Path:
     return cfg
 
 
+def resolve_point_workdir(*, project_slug: str, lat: float, lon: float) -> Path:
+    cfg = preset_path_for_project(project_slug)
+    preset = load_preset(cfg)
+    viewsheds_root = _viewsheds_root_for_preset(cfg)
+    if viewsheds_root is None:
+        raise FileNotFoundError("viewshed root unavailable")
+    return resolved_viewshed_workdir_for_coords(
+        preset=preset,
+        viewshed_root=viewsheds_root,
+        lat=float(lat),
+        lon=float(lon),
+    )
+
+
 def resolve_site_workdir(*, project_slug: str, site_slug: str) -> Path:
     cfg = preset_path_for_project(project_slug)
     preset = load_preset(cfg)

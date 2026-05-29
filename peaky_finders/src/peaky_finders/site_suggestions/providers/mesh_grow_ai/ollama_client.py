@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import httpx
@@ -87,6 +87,7 @@ def chat_completions_stream(
     tools: list[dict[str, Any]] | None = None,
     temperature: float = 0.2,
     timeout_s: float = 300.0,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> Iterator[str]:
     """Yield OpenAI-style SSE payload strings (without the ``data:`` prefix)."""
     url = f"{base_url.rstrip('/')}/chat/completions"
@@ -104,6 +105,8 @@ def chat_completions_stream(
                     detail = resp.read().decode("utf-8", errors="replace")[:500]
                     raise OllamaError(f"Ollama HTTP {resp.status_code}: {detail}")
                 for line in resp.iter_lines():
+                    if should_cancel and should_cancel():
+                        break
                     if not line or not line.startswith("data: "):
                         continue
                     payload = line[6:].strip()
@@ -172,3 +175,91 @@ def stream_delta_text(payload: str) -> str:
         return str(content)
     reasoning = delta.get("reasoning")
     return str(reasoning) if reasoning else ""
+
+
+def _merge_stream_tool_calls(
+    tool_calls_by_index: dict[int, dict[str, Any]],
+    delta_tool_calls: list[Any],
+) -> None:
+    for tc in delta_tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        idx = int(tc.get("index", 0))
+        entry = tool_calls_by_index.setdefault(
+            idx,
+            {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+        )
+        if tc.get("id"):
+            entry["id"] = str(tc["id"])
+        fn = tc.get("function") or {}
+        if fn.get("name"):
+            entry["function"]["name"] += str(fn["name"])
+        if fn.get("arguments") is not None:
+            entry["function"]["arguments"] += str(fn["arguments"])
+
+
+def assemble_streamed_assistant_message(
+    *,
+    content_parts: list[str],
+    tool_calls_by_index: dict[int, dict[str, Any]],
+) -> dict[str, Any]:
+    message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
+    if tool_calls_by_index:
+        message["tool_calls"] = [
+            tool_calls_by_index[idx] for idx in sorted(tool_calls_by_index)
+        ]
+    return message
+
+
+def stream_chat_completions_turn(
+    *,
+    base_url: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    temperature: float = 0.2,
+    timeout_s: float = 300.0,
+    should_cancel: Callable[[], bool] | None = None,
+) -> Iterator[tuple[str, str | dict[str, Any] | None]]:
+    """Yield ``("delta"|"reasoning", text)`` tokens, then ``("done", assistant_message)``."""
+    content_parts: list[str] = []
+    tool_calls_by_index: dict[int, dict[str, Any]] = {}
+
+    for payload in chat_completions_stream(
+        base_url=base_url,
+        model=model,
+        messages=messages,
+        tools=tools,
+        temperature=temperature,
+        timeout_s=timeout_s,
+        should_cancel=should_cancel,
+    ):
+        if should_cancel and should_cancel():
+            return
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        choices = data.get("choices") or []
+        if not choices:
+            continue
+        delta = choices[0].get("delta") or {}
+        content = delta.get("content")
+        if content:
+            text = str(content)
+            content_parts.append(text)
+            yield "delta", text
+        reasoning = delta.get("reasoning")
+        if reasoning:
+            yield "reasoning", str(reasoning)
+        _merge_stream_tool_calls(tool_calls_by_index, delta.get("tool_calls") or [])
+
+    if should_cancel and should_cancel():
+        return
+
+    yield "done", assemble_streamed_assistant_message(
+        content_parts=content_parts,
+        tool_calls_by_index=tool_calls_by_index,
+    )

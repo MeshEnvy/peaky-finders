@@ -44,7 +44,6 @@ def run_ephemeral_viewshed_footprint(
 
     rc = run_viewshed_coverage(
         site_name=f"suggest {lat:.5f},{lon:.5f}",
-        provider=preset.simulation.provider,
         data_dir=wd,
         coverage_verbose=verbose,
     )

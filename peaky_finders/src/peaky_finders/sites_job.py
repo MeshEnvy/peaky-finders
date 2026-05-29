@@ -932,6 +932,12 @@ class MeshGrowAiStrategyConfig(BaseModel):
     max_agent_steps: int = Field(default=40, ge=1, le=200)
     max_viewshed_evals_per_episode: int = Field(default=16, ge=1, le=64)
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    web_chat_num_ctx: int = Field(
+        default=32768,
+        ge=2048,
+        le=262144,
+        description="Context window size for the web chat meter and summarization threshold.",
+    )
 
 
 class BundleSiteSuggestionsConfig(BaseModel):

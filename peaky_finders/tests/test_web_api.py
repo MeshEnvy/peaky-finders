@@ -30,8 +30,19 @@ def test_chat_stream() -> None:
     app = create_app()
     client = TestClient(app)
 
-    def fake_stream(message: str, *, project_slug: str | None = None):
+    def fake_stream(
+        message: str,
+        *,
+        project_slug: str | None = None,
+        history=None,
+        summary=None,
+        map_pins=None,
+        should_cancel=None,
+    ):
         assert message == "hello"
+        assert history == []
+        assert summary is None
+        assert map_pins == []
         yield {"op": "chat.delta", "text": "Hel"}
         yield {"op": "chat.delta", "text": "lo!"}
         yield {"op": "chat.done", "model": "test"}

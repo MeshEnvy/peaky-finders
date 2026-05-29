@@ -1,0 +1,375 @@
+"""Map-aware tools for the Peaky web chat agent."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+from peaky_finders.sites_job import peaky_projects_dir
+from peaky_finders.web.geocode import GeocodeError, geocode_place_ranked
+from peaky_finders.web.projects import project_context
+from peaky_finders.web.viewshed_service import ensure_point_viewshed
+
+ToolResult = dict[str, Any]
+MapPinState = dict[str, Any]
+EmitFn = Callable[[str, Any], None]
+
+_LAT_LON = {
+    "type": "object",
+    "properties": {
+        "lat": {"type": "number", "description": "WGS-84 latitude"},
+        "lon": {"type": "number", "description": "WGS-84 longitude"},
+    },
+    "required": ["lat", "lon"],
+    "additionalProperties": False,
+}
+
+
+def _tool(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        },
+    }
+
+
+WEB_TOOL_SCHEMAS: list[dict[str, Any]] = [
+    _tool(
+        "geocode_place",
+        "Resolve a place name to WGS-84 coordinates (OpenStreetMap). Returns ranked results and a best pick.",
+        {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Place name, e.g. Charleston Peak, Nevada",
+                },
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    ),
+    _tool(
+        "show_on_map",
+        (
+            "Drop a pin on the map, center the view, and optionally compute an RF viewshed overlay. "
+            "For follow-ups on an existing pin ('that one', 'add a viewshed there'), pass pin_id "
+            "from map state instead of lat/lon — never guess coordinates from memory."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "pin_id": {
+                    "type": "string",
+                    "description": "Existing pin id from map state or a prior show_on_map result",
+                },
+                "lat": {"type": "number", "description": "WGS-84 latitude (required for new pins)"},
+                "lon": {"type": "number", "description": "WGS-84 longitude (required for new pins)"},
+                "label": {"type": "string", "description": "Pin label shown on the map"},
+                "include_viewshed": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Compute and display RF viewshed at this point",
+                },
+                "padding_deg": {
+                    "type": "number",
+                    "default": 0.08,
+                    "description": "Map fit padding around the point in degrees",
+                },
+                "bbox": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Optional [west, south, east, north] from geocode_place",
+                },
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    ),
+]
+
+
+@dataclass
+class WebChatContext:
+    project_slug: str | None
+    emit: EmitFn | None = None
+    geocode_viewbox: list[float] | None = None
+    geocode_calls: int = 0
+    map_pins: list[MapPinState] | None = None
+
+    @property
+    def preset_path(self) -> Path | None:
+        if not self.project_slug:
+            return None
+        cfg = peaky_projects_dir() / self.project_slug / "config.yaml"
+        return cfg if cfg.is_file() else None
+
+
+def _pin_id(label: str, lat: float, lon: float) -> str:
+    raw = f"{label}:{lat:.6f}:{lon:.6f}".encode()
+    return hashlib.sha1(raw).hexdigest()[:12]
+
+
+def normalize_map_pins(raw: list[MapPinState] | None) -> list[MapPinState]:
+    out: list[MapPinState] = []
+    seen: set[str] = set()
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        pin_id = str(item.get("pin_id") or item.get("id") or "").strip()
+        label = str(item.get("label") or "").strip()
+        try:
+            lat = float(item["lat"])
+            lon = float(item["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not pin_id:
+            pin_id = _pin_id(label or f"{lat:.5f},{lon:.5f}", lat, lon)
+        if pin_id in seen:
+            continue
+        seen.add(pin_id)
+        pin: MapPinState = {
+            "pin_id": pin_id,
+            "label": label or f"{lat:.5f},{lon:.5f}",
+            "lat": lat,
+            "lon": lon,
+        }
+        if item.get("has_viewshed") is True:
+            pin["has_viewshed"] = True
+        out.append(pin)
+    return out
+
+
+def lookup_map_pin(pins: list[MapPinState], pin_id: str) -> MapPinState | None:
+    needle = str(pin_id or "").strip()
+    if not needle:
+        return None
+    for pin in pins:
+        if str(pin.get("pin_id") or "") == needle:
+            return pin
+    return None
+
+
+def remember_map_pin(ctx: WebChatContext, *, pin_id: str, label: str, lat: float, lon: float, has_viewshed: bool) -> None:
+    pins = normalize_map_pins(ctx.map_pins)
+    updated = {
+        "pin_id": pin_id,
+        "label": label,
+        "lat": lat,
+        "lon": lon,
+        "has_viewshed": has_viewshed,
+    }
+    ctx.map_pins = [pin for pin in pins if str(pin.get("pin_id") or "") != pin_id] + [updated]
+
+
+def format_map_pins_for_prompt(pins: list[MapPinState] | None) -> str:
+    normalized = normalize_map_pins(pins)
+    if not normalized:
+        return "No chat-placed pins on the map yet."
+    lines = [
+        "Chat-placed pins currently on the map (use these exact coordinates or pin_id; never guess):"
+    ]
+    for pin in normalized:
+        viewshed_note = ", viewshed shown" if pin.get("has_viewshed") else ""
+        lines.append(
+            f"- pin_id={pin['pin_id']!r} label={pin['label']!r} "
+            f"lat={float(pin['lat']):.6f} lon={float(pin['lon']):.6f}{viewshed_note}"
+        )
+    return "\n".join(lines)
+
+
+def _fit_bbox(lat: float, lon: float, *, padding_deg: float, place_bbox: list[float] | None) -> list[float]:
+    if place_bbox and len(place_bbox) == 4:
+        west, south, east, north = place_bbox
+        if east > west and north > south:
+            return [west, south, east, north]
+    pad = max(0.01, float(padding_deg))
+    return [lon - pad, lat - pad, lon + pad, lat + pad]
+
+
+def dispatch_web_tool(name: str, args: dict[str, Any], *, ctx: WebChatContext) -> ToolResult:
+    if name == "geocode_place":
+        return _geocode_place(ctx, args)
+    if name == "show_on_map":
+        return _show_on_map(ctx, args)
+    return {"error": f"unknown tool {name!r}"}
+
+
+def _geocode_place(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"error": "query is required"}
+    if ctx.geocode_calls >= 2:
+        return {
+            "error": "geocode_place already called twice this turn; use the prior best result or ask the user to clarify",
+        }
+    ctx.geocode_calls += 1
+    try:
+        payload = geocode_place_ranked(query, viewbox=ctx.geocode_viewbox)
+    except GeocodeError as exc:
+        return {"error": str(exc)}
+    if not payload["results"]:
+        return {"query": query, "results": [], "best": None, "error": "no matches", "hint": payload.get("hint")}
+    return payload
+
+
+def _resolve_show_on_map_target(ctx: WebChatContext, args: dict[str, Any]) -> tuple[float, float, str, str] | ToolResult:
+    pins = normalize_map_pins(ctx.map_pins)
+    pin_id_arg = str(args.get("pin_id") or "").strip()
+    if pin_id_arg:
+        hit = lookup_map_pin(pins, pin_id_arg)
+        if hit is None:
+            return {"error": f"unknown pin_id {pin_id_arg!r}; use a pin from map state or place a new pin first"}
+        label = str(args.get("label") or hit.get("label") or pin_id_arg).strip()
+        return float(hit["lat"]), float(hit["lon"]), label, pin_id_arg
+
+    try:
+        lat = float(args["lat"])
+        lon = float(args["lon"])
+    except (KeyError, TypeError, ValueError):
+        if pins:
+            return {
+                "error": (
+                    "lat and lon are required for a new pin, or pass pin_id for an existing map pin"
+                ),
+                "map_pins": pins,
+            }
+        return {"error": "lat and lon are required numbers"}
+
+    label = str(args.get("label") or f"{lat:.5f},{lon:.5f}").strip()
+    return lat, lon, label, _pin_id(label, lat, lon)
+
+
+def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
+    if not ctx.project_slug:
+        return {"error": "select a project before showing locations on the map"}
+
+    resolved = _resolve_show_on_map_target(ctx, args)
+    if isinstance(resolved, dict):
+        return resolved
+    lat, lon, label, pin_id = resolved
+
+    include_viewshed = bool(args.get("include_viewshed", True))
+    padding_deg = float(args.get("padding_deg") or 0.08)
+    place_bbox = args.get("bbox")
+    bbox = _fit_bbox(lat, lon, padding_deg=padding_deg, place_bbox=place_bbox if isinstance(place_bbox, list) else None)
+
+    if ctx.emit:
+        ctx.emit(
+            "map.pin",
+            layer_id="trials",
+            id=pin_id,
+            lat=lat,
+            lon=lon,
+            label=label,
+        )
+
+    viewshed: dict[str, Any] | None = None
+    if include_viewshed:
+        try:
+            viewshed = ensure_point_viewshed(
+                project_slug=ctx.project_slug,
+                lat=lat,
+                lon=lon,
+                verbose=False,
+            )
+            if ctx.emit:
+                ctx.emit("map.viewshed", **viewshed)
+                viewshed_bounds = viewshed.get("bounds")
+                if isinstance(viewshed_bounds, list) and len(viewshed_bounds) == 4:
+                    ctx.emit("map.fit_bounds", bbox=viewshed_bounds)
+                else:
+                    ctx.emit("map.fit_bounds", bbox=bbox)
+        except Exception as exc:
+            if ctx.emit:
+                ctx.emit("map.fit_bounds", bbox=bbox)
+            return {
+                "ok": True,
+                "lat": lat,
+                "lon": lon,
+                "label": label,
+                "pin_id": pin_id,
+                "bbox": bbox,
+                "viewshed_error": str(exc),
+            }
+    elif ctx.emit:
+        ctx.emit("map.fit_bounds", bbox=bbox)
+
+    remember_map_pin(ctx, pin_id=pin_id, label=label, lat=lat, lon=lon, has_viewshed=viewshed is not None)
+
+    return {
+        "ok": True,
+        "lat": lat,
+        "lon": lon,
+        "label": label,
+        "pin_id": pin_id,
+        "bbox": bbox,
+        "viewshed": viewshed,
+    }
+
+
+def truncate_tool_result_for_stream(result: ToolResult, *, max_chars: int = 4000) -> ToolResult:
+    text = json.dumps(result, default=str)
+    if len(text) <= max_chars:
+        return result
+    return {"truncated": True, "preview": text[: max_chars - 3] + "..."}
+
+
+def web_chat_context_for_project(
+    project_slug: str | None,
+    *,
+    map_pins: list[MapPinState] | None = None,
+) -> WebChatContext:
+    geocode_viewbox = None
+    if project_slug:
+        try:
+            ctx = project_context(project_slug)
+            geocode_viewbox = ctx.get("bbox")
+        except FileNotFoundError:
+            geocode_viewbox = None
+    return WebChatContext(
+        project_slug=project_slug,
+        geocode_viewbox=geocode_viewbox,
+        map_pins=normalize_map_pins(map_pins),
+    )
+
+
+def web_chat_system_prompt(
+    *,
+    project_slug: str | None,
+    map_pins: list[MapPinState] | None = None,
+) -> str:
+    project_line = (
+        f"Active project: {project_slug!r}."
+        if project_slug
+        else "No project selected yet."
+    )
+    return (
+        "You are a helpful assistant for Peaky, a mesh radio site planning tool with an interactive map. "
+        "Be concise, conversational, and friendly — talk to the user, not about them.\n\n"
+        f"{project_line}\n\n"
+        "Answer general questions (geography, RF planning, how things work) directly in plain language. "
+        "Do not narrate your reasoning, planning, or tool choices. Never say things like "
+        "\"the user is asking\" or \"I should use a tool\".\n\n"
+        "Use tools only when the user wants something on the map: place a pin, show a place, compute a viewshed.\n"
+        "Coordinate rules (critical):\n"
+        "- Never recall or invent lat/lon from memory.\n"
+        "- New places: geocode_place once, then show_on_map with the returned best lat/lon/label/bbox.\n"
+        "- Follow-ups on an existing pin ('that one', 'there', 'add a viewshed'): use show_on_map with "
+        "pin_id from map state below — do not pass new coordinates.\n"
+        "- Copy coordinates exactly from tool results or map state; do not round or substitute.\n\n"
+        f"{format_map_pins_for_prompt(map_pins)}\n\n"
+        "Geocoding rules:\n"
+        "- Call geocode_place once per new place.\n"
+        "- Use the returned best result unless quality is likely_street_not_peak.\n"
+        "- Do not retry geocode with rephrased queries; ask the user to clarify instead.\n"
+        "- For mountains/peaks, include state in the query (e.g. 'Charleston Peak, Nevada').\n"
+        "Confirm briefly what you placed.\n\n"
+        "If they only want facts, just answer — offer to map it only if that would be useful."
+    )

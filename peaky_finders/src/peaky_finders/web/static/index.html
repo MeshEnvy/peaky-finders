@@ -20,7 +20,7 @@
       href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
       rel="stylesheet"
     />
-    <link href="/styles.css?v=4" rel="stylesheet" />
+    <link href="/styles.css?v=6" rel="stylesheet" />
   </head>
   <body>
     <div class="app">
@@ -52,9 +52,6 @@
               <option value="satellite">Satellite</option>
             </select>
           </div>
-          <button id="build" class="btn-build" type="button">
-            Build + Suggest
-          </button>
         </div>
 
         <span id="status" class="status-pill">idle</span>
@@ -90,10 +87,29 @@
             <div id="chat-empty" class="chat-empty">
               <div class="chat-empty-icon" aria-hidden="true">◎</div>
               <p>
-                Say hello below, or run <strong>Build + Suggest</strong> to
-                stream agent events here.
+                Say hello below to start a conversation with the agent.
               </p>
             </div>
+          </div>
+          <div id="chat-context" class="chat-context" aria-live="polite">
+            <div class="chat-context-row">
+              <span class="chat-context-label">Context</span>
+              <span id="chat-context-pct" class="chat-context-pct">0%</span>
+            </div>
+            <div
+              class="chat-context-track"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              id="chat-context-track"
+            >
+              <div id="chat-context-fill" class="chat-context-fill"></div>
+            </div>
+            <p id="chat-context-note" class="chat-context-note" hidden></p>
+            <button id="chat-summarize" type="button" class="chat-summarize" hidden>
+              Summarize &amp; reset context
+            </button>
           </div>
           <form id="chat-form" class="chat-composer">
             <input
@@ -109,6 +125,6 @@
     </div>
 
     <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-    <script src="/app.js?v=18"></script>
+    <script src="/app.js?v=22"></script>
   </body>
 </html>

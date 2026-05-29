@@ -2,22 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from peaky_finders.site_suggestions.providers.mesh_grow_ai.ollama_client import (
     OllamaError,
     chat_completions,
     ollama_health_ok,
-    ollama_native_chat_stream,
 )
 from peaky_finders.sites_job import MeshGrowAiStrategyConfig, load_preset, peaky_projects_dir
-
-CHAT_SYSTEM_PROMPT = (
-    "You are a helpful assistant for Peaky, a mesh radio site planning tool. "
-    "Keep replies concise and friendly."
-)
-WEB_CHAT_NUM_CTX = 8192
 
 
 def extract_assistant_content(resp: dict[str, Any]) -> str:
@@ -43,9 +36,12 @@ def resolve_ollama_config(project_slug: str | None) -> MeshGrowAiStrategyConfig:
     return cfg
 
 
+def resolve_web_chat_num_ctx(project_slug: str | None) -> int:
+    return int(resolve_ollama_config(project_slug).web_chat_num_ctx)
+
+
 def chat_messages(message: str) -> list[dict[str, str]]:
     return [
-        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
         {"role": "user", "content": message},
     ]
 
@@ -68,32 +64,22 @@ def simple_chat(message: str, *, project_slug: str | None = None) -> dict[str, s
     return {"reply": reply, "model": ai.ollama_model}
 
 
-def stream_chat(message: str, *, project_slug: str | None = None) -> Iterator[dict[str, Any]]:
-    ai = resolve_ollama_config(project_slug)
-    if not ollama_health_ok(ai.ollama_base_url):
-        yield {"op": "chat.error", "message": f"Ollama not reachable at {ai.ollama_base_url!r}"}
-        return
+def stream_chat(
+    message: str,
+    *,
+    project_slug: str | None = None,
+    history: list | None = None,
+    summary: str | None = None,
+    map_pins: list | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> Iterator[dict[str, Any]]:
+    from peaky_finders.web.chat_agent import stream_web_chat
 
-    yield {"op": "chat.started", "model": ai.ollama_model}
-
-    got_content = False
-    try:
-        for text in ollama_native_chat_stream(
-            base_url=ai.ollama_base_url,
-            model=ai.ollama_model,
-            messages=chat_messages(message),
-            temperature=float(ai.temperature),
-            think=False,
-            num_ctx=WEB_CHAT_NUM_CTX,
-            timeout_s=300.0,
-        ):
-            got_content = True
-            yield {"op": "chat.delta", "text": text}
-    except OllamaError as exc:
-        yield {"op": "chat.error", "message": str(exc)}
-        return
-
-    if not got_content:
-        yield {"op": "chat.error", "message": "Ollama returned empty reply"}
-        return
-    yield {"op": "chat.done", "model": ai.ollama_model}
+    yield from stream_web_chat(
+        message,
+        project_slug=project_slug,
+        history=history,
+        summary=summary,
+        map_pins=map_pins,
+        should_cancel=should_cancel,
+    )

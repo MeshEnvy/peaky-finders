@@ -2,13 +2,24 @@
 
 const projectSel = document.getElementById('project')
 const basemapSel = document.getElementById('basemap')
-const buildBtn = document.getElementById('build')
 const statusEl = document.getElementById('status')
 const chatEl = document.getElementById('chat')
 const chatEmptyEl = document.getElementById('chat-empty')
 const chatForm = document.getElementById('chat-form')
 const chatInput = document.getElementById('chat-input')
 const chatSendBtn = document.getElementById('chat-send')
+const chatContextFill = document.getElementById('chat-context-fill')
+const chatContextPct = document.getElementById('chat-context-pct')
+const chatContextTrack = document.getElementById('chat-context-track')
+const chatContextNote = document.getElementById('chat-context-note')
+const chatSummarizeBtn = document.getElementById('chat-summarize')
+
+const chatHistory = []
+const chatMapPins = new Map()
+let chatSummary = null
+let chatContextState = { usage_pct: 0, status: 'ok', full_pct: 92 }
+let chatContextRefreshTimer = null
+let chatSummarizeInFlight = false
 
 const TERRAIN_SOURCE = 'terrain-dem'
 const TERRAIN_HILLSHADE = 'terrain-hillshade'
@@ -337,9 +348,18 @@ async function loadProjectViewsheds(projectSlug, sites) {
 function addViewshedRaster(r) {
   const sourceId = `viewshed-raster-${r.slug}`
   const layerId = `${sourceId}-layer`
-  if (map.getSource(sourceId)) return
+  const useImage = Boolean(r.url && r.coordinates)
 
-  if (r.tile_url && r.bounds) {
+  if (map.getLayer(layerId)) map.removeLayer(layerId)
+  if (map.getSource(sourceId)) map.removeSource(sourceId)
+
+  if (useImage) {
+    map.addSource(sourceId, {
+      type: 'image',
+      url: r.url,
+      coordinates: r.coordinates,
+    })
+  } else if (r.tile_url && r.bounds) {
     map.addSource(sourceId, {
       type: 'raster',
       tiles: [r.tile_url],
@@ -349,11 +369,7 @@ function addViewshedRaster(r) {
       maxzoom: r.maxzoom ?? 22,
     })
   } else {
-    map.addSource(sourceId, {
-      type: 'image',
-      url: r.url,
-      coordinates: r.coordinates,
-    })
+    return
   }
 
   map.addLayer(
@@ -505,6 +521,9 @@ function appendChat(text, kind = 'build', label = null) {
 }
 
 let chatPendingEl = null
+let chatInFlight = false
+let chatAbortController = null
+let chatRequestSeq = 0
 
 function setChatPendingLabel(label) {
   if (!chatPendingEl) return
@@ -518,13 +537,22 @@ function setChatPendingLabel(label) {
   body.appendChild(dots)
 }
 
+function setChatComposerBusy(active) {
+  chatInFlight = active
+  chatSendBtn.type = active ? 'button' : 'submit'
+  chatSendBtn.textContent = active ? 'Stop' : 'Send'
+  chatSendBtn.classList.toggle('stop', active)
+  chatSendBtn.disabled = false
+}
+
 function setChatPending(active) {
   if (!active) {
     chatPendingEl?.remove()
     chatPendingEl = null
     return
   }
-  if (chatPendingEl) return
+  chatPendingEl?.remove()
+  chatPendingEl = null
 
   if (chatEmptyEl) chatEmptyEl.hidden = true
   const div = document.createElement('div')
@@ -573,6 +601,116 @@ function beginAssistantReply() {
   return body
 }
 
+function beginThinkingBlock() {
+  setChatPending(false)
+  if (chatEmptyEl) chatEmptyEl.hidden = true
+  const details = document.createElement('details')
+  details.className = 'msg thinking streaming'
+  details.open = false
+
+  const summary = document.createElement('summary')
+  summary.className = 'chat-thinking-summary'
+  summary.textContent = 'Thinking'
+  details.appendChild(summary)
+
+  const body = document.createElement('div')
+  body.className = 'chat-thinking-body'
+  body.setAttribute('aria-live', 'polite')
+  details.appendChild(body)
+
+  chatEl.appendChild(details)
+  chatEl.scrollTop = chatEl.scrollHeight
+  return { details, body }
+}
+
+const pendingToolCallBlocks = new Map()
+
+function formatToolJson(value) {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function beginToolCallBlock(callId, name, args) {
+  setChatPending(false)
+  if (chatEmptyEl) chatEmptyEl.hidden = true
+
+  const details = document.createElement('details')
+  details.className = 'msg tool-call pending'
+  details.open = false
+  details.dataset.callId = callId
+
+  const summary = document.createElement('summary')
+  summary.className = 'chat-tool-summary'
+
+  const nameEl = document.createElement('span')
+  nameEl.className = 'chat-tool-name'
+  nameEl.textContent = name || 'tool'
+
+  const statusEl = document.createElement('span')
+  statusEl.className = 'chat-tool-status'
+  statusEl.setAttribute('aria-hidden', 'true')
+  summary.append(nameEl, statusEl)
+  details.appendChild(summary)
+
+  const body = document.createElement('div')
+  body.className = 'chat-tool-body'
+  const argsSection = document.createElement('div')
+  argsSection.className = 'chat-tool-section'
+  const argsLabel = document.createElement('div')
+  argsLabel.className = 'chat-tool-section-label'
+  argsLabel.textContent = 'Arguments'
+  const argsPre = document.createElement('pre')
+  argsPre.className = 'chat-tool-pre'
+  argsPre.textContent = formatToolJson(args)
+  argsSection.append(argsLabel, argsPre)
+  body.appendChild(argsSection)
+  details.appendChild(body)
+
+  chatEl.appendChild(details)
+  chatEl.scrollTop = chatEl.scrollHeight
+  pendingToolCallBlocks.set(callId, { details, statusEl, body })
+  return details
+}
+
+function completeToolCallBlock(callId, name, result) {
+  const block = pendingToolCallBlocks.get(callId)
+  if (!block) {
+    appendChat(`${name}: ${formatToolJson(result)}`, 'tool', 'Tool result')
+    return
+  }
+  pendingToolCallBlocks.delete(callId)
+
+  const { details, statusEl, body } = block
+  details.classList.remove('pending')
+  details.classList.add('done')
+  statusEl.textContent = '✓'
+  statusEl.setAttribute('aria-label', 'Completed')
+
+  const resultSection = document.createElement('div')
+  resultSection.className = 'chat-tool-section'
+  const resultLabel = document.createElement('div')
+  resultLabel.className = 'chat-tool-section-label'
+  resultLabel.textContent = 'Result'
+  const resultPre = document.createElement('pre')
+  resultPre.className = 'chat-tool-pre'
+  resultPre.textContent = formatToolJson(result)
+  resultSection.append(resultLabel, resultPre)
+  body.appendChild(resultSection)
+
+  chatEl.scrollTop = chatEl.scrollHeight
+}
+
+function finishPendingToolCalls(mark = '—') {
+  for (const { details, statusEl } of pendingToolCallBlocks.values()) {
+    details.classList.remove('pending')
+    statusEl.textContent = mark
+  }
+  pendingToolCallBlocks.clear()
+}
+
 async function consumeChatStream(res, onEvent) {
   const reader = res.body?.getReader()
   if (!reader) throw new Error('Streaming not supported')
@@ -613,7 +751,6 @@ const handlers = {
   'build.finished': (m) => {
     setStatus(m.ok ? 'done' : 'error', m.ok ? 'complete' : 'failed')
     appendChat(m.ok ? 'Build finished successfully.' : `Exit code ${m.exit_code}`, 'build', 'Finished')
-    buildBtn.disabled = false
   },
   'build.error': (m) => {
     setStatus('error', 'error')
@@ -623,10 +760,8 @@ const handlers = {
   'chat.system': (m) => appendChat(m.text, 'system', 'System'),
   'chat.user': (m) => appendChat(m.text, 'user', 'User'),
   'chat.assistant': (m) => appendChat(m.text, 'assistant', 'Assistant'),
-  'chat.tool_call': (m) =>
-    appendChat(`${m.name}(${JSON.stringify(m.arguments)})`, 'tool', 'Tool call'),
-  'chat.tool_result': (m) =>
-    appendChat(`${m.name}: ${JSON.stringify(m.result)}`, 'tool', 'Tool result'),
+  'chat.tool_call': (m) => beginToolCallBlock(m.call_id, m.name, m.arguments),
+  'chat.tool_result': (m) => completeToolCallBlock(m.call_id, m.name, m.result),
   'chat.divider': (m) => appendChat(m.label, 'divider'),
   'log.line': (m) => appendChat(m.text, 'tool', 'Log'),
   'map.clear_layer': (m) => {
@@ -652,6 +787,7 @@ const handlers = {
       geometry: { type: 'Point', coordinates: [m.lon, m.lat] },
     }
     pinFeatureCache.set(`${layerId}:${m.id}`, feature)
+    if (layerId === 'trials') rememberChatTrialPin({ id: m.id, label: m.label || m.id, lat: m.lat, lon: m.lon })
     flushPinLayer(layerId)
   },
   'map.line': (m) => {
@@ -693,6 +829,11 @@ const handlers = {
     projectMeshScopeBbox = m.bbox
     fitMapToMeshScope(m.bbox)
   },
+  'map.viewshed': (m) => {
+    if (m.lat != null && m.lon != null) markChatTrialPinViewshed(m.lat, m.lon)
+    if (mapReady) addViewshedRaster(m)
+    else pendingRasters.push(m)
+  },
 }
 
 function routeOp(msg) {
@@ -717,8 +858,147 @@ function clearOverlayLayers() {
 }
 
 function clearChat() {
+  finishPendingToolCalls()
   chatEl.querySelectorAll('.msg').forEach((el) => el.remove())
   if (chatEmptyEl) chatEmptyEl.hidden = false
+  resetChatHistory()
+}
+
+function rememberChatTrialPin({ id, label, lat, lon }) {
+  chatMapPins.set(id, {
+    pin_id: id,
+    label: label || id,
+    lat,
+    lon,
+    has_viewshed: chatMapPins.get(id)?.has_viewshed || false,
+  })
+}
+
+function markChatTrialPinViewshed(lat, lon) {
+  for (const pin of chatMapPins.values()) {
+    if (Math.abs(pin.lat - lat) < 0.001 && Math.abs(pin.lon - lon) < 0.001) {
+      pin.has_viewshed = true
+    }
+  }
+}
+
+function trialMapPinsPayload() {
+  return [...chatMapPins.values()]
+}
+
+function resetChatHistory() {
+  chatHistory.length = 0
+  chatMapPins.clear()
+  chatSummary = null
+  scheduleChatContextRefresh('')
+}
+
+function rememberChatTurn(userText, assistantText) {
+  const user = String(userText || '').trim()
+  const assistant = String(assistantText || '').trim()
+  if (!user) return
+  chatHistory.push({ role: 'user', content: user })
+  if (assistant) chatHistory.push({ role: 'assistant', content: assistant })
+  scheduleChatContextRefresh('')
+}
+
+function chatContextPayload(pendingMessage = '') {
+  return {
+    project_slug: projectSel.value || null,
+    history: chatHistory,
+    summary: chatSummary,
+    map_pins: trialMapPinsPayload(),
+    message: pendingMessage || undefined,
+  }
+}
+
+function applyChatContext(ctx) {
+  if (!ctx || !chatContextFill) return
+  chatContextState = ctx
+  const pct = Math.max(0, Math.min(100, Number(ctx.usage_pct) || 0))
+  chatContextFill.style.width = `${pct}%`
+  chatContextFill.classList.toggle('warn', ctx.status === 'warn')
+  chatContextFill.classList.toggle('full', ctx.status === 'full')
+  if (chatContextPct) chatContextPct.textContent = `${pct.toFixed(1)}%`
+  if (chatContextTrack) chatContextTrack.setAttribute('aria-valuenow', String(Math.round(pct)))
+
+  const showSummarize = ctx.status === 'warn' || ctx.status === 'full'
+  if (chatSummarizeBtn) chatSummarizeBtn.hidden = !showSummarize
+
+  if (!chatContextNote) return
+  if (ctx.status === 'full') {
+    chatContextNote.hidden = false
+    chatContextNote.className = 'chat-context-note full'
+    chatContextNote.textContent =
+      'Context window nearly full. Summarize to compress earlier turns before continuing.'
+  } else if (ctx.status === 'warn') {
+    chatContextNote.hidden = false
+    chatContextNote.className = 'chat-context-note'
+    chatContextNote.textContent = 'Context window filling up. Summarize soon to keep the full thread.'
+  } else {
+    chatContextNote.hidden = true
+    chatContextNote.textContent = ''
+  }
+}
+
+async function refreshChatContext(pendingMessage = '') {
+  if (!chatContextFill) return chatContextState
+  try {
+    const res = await fetch('/api/chat/context', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(chatContextPayload(pendingMessage)),
+    })
+    if (!res.ok) return chatContextState
+    applyChatContext(await res.json())
+  } catch (err) {
+    console.warn('refreshChatContext failed:', err)
+  }
+  return chatContextState
+}
+
+function scheduleChatContextRefresh(pendingMessage = '') {
+  if (chatContextRefreshTimer) clearTimeout(chatContextRefreshTimer)
+  chatContextRefreshTimer = setTimeout(() => {
+    chatContextRefreshTimer = null
+    void refreshChatContext(pendingMessage)
+  }, 180)
+}
+
+async function summarizeChatContext({ announce = true } = {}) {
+  if (chatSummarizeInFlight) return false
+  if (!chatHistory.length && !chatSummary) return false
+
+  chatSummarizeInFlight = true
+  if (chatSummarizeBtn) chatSummarizeBtn.disabled = true
+  setStatus('thinking', 'summarizing')
+  try {
+    const res = await fetch('/api/chat/summarize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(chatContextPayload()),
+    })
+    const payload = await res.json().catch(() => null)
+    if (!res.ok) {
+      appendChat(payload?.detail || res.statusText || 'Summarize failed', 'error', 'Error')
+      return false
+    }
+    chatSummary = payload.summary || chatSummary
+    chatHistory.length = 0
+    if (announce) {
+      appendChat('Earlier conversation summarized and compressed into context memory.', 'divider', 'Context')
+    }
+    applyChatContext(payload.context || {})
+    return true
+  } catch (err) {
+    appendChat(String(err), 'error', 'Error')
+    return false
+  } finally {
+    chatSummarizeInFlight = false
+    if (chatSummarizeBtn) chatSummarizeBtn.disabled = false
+    if (!buildBtn.disabled) setStatus('', 'idle')
+    else setStatus('running', 'building')
+  }
 }
 
 async function loadProjects() {
@@ -737,6 +1017,7 @@ async function loadProjects() {
 async function loadContext(slug) {
   currentProjectSlug = slug
   projectMeshScopeBbox = null
+  resetChatHistory()
   clearOverlayLayers()
   const res = await fetch(`/api/projects/${slug}/context`)
   const ctx = await res.json()
@@ -755,50 +1036,44 @@ async function loadContext(slug) {
     console.warn('fitMapToMeshScope failed:', err)
   }
   void loadProjectViewsheds(slug, ctx.sites)
+  scheduleChatContextRefresh('')
 }
 
 projectSel.addEventListener('change', () => loadContext(projectSel.value))
 basemapSel.addEventListener('change', () => setBasemap(basemapSel.value))
 
-buildBtn.addEventListener('click', async () => {
-  buildBtn.disabled = true
-  clearChat()
-  setStatus('running', 'starting')
-  const res = await fetch('/api/build', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ project_slug: projectSel.value }),
-  })
-  if (!res.ok) {
-    setStatus('error', 'error')
-    buildBtn.disabled = false
-    appendChat(await res.text(), 'error', 'Error')
-    return
-  }
-  const { job_id } = await res.json()
-  const es = new EventSource(`/api/jobs/${job_id}/events`)
-  es.onmessage = (ev) => {
-    try {
-      routeOp(JSON.parse(ev.data))
-    } catch (e) {
-      console.warn(e)
-    }
-  }
-  es.onerror = () => {
-    es.close()
-    buildBtn.disabled = false
-  }
-})
+function stopChatAgent() {
+  chatAbortController?.abort()
+}
 
 async function sendChatMessage(text) {
+  const mySeq = ++chatRequestSeq
+  chatAbortController?.abort()
+
+  const ctx = await refreshChatContext(text)
+  if (mySeq !== chatRequestSeq) return
+  if (ctx.status === 'full') {
+    appendChat(
+      'Context window is nearly full. Summarize the conversation first, then send your message again.',
+      'error',
+      'Context',
+    )
+    chatInput.focus()
+    return
+  }
+
+  finishPendingToolCalls('—')
+
   appendChat(text, 'user', 'You')
-  chatInput.disabled = true
-  chatSendBtn.disabled = true
-  const sendLabel = chatSendBtn.textContent
-  chatSendBtn.textContent = 'Thinking…'
+  setChatComposerBusy(true)
   setChatPending(true)
   setStatus('thinking', 'thinking')
+  chatAbortController = new AbortController()
   let assistantBody = null
+  let thinkingDetails = null
+  let thinkingBody = null
+  let hadChatError = false
+  let wasCancelled = false
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -806,7 +1081,11 @@ async function sendChatMessage(text) {
       body: JSON.stringify({
         message: text,
         project_slug: projectSel.value || null,
+        history: chatHistory,
+        summary: chatSummary,
+        map_pins: trialMapPinsPayload(),
       }),
+      signal: chatAbortController.signal,
     })
     if (!res.ok) {
       const payload = await res.json().catch(() => null)
@@ -815,35 +1094,87 @@ async function sendChatMessage(text) {
       return
     }
     await consumeChatStream(res, (msg) => {
+      if (mySeq !== chatRequestSeq) return
       if (msg.op === 'chat.started') {
         setChatPendingLabel('Waiting for model')
+        if (msg.context) applyChatContext(msg.context)
+      } else if (msg.op === 'chat.thinking.delta') {
+        if (!thinkingBody) {
+          const block = beginThinkingBlock()
+          thinkingDetails = block.details
+          thinkingBody = block.body
+        }
+        thinkingBody.textContent += msg.text
+        chatEl.scrollTop = chatEl.scrollHeight
       } else if (msg.op === 'chat.delta') {
         if (!assistantBody) assistantBody = beginAssistantReply()
         assistantBody.textContent += msg.text
         chatEl.scrollTop = chatEl.scrollHeight
+      } else if (msg.op === 'chat.cancelled') {
+        wasCancelled = true
       } else if (msg.op === 'chat.error') {
+        hadChatError = true
         appendChat(String(msg.message), 'error', 'Error')
+      } else if (msg.op.startsWith('map.')) {
+        routeOp(msg)
+      } else if (msg.op === 'chat.tool_call' || msg.op === 'chat.tool_result') {
+        routeOp(msg)
       }
     })
+    if (mySeq !== chatRequestSeq) return
+    thinkingDetails?.classList.remove('streaming')
     assistantBody?.closest('.msg')?.classList.remove('streaming')
+    if (wasCancelled) {
+      finishPendingToolCalls()
+      appendChat('Stopped.', 'system', 'System')
+      scheduleChatContextRefresh('')
+    } else if (!hadChatError) {
+      rememberChatTurn(text, assistantBody?.textContent || '')
+    } else {
+      scheduleChatContextRefresh('')
+    }
   } catch (err) {
-    appendChat(String(err), 'error', 'Error')
+    if (mySeq !== chatRequestSeq) return
+    if (err?.name === 'AbortError') {
+      finishPendingToolCalls()
+      thinkingDetails?.classList.remove('streaming')
+      assistantBody?.closest('.msg')?.classList.remove('streaming')
+      appendChat('Stopped.', 'system', 'System')
+      scheduleChatContextRefresh('')
+    } else {
+      appendChat(String(err), 'error', 'Error')
+    }
   } finally {
+    if (mySeq !== chatRequestSeq) return
+    chatAbortController = null
     setChatPending(false)
-    if (!buildBtn.disabled) setStatus('', 'idle')
-    chatInput.disabled = false
-    chatSendBtn.disabled = false
-    chatSendBtn.textContent = sendLabel
+    setChatComposerBusy(false)
+    setStatus('', 'idle')
     chatInput.focus()
   }
 }
+
+chatSendBtn.addEventListener('click', (ev) => {
+  if (!chatInFlight) return
+  ev.preventDefault()
+  stopChatAgent()
+})
 
 chatForm.addEventListener('submit', (ev) => {
   ev.preventDefault()
   const text = chatInput.value.trim()
   if (!text) return
+  if (chatInFlight) stopChatAgent()
   chatInput.value = ''
   void sendChatMessage(text)
+})
+
+chatSummarizeBtn?.addEventListener('click', () => {
+  void summarizeChatContext({ announce: true })
+})
+
+chatInput?.addEventListener('input', () => {
+  scheduleChatContextRefresh(chatInput.value.trim())
 })
 
 map.on('load', () => {

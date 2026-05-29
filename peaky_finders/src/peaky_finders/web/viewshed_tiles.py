@@ -12,6 +12,7 @@ from peaky_finders.coverage_png import _lat_lon_to_fraction, bbox_rotation_norma
 from peaky_finders.web.viewshed_rasters import (
     _bounds_for_workdir,
     latlonbox_image_coordinates,
+    resolve_point_workdir,
     resolve_site_workdir,
     resolve_splat_png_path,
 )
@@ -181,3 +182,57 @@ def tile_layer_metadata(*, project_slug: str, site_slug: str, workdir: Path, bou
         "source_pixels": [w, h],
         "source_path": source_path.name,
     }
+
+
+def point_tile_layer_metadata(
+    *,
+    project_slug: str,
+    lat: float,
+    lon: float,
+    workdir: Path,
+    bounds: dict[str, float],
+) -> dict[str, object]:
+    rgba, source_path = load_viewshed_rgba(workdir)
+    h, w = rgba.shape[:2]
+    minzoom, maxzoom = zoom_range_for_raster(width=w, height=h, bounds=bounds)
+    lat_s = f"{float(lat):.6f}"
+    lon_s = f"{float(lon):.6f}"
+    q = f"lat={lat_s}&lon={lon_s}"
+    return {
+        "tile_url": f"/api/projects/{project_slug}/viewsheds/at/tiles/{{z}}/{{x}}/{{y}}.png?{q}",
+        "bounds": axis_aligned_bounds(bounds),
+        "minzoom": minzoom,
+        "maxzoom": maxzoom,
+        "source_pixels": [w, h],
+        "source_path": source_path.name,
+    }
+
+
+def ensure_point_viewshed_tile(
+    *,
+    project_slug: str,
+    lat: float,
+    lon: float,
+    z: int,
+    x: int,
+    y: int,
+) -> Path:
+    if z < 0 or z > 22:
+        raise FileNotFoundError("tile zoom out of range")
+    workdir = resolve_point_workdir(project_slug=project_slug, lat=lat, lon=lon)
+    if not (workdir / "splat.png").is_file() and not (workdir / "output.ppm").is_file():
+        raise FileNotFoundError(f"missing viewshed raster for {lat:.5f},{lon:.5f}")
+    bounds = _bounds_for_workdir(workdir)
+    if bounds is None:
+        raise FileNotFoundError(f"missing viewshed bounds for {lat:.5f},{lon:.5f}")
+
+    rgba, source_path = load_viewshed_rgba(workdir)
+    source_key = _source_cache_key(source_path)
+    cache_path = _tile_cache_path(workdir=workdir, source_key=source_key, z=z, x=x, y=y)
+    if cache_path.is_file():
+        return cache_path
+
+    tile = render_viewshed_tile(rgba=rgba, bounds=bounds, z=z, x=x, y=y)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tile.save(cache_path, format="PNG", optimize=True)
+    return cache_path
