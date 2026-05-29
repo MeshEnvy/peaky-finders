@@ -221,7 +221,7 @@ def test_enrich_all_preset_sites_writes_yaml_per_site(tmp_path: Path) -> None:
     ), patch(
         "peaky_finders.site_metadata_enrich.write_plss_mlrs_loc_cache",
     ), patch(
-        "peaky_finders.site_metadata_enrich.dump_preset_yaml_document",
+        "peaky_finders.sites_job.dump_preset_yaml_document",
         wraps=dump_preset_yaml_document,
     ) as dump_yaml:
         network_count, updated = enrich_all_preset_sites(cfg, allow_network_plss=False)

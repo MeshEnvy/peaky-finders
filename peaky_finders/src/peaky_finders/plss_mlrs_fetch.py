@@ -12,7 +12,7 @@ from typing import Any
 
 from peaky_finders.content_keys import content_key_hex, read_content_key_hex, write_content_key
 from peaky_finders.http_pool import CADNSDI_HTTP_POOL, HttpPool
-from peaky_finders.sites_job import Preset, _slugify_files_segment, dump_preset_yaml_document, read_preset_yaml_tree
+from peaky_finders.sites_job import Preset, _slugify_files_segment, read_preset_yaml_tree, update_preset_yaml_tree
 
 CADNSDI_BASE = "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer"
 
@@ -221,6 +221,25 @@ def _yaml_plss_mlrs(ent: dict[str, Any]) -> tuple[str | None, str | None]:
     return plss_s, mlrs_s
 
 
+def _apply_plss_mlrs_on_preset(preset_path: Path, slug: str, plss: str | None, mlrs: str | None) -> None:
+    def mutator(_y: Any, root: dict[str, Any]) -> None:
+        sites_raw = root.get("sites")
+        if isinstance(sites_raw, dict):
+            ent = sites_raw.get(slug)
+            if isinstance(ent, dict):
+                ent["plss"] = plss
+                ent["mlrs"] = mlrs
+            return
+        if isinstance(sites_raw, list):
+            for site_slug, ent in _list_site_slug_assignments(sites_raw):
+                if site_slug == slug and isinstance(ent, dict):
+                    ent["plss"] = plss
+                    ent["mlrs"] = mlrs
+                    break
+
+    update_preset_yaml_tree(preset_path, mutator)
+
+
 def populate_preset_plss_mlrs_file(
     preset_path: Path,
     *,
@@ -241,6 +260,7 @@ def populate_preset_plss_mlrs_file(
     """
     preset_path = preset_path.expanduser()
     yaml_rt, root = read_preset_yaml_tree(preset_path)
+    del yaml_rt
     sites_raw = root.get("sites")
     if sites_raw is None:
         return 0
@@ -278,13 +298,11 @@ def populate_preset_plss_mlrs_file(
         stamp = loc_stamp(lat, lon)
         try:
             cached = (loc_cache or {}).get(stamp)
-            from_network = False
             if cached is not None and loc_plss_resolved(cached) and not force_network:
                 plss, mlrs = cached.get("plss", ""), cached.get("mlrs", "")
             else:
                 _emit(f"PLSS/MLRS: [{i}/{total}] {slug} …")
                 plss, mlrs = plss_mlrs_for_point(lon, lat, http_pool=http_pool)
-                from_network = True
                 network_count += 1
                 if loc_cache is not None:
                     loc_cache[stamp] = {"plss": plss or "", "mlrs": mlrs or ""}
@@ -292,17 +310,12 @@ def populate_preset_plss_mlrs_file(
             new_mlrs = mlrs or None
             old_plss, old_mlrs = _yaml_plss_mlrs(ent)
             if old_plss != new_plss or old_mlrs != new_mlrs:
-                ent["plss"] = new_plss
-                ent["mlrs"] = new_mlrs
-                dump_preset_yaml_document(yaml_rt, root, preset_path)
+                _apply_plss_mlrs_on_preset(preset_path, slug, new_plss, new_mlrs)
         except Exception as e:
             _emit(f"  ERROR {slug}: {e}")
             old_plss, old_mlrs = _yaml_plss_mlrs(ent)
             if old_plss is not None or old_mlrs is not None:
-                ent["plss"] = None
-                ent["mlrs"] = None
-                dump_preset_yaml_document(yaml_rt, root, preset_path)
-            from_network = False
+                _apply_plss_mlrs_on_preset(preset_path, slug, None, None)
     return network_count
 
 

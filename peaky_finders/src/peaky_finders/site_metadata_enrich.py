@@ -18,11 +18,11 @@ from peaky_finders.plss_mlrs_fetch import (
     write_plss_mlrs_loc_cache,
 )
 from peaky_finders.sites_job import (
-    dump_preset_yaml_document,
-    parse_preset_dict,
+    load_preset,
     read_preset_yaml_tree,
     resolved_preset_build_dir,
     resolved_skadi_mirror_dir,
+    update_preset_yaml_tree,
 )
 
 
@@ -184,6 +184,35 @@ def enrich_site_entry_metadata(
     return changed, plss_from_network
 
 
+def _site_ent_snapshot(preset_path: Path, slug: str) -> dict[str, Any] | None:
+    preset = load_preset(preset_path)
+    if slug not in preset.sites:
+        return None
+    entry = preset.sites[slug]
+    ent: dict[str, Any] = {"loc": [entry.lat, entry.lon]}
+    if entry.plss is not None:
+        ent["plss"] = entry.plss
+    if entry.mlrs is not None:
+        ent["mlrs"] = entry.mlrs
+    if entry.elevation_m is not None:
+        ent["elevation_m"] = entry.elevation_m
+    return ent
+
+
+def _merge_site_metadata_into_root(root: dict[str, Any], slug: str, enriched: dict[str, Any]) -> None:
+    sites_raw = root.get("sites")
+    if not isinstance(sites_raw, dict):
+        return
+    tgt = sites_raw.get(slug)
+    if not isinstance(tgt, dict):
+        return
+    for key in ("plss", "mlrs", "elevation_m"):
+        if key in enriched:
+            tgt[key] = enriched[key]
+        elif key in tgt:
+            tgt.pop(key)
+
+
 def _resolve_site_slugs(
     preset_path: Path,
     site_slug: str | None,
@@ -223,25 +252,19 @@ def resolve_site_metadata(
     if not slugs:
         return 0, 0
 
-    yaml_rt, root = read_preset_yaml_tree(preset_path)
-    sites_raw = root.get("sites")
-    if not isinstance(sites_raw, dict):
-        return 0, 0
-
     cache_base = resolved_preset_build_dir(preset_path)
     loc_cache = read_plss_mlrs_loc_cache(cache_base)
     dem_dir = resolved_dem_mirror_for_preset(preset_path)
     pool = http_pool or CADNSDI_HTTP_POOL
     cache_lock = threading.Lock()
-    persist_lock = threading.Lock()
 
     network_count = 0
     updated = 0
 
-    def _enrich_slug(slug: str) -> tuple[str, bool, bool]:
-        ent = sites_raw.get(slug)
-        if not isinstance(ent, dict):
-            return slug, False, False
+    def _enrich_slug(slug: str) -> tuple[str, dict[str, Any] | None, bool, bool]:
+        ent = _site_ent_snapshot(preset_path, slug)
+        if ent is None:
+            return slug, None, False, False
         changed, from_network = enrich_site_entry_metadata(
             ent,
             loc_cache=loc_cache,
@@ -251,32 +274,36 @@ def resolve_site_metadata(
             loc_cache_lock=cache_lock,
             force=force,
         )
-        return slug, changed, from_network
+        if not changed:
+            return slug, None, False, from_network
+        return slug, ent, True, from_network
 
-    def _persist(slug: str, changed: bool, from_network: bool) -> None:
+    def _persist(slug: str, enriched: dict[str, Any] | None, changed: bool, from_network: bool) -> None:
         nonlocal network_count, updated
-        with persist_lock:
-            if from_network:
-                network_count += 1
-                write_plss_mlrs_loc_cache(cache_base, loc_cache)
-            if changed:
-                updated += 1
-                parse_preset_dict(root)
-                dump_preset_yaml_document(yaml_rt, root, preset_path)
-                if log_fp is not None:
-                    print(f"site metadata: {slug} updated", file=log_fp, flush=True)
+        if from_network:
+            network_count += 1
+            write_plss_mlrs_loc_cache(cache_base, loc_cache)
+        if changed and enriched is not None:
+            updated += 1
+
+            def mutator(_yaml_rt: Any, root: dict[str, Any]) -> None:
+                _merge_site_metadata_into_root(root, slug, enriched)
+
+            update_preset_yaml_tree(preset_path, mutator)
+            if log_fp is not None:
+                print(f"site metadata: {slug} updated", file=log_fp, flush=True)
 
     workers = min(pool.max_concurrent, len(slugs))
     if workers <= 1:
         for slug in slugs:
-            slug, changed, from_network = _enrich_slug(slug)
-            _persist(slug, changed, from_network)
+            slug, enriched, changed, from_network = _enrich_slug(slug)
+            _persist(slug, enriched, changed, from_network)
     else:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = [executor.submit(_enrich_slug, slug) for slug in slugs]
             for fut in as_completed(futures):
-                slug, changed, from_network = fut.result()
-                _persist(slug, changed, from_network)
+                slug, enriched, changed, from_network = fut.result()
+                _persist(slug, enriched, changed, from_network)
 
     write_plss_mlrs_loc_cache(cache_base, loc_cache)
     return network_count, updated

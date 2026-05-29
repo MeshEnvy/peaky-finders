@@ -46,15 +46,14 @@ from peaky_finders.sites_job import (
     MapType,
     Preset,
     ProjectMapEntry,
-    dump_preset_yaml_document,
     load_preset,
     maps_by_type,
-    parse_preset_dict,
     preset_general_overlays,
     read_preset_yaml_tree,
     resolved_bundle_dir,
     resolved_preset_clips_dir,
     resolved_preset_data_dir,
+    update_preset_yaml_tree,
 )
 
 MAP_TYPES: tuple[MapType, ...] = ("aoi", "include", "exclude", "general_overlay")
@@ -400,33 +399,37 @@ def _maps_list(root: dict[str, Any]) -> list[dict[str, Any]]:
 def append_map_entry(slug: str, payload: dict[str, Any]) -> dict[str, Any]:
     preset_path = _preset_path(slug)
     entry = ProjectMapEntry.model_validate(payload)
-    y, root = read_preset_yaml_tree(preset_path)
-    maps_raw = _maps_list(root)
-    if any(isinstance(m, dict) and str(m.get("id")) == entry.id for m in maps_raw):
-        raise ValueError(f"map id already exists: {entry.id!r}")
-    maps_raw.append(entry.model_dump(mode="json", exclude_none=True))
-    parse_preset_dict(root)
-    dump_preset_yaml_document(y, root, preset_path)
+
+    def mutator(_y: Any, root: dict[str, Any]) -> ProjectMapEntry:
+        maps_raw = _maps_list(root)
+        if any(isinstance(m, dict) and str(m.get("id")) == entry.id for m in maps_raw):
+            raise ValueError(f"map id already exists: {entry.id!r}")
+        maps_raw.append(entry.model_dump(mode="json", exclude_none=True))
+        return entry
+
+    saved = update_preset_yaml_tree(preset_path, mutator)
     preset = load_preset(preset_path)
-    return _map_entry_dict(entry, preset, preset_path, slug=slug)
+    return _map_entry_dict(saved, preset, preset_path, slug=slug)
 
 
 def patch_map_entry(slug: str, map_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     preset_path = _preset_path(slug)
-    y, root = read_preset_yaml_tree(preset_path)
-    maps_raw = _maps_list(root)
-    idx = next((i for i, m in enumerate(maps_raw) if isinstance(m, dict) and str(m.get("id")) == map_id), None)
-    if idx is None:
-        raise KeyError(f"unknown map id: {map_id!r}")
-    current = dict(maps_raw[idx]) if isinstance(maps_raw[idx], dict) else {}
-    current.update({k: v for k, v in payload.items() if v is not None})
-    current["id"] = map_id
-    entry = ProjectMapEntry.model_validate(current)
-    maps_raw[idx] = entry.model_dump(mode="json", exclude_none=True)
-    parse_preset_dict(root)
-    dump_preset_yaml_document(y, root, preset_path)
+
+    def mutator(_y: Any, root: dict[str, Any]) -> ProjectMapEntry:
+        maps_raw = _maps_list(root)
+        idx = next((i for i, m in enumerate(maps_raw) if isinstance(m, dict) and str(m.get("id")) == map_id), None)
+        if idx is None:
+            raise KeyError(f"unknown map id: {map_id!r}")
+        current = dict(maps_raw[idx]) if isinstance(maps_raw[idx], dict) else {}
+        current.update({k: v for k, v in payload.items() if v is not None})
+        current["id"] = map_id
+        entry = ProjectMapEntry.model_validate(current)
+        maps_raw[idx] = entry.model_dump(mode="json", exclude_none=True)
+        return entry
+
+    saved = update_preset_yaml_tree(preset_path, mutator)
     preset = load_preset(preset_path)
-    return _map_entry_dict(entry, preset, preset_path, slug=slug)
+    return _map_entry_dict(saved, preset, preset_path, slug=slug)
 
 
 def patch_map_display_mode(slug: str, map_id: str, mode: str) -> dict[str, Any]:
@@ -441,36 +444,38 @@ def patch_eligible_display_mode(slug: str, mode: str) -> dict[str, Any]:
 
 def patch_eligible_visibility(slug: str, visible: bool) -> dict[str, Any]:
     preset_path = _preset_path(slug)
-    y, root = read_preset_yaml_tree(preset_path)
-    bundle = root.get("bundle")
-    if not isinstance(bundle, dict):
-        bundle = {}
-        root["bundle"] = bundle
-    kmz = bundle.get("kmz")
-    if not isinstance(kmz, dict):
-        kmz = {}
-        bundle["kmz"] = kmz
-    layers = kmz.get("layers")
-    if not isinstance(layers, dict):
-        layers = {}
-        kmz["layers"] = layers
-    layers["eligible"] = bool(visible)
-    parse_preset_dict(root)
-    dump_preset_yaml_document(y, root, preset_path)
+
+    def mutator(_y: Any, root: dict[str, Any]) -> None:
+        bundle = root.get("bundle")
+        if not isinstance(bundle, dict):
+            bundle = {}
+            root["bundle"] = bundle
+        kmz = bundle.get("kmz")
+        if not isinstance(kmz, dict):
+            kmz = {}
+            bundle["kmz"] = kmz
+        layers = kmz.get("layers")
+        if not isinstance(layers, dict):
+            layers = {}
+            kmz["layers"] = layers
+        layers["eligible"] = bool(visible)
+
+    update_preset_yaml_tree(preset_path, mutator)
     preset = load_preset(preset_path)
     return _eligible_catalog_entry(preset, preset_path, slug=slug)
 
 
 def delete_map_entry(slug: str, map_id: str) -> None:
     preset_path = _preset_path(slug)
-    y, root = read_preset_yaml_tree(preset_path)
-    maps_raw = _maps_list(root)
-    kept = [m for m in maps_raw if not (isinstance(m, dict) and str(m.get("id")) == map_id)]
-    if len(kept) == len(maps_raw):
-        raise KeyError(f"unknown map id: {map_id!r}")
-    root["maps"] = kept
-    parse_preset_dict(root)
-    dump_preset_yaml_document(y, root, preset_path)
+
+    def mutator(_y: Any, root: dict[str, Any]) -> None:
+        maps_raw = _maps_list(root)
+        kept = [m for m in maps_raw if not (isinstance(m, dict) and str(m.get("id")) == map_id)]
+        if len(kept) == len(maps_raw):
+            raise KeyError(f"unknown map id: {map_id!r}")
+        root["maps"] = kept
+
+    update_preset_yaml_tree(preset_path, mutator)
 
 
 def run_maps_rebuild(
