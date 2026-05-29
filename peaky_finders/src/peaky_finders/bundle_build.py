@@ -30,9 +30,9 @@ from shapely.ops import unary_union
 from peaky_finders.google_earth_polygon import orient_for_kml
 from peaky_finders.geometry_preview_png import write_wgs84_geodataframe_preview_png
 from peaky_finders.sites_job import (
-    BundleKmlOverlayStyles,
     BundleConfig,
-    BundleReferenceLayerEntry,
+    BundleKmlOverlayStyles,
+    GeneralOverlayEntry,
     GdbLayerGroup,
     GdbLayerSpec,
     Preset,
@@ -42,8 +42,13 @@ from peaky_finders.sites_job import (
     canonical_bundle_land_use_config_text,
     canonical_bundle_reference_config_text,
     load_preset,
+    maps_by_type,
     ogr_where_for_layer_spec,
     peaky_home,
+    preset_aoi_groups,
+    preset_exclude_groups,
+    preset_general_overlays,
+    preset_include_groups,
     resolved_bundle_dir,
     resolved_preset_build_dir,
     resolved_preset_bundle_data_dir,
@@ -61,26 +66,22 @@ def resolve_land_use_gdb_path(data_dir: Path, path_str: str) -> Path:
 
 
 def require_bundle_config(preset: Preset) -> BundleConfig:
-    if preset.bundle is None:
-        raise ValueError('Preset needs a top-level "bundle" object with aoi, include, and exclude.')
-    pre = preset.bundle
-    if not pre.aoi:
+    if not maps_by_type(preset.maps, "aoi"):
         raise ValueError(
-            'Preset needs non-empty "bundle.aoi" (GDB path + polygon layers defining the AOI).'
+            'Preset needs non-empty "maps" with type aoi (GDB path + polygon layers defining the AOI).'
         )
-    if not pre.include:
+    if not maps_by_type(preset.maps, "include"):
         raise ValueError(
-            'Preset needs non-empty "bundle.include". Layer names:'
-            "\n  list GDB layers with ogrinfo or pyogrio"
-            "\nthen edit the preset JSON bundle.include / bundle.exclude arrays."
+            'Preset needs non-empty "maps" with type include. '
+            "List OGR layers in each map entry's layers field."
         )
-    return pre
+    return preset.bundle or BundleConfig()
 
 
-def _unique_sorted_aoi_gdb_roots(pre: BundleConfig, data_dir: Path) -> list[Path]:
+def _unique_sorted_aoi_gdb_roots(preset: Preset, data_dir: Path) -> list[Path]:
     seen: set[str] = set()
     roots: list[Path] = []
-    for g in pre.aoi:
+    for g in preset_aoi_groups(preset):
         r = resolve_land_use_gdb_path(data_dir, g.path)
         key = str(r.resolve())
         if key not in seen:
@@ -89,10 +90,10 @@ def _unique_sorted_aoi_gdb_roots(pre: BundleConfig, data_dir: Path) -> list[Path
     return sorted(roots, key=lambda p: str(p))
 
 
-def _unique_sorted_gdb_roots(pre: BundleConfig, data_dir: Path) -> list[Path]:
+def _unique_sorted_gdb_roots(preset: Preset, data_dir: Path) -> list[Path]:
     seen: set[str] = set()
     roots: list[Path] = []
-    for g in pre.include + pre.exclude:
+    for g in preset_include_groups(preset) + preset_exclude_groups(preset):
         r = resolve_land_use_gdb_path(data_dir, g.path)
         key = str(r.resolve())
         if key not in seen:
@@ -101,10 +102,10 @@ def _unique_sorted_gdb_roots(pre: BundleConfig, data_dir: Path) -> list[Path]:
     return sorted(roots, key=lambda p: str(p))
 
 
-def _unique_sorted_include_gdb_roots(pre: BundleConfig, data_dir: Path) -> list[Path]:
+def _unique_sorted_include_gdb_roots(preset: Preset, data_dir: Path) -> list[Path]:
     seen: set[str] = set()
     roots: list[Path] = []
-    for g in pre.include:
+    for g in preset_include_groups(preset):
         r = resolve_land_use_gdb_path(data_dir, g.path)
         key = str(r.resolve())
         if key not in seen:
@@ -113,10 +114,10 @@ def _unique_sorted_include_gdb_roots(pre: BundleConfig, data_dir: Path) -> list[
     return sorted(roots, key=lambda p: str(p))
 
 
-def _unique_sorted_exclude_gdb_roots(pre: BundleConfig, data_dir: Path) -> list[Path]:
+def _unique_sorted_exclude_gdb_roots(preset: Preset, data_dir: Path) -> list[Path]:
     seen: set[str] = set()
     roots: list[Path] = []
-    for g in pre.exclude:
+    for g in preset_exclude_groups(preset):
         r = resolve_land_use_gdb_path(data_dir, g.path)
         key = str(r.resolve())
         if key not in seen:
@@ -125,16 +126,16 @@ def _unique_sorted_exclude_gdb_roots(pre: BundleConfig, data_dir: Path) -> list[
     return sorted(roots, key=lambda p: str(p))
 
 
-def land_use_inputs_fingerprint_body(pre: BundleConfig, data_dir: Path) -> str:
-    """v3: canonical preset bundle land-use config + per-referenced-GDB file-tree fingerprints."""
+def land_use_inputs_fingerprint_body(preset: Preset, data_dir: Path) -> str:
+    """v3: canonical preset maps land-use config + per-referenced-GDB file-tree fingerprints."""
     data_dir = Path(data_dir).expanduser().resolve()
     parts: list[str] = [
         "format=bundle_land_use_inputs/v3",
         "config",
-        canonical_bundle_land_use_config_text(pre).rstrip("\n"),
+        canonical_bundle_land_use_config_text(preset.maps).rstrip("\n"),
         "gdb_roots",
     ]
-    for root in _unique_sorted_gdb_roots(pre, data_dir):
+    for root in _unique_sorted_gdb_roots(preset, data_dir):
         if not root.exists():
             raise FileNotFoundError(f"GDB path not found for bundle fingerprint: {root}")
         parts.append(str(root.resolve()))
@@ -142,16 +143,16 @@ def land_use_inputs_fingerprint_body(pre: BundleConfig, data_dir: Path) -> str:
     return "\n".join(parts) + "\n"
 
 
-def aoi_inputs_fingerprint_body(pre: BundleConfig, data_dir: Path) -> str:
+def aoi_inputs_fingerprint_body(preset: Preset, data_dir: Path) -> str:
     """v1: AOI preset config + per-referenced-GDB file-tree fingerprints (AOI sources only)."""
     data_dir = Path(data_dir).expanduser().resolve()
     parts: list[str] = [
         "format=bundle_aoi_inputs/v1",
         "config",
-        canonical_bundle_aoi_config_text(pre).rstrip("\n"),
+        canonical_bundle_aoi_config_text(preset.maps).rstrip("\n"),
         "gdb_roots",
     ]
-    for root in _unique_sorted_aoi_gdb_roots(pre, data_dir):
+    for root in _unique_sorted_aoi_gdb_roots(preset, data_dir):
         if not root.exists():
             raise FileNotFoundError(f"GDB path not found for AOI fingerprint: {root}")
         parts.append(str(root.resolve()))
@@ -159,26 +160,27 @@ def aoi_inputs_fingerprint_body(pre: BundleConfig, data_dir: Path) -> str:
     return "\n".join(parts) + "\n"
 
 
-def bundle_aoi_inputs_digest(pre: BundleConfig, data_dir: Path) -> str:
+def bundle_aoi_inputs_digest(preset: Preset, data_dir: Path) -> str:
     """SHA-256 hex of AOI fingerprint (preset AOI paths/layers + GDB file trees)."""
     dd = Path(data_dir).expanduser().resolve()
-    body = aoi_inputs_fingerprint_body(pre, dd)
+    body = aoi_inputs_fingerprint_body(preset, dd)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def bundle_land_use_inputs_digest(pre: BundleConfig, data_dir: Path) -> str:
+def bundle_land_use_inputs_digest(preset: Preset, data_dir: Path) -> str:
     """SHA-256 hex of v3 land-use fingerprint (preset paths/layers + GDB file trees)."""
     dd = Path(data_dir).expanduser().resolve()
-    body = land_use_inputs_fingerprint_body(pre, dd)
+    body = land_use_inputs_fingerprint_body(preset, dd)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def _unique_sorted_reference_gdb_roots(pre: BundleConfig, data_dir: Path) -> list[Path]:
-    if not pre.reference:
+def _unique_sorted_general_overlay_gdb_roots(preset: Preset, data_dir: Path) -> list[Path]:
+    overlays = preset_general_overlays(preset)
+    if not overlays:
         return []
     seen: set[str] = set()
     roots: list[Path] = []
-    for ent in pre.reference:
+    for ent in overlays:
         r = resolve_land_use_gdb_path(data_dir, ent.path)
         key = str(r.resolve())
         if key not in seen:
@@ -187,32 +189,38 @@ def _unique_sorted_reference_gdb_roots(pre: BundleConfig, data_dir: Path) -> lis
     return sorted(roots, key=lambda p: str(p))
 
 
-def bundle_reference_inputs_fingerprint_body(pre: BundleConfig, data_dir: Path) -> str:
-    """Canonical reference preset + GDB file-tree mtimes (independent of land-use cache digest)."""
+def bundle_general_overlay_inputs_fingerprint_body(preset: Preset, data_dir: Path) -> str:
+    """Canonical general_overlay preset + GDB file-tree mtimes (independent of land-use cache digest)."""
     data_dir = Path(data_dir).expanduser().resolve()
-    if not pre.reference:
+    overlays = preset_general_overlays(preset)
+    if not overlays:
         return (
-            "format=bundle_reference_inputs/v1\nconfig\n"
-            + json.dumps({"reference": []}, sort_keys=True)
+            "format=bundle_general_overlay_inputs/v1\nconfig\n"
+            + json.dumps({"general_overlay": []}, sort_keys=True)
             + "\n"
         )
     parts: list[str] = [
-        "format=bundle_reference_inputs/v1",
+        "format=bundle_general_overlay_inputs/v1",
         "config",
-        canonical_bundle_reference_config_text(pre).rstrip("\n"),
+        canonical_bundle_reference_config_text(preset.maps).rstrip("\n"),
         "gdb_roots",
     ]
-    for root in _unique_sorted_reference_gdb_roots(pre, data_dir):
+    for root in _unique_sorted_general_overlay_gdb_roots(preset, data_dir):
         if not root.exists():
-            raise FileNotFoundError(f"GDB path not found for reference bundle fingerprint: {root}")
+            raise FileNotFoundError(f"GDB path not found for general_overlay bundle fingerprint: {root}")
         parts.append(str(root.resolve()))
         parts.append(_file_tree_mtime_size_fingerprint(root).rstrip("\n"))
     return "\n".join(parts) + "\n"
 
 
-def bundle_reference_inputs_digest(pre: BundleConfig, data_dir: Path) -> str:
-    body = bundle_reference_inputs_fingerprint_body(pre, data_dir)
+def bundle_general_overlay_inputs_digest(preset: Preset, data_dir: Path) -> str:
+    body = bundle_general_overlay_inputs_fingerprint_body(preset, data_dir)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+# Legacy aliases
+bundle_reference_inputs_fingerprint_body = bundle_general_overlay_inputs_fingerprint_body
+bundle_reference_inputs_digest = bundle_general_overlay_inputs_digest
 
 
 def bundle_kml_overlay_inputs_fingerprint_body(pre: BundleConfig) -> str:
@@ -231,8 +239,8 @@ def bundle_kml_overlay_inputs_digest(pre: BundleConfig) -> str:
 def bundle_cache_digest(*, preset: Preset, data_dir: Path | None = None) -> str:
     """SHA-256 hex: AOI (v1) + land-use (v3) fingerprint bodies (logging / diagnostics only)."""
     dd = Path(data_dir).expanduser().resolve() if data_dir is not None else peaky_home() / "data"
-    pre = require_bundle_config(preset)
-    payload = aoi_inputs_fingerprint_body(pre, dd) + land_use_inputs_fingerprint_body(pre, dd)
+    require_bundle_config(preset)
+    payload = aoi_inputs_fingerprint_body(preset, dd) + land_use_inputs_fingerprint_body(preset, dd)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -281,10 +289,10 @@ def _file_tree_mtime_size_fingerprint(root: Path) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
-def load_composite_aoi_polygon(pre: BundleConfig, data_dir: Path) -> BaseGeometry:
-    """Union all ``bundle.aoi`` polygon layers to one geometry in EPSG:4326."""
+def load_composite_aoi_polygon(preset: Preset, data_dir: Path) -> BaseGeometry:
+    """Union all ``maps`` type aoi polygon layers to one geometry in EPSG:4326."""
     pieces: list[BaseGeometry] = []
-    jobs = _flatten_gdb_layer_jobs(pre.aoi, data_dir)
+    jobs = _flatten_gdb_layer_jobs(preset_aoi_groups(preset), data_dir)
     for preset_path, resolved, layer_name, where in jobs:
         if not resolved.exists():
             raise FileNotFoundError(f"AOI GDB not found: {resolved} (preset path {preset_path!r})")
@@ -1214,18 +1222,22 @@ def reference_entry_kml_stem(entry_id: str) -> str:
     return s[:120] if s else "ref"
 
 
-def _overlay_for_reference_entry(
-    entry: BundleReferenceLayerEntry,
+def _overlay_for_general_overlay_entry(
+    entry: GeneralOverlayEntry,
     plc: BundleConfig,
 ) -> BundleKmlOverlayStyles | None:
     if plc.kml_overlay is not None:
         base = plc.kml_overlay
-        ref_style = entry.style or base.reference or base.default
-        return base.model_copy(update={"reference": ref_style})
+        overlay_style = entry.style or base.general_overlay or base.default
+        return base.model_copy(update={"general_overlay": overlay_style})
     if entry.style is None:
         return None
     st = entry.style
-    return BundleKmlOverlayStyles(default=st, reference=st)
+    return BundleKmlOverlayStyles(default=st, general_overlay=st)
+
+
+# Legacy alias
+_overlay_for_reference_entry = _overlay_for_general_overlay_entry
 
 
 
@@ -1269,7 +1281,7 @@ def cached_gpkg_path_from_preset(
         return bundle_eligible_land_use_gpkg(bundle_dir)
     plc = require_bundle_config(preset)
     planned = plan_clip_build_result(
-        plc=plc, data_dir=dd, clips_root=resolved_preset_clips_dir(p)
+        preset=preset, data_dir=dd, clips_root=resolved_preset_clips_dir(p)
     )
     return planned.eligible_gpkg
 

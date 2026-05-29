@@ -56,7 +56,7 @@ def test_enrich_all_project_sites_skips_invalid_presets(monkeypatch, tmp_path: P
             {
                 "simulation": {"provider": "los", "radius_km": 5.0},
                 "display": {},
-                "bundle": {"inputs_root": "data", "aoi": [], "include": [], "exclude": []},
+                "bundle": {},
                 "sites": {"a": {"loc": [36.0, -115.0]}},
             }
         ),
@@ -92,7 +92,7 @@ def test_project_context_goal_labels_default_to_key(monkeypatch, tmp_path: Path)
             {
                 "simulation": {"provider": "los", "radius_km": 5.0},
                 "display": {},
-                "bundle": {"inputs_root": "data", "aoi": [], "include": [], "exclude": []},
+                "bundle": {},
                 "sites": {
                     "vegas": {"type": "goal", "name": "Las Vegas", "loc": [36.17, -115.14]},
                     "hub": {"name": "Hub", "loc": [36.5, -115.5]},

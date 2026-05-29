@@ -15,7 +15,7 @@ from peaky_finders.site_suggestions.rf_link import (
     rf_mutual_link_slug_pairs,
     rf_mutual_link_slug_pairs_from_site,
 )
-from peaky_finders.sites_job import Preset, SiteType, load_preset, peaky_projects_dir, resolved_preset_bundle_data_dir
+from peaky_finders.sites_job import Preset, SiteType, load_preset, maps_by_type, peaky_projects_dir, resolved_preset_bundle_data_dir
 from peaky_finders.web.site_preset_io import (
     delete_site_from_preset,
     update_site_in_preset,
@@ -192,10 +192,10 @@ def project_geocode_aoi(slug: str) -> tuple[list[float] | None, BaseGeometry | N
         _GEOCODE_AOI_CACHE[slug] = (mtime, None, None)
         return None, None
 
-    if preset.bundle and preset.bundle.aoi:
+    if maps_by_type(preset.maps, "aoi"):
         try:
             data_dir = resolved_preset_bundle_data_dir(preset_path=cfg, preset=preset)
-            poly = load_composite_aoi_polygon(preset.bundle, data_dir)
+            poly = load_composite_aoi_polygon(preset, data_dir)
             if not poly.is_empty:
                 aoi = poly
                 west, south, east, north = poly.bounds

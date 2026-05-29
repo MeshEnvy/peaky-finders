@@ -9,7 +9,7 @@ import re
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -152,24 +152,22 @@ def resolved_mesh_site_links_kml(preset_path: Path) -> Path:
     return resolved_preset_build_dir(path) / "mesh" / "links" / "site_to_site.kml"
 
 
+def resolved_preset_data_dir(preset_path: Path) -> Path:
+    """Vector dataset root: ``<preset-dir>/data``."""
+    return (Path(preset_path).expanduser().resolve().parent / "data").resolve()
+
+
 def resolved_preset_bundle_data_dir(
     *,
     preset_path: Path,
     preset: Preset,
     data_dir_override: Path | None = None,
 ) -> Path:
-    """GDB ``bundle.*`` path root: override, else ``<preset-dir>/<bundle.inputs_root>``, else ``<PEAKY_HOME>/data``."""
+    """GDB path root for bundle builds: override, else ``<preset-dir>/data``."""
+    del preset
     if data_dir_override is not None:
         return Path(data_dir_override).expanduser().resolve()
-    bundle = preset.bundle
-    if bundle is not None and bundle.inputs_root is not None:
-        raw = str(bundle.inputs_root).strip()
-        if raw:
-            root = Path(raw)
-            if root.is_absolute():
-                return root.resolve()
-            return (Path(preset_path).expanduser().resolve().parent / root).resolve()
-    return (peaky_home() / "data").resolve()
+    return resolved_preset_data_dir(preset_path)
 
 
 def _preset_yaml_typ_rt() -> YAML:
@@ -415,13 +413,11 @@ class GdbAttributeRule(BaseModel):
 
 
 class GdbLayerSpec(BaseModel):
-    """One GDB layer name plus optional attribute include / exclude lists for reading features."""
+    """One OGR layer name (no attribute filters — select layers explicitly in preset ``maps``)."""
 
     model_config = ConfigDict(extra="ignore")
 
     name: str
-    include: list[GdbAttributeRule] = Field(default_factory=list)
-    exclude: list[GdbAttributeRule] = Field(default_factory=list)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -432,18 +428,7 @@ class GdbLayerSpec(BaseModel):
         return s
 
     def canonical_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"name": self.name}
-        if self.include:
-            d["include"] = [
-                {"name": r.name, "value": r.value}
-                for r in sorted(self.include, key=lambda x: (x.name, x.value))
-            ]
-        if self.exclude:
-            d["exclude"] = [
-                {"name": r.name, "value": r.value}
-                for r in sorted(self.exclude, key=lambda x: (x.name, x.value))
-            ]
-        return d
+        return {"name": self.name}
 
 
 class GdbLayerGroup(BaseModel):
@@ -514,16 +499,9 @@ def ogr_sql_literal(value: str) -> str:
 
 
 def ogr_where_for_layer_spec(spec: GdbLayerSpec) -> str | None:
-    """OGR WHERE clause: optional (include1 OR …) AND NOT exclude1 AND NOT …. Empty include = all rows."""
-    parts: list[str] = []
-    if spec.include:
-        ors = [f"{r.name} = {ogr_sql_literal(r.value)}" for r in spec.include]
-        parts.append("(" + " OR ".join(ors) + ")")
-    for r in spec.exclude:
-        parts.append(f"NOT ({r.name} = {ogr_sql_literal(r.value)})")
-    if not parts:
-        return None
-    return " AND ".join(parts)
+    """OGR WHERE clause (unused — maps use explicit OGR layer lists only)."""
+    del spec
+    return None
 
 
 def _gdb_layer_group_sort_key(g: GdbLayerGroup) -> tuple[str, tuple[str, ...]]:
@@ -537,26 +515,6 @@ def _gdb_layer_group_payload(g: GdbLayerGroup) -> dict[str, Any]:
         return {"layers": "*", "path": g.path}
     sorted_specs = sorted(g.layers, key=lambda s: s.name)
     return {"layers": [s.canonical_dict() for s in sorted_specs], "path": g.path}
-
-
-def canonical_bundle_aoi_config_text(pre: BundleConfig) -> str:
-    """Deterministic text for AOI cache keys (sorted groups, sorted layers within each group)."""
-    sorted_groups = sorted(pre.aoi, key=_gdb_layer_group_sort_key)
-    payload = {"aoi": [_gdb_layer_group_payload(g) for g in sorted_groups]}
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
-
-
-def canonical_bundle_land_use_config_text(pre: BundleConfig) -> str:
-    """Deterministic text block for hashing include/exclude only (not AOI)."""
-    def groups_payload(groups: list[GdbLayerGroup]) -> list[dict[str, Any]]:
-        sorted_groups = sorted(groups, key=_gdb_layer_group_sort_key)
-        return [_gdb_layer_group_payload(g) for g in sorted_groups]
-
-    payload = {
-        "exclude": groups_payload(pre.exclude),
-        "include": groups_payload(pre.include),
-    }
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
 
 
 _KML_COLOR_RE = re.compile(r"^[0-9a-fA-F]{8}$")
@@ -581,14 +539,61 @@ class BundleKmlLayerStyle(BaseModel):
         return s.lower()
 
 
-class BundleReferenceLayerEntry(BaseModel):
-    """One optional context / reference GDB source: path, filters, per-entry KMZ visibility and style."""
+MapType = Literal["aoi", "include", "exclude", "general_overlay"]
+
+
+class ProjectMapEntry(BaseModel):
+    """One vector dataset registered on a project preset."""
 
     model_config = ConfigDict(extra="ignore")
 
-    id: str = Field(min_length=1, description="Stable id for cache filenames and Places folder label")
+    id: str = Field(min_length=1, description="Stable id for clips, API, and AI references")
+    name: str
+    description: str = ""
+    type: MapType
     path: str
-    visible: bool = Field(default=False, description="Initial NetworkLink visibility in aggregate doc.kml")
+    layers: list[str] = Field(min_length=1, description="OGR layer names to read from path")
+    visible: bool = Field(default=False, description="Default map/KMZ visibility")
+    style: BundleKmlLayerStyle | None = None
+
+    @field_validator("id", "name", "path", mode="before")
+    @classmethod
+    def _strip_required(cls, v: Any) -> str:
+        s = str(v).strip()
+        if not s:
+            raise ValueError("field must be non-empty")
+        return s
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _strip_description(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        return str(v).strip()
+
+    @field_validator("layers", mode="before")
+    @classmethod
+    def _coerce_map_layers(cls, v: Any) -> list[str]:
+        if not isinstance(v, list) or not v:
+            raise ValueError("layers must be a non-empty list")
+        out: list[str] = []
+        for item in v:
+            s = str(item).strip()
+            if s:
+                out.append(s)
+        if not out:
+            raise ValueError("layers must contain at least one layer name")
+        return out
+
+
+class GeneralOverlayEntry(BaseModel):
+    """One AOI-clipped context map (from ``type: general_overlay`` preset entries)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    path: str
+    visible: bool = False
     style: BundleKmlLayerStyle | None = None
     layers: list[GdbLayerSpec] = Field(min_length=1)
 
@@ -609,6 +614,110 @@ class BundleReferenceLayerEntry(BaseModel):
     @classmethod
     def _coerce_layers(cls, v: Any) -> list[Any]:
         return _coerce_gdb_layers_list(v)
+
+
+# Back-compat alias
+BundleReferenceLayerEntry = GeneralOverlayEntry
+
+
+def maps_by_type(maps: list[ProjectMapEntry], map_type: MapType) -> list[ProjectMapEntry]:
+    return [m for m in maps if m.type == map_type]
+
+
+def map_entry_to_gdb_layer_group(entry: ProjectMapEntry) -> GdbLayerGroup:
+    return GdbLayerGroup(path=entry.path, layers=[GdbLayerSpec(name=n) for n in entry.layers])
+
+
+def map_entry_to_general_overlay(entry: ProjectMapEntry) -> GeneralOverlayEntry:
+    return GeneralOverlayEntry(
+        id=entry.id,
+        path=entry.path,
+        visible=entry.visible,
+        style=entry.style,
+        layers=[GdbLayerSpec(name=n) for n in entry.layers],
+    )
+
+
+def preset_aoi_groups(preset: Preset) -> list[GdbLayerGroup]:
+    return [map_entry_to_gdb_layer_group(m) for m in maps_by_type(preset.maps, "aoi")]
+
+
+def preset_include_groups(preset: Preset) -> list[GdbLayerGroup]:
+    return [map_entry_to_gdb_layer_group(m) for m in maps_by_type(preset.maps, "include")]
+
+
+def preset_exclude_groups(preset: Preset) -> list[GdbLayerGroup]:
+    return [map_entry_to_gdb_layer_group(m) for m in maps_by_type(preset.maps, "exclude")]
+
+
+def preset_general_overlays(preset: Preset) -> list[GeneralOverlayEntry]:
+    return [map_entry_to_general_overlay(m) for m in maps_by_type(preset.maps, "general_overlay")]
+
+
+def _map_entry_payload(m: ProjectMapEntry) -> dict[str, Any]:
+    d: dict[str, Any] = {
+        "id": m.id,
+        "layers": sorted(m.layers),
+        "name": m.name,
+        "path": m.path,
+        "type": m.type,
+    }
+    if m.description:
+        d["description"] = m.description
+    if m.visible:
+        d["visible"] = m.visible
+    if m.style is not None:
+        d["style"] = m.style.model_dump(mode="json")
+    return d
+
+
+def _general_overlay_entry_payload(e: GeneralOverlayEntry) -> dict[str, Any]:
+    layers_sorted = sorted(e.layers, key=lambda s: s.name)
+    d: dict[str, Any] = {
+        "id": e.id,
+        "layers": [s.canonical_dict() for s in layers_sorted],
+        "path": e.path,
+        "visible": e.visible,
+    }
+    if e.style is not None:
+        d["style"] = e.style.model_dump(mode="json")
+    return d
+
+
+def canonical_maps_aoi_config_text(maps: list[ProjectMapEntry]) -> str:
+    aoi = [map_entry_to_gdb_layer_group(m) for m in maps_by_type(maps, "aoi")]
+    sorted_groups = sorted(aoi, key=_gdb_layer_group_sort_key)
+    payload = {"aoi": [_gdb_layer_group_payload(g) for g in sorted_groups]}
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def canonical_maps_land_use_config_text(maps: list[ProjectMapEntry]) -> str:
+    def groups_payload(map_type: MapType) -> list[dict[str, Any]]:
+        groups = [map_entry_to_gdb_layer_group(m) for m in maps_by_type(maps, map_type)]
+        sorted_groups = sorted(groups, key=_gdb_layer_group_sort_key)
+        return [_gdb_layer_group_payload(g) for g in sorted_groups]
+
+    payload = {
+        "exclude": groups_payload("exclude"),
+        "include": groups_payload("include"),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def canonical_maps_general_overlay_config_text(maps: list[ProjectMapEntry]) -> str:
+    entries = [map_entry_to_general_overlay(m) for m in maps_by_type(maps, "general_overlay")]
+    payload = {
+        "general_overlay": sorted(
+            (_general_overlay_entry_payload(e) for e in entries),
+            key=lambda x: x["id"],
+        )
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+canonical_bundle_aoi_config_text = canonical_maps_aoi_config_text
+canonical_bundle_land_use_config_text = canonical_maps_land_use_config_text
+canonical_bundle_reference_config_text = canonical_maps_general_overlay_config_text
 
 
 class BundleMeshDepthBandStyles(BaseModel):
@@ -1062,9 +1171,9 @@ class BundleKmlOverlayStyles(BaseModel):
     exclude: BundleKmlLayerStyle | None = None
     eligible: BundleKmlLayerStyle | None = None
     summits: BundleKmlLayerStyle | None = None
-    reference: BundleKmlLayerStyle | None = Field(
+    general_overlay: BundleKmlLayerStyle | None = Field(
         default=None,
-        description="Fallback style for bundle.reference sidecar KML when an entry omits ``style``.",
+        description="Fallback style for general_overlay sidecar KML when a map entry omits ``style``.",
     )
     viewshed_coverage: BundleKmlLayerStyle | None = Field(
         default=None,
@@ -1098,24 +1207,10 @@ class BundleKmzConfig(BaseModel):
 
 
 class BundleConfig(BaseModel):
-    """GDB-driven AOI polygon plus land-use include / exclude for bundle stages."""
+    """Build/display knobs for bundle stages (vector sources live in preset ``maps``)."""
 
     model_config = ConfigDict(extra="ignore")
 
-    inputs_root: str | None = Field(
-        default=None,
-        description=(
-            "Directory for bundle GDB paths; relative to the preset file unless absolute. "
-            "Default: repo ``data/``."
-        ),
-    )
-    reference: list[BundleReferenceLayerEntry] = Field(
-        default_factory=list,
-        description="Optional AOI-clipped context layers (e.g. admin boundaries) for KMZ only; not used in eligibility.",
-    )
-    aoi: list[GdbLayerGroup] = Field(default_factory=list)
-    include: list[GdbLayerGroup] = Field(default_factory=list)
-    exclude: list[GdbLayerGroup] = Field(default_factory=list)
     kml_overlay: BundleKmlOverlayStyles | None = Field(
         default=None,
         description="Optional KML sidecar styles (filled polygons in Google Earth). Omit to skip style injection.",
@@ -1139,27 +1234,6 @@ def resolved_site_suggestions_config(bundle: BundleConfig | None) -> BundleSiteS
     if bundle is None or bundle.site_suggestions is None:
         return BundleSiteSuggestionsConfig()
     return bundle.site_suggestions
-
-
-def _reference_entry_payload(e: BundleReferenceLayerEntry) -> dict[str, Any]:
-    layers_sorted = sorted(e.layers, key=lambda s: s.name)
-    d: dict[str, Any] = {
-        "id": e.id,
-        "layers": [s.canonical_dict() for s in layers_sorted],
-        "path": e.path,
-        "visible": e.visible,
-    }
-    if e.style is not None:
-        d["style"] = e.style.model_dump(mode="json")
-    return d
-
-
-def canonical_bundle_reference_config_text(pre: BundleConfig) -> str:
-    """Deterministic JSON for ``bundle.reference`` cache keys."""
-    payload = {
-        "reference": sorted((_reference_entry_payload(e) for e in pre.reference), key=lambda x: x["id"])
-    }
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
 
 
 DEFAULT_VIEWSHED_COVERAGE_KML_STYLE = BundleKmlLayerStyle(
@@ -1314,6 +1388,7 @@ class Preset(BaseModel):
     display: dict[str, Any]
     sites: dict[str, SiteEntry]
     ai: AiConfig = Field(default_factory=AiConfig)
+    maps: list[ProjectMapEntry] = Field(default_factory=list)
     bundle: BundleConfig | None = None
 
     @model_validator(mode="after")

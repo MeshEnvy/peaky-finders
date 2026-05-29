@@ -21,6 +21,7 @@ matplotlib = "^3.8"
 ruamel-yaml = "^0.18"
 httpx = "^0.28"
 fastapi = "^0.115"
+python-multipart = "^0.0.9"
 uvicorn = { version = "^0.32", extras = ["standard"] }
 
 [tool.poetry.group.dev.dependencies]

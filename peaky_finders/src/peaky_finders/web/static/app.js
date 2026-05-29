@@ -25,8 +25,10 @@ const sitesListEmptyEl = document.getElementById('sites-list-empty')
 
 const siteDrawerEl = document.getElementById('site-info-panel')
 const sidebarTabInfoBtn = document.getElementById('sidebar-tab-info')
+const sidebarTabLayersBtn = document.getElementById('sidebar-tab-layers')
 const sidebarTabAgentBtn = document.getElementById('sidebar-tab-agent')
 const sidebarPanelInfoEl = document.getElementById('sidebar-panel-info')
+const sidebarPanelLayersEl = document.getElementById('sidebar-panel-layers')
 const sidebarPanelAgentEl = document.getElementById('sidebar-panel-agent')
 const siteDrawerTitleEl = document.getElementById('site-drawer-title')
 const siteDrawerFormEl = document.getElementById('site-drawer-form')
@@ -63,6 +65,21 @@ let siteDrawerSees = []
 let siteDrawerPeerSlugs = []
 let siteDrawerBusy = false
 let sidebarActiveTab = 'agent'
+
+const MAP_LAYER_COLORS = {
+  aoi: { fill: 'rgba(255, 102, 0, 0.35)', line: '#ff6600' },
+  include: { fill: 'rgba(0, 243, 0, 0.25)', line: '#00f300' },
+  exclude: { fill: 'rgba(0, 0, 255, 0.25)', line: '#0000ff' },
+  general_overlay: { fill: 'rgba(136, 136, 136, 0.3)', line: '#888888' },
+  eligible: { fill: 'rgba(0, 243, 0, 0.2)', line: '#00aa00' },
+  mesh_pairwise: { fill: 'rgba(255, 0, 0, 0.35)', line: '#ff0000' },
+  mesh_pairwise_eligible: { fill: 'rgba(255, 255, 0, 0.35)', line: '#cccc00' },
+  mesh_depth: { fill: 'rgba(136, 0, 255, 0.3)', line: '#8800ff' },
+}
+
+const mapLayerDisplayMode = new Map()
+let layersWizardUpload = null
+let projectEventSource = null
 
 const SITE_PANEL_SECTIONS = [
   { id: 'installed', label: 'Installed' },
@@ -658,6 +675,8 @@ const LINKS_ICON_SVG =
   '<svg viewBox="0 0 14 14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2"><circle cx="2.5" cy="7" r="2"/><circle cx="11.5" cy="2.5" r="2"/><circle cx="11.5" cy="11.5" r="2"/><path d="m3.71 5.41l5.85-2.43M3.71 8.59l5.85 2.43"/></g></svg>'
 const EDIT_ICON_SVG =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 21q-.825 0-1.412-.587T3 19V5q0-.825.588-1.412T5 3h8.925l-2 2H5v14h14v-6.95l2-2V19q0 .825-.587 1.413T19 21zm4-6v-4.25l9.175-9.175q.3-.3.675-.45t.75-.15q.4 0 .763.15t.662.45L22.425 3q.275.3.425.663T23 4.4t-.137.738t-.438.662L13.25 15zM21.025 4.4l-1.4-1.4zM11 13h1.4l5.8-5.8l-.7-.7l-.725-.7L11 11.575zm6.5-6.5l-.725-.7zl.7.7z"/></svg>'
+const LAYER_EYE_ICON_SVG =
+  '<svg viewBox="0 0 36 36" aria-hidden="true"><path fill="currentColor" d="M33.62 17.53c-3.37-6.23-9.28-10-15.82-10S5.34 11.3 2 17.53l-.28.47l.26.48c3.37 6.23 9.28 10 15.82 10s12.46-3.72 15.82-10l.26-.48Zm-15.82 8.9C12.17 26.43 7 23.29 4 18c3-5.29 8.17-8.43 13.8-8.43S28.54 12.72 31.59 18c-3.05 5.29-8.17 8.43-13.79 8.43"/><circle cx="18.09" cy="18.03" r="6.86" fill="currentColor"/></svg>'
 
 function registryEntryBySlug(slug) {
   if (!slug) return null
@@ -1169,22 +1188,31 @@ function populateSiteDrawer(detail) {
 }
 
 function setSidebarTab(tab) {
-  const next = tab === 'info' ? 'info' : 'agent'
+  const normalized = tab === 'maps' ? 'layers' : tab
+  const next = normalized === 'info' || normalized === 'layers' ? normalized : 'agent'
   sidebarActiveTab = next
   const isInfo = next === 'info'
+  const isLayers = next === 'layers'
+  const isAgent = next === 'agent'
 
   sidebarTabInfoBtn?.classList.toggle('active', isInfo)
-  sidebarTabAgentBtn?.classList.toggle('active', !isInfo)
+  sidebarTabLayersBtn?.classList.toggle('active', isLayers)
+  sidebarTabAgentBtn?.classList.toggle('active', isAgent)
   sidebarTabInfoBtn?.setAttribute('aria-selected', isInfo ? 'true' : 'false')
-  sidebarTabAgentBtn?.setAttribute('aria-selected', isInfo ? 'false' : 'true')
+  sidebarTabLayersBtn?.setAttribute('aria-selected', isLayers ? 'true' : 'false')
+  sidebarTabAgentBtn?.setAttribute('aria-selected', isAgent ? 'true' : 'false')
 
   if (sidebarPanelInfoEl) {
     sidebarPanelInfoEl.hidden = !isInfo
     sidebarPanelInfoEl.classList.toggle('active', isInfo)
   }
+  if (sidebarPanelLayersEl) {
+    sidebarPanelLayersEl.hidden = !isLayers
+    sidebarPanelLayersEl.classList.toggle('active', isLayers)
+  }
   if (sidebarPanelAgentEl) {
-    sidebarPanelAgentEl.hidden = isInfo
-    sidebarPanelAgentEl.classList.toggle('active', !isInfo)
+    sidebarPanelAgentEl.hidden = !isAgent
+    sidebarPanelAgentEl.classList.toggle('active', isAgent)
   }
 }
 
@@ -1371,6 +1399,7 @@ function handleMapSiteClick(ev) {
 siteDrawerFormEl?.addEventListener('submit', saveSiteDrawer)
 siteDrawerDeleteBtn?.addEventListener('click', deleteSiteDrawer)
 sidebarTabInfoBtn?.addEventListener('click', () => setSidebarTab('info'))
+sidebarTabLayersBtn?.addEventListener('click', () => setSidebarTab('layers'))
 sidebarTabAgentBtn?.addEventListener('click', () => setSidebarTab('agent'))
 siteFieldTypeEl?.addEventListener('change', syncSiteDrawerTypeUi)
 siteSeesAddEl?.addEventListener('change', () => {
@@ -1879,6 +1908,15 @@ const handlers = {
     if (mapReady) addViewshedRaster(m)
     else pendingRasters.push(m)
   },
+  'maps.build.status': (m) => {
+    applyMapsBuildStatus(m.clips, m.mesh)
+  },
+  'maps.layer.phase': (m) => {
+    if (m.layer_id) updateMapsLayerPhase(m.layer_id, m.phase)
+  },
+  'maps.catalog.refresh': () => {
+    if (currentProjectSlug) void loadProjectMaps(currentProjectSlug, { refreshOnly: true })
+  },
 }
 
 function routeOp(msg) {
@@ -2210,6 +2248,7 @@ async function loadContext(slug) {
     finalizePendingChatTurn()
     resetChatHistory()
     closeSiteDrawer()
+    disconnectProjectEvents()
   }
   clearOverlayLayers()
   const res = await fetch(`/api/projects/${slug}/context`)
@@ -2245,8 +2284,10 @@ async function loadContext(slug) {
   } catch (err) {
     console.warn('fitMapToMeshScope failed:', err)
   }
+  connectProjectEvents(slug)
   void loadProjectViewsheds(slug, rfSites(ctx.sites))
   await loadProjectMeshLinks(slug)
+  await loadProjectMaps(slug)
   await loadChatModels(slug)
   scheduleChatContextRefresh('')
 }
@@ -2453,3 +2494,591 @@ map.on('load', async () => {
 
 map.on('pitch', syncTerrainFromPitch)
 map.on('moveend', syncTerrainFromPitch)
+
+function bundleMapLayerId(mapId) {
+  return `bundle-map-${mapId}`
+}
+
+function ensureBundleMapLayer(mapId, mapType, customColors) {
+  const layerId = bundleMapLayerId(mapId)
+  const srcId = `${layerId}-src`
+  const fillId = `${layerId}-fill`
+  const lineId = `${layerId}-line`
+  const colors = customColors || MAP_LAYER_COLORS[mapType] || MAP_LAYER_COLORS.general_overlay
+  if (!map.getSource(srcId)) {
+    map.addSource(srcId, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    map.addLayer(
+      {
+        id: fillId,
+        type: 'fill',
+        source: srcId,
+        paint: { 'fill-color': colors.fill, 'fill-outline-color': colors.line },
+      },
+      firstOverlayLayerId(),
+    )
+    map.addLayer(
+      {
+        id: lineId,
+        type: 'line',
+        source: srcId,
+        paint: { 'line-color': colors.line, 'line-width': 1.2 },
+      },
+      firstOverlayLayerId(),
+    )
+  } else if (map.getLayer(fillId)) {
+    map.setPaintProperty(fillId, 'fill-color', colors.fill)
+    map.setPaintProperty(fillId, 'fill-outline-color', colors.line)
+    map.setPaintProperty(lineId, 'line-color', colors.line)
+  }
+  return { srcId, fillId, lineId }
+}
+
+function setBundleMapVisibility(mapId, visible) {
+  const fillId = `${bundleMapLayerId(mapId)}-fill`
+  const lineId = `${bundleMapLayerId(mapId)}-line`
+  if (!map.getLayer(fillId)) return
+  map.setLayoutProperty(fillId, 'visibility', visible ? 'visible' : 'none')
+  map.setLayoutProperty(lineId, 'visibility', visible ? 'visible' : 'none')
+}
+
+async function fetchMapGeojson(slug, mapId) {
+  const res = await fetch(`/api/projects/${encodeURIComponent(slug)}/maps/${encodeURIComponent(mapId)}.geojson`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+async function fetchMeshLayerGeojson(slug, layerId, view = 'all') {
+  const url = new URL(
+    `/api/projects/${encodeURIComponent(slug)}/maps/mesh/${encodeURIComponent(layerId)}.geojson`,
+    window.location.origin,
+  )
+  url.searchParams.set('view', view)
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+function setLayersStatus(message) {
+  const el = document.getElementById('layers-status')
+  if (!el) return
+  if (!message) {
+    el.hidden = true
+    el.textContent = ''
+    return
+  }
+  el.hidden = false
+  el.textContent = message
+}
+
+const LAYER_MODE_OPTIONS = [
+  { id: 'off', label: 'Off' },
+  { id: 'eligible', label: 'Eligible' },
+  { id: 'all', label: 'All' },
+]
+
+function createLayerModeGroup({ mode, label, eligibleEnabled = true, disabled, onChange }) {
+  const group = document.createElement('div')
+  group.className = 'layers-mode-group'
+  group.setAttribute('role', 'group')
+  group.setAttribute('aria-label', `${label} display mode`)
+  for (const opt of LAYER_MODE_OPTIONS) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'layers-mode-btn'
+    btn.textContent = opt.label
+    btn.dataset.mode = opt.id
+    if (opt.id === 'eligible' && !eligibleEnabled) {
+      btn.hidden = true
+    }
+    if (opt.id === mode) btn.classList.add('active')
+    if (disabled) btn.disabled = true
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation()
+      if (btn.disabled || btn.classList.contains('active')) return
+      void onChange(opt.id, group)
+    })
+    group.appendChild(btn)
+  }
+  return group
+}
+
+function setLayerModeGroupActive(group, mode) {
+  for (const btn of group.querySelectorAll('.layers-mode-btn')) {
+    btn.classList.toggle('active', btn.dataset.mode === mode)
+  }
+}
+
+function createBuildStatusIcon(phase) {
+  const el = document.createElement('span')
+  el.className = 'layers-build-status'
+  if (phase === 'building' || phase === 'stale') {
+    el.classList.add('layers-build-status--loading')
+    el.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="42" stroke-linecap="round"/></svg>'
+    el.title = phase === 'building' ? 'Building…' : 'Queued for rebuild'
+  } else if (phase === 'built') {
+    el.classList.add('layers-build-status--ok')
+    el.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>'
+    el.title = 'Built'
+  }
+  return el
+}
+
+async function persistMapLayerVisibility(slug, mapId, visible) {
+  const res = await fetch(`/api/projects/${encodeURIComponent(slug)}/maps/${encodeURIComponent(mapId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visible }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `save visibility failed (${res.status})`)
+  }
+}
+
+async function persistMapDisplayMode(slug, mapId, mode) {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(slug)}/maps/${encodeURIComponent(mapId)}/display-mode`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    },
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `save display mode failed (${res.status})`)
+  }
+}
+
+async function persistMeshLayerDisplayMode(slug, layerId, mode) {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(slug)}/maps/mesh/${encodeURIComponent(layerId)}/display-mode`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    },
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `save mesh display mode failed (${res.status})`)
+  }
+}
+
+async function persistEligibleDisplayMode(slug, mode) {
+  const res = await fetch(`/api/projects/${encodeURIComponent(slug)}/maps/eligible/display-mode`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || `save eligible display mode failed (${res.status})`)
+  }
+}
+
+async function applyMapLayerMode(slug, entry, mode) {
+  if (!mapReady) return false
+  const layerId = bundleMapLayerId(entry.id)
+  mapLayerDisplayMode.set(entry.id, mode)
+  if (mode === 'off') {
+    setBundleMapVisibility(entry.id, false)
+    return true
+  }
+  if (entry.build_phase !== 'built') {
+    setBundleMapVisibility(entry.id, false)
+    return true
+  }
+  try {
+    const gj = await fetchMapGeojson(slug, entry.id)
+    ensureBundleMapLayer(entry.id, entry.type, entry.map_style)
+    map.getSource(`${layerId}-src`)?.setData(gj)
+    setBundleMapVisibility(entry.id, true)
+    setLayersStatus('')
+    return true
+  } catch (err) {
+    console.warn(`map layer ${entry.id}:`, err)
+    setLayersStatus(`${entry.name}: ${err.message || err}`)
+    return false
+  }
+}
+
+async function applyMeshLayerMode(slug, entry, mode) {
+  if (!mapReady) return false
+  const layerId = bundleMapLayerId(entry.id)
+  mapLayerDisplayMode.set(entry.id, mode)
+  if (mode === 'off') {
+    setBundleMapVisibility(entry.id, false)
+    return true
+  }
+  if (entry.build_phase !== 'built') {
+    setBundleMapVisibility(entry.id, false)
+    return true
+  }
+  const view = mode === 'eligible' ? 'eligible' : 'all'
+  const style = mode === 'eligible' ? entry.eligible_map_style || entry.map_style : entry.map_style
+  try {
+    const gj = await fetchMeshLayerGeojson(slug, entry.id, view)
+    const mapType = entry.mesh_kind === 'depth' ? 'mesh_depth' : 'mesh_pairwise'
+    ensureBundleMapLayer(entry.id, mapType, style)
+    map.getSource(`${layerId}-src`)?.setData(gj)
+    setBundleMapVisibility(entry.id, true)
+    setLayersStatus('')
+    return true
+  } catch (err) {
+    console.warn(`mesh layer ${entry.id}:`, err)
+    setLayersStatus(`${entry.name}: ${err.message || err}`)
+    return false
+  }
+}
+
+async function applyEligibleLayerMode(slug, mode, label = 'Eligible land') {
+  if (!mapReady) return false
+  mapLayerDisplayMode.set('eligible', mode)
+  if (mode === 'off') {
+    setBundleMapVisibility('eligible', false)
+    return true
+  }
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(slug)}/maps/eligible.geojson`)
+    if (!res.ok) throw new Error('eligible not built')
+    const gj = await res.json()
+    ensureBundleMapLayer('eligible', 'eligible')
+    map.getSource(`${bundleMapLayerId('eligible')}-src`)?.setData(gj)
+    setBundleMapVisibility('eligible', true)
+    setLayersStatus('')
+    return true
+  } catch (err) {
+    console.warn('eligible layer:', err)
+    setLayersStatus(`${label}: ${err.message || err}`)
+    return false
+  }
+}
+
+function applyMapsBuildStatus(clips, mesh) {
+  const panel = document.querySelector('.layers-panel')
+  if (!panel) return
+  panel.dataset.clipsPhase = clips?.phase || ''
+  panel.dataset.meshPhase = mesh?.phase || ''
+}
+
+function updateMapsLayerPhase(layerId, phase) {
+  const row = document.querySelector(`.layers-row[data-layer-id="${CSS.escape(layerId)}"]`)
+  if (!row) return
+  const slot = row.querySelector('.layers-build-status')
+  if (!slot) return
+  const next = createBuildStatusIcon(phase || 'stale')
+  slot.replaceWith(next)
+}
+
+function disconnectProjectEvents() {
+  projectEventSource?.close()
+  projectEventSource = null
+}
+
+function connectProjectEvents(slug) {
+  disconnectProjectEvents()
+  if (!slug) return
+  const url = `/api/projects/${encodeURIComponent(slug)}/events`
+  projectEventSource = new EventSource(url)
+  projectEventSource.onmessage = (ev) => {
+    try {
+      routeOp(JSON.parse(ev.data))
+    } catch (err) {
+      console.warn('project events parse:', err)
+    }
+  }
+  projectEventSource.onerror = () => {
+    disconnectProjectEvents()
+  }
+}
+
+function renderLayerRow(entry, { eligibleEnabled = false, onModeChange }) {
+  const row = document.createElement('div')
+  row.className = 'layers-row'
+  row.dataset.layerId = entry.id
+  const mode = mapLayerDisplayMode.get(entry.id) ?? entry.display_mode ?? 'off'
+  const modeGroup = createLayerModeGroup({
+    mode,
+    label: entry.name,
+    eligibleEnabled,
+    disabled: false,
+    onChange: onModeChange,
+  })
+  const meta = document.createElement('span')
+  meta.className = 'layers-row-meta'
+  meta.innerHTML = `<strong>${entry.name}</strong><br /><span class="layers-row-desc">${entry.description || entry.path || ''}</span>`
+  const status = createBuildStatusIcon(entry.build_phase || 'stale')
+  status.classList.add('layers-build-status')
+  row.append(modeGroup, meta, status)
+  return row
+}
+
+function renderLayersList(catalog) {
+  const listEl = document.getElementById('layers-list')
+  if (!listEl) return
+  listEl.innerHTML = ''
+  const typeOrder = ['aoi', 'include', 'exclude', 'general_overlay']
+  for (const t of typeOrder) {
+    const group = catalog.by_type?.[t] || []
+    if (!group.length) continue
+    const heading = document.createElement('h4')
+    heading.className = 'layers-group-title'
+    heading.textContent = t.replace('_', ' ')
+    listEl.appendChild(heading)
+    for (const entry of group) {
+      listEl.appendChild(
+        renderLayerRow(entry, {
+          eligibleEnabled: false,
+          onModeChange: async (nextMode, group) => {
+            if (!currentProjectSlug) return
+            const prev = mapLayerDisplayMode.get(entry.id) ?? 'off'
+            setLayerModeGroupActive(group, nextMode)
+            const ok = await applyMapLayerMode(currentProjectSlug, entry, nextMode)
+            if (!ok) {
+              setLayerModeGroupActive(group, prev)
+              return
+            }
+            try {
+              await persistMapDisplayMode(currentProjectSlug, entry.id, nextMode)
+              entry.display_mode = nextMode
+            } catch (err) {
+              setLayersStatus(String(err))
+              setLayerModeGroupActive(group, prev)
+              await applyMapLayerMode(currentProjectSlug, entry, prev)
+            }
+          },
+        }),
+      )
+    }
+  }
+}
+
+function renderMeshLayersList(mesh) {
+  const section = document.getElementById('layers-mesh-section')
+  const listEl = document.getElementById('layers-mesh-list')
+  if (!section || !listEl) return
+  listEl.innerHTML = ''
+  const pairs = mesh?.pairwise_pairs || []
+  const bands = mesh?.depth_bands || []
+  if (!pairs.length && !bands.length) {
+    section.hidden = true
+    return
+  }
+  section.hidden = false
+  if (pairs.length) {
+    const heading = document.createElement('h4')
+    heading.className = 'layers-group-title'
+    heading.textContent = 'Pairwise overlaps'
+    listEl.appendChild(heading)
+    for (const entry of pairs) {
+      listEl.appendChild(
+        renderLayerRow(entry, {
+          eligibleEnabled: true,
+          onModeChange: async (nextMode, group) => {
+            if (!currentProjectSlug) return
+            const prev = mapLayerDisplayMode.get(entry.id) ?? 'off'
+            setLayerModeGroupActive(group, nextMode)
+            const ok = await applyMeshLayerMode(currentProjectSlug, entry, nextMode)
+            if (!ok) {
+              setLayerModeGroupActive(group, prev)
+              return
+            }
+            try {
+              await persistMeshLayerDisplayMode(currentProjectSlug, entry.id, nextMode)
+              entry.display_mode = nextMode
+            } catch (err) {
+              setLayersStatus(String(err))
+              setLayerModeGroupActive(group, prev)
+              await applyMeshLayerMode(currentProjectSlug, entry, prev)
+            }
+          },
+        }),
+      )
+    }
+  }
+  if (bands.length) {
+    const heading = document.createElement('h4')
+    heading.className = 'layers-group-title'
+    heading.textContent = 'Coverage depth'
+    listEl.appendChild(heading)
+    for (const entry of bands) {
+      listEl.appendChild(
+        renderLayerRow(entry, {
+          eligibleEnabled: true,
+          onModeChange: async (nextMode, group) => {
+            if (!currentProjectSlug) return
+            const prev = mapLayerDisplayMode.get(entry.id) ?? 'off'
+            setLayerModeGroupActive(group, nextMode)
+            const ok = await applyMeshLayerMode(currentProjectSlug, entry, nextMode)
+            if (!ok) {
+              setLayerModeGroupActive(group, prev)
+              return
+            }
+            try {
+              await persistMeshLayerDisplayMode(currentProjectSlug, entry.id, nextMode)
+              entry.display_mode = nextMode
+            } catch (err) {
+              setLayersStatus(String(err))
+              setLayerModeGroupActive(group, prev)
+              await applyMeshLayerMode(currentProjectSlug, entry, prev)
+            }
+          },
+        }),
+      )
+    }
+  }
+}
+
+async function loadProjectMaps(slug, opts = {}) {
+  if (!slug) return
+  if (!opts.refreshOnly) mapLayerDisplayMode.clear()
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(slug)}/maps`)
+    if (!res.ok) return
+    const catalog = await res.json()
+    if (!opts.refreshOnly) {
+      for (const entry of catalog.maps || []) {
+        mapLayerDisplayMode.set(entry.id, entry.display_mode ?? (entry.visible ? 'all' : 'off'))
+      }
+      for (const entry of catalog.mesh?.pairwise_pairs || []) {
+        mapLayerDisplayMode.set(entry.id, entry.display_mode ?? 'off')
+      }
+      for (const entry of catalog.mesh?.depth_bands || []) {
+        mapLayerDisplayMode.set(entry.id, entry.display_mode ?? 'off')
+      }
+      if (catalog.eligible) {
+        mapLayerDisplayMode.set('eligible', catalog.eligible.display_mode ?? 'off')
+      }
+    }
+    renderLayersList(catalog)
+    renderMeshLayersList(catalog.mesh)
+
+    const eligSection = document.getElementById('layers-eligible-section')
+    if (eligSection) {
+      eligSection.innerHTML = ''
+      const elig = catalog.eligible
+      if (elig) {
+        const eligLabel = elig.name || 'Eligible land'
+        const eligEntry = { ...elig, id: 'eligible', name: eligLabel, description: 'derived' }
+        eligSection.appendChild(
+          renderLayerRow(eligEntry, {
+            eligibleEnabled: false,
+            onModeChange: async (nextMode, group) => {
+              const prev = mapLayerDisplayMode.get('eligible') ?? 'off'
+              setLayerModeGroupActive(group, nextMode)
+              const ok = await applyEligibleLayerMode(slug, nextMode, eligLabel)
+              if (!ok) {
+                setLayerModeGroupActive(group, prev)
+                return
+              }
+              try {
+                await persistEligibleDisplayMode(slug, nextMode)
+              } catch (err) {
+                setLayersStatus(String(err))
+                setLayerModeGroupActive(group, prev)
+                await applyEligibleLayerMode(slug, prev, eligLabel)
+              }
+            },
+          }),
+        )
+      }
+    }
+
+    if (!opts.refreshOnly) {
+      for (const entry of catalog.maps || []) {
+        const mode = mapLayerDisplayMode.get(entry.id) ?? 'off'
+        if (mode !== 'off') await applyMapLayerMode(slug, entry, mode)
+      }
+      const eligMode = mapLayerDisplayMode.get('eligible') ?? 'off'
+      if (eligMode !== 'off') await applyEligibleLayerMode(slug, eligMode)
+      for (const entry of [...(catalog.mesh?.pairwise_pairs || []), ...(catalog.mesh?.depth_bands || [])]) {
+        const mode = mapLayerDisplayMode.get(entry.id) ?? 'off'
+        if (mode !== 'off') await applyMeshLayerMode(slug, entry, mode)
+      }
+    }
+
+    applyMapsBuildStatus(catalog.build?.clips, catalog.build?.mesh)
+  } catch (err) {
+    console.warn('loadProjectMaps failed:', err)
+  }
+}
+
+function showLayersWizard(inspect) {
+  const wiz = document.getElementById('layers-wizard')
+  const fieldset = document.getElementById('layers-wiz-layers')
+  if (!wiz || !fieldset) return
+  layersWizardUpload = inspect
+  fieldset.innerHTML = ''
+  for (const layer of inspect.layers || []) {
+    const label = document.createElement('label')
+    label.className = 'layers-layer-opt'
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.value = layer.name
+    cb.checked = true
+    label.append(cb, document.createTextNode(` ${layer.name} (${layer.geometry_type || '?'})`))
+    fieldset.appendChild(label)
+  }
+  wiz.hidden = false
+}
+
+document.getElementById('layers-upload-input')?.addEventListener('change', async (ev) => {
+  const file = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!file || !currentProjectSlug) return
+  const status = document.getElementById('layers-status')
+  const fd = new FormData()
+  fd.append('file', file)
+  try {
+    if (status) {
+      status.hidden = false
+      status.textContent = 'Uploading…'
+    }
+    const res = await fetch(`/api/projects/${encodeURIComponent(currentProjectSlug)}/maps/upload`, {
+      method: 'POST',
+      body: fd,
+    })
+    const inspect = await res.json()
+    if (!res.ok) throw new Error(inspect.detail || 'upload failed')
+    if (status) status.textContent = `Uploaded ${inspect.path}`
+    showLayersWizard(inspect)
+  } catch (err) {
+    if (status) status.textContent = String(err)
+  }
+})
+
+document.getElementById('layers-wiz-cancel')?.addEventListener('click', () => {
+  const wiz = document.getElementById('layers-wizard')
+  if (wiz) wiz.hidden = true
+  layersWizardUpload = null
+})
+
+document.getElementById('layers-wiz-save')?.addEventListener('click', async () => {
+  if (!currentProjectSlug || !layersWizardUpload) return
+  const name = document.getElementById('layers-wiz-name')?.value?.trim()
+  const description = document.getElementById('layers-wiz-description')?.value?.trim() || ''
+  const type = document.getElementById('layers-wiz-type')?.value || 'general_overlay'
+  const checked = [...document.querySelectorAll('#layers-wiz-layers input:checked')].map((el) => el.value)
+  if (!name || !checked.length) return
+  const id = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '')
+  const body = { id, name, description, type, path: layersWizardUpload.path, layers: checked, visible: false }
+  const res = await fetch(`/api/projects/${encodeURIComponent(currentProjectSlug)}/maps`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    alert(await res.text())
+    return
+  }
+  document.getElementById('layers-wizard').hidden = true
+  layersWizardUpload = null
+  await loadProjectMaps(currentProjectSlug)
+})
+

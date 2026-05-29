@@ -24,6 +24,12 @@ def peaky_test_home(monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _disable_web_auto_rebuild(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Layers catalog tests must not spawn background clip/mesh rebuild threads."""
+    monkeypatch.setenv("PEAKY_WEB_AUTO_REBUILD", "0")
+
+
+@pytest.fixture(autouse=True)
 def _reset_splatter_session() -> None:
     """Drop the process-wide splatter DEM session between tests."""
     try:

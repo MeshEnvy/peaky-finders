@@ -17,28 +17,49 @@ from peaky_finders.bundle_clips import (
     reference_entry_sha,
     resolved_clips_cache_root,
 )
-from peaky_finders.sites_job import BundleReferenceLayerEntry
-from peaky_finders.sites_job import BundleConfig, load_preset
+from peaky_finders.sites_job import BundleConfig, GeneralOverlayEntry, Preset, SimulationConfig, load_preset
+
+
+def _minimal_preset() -> Preset:
+    return Preset(
+        simulation=SimulationConfig.model_validate({"radius_km": 10.0}),
+        display={},
+        sites={
+            "hub": {
+                "name": "Hub",
+                "loc": [40.0, -119.0],
+            }
+        },
+        maps=_minimal_preset_maps(),
+        bundle=BundleConfig(),
+    )
 
 
 def _minimal_bundle_config() -> BundleConfig:
-    return BundleConfig.model_validate(
-        {
-            "aoi": [
-                {
-                    "path": "aoi/test.gdb",
-                    "layers": [{"name": "boundary"}],
-                }
-            ],
-            "include": [
-                {
-                    "path": "include/test.gdb",
-                    "layers": [{"name": "inc_layer"}],
-                }
-            ],
-            "exclude": [],
-        }
-    )
+    return BundleConfig()
+
+
+def _minimal_preset_maps() -> list:
+    from peaky_finders.sites_job import ProjectMapEntry
+
+    return [
+        ProjectMapEntry(
+            id="test_aoi",
+            name="Test AOI",
+            description="",
+            type="aoi",
+            path="aoi/test.gdb",
+            layers=["boundary"],
+        ),
+        ProjectMapEntry(
+            id="test_include",
+            name="Test Include",
+            description="",
+            type="include",
+            path="include/test.gdb",
+            layers=["inc_layer"],
+        ),
+    ]
 
 
 def test_clip_stem_is_stable_without_content_hash() -> None:
@@ -58,8 +79,8 @@ def test_plan_clip_layer_jobs_lists_gdb_input_files(tmp_path: Path) -> None:
     (data / "include" / "test.gdb").mkdir(parents=True)
     (data / "include" / "test.gdb" / "inc_layer.gdbtable").write_bytes(b"b")
     clips = resolved_clips_cache_root(tmp_path)
-    plc = _minimal_bundle_config()
-    layers, _ = plan_clip_layer_jobs(plc=plc, data_dir=data, clips_root=clips)
+    preset = _minimal_preset()
+    layers, _ = plan_clip_layer_jobs(preset=preset, data_dir=data, clips_root=clips)
     aoi = next(layer for layer in layers if layer.role == "aoi")
     assert aoi.gpkg == clips / "layer_jobs" / "aoi" / "aoi_test_gdb__boundary" / "clip.gpkg"
     assert (data / "aoi" / "test.gdb" / "boundary.gdbtable") in aoi.input_files
@@ -94,7 +115,7 @@ def test_clip_layer_sha_changes_with_mask() -> None:
 
 
 def test_reference_entry_sha_stable() -> None:
-    ent = BundleReferenceLayerEntry(
+    ent = GeneralOverlayEntry(
         id="districts",
         path="reference/foo.gdb",
         layers=["layer_a"],
@@ -115,8 +136,8 @@ def test_plan_clip_build_result_paths_under_clips_root(tmp_path: Path) -> None:
     (data / "include" / "test.gdb").mkdir(parents=True)
     (data / "include" / "test.gdb" / "y.gdbtable").write_bytes(b"")
     clips = resolved_clips_cache_root(tmp_path)
-    plc = _minimal_bundle_config()
-    planned = plan_clip_build_result(plc=plc, data_dir=data, clips_root=clips)
+    preset = _minimal_preset()
+    planned = plan_clip_build_result(preset=preset, data_dir=data, clips_root=clips)
     assert planned.eligible_gpkg == clips / "eligible" / "eligible_land_use.gpkg"
     assert len(planned.aoi_sha) == 16
     assert len(planned.eligible_sha) == 16
@@ -124,10 +145,10 @@ def test_plan_clip_build_result_paths_under_clips_root(tmp_path: Path) -> None:
 
 def test_plan_with_sample_project_preset() -> None:
     preset = load_preset(SAMPLE_PROJECT_CONFIG)
-    plc = require_bundle_config(preset)
+    require_bundle_config(preset)
     data_dir = SAMPLE_PROJECT_CONFIG.parent / "data"
     clips = resolved_clips_cache_root(PEAKY_TEST_HOME / "share")
-    planned = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips)
-    mask = aoi_inputs_fingerprint_body(plc, data_dir)
+    planned = plan_clip_build_result(preset=preset, data_dir=data_dir, clips_root=clips)
+    mask = aoi_inputs_fingerprint_body(preset, data_dir)
     assert mask.startswith("format=bundle_aoi_inputs/v1")
     assert planned.eligible_gpkg.parent.name == "eligible"

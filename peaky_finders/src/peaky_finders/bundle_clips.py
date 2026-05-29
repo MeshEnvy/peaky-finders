@@ -36,12 +36,16 @@ from shapely.geometry.base import BaseGeometry
 from peaky_finders.sites_job import (
     BundleConfig,
     BundleKmlOverlayStyles,
-    BundleReferenceLayerEntry,
+    GeneralOverlayEntry,
     GdbLayerGroup,
     Preset,
     _gdb_layer_group_payload,
     _gdb_layer_group_sort_key,
-    _reference_entry_payload,
+    _general_overlay_entry_payload,
+    preset_aoi_groups,
+    preset_exclude_groups,
+    preset_general_overlays,
+    preset_include_groups,
 )
 
 CLIP_LAYER_FORMAT = "clip_layer/v1"
@@ -199,20 +203,20 @@ def composite_aoi_fingerprint_body(clip_shas: list[str]) -> str:
     return f"format={COMPOSITE_AOI_FORMAT}\nclips\n{lines}\n"
 
 
-def _include_config_json(pre: BundleConfig) -> str:
-    sorted_groups = sorted(pre.include, key=_gdb_layer_group_sort_key)
+def _include_config_json(preset: Preset) -> str:
+    sorted_groups = sorted(preset_include_groups(preset), key=_gdb_layer_group_sort_key)
     payload = {"include": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
-def _exclude_config_json(pre: BundleConfig) -> str:
-    sorted_groups = sorted(pre.exclude, key=_gdb_layer_group_sort_key)
+def _exclude_config_json(preset: Preset) -> str:
+    sorted_groups = sorted(preset_exclude_groups(preset), key=_gdb_layer_group_sort_key)
     payload = {"exclude": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def composite_include_fingerprint_body(
-    pre: BundleConfig, data_dir: Path, *, aoi_mask_sha: str, gdb_fingerprint_fn: Any
+    preset: Preset, data_dir: Path, *, aoi_mask_sha: str, gdb_fingerprint_fn: Any
 ) -> str:
     from peaky_finders.bundle_build import _unique_sorted_include_gdb_roots
 
@@ -221,10 +225,10 @@ def composite_include_fingerprint_body(
         f"format={COMPOSITE_INCLUDE_FORMAT}",
         f"aoi_mask={aoi_mask_sha}",
         "config",
-        _include_config_json(pre),
+        _include_config_json(preset),
         "gdb_roots",
     ]
-    for root in _unique_sorted_include_gdb_roots(pre, data_dir):
+    for root in _unique_sorted_include_gdb_roots(preset, data_dir):
         if not root.exists():
             raise FileNotFoundError(f"GDB path not found for include composite fingerprint: {root}")
         parts.append(str(root.resolve()))
@@ -233,7 +237,7 @@ def composite_include_fingerprint_body(
 
 
 def composite_exclude_fingerprint_body(
-    pre: BundleConfig, data_dir: Path, *, aoi_mask_sha: str, gdb_fingerprint_fn: Any
+    preset: Preset, data_dir: Path, *, aoi_mask_sha: str, gdb_fingerprint_fn: Any
 ) -> str:
     from peaky_finders.bundle_build import _unique_sorted_exclude_gdb_roots
 
@@ -242,10 +246,10 @@ def composite_exclude_fingerprint_body(
         f"format={COMPOSITE_EXCLUDE_FORMAT}",
         f"aoi_mask={aoi_mask_sha}",
         "config",
-        _exclude_config_json(pre),
+        _exclude_config_json(preset),
         "gdb_roots",
     ]
-    for root in _unique_sorted_exclude_gdb_roots(pre, data_dir):
+    for root in _unique_sorted_exclude_gdb_roots(preset, data_dir):
         if not root.exists():
             raise FileNotFoundError(f"GDB path not found for exclude composite fingerprint: {root}")
         parts.append(str(root.resolve()))
@@ -266,7 +270,7 @@ def eligible_fingerprint_body(*, include_sha: str, exclude_sha: str, bundle_land
 
 def plan_clip_build_result(
     *,
-    plc: BundleConfig,
+    preset: Preset,
     data_dir: Path,
     clips_root: Path,
 ) -> ClipBuildResult:
@@ -280,12 +284,12 @@ def plan_clip_build_result(
 
     data_dir = Path(data_dir).expanduser().resolve()
     clips_root = Path(clips_root).expanduser().resolve()
-    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+    mask_body = aoi_inputs_fingerprint_body(preset, data_dir)
     mask_sha = aoi_mask_sha_from_body(mask_body)
     gdb_fp = _file_tree_mtime_size_fingerprint
 
     aoi_clip_shas: list[str] = []
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.aoi, data_dir):
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(preset_aoi_groups(preset), data_dir):
         body = clip_layer_fingerprint_body(
             role="aoi",
             preset_path=preset_path,
@@ -299,12 +303,12 @@ def plan_clip_build_result(
 
     aoi_sha = _sha16(composite_aoi_fingerprint_body(aoi_clip_shas))
     include_sha = _sha16(
-        composite_include_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+        composite_include_fingerprint_body(preset, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
     )
     exclude_sha = _sha16(
-        composite_exclude_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+        composite_exclude_fingerprint_body(preset, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
     )
-    bundle_land_digest = _sha16(land_use_inputs_fingerprint_body(plc, data_dir))
+    bundle_land_digest = _sha16(land_use_inputs_fingerprint_body(preset, data_dir))
     eligible_sha = _sha16(
         eligible_fingerprint_body(
             include_sha=include_sha,
@@ -373,7 +377,7 @@ def _plan_clip_layer_job(
 
 def plan_clip_layer_jobs(
     *,
-    plc: BundleConfig,
+    preset: Preset,
     data_dir: Path,
     clips_root: Path,
 ) -> tuple[tuple[PlannedClipLayer, ...], ClipBuildResult]:
@@ -386,15 +390,15 @@ def plan_clip_layer_jobs(
 
     data_dir = Path(data_dir).expanduser().resolve()
     clips_root = Path(clips_root).expanduser().resolve()
-    composites = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips_root)
-    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+    composites = plan_clip_build_result(preset=preset, data_dir=data_dir, clips_root=clips_root)
+    mask_body = aoi_inputs_fingerprint_body(preset, data_dir)
     gdb_fp = _file_tree_mtime_size_fingerprint
 
     layers: list[PlannedClipLayer] = []
     for role, groups in (
-        ("aoi", plc.aoi),
-        ("include", plc.include),
-        ("exclude", plc.exclude),
+        ("aoi", preset_aoi_groups(preset)),
+        ("include", preset_include_groups(preset)),
+        ("exclude", preset_exclude_groups(preset)),
     ):
         for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(groups, data_dir):
             if not resolved.exists():
@@ -433,7 +437,7 @@ def aoi_mask_sha_from_body(mask_body: str) -> str:
 
 def _sorted_layer_job_gpkgs_for_clip_shas(
     *,
-    plc: BundleConfig,
+    preset: Preset,
     role: ClipRole,
     clips_root: Path,
     data_dir: Path,
@@ -443,7 +447,7 @@ def _sorted_layer_job_gpkgs_for_clip_shas(
     from peaky_finders.bundle_build import _clip_stem, _file_tree_mtime_size_fingerprint, _flatten_gdb_layer_jobs
 
     gdb_fp = _file_tree_mtime_size_fingerprint
-    groups = plc.aoi if role == "aoi" else plc.include if role == "include" else plc.exclude
+    groups = preset_aoi_groups(preset) if role == "aoi" else preset_include_groups(preset) if role == "include" else preset_exclude_groups(preset)
     want = frozenset(clip_shas)
     by_sha: dict[str, Path] = {}
     for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(groups, data_dir):
@@ -506,7 +510,7 @@ def write_bundle_resolve(
 
 
 def reference_entry_fingerprint_body(
-    ent: BundleReferenceLayerEntry,
+    ent: GeneralOverlayEntry,
     data_dir: Path,
     *,
     aoi_mask_sha: str,
@@ -515,7 +519,7 @@ def reference_entry_fingerprint_body(
     from peaky_finders.bundle_build import resolve_land_use_gdb_path
 
     resolved = resolve_land_use_gdb_path(data_dir, ent.path)
-    entry_json = json.dumps(_reference_entry_payload(ent), ensure_ascii=False, sort_keys=True)
+    entry_json = json.dumps(_general_overlay_entry_payload(ent), ensure_ascii=False, sort_keys=True)
     return (
         f"format={REFERENCE_ENTRY_FORMAT}\n"
         f"aoi_mask={aoi_mask_sha}\n"
@@ -532,7 +536,7 @@ def reference_entry_sha(body: str) -> str:
 
 def plan_reference_entries(
     *,
-    plc: BundleConfig,
+    preset: Preset,
     data_dir: Path,
     clips_root: Path,
 ) -> dict[str, str]:
@@ -549,20 +553,20 @@ def plan_reference_entries(
         resolve_land_use_gdb_path,
     )
 
-    if not plc.reference:
+    if not preset_general_overlays(preset):
         return {}
     data_dir = Path(data_dir).expanduser().resolve()
-    mask_sha = aoi_mask_sha_from_body(aoi_inputs_fingerprint_body(plc, data_dir))
+    mask_sha = aoi_mask_sha_from_body(aoi_inputs_fingerprint_body(preset, data_dir))
     gdb_fp = _file_tree_mtime_size_fingerprint
     out: dict[str, str] = {}
-    for ent in plc.reference:
+    for ent in preset_general_overlays(preset):
         resolved = resolve_land_use_gdb_path(data_dir, ent.path)
         if resolved.exists():
             body = reference_entry_fingerprint_body(
                 ent, data_dir, aoi_mask_sha=mask_sha, gdb_tree=gdb_fp(resolved)
             )
         else:
-            entry_json = json.dumps(_reference_entry_payload(ent), ensure_ascii=False, sort_keys=True)
+            entry_json = json.dumps(_general_overlay_entry_payload(ent), ensure_ascii=False, sort_keys=True)
             body = (
                 f"format={REFERENCE_ENTRY_FORMAT}\n"
                 f"aoi_mask={mask_sha}\n"
@@ -669,10 +673,10 @@ def list_exclude_layer_kmz_entries(
     if not manifest_shas:
         return []
 
-    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+    mask_body = aoi_inputs_fingerprint_body(preset, data_dir)
     gdb_fp = _file_tree_mtime_size_fingerprint
 
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.exclude, data_dir):
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(preset_exclude_groups(preset), data_dir):
         body = clip_layer_fingerprint_body(
             role="exclude",
             preset_path=preset_path,
@@ -735,10 +739,10 @@ def list_include_layer_kmz_entries(
     if not manifest_shas:
         return []
 
-    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+    mask_body = aoi_inputs_fingerprint_body(preset, data_dir)
     gdb_fp = _file_tree_mtime_size_fingerprint
 
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir):
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(preset_include_groups(preset), data_dir):
         body = clip_layer_fingerprint_body(
             role="include",
             preset_path=preset_path,
@@ -766,7 +770,7 @@ def list_include_layer_kmz_entries(
 
 def sync_eligible_include_layer_slices(
     *,
-    plc: BundleConfig,
+    preset: Preset,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -817,7 +821,7 @@ def sync_eligible_include_layer_slices(
     wanted_stems: set[str] = set()
     layers_root.mkdir(parents=True, exist_ok=True)
 
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir_res):
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(preset_include_groups(preset), data_dir_res):
         body = clip_layer_fingerprint_body(
             role="include",
             preset_path=preset_path,
@@ -912,12 +916,12 @@ def list_eligible_layer_kmz_entries(
 
     eligible_gpkg = eligible_gpkg_path(clips_root)
     layers_root = eligible_gpkg.parent / ELIGIBLE_SLICE_LAYERS_SUBDIR
-    mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
+    mask_body = aoi_inputs_fingerprint_body(preset, data_dir)
     manifest_shas = set(read_composite_include_manifest(clips_root))
     if not manifest_shas:
         return []
 
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir):
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(preset_include_groups(preset), data_dir):
         body = clip_layer_fingerprint_body(
             role="include",
             preset_path=preset_path,
@@ -1097,7 +1101,7 @@ def build_clip_layer(
 
 def _clip_shas_for_composite(
     *,
-    plc: BundleConfig,
+    preset: Preset,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -1106,7 +1110,7 @@ def _clip_shas_for_composite(
     from peaky_finders.bundle_build import _clip_stem, _file_tree_mtime_size_fingerprint, _flatten_gdb_layer_jobs
 
     gdb_fp = _file_tree_mtime_size_fingerprint
-    groups = plc.aoi if role == "aoi" else plc.include if role == "include" else plc.exclude
+    groups = preset_aoi_groups(preset) if role == "aoi" else preset_include_groups(preset) if role == "include" else preset_exclude_groups(preset)
     shas: list[str] = []
     for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(groups, data_dir):
         if not resolved.exists():
@@ -1137,7 +1141,7 @@ def _clip_shas_for_composite(
 
 def build_composite_aoi(
     *,
-    plc: BundleConfig,
+    preset: Preset,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -1150,7 +1154,7 @@ def build_composite_aoi(
     data_dir = Path(data_dir).expanduser().resolve()
 
     aoi_clip_shas = _clip_shas_for_composite(
-        plc=plc, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="aoi"
+        preset=preset, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="aoi"
     )
     if not aoi_clip_shas:
         raise ValueError("AOI clip set is empty")
@@ -1165,7 +1169,7 @@ def build_composite_aoi(
             shutil.rmtree(aoi_workspace)
         aoi_workspace.mkdir(parents=True, exist_ok=True)
         aoi_job_paths = _sorted_layer_job_gpkgs_for_clip_shas(
-            plc=plc,
+            preset=preset,
             role="aoi",
             clips_root=clips_root,
             data_dir=data_dir,
@@ -1197,7 +1201,7 @@ def build_composite_aoi(
 
 def build_composite_include(
     *,
-    plc: BundleConfig,
+    preset: Preset,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -1214,10 +1218,10 @@ def build_composite_include(
     gdb_fp = _file_tree_mtime_size_fingerprint
 
     include_clip_shas = _clip_shas_for_composite(
-        plc=plc, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="include"
+        preset=preset, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="include"
     )
     include_sha = _sha16(
-        composite_include_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+        composite_include_fingerprint_body(preset, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
     )
     include_workspace = composite_workspace_dir(clips_root, "include")
     include_gpkg = include_workspace / UNION_GPKG_BASENAME
@@ -1228,7 +1232,7 @@ def build_composite_include(
             shutil.rmtree(include_workspace)
         include_workspace.mkdir(parents=True, exist_ok=True)
         inc_job_paths = _sorted_layer_job_gpkgs_for_clip_shas(
-            plc=plc,
+            preset=preset,
             role="include",
             clips_root=clips_root,
             data_dir=data_dir,
@@ -1258,7 +1262,7 @@ def build_composite_include(
 
 def build_composite_exclude(
     *,
-    plc: BundleConfig,
+    preset: Preset,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -1275,10 +1279,10 @@ def build_composite_exclude(
     gdb_fp = _file_tree_mtime_size_fingerprint
 
     exclude_clip_shas = _clip_shas_for_composite(
-        plc=plc, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="exclude"
+        preset=preset, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="exclude"
     )
     exclude_sha = _sha16(
-        composite_exclude_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+        composite_exclude_fingerprint_body(preset, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
     )
     exclude_workspace = composite_workspace_dir(clips_root, "exclude")
     exclude_gpkg = exclude_workspace / UNION_GPKG_BASENAME
@@ -1290,7 +1294,7 @@ def build_composite_exclude(
         exclude_workspace.mkdir(parents=True, exist_ok=True)
         if exclude_clip_shas:
             exc_job_paths = _sorted_layer_job_gpkgs_for_clip_shas(
-                plc=plc,
+                preset=preset,
                 role="exclude",
                 clips_root=clips_root,
                 data_dir=data_dir,
@@ -1322,7 +1326,7 @@ def build_composite_exclude(
 
 def build_eligible_workspace(
     *,
-    plc: BundleConfig,
+    preset: Preset,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -1347,12 +1351,12 @@ def build_eligible_workspace(
     gdb_fp = _file_tree_mtime_size_fingerprint
 
     include_sha = _sha16(
-        composite_include_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+        composite_include_fingerprint_body(preset, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
     )
     exclude_sha = _sha16(
-        composite_exclude_fingerprint_body(plc, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
+        composite_exclude_fingerprint_body(preset, data_dir, aoi_mask_sha=mask_sha, gdb_fingerprint_fn=gdb_fp)
     )
-    bundle_land_digest = _sha16(land_use_inputs_fingerprint_body(plc, data_dir))
+    bundle_land_digest = _sha16(land_use_inputs_fingerprint_body(preset, data_dir))
     eligible_sha = _sha16(
         eligible_fingerprint_body(
             include_sha=include_sha,
@@ -1417,7 +1421,7 @@ def build_eligible_workspace(
         _vlog(f"wrote manifest {manifest_path.name}")
         _vlog("syncing eligible include layer slices")
         sync_eligible_include_layer_slices(
-            plc=plc,
+            preset=preset,
             data_dir=data_dir,
             clips_root=clips_root,
             mask_body=mask_body,
@@ -1429,7 +1433,7 @@ def build_eligible_workspace(
     aoi_sha = _sha16(
         composite_aoi_fingerprint_body(
             _clip_shas_for_composite(
-                plc=plc, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="aoi"
+                preset=preset, data_dir=data_dir, clips_root=clips_root, mask_body=mask_body, role="aoi"
             )
         )
     )
@@ -1445,7 +1449,7 @@ def build_eligible_workspace(
 def build_reference_entry(
     *,
     entry_id: str,
-    plc: BundleConfig,
+    preset: Preset,
     data_dir: Path,
     clips_root: Path,
     aoi_sha: str,
@@ -1464,18 +1468,18 @@ def build_reference_entry(
         _write_geodataframe_gpkg_and_kml,
     )
 
-    if not plc.reference:
-        raise ValueError("preset has no bundle.reference entries")
+    if not preset_general_overlays(preset):
+        raise ValueError("preset has no general_overlay maps")
 
     want = entry_id.strip()
-    ent = next((e for e in plc.reference if e.id == want), None)
+    ent = next((e for e in preset_general_overlays(preset) if e.id == want), None)
     if ent is None:
-        known = [e.id for e in plc.reference]
+        known = [e.id for e in preset_general_overlays(preset)]
         raise KeyError(f"unknown reference id {want!r} (configured: {', '.join(repr(k) for k in known)})")
 
     clips_root = Path(clips_root).expanduser().resolve()
     data_dir = Path(data_dir).expanduser().resolve()
-    entry_sha = plan_reference_entries(plc=plc, data_dir=data_dir, clips_root=clips_root)[want]
+    entry_sha = plan_reference_entries(preset=preset, data_dir=data_dir, clips_root=clips_root)[want]
 
     aoi_gpkg = composite_union_gpkg(clips_root, "aoi", aoi_sha)
     if not aoi_gpkg.is_file():
@@ -1523,7 +1527,7 @@ def build_reference_entry(
             return entry_sha
 
         merged = gpd.GeoDataFrame(pd.concat(pieces_ll, ignore_index=True), crs="EPSG:4326")
-        overlay = _overlay_for_reference_entry(ent, plc)
+        overlay = _overlay_for_reference_entry(ent, preset.bundle or BundleConfig())
         if progress_log:
             progress_log(f"{ref_dir.name}: write reference.gpkg + kml …")
         _write_geodataframe_gpkg_and_kml(

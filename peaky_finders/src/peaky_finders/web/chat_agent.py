@@ -30,6 +30,11 @@ _TOOL_STATUS: dict[str, str] = {
     "query_project_dem_highest": "Scanning Skadi DEM for highest point in project AOI…",
     "show_on_map": "Placing pin and computing viewshed…",
     "geocode_place": "Geocoding place name…",
+    "list_general_overlays": "Loading overlay catalog…",
+    "query_overlay_at_point": "Querying overlay at point…",
+    "list_overlay_values": "Listing overlay attribute values…",
+    "sites_in_overlay": "Finding sites in overlay…",
+    "point_in_eligible": "Checking eligible land…",
 }
 
 

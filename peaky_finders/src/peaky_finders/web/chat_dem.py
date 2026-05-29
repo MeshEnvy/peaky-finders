@@ -12,7 +12,7 @@ from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.bundle_build import load_composite_aoi_polygon
 from peaky_finders.pairwise_dem_peak import global_max_skadi_elevation_in_polygon
-from peaky_finders.sites_job import Preset, load_preset, peaky_projects_dir, resolved_preset_bundle_data_dir
+from peaky_finders.sites_job import Preset, load_preset, maps_by_type, peaky_projects_dir, resolved_preset_bundle_data_dir
 from peaky_finders.web.dem_contours import resolved_project_dem_dir
 from peaky_finders.web.geocode import GeocodeError, reverse_geocode_label
 from peaky_finders.web.projects import project_context
@@ -115,10 +115,10 @@ def project_dem_search_geometry(
     preset: Preset,
 ) -> tuple[BaseGeometry, str]:
     """Geometry to scan and a short scope label for tool results."""
-    if preset.bundle and preset.bundle.aoi:
+    if maps_by_type(preset.maps, "aoi"):
         try:
             data_dir = resolved_preset_bundle_data_dir(preset_path=preset_path, preset=preset)
-            poly = load_composite_aoi_polygon(preset.bundle, data_dir)
+            poly = load_composite_aoi_polygon(preset, data_dir)
             if not poly.is_empty:
                 return poly, "project bundle AOI"
         except Exception:
@@ -132,7 +132,7 @@ def project_dem_search_geometry(
             return box(west, south, east, north), "project site map extent"
 
     raise ValueError(
-        "no project AOI or site extent available — configure bundle.aoi or add sites to the preset"
+        "no project AOI or site extent available — configure maps with type aoi or add sites to the preset"
     )
 
 

@@ -32,17 +32,24 @@ display:
   min_dbm: -130.0
   max_dbm: -80.0
 
-bundle:
-  inputs_root: data
-  aoi:
-  - path: aoi/test.gdb
-    layers:
-    - name: boundary
-  include:
-  - path: include/test.gdb
-    layers:
-    - name: inc_layer
-  exclude: []
+maps:
+- id: test_aoi
+  name: Test AOI
+  description: Integration test AOI boundary
+  type: aoi
+  path: aoi/test.gdb
+  layers:
+  - boundary
+  visible: false
+- id: test_include
+  name: Test Include
+  description: Permissible land for integration tests
+  type: include
+  path: include/test.gdb
+  layers:
+  - inc_layer
+
+bundle: {}
 
 sites:
   hub:

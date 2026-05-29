@@ -61,83 +61,116 @@ display:
   min_dbm: -130.0
   max_dbm: -80.0
 
-# --- GDB-driven bundle (AOI, eligible land masks, overlays, DEM pin scan, KMZ layer toggles) ---
+# --- Project vector maps (AOI, land-use, informational overlays) ---
+maps:
+- id: blm_nevada_districts
+  name: BLM Nevada Districts
+  description: BLM district office boundaries for administrative context queries.
+  type: general_overlay
+  path: BLM_Nevada_District_Office_Boundary.gdb
+  visible: false
+  style:
+    line: ff4488cc
+    fill: 664488cc
+    fill_polygons: true
+    line_width: 1.5
+  layers:
+  - admu_district_poly
+- id: blm_nv_field_offices
+  name: BLM NV Field Offices
+  description: >
+    BLM field office boundaries. Use to list all field offices or find sites within
+    a named office.
+  type: general_overlay
+  path: BLM_NV_Field_Office_Boundary_Polygons.gdb
+  visible: false
+  style:
+    line: ffcc8844
+    fill: 66cc8844
+    fill_polygons: true
+    line_width: 1.0
+  layers:
+  - admu_ofc_poly
+- id: nevada_state_boundary
+  name: Nevada State Boundary
+  description: Project AOI. All other layers are clipped to this boundary.
+  type: aoi
+  path: State_of_Nevada_Boundary_74510041082641794
+  layers:
+  - Nevada_State_Boundary
+- id: blm_sma
+  name: BLM Surface Management
+  description: BLM-administered land where site placement is generally permitted.
+  type: include
+  path: BLM_Nevada_Surface_Management_Agency.gdb
+  layers:
+  - Land_Status_Dis
+- id: nwr_boundaries
+  name: National Wildlife Refuge Boundaries
+  description: National wildlife refuge boundaries as permissible include land.
+  type: include
+  path: National_Wildlife_Refuge_System_Boundaries.gdb
+  layers:
+  - FWSBoundaries
+- id: acec_designated
+  name: ACEC Designated
+  description: Areas of Critical Environmental Concern (designated).
+  type: exclude
+  path: BLM_Natl_Areas_of_Critical_Environmental_Concern_-8889489521581605133
+  layers:
+  - acec_desig_poly
+- id: acec_historic
+  name: ACEC Historic
+  description: Historic Areas of Critical Environmental Concern.
+  type: exclude
+  path: BLM_Natl_Historic_Areas_of_Critical_of_Environmental_Concern_3039259636030657794
+  layers:
+  - acec_hist_poly
+- id: lwcf_polygons
+  name: LWCF Polygons
+  description: Land and Water Conservation Fund exclusion polygons.
+  type: exclude
+  path: BLM_Natl_Land_and_Water_Conservation_Fund_LWCF_Polygons_2503496445228609816
+  layers:
+  - BLM_Natl_Land_and_Water_Conservation_Fund__LWCF__Polygons
+- id: nlcs_monuments
+  name: NLCS Monuments and NCAs
+  description: National monuments and national conservation areas.
+  type: exclude
+  path: BLM_Natl_NLCS_National_Monuments_National_Conservation_Areas_Polygons_3820554695161457218
+  layers:
+  - BLM_Natl_NLCS_National_Monuments_National_Conservation_Areas_Polygons
+- id: nlcs_wilderness
+  name: NLCS Wilderness Areas
+  description: BLM NLCS wilderness area polygons.
+  type: exclude
+  path: BLM_Natl_NLCS_Wilderness_Areas_Polygons_-100690039319256330
+  layers:
+  - BLM_Natl_NLCS_Wilderness_Areas_Polygons
+- id: nlcs_wsa
+  name: NLCS Wilderness Study Areas
+  description: BLM wilderness study area polygons.
+  type: exclude
+  path: BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons_-3786779803719444042
+  layers:
+  - BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons
+- id: frtc_land_status
+  name: FRTC Land Status
+  description: FRTC map land status exclusion polygons.
+  type: exclude
+  path: FRTCMapData_LandStatus_styled.kml
+  layers:
+  - FRTCMapData_LandStatus_styled
+- id: usfs_wilderness
+  name: USFS Wilderness Areas
+  description: US Forest Service wilderness exclusions.
+  type: exclude
+  path: USFS Wilderness Areas.gdb
+  layers:
+  - USFS_Wilderness_Areas_1_136_861_Acres
+
+# --- Bundle build/display knobs (KMZ styles, mesh coverage, site suggestions) ---
 bundle:
-  inputs_root: data
-
-  # Context maps (AOI-clipped; KMZ only — not used for eligibility). Ordered before ``aoi`` in doc.kml.
-  reference:
-  - id: blm_nevada_districts
-    path: BLM_Nevada_District_Office_Boundary.gdb
-    visible: false
-    style:
-      line: ff4488cc
-      fill: 664488cc
-      fill_polygons: true
-      line_width: 1.5
-    layers:
-    - admu_district_poly
-  - id: blm_nv_field_offices
-    path: BLM_NV_Field_Office_Boundary_Polygons.gdb
-    visible: false
-    style:
-      line: ffcc8844
-      fill: 66cc8844
-      fill_polygons: true
-      line_width: 1.0
-    layers:
-    - admu_ofc_poly
-
-  # Outer clip — state hull or arbitrary polygon union
-  aoi:
-  - path: State_of_Nevada_Boundary_74510041082641794
-    layers:
-    - Nevada_State_Boundary
-
-  # Polygons counted as permissible land (attribute filter on GDB layer rows)
-  include:
-  - path: BLM_Nevada_Surface_Management_Agency.gdb
-    layers:
-    - name: Land_Status_Dis
-      include:
-      - name: ABBR
-        value: BLM
-      - name: ABBR
-        value: FS
-  - path: National_Wildlife_Refuge_System_Boundaries.gdb
-    layers:
-    - name: FWSBoundaries
-
-  # Subtracted before eligible land (wilderness, ACEC, LWCF, etc.)
-  exclude:
-  - path: 
-      BLM_Natl_Areas_of_Critical_Environmental_Concern_-8889489521581605133
-    layers:
-    - name: acec_desig_poly
-  - path: 
-      BLM_Natl_Historic_Areas_of_Critical_of_Environmental_Concern_3039259636030657794
-    layers:
-    - name: acec_hist_poly
-  - path: 
-      BLM_Natl_Land_and_Water_Conservation_Fund_LWCF_Polygons_2503496445228609816
-    layers:
-    - name: BLM_Natl_Land_and_Water_Conservation_Fund__LWCF__Polygons
-  - path: 
-      BLM_Natl_NLCS_National_Monuments_National_Conservation_Areas_Polygons_3820554695161457218
-    layers:
-    - name: 
-        BLM_Natl_NLCS_National_Monuments_National_Conservation_Areas_Polygons
-  - path: BLM_Natl_NLCS_Wilderness_Areas_Polygons_-100690039319256330
-    layers:
-    - name: BLM_Natl_NLCS_Wilderness_Areas_Polygons
-  - path: 
-        BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons_-3786779803719444042
-    layers:
-    - name: BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons
-  - path: FRTCMapData_LandStatus_styled.kml
-  - path: USFS Wilderness Areas.gdb
-
-  # KML fill/line defaults (AABBGGRR where applicable — Google Earth convention)
   kml_overlay:
     default:
       line: ff666666
@@ -162,7 +195,7 @@ bundle:
       fill: 6600f300
       fill_polygons: true
       line_width: 0
-    reference:
+    general_overlay:
       line: ff666666
       fill: '66888888'
       fill_polygons: true

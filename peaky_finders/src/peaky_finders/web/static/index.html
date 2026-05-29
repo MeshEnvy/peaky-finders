@@ -20,7 +20,7 @@
       href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
       rel="stylesheet"
     />
-    <link href="/styles.css?v=15" rel="stylesheet" />
+    <link href="/styles.css?v=16" rel="stylesheet" />
   </head>
   <body>
     <div class="app">
@@ -123,6 +123,16 @@
             </button>
             <button
               type="button"
+              id="sidebar-tab-layers"
+              class="sidebar-tab"
+              role="tab"
+              aria-selected="false"
+              aria-controls="sidebar-panel-layers"
+            >
+              Maps
+            </button>
+            <button
+              type="button"
               id="sidebar-tab-agent"
               class="sidebar-tab active"
               role="tab"
@@ -131,6 +141,55 @@
             >
               Agent
             </button>
+          </div>
+
+          <div
+            id="sidebar-panel-layers"
+            class="sidebar-panel"
+            role="tabpanel"
+            aria-labelledby="sidebar-tab-layers"
+            hidden
+          >
+            <div class="layers-panel">
+              <div class="layers-panel-toolbar">
+                <label class="layers-upload-btn">
+                  Upload
+                  <input id="layers-upload-input" type="file" accept=".gdb,.gpkg,.kml,.kmz,.zip" hidden />
+                </label>
+              </div>
+              <p id="layers-status" class="layers-status" hidden></p>
+              <div id="layers-wizard" class="layers-wizard" hidden>
+                <h3 class="layers-wizard-title">New map</h3>
+                <label class="site-field">
+                  <span>Name</span>
+                  <input id="layers-wiz-name" type="text" />
+                </label>
+                <label class="site-field">
+                  <span>Description</span>
+                  <textarea id="layers-wiz-description" rows="2"></textarea>
+                </label>
+                <label class="site-field">
+                  <span>Type</span>
+                  <select id="layers-wiz-type">
+                    <option value="general_overlay">general overlay</option>
+                    <option value="aoi">aoi</option>
+                    <option value="include">include</option>
+                    <option value="exclude">exclude</option>
+                  </select>
+                </label>
+                <fieldset id="layers-wiz-layers" class="layers-wiz-layers"></fieldset>
+                <div class="layers-wizard-actions">
+                  <button id="layers-wiz-save" type="button">Save map</button>
+                  <button id="layers-wiz-cancel" type="button" class="ghost">Cancel</button>
+                </div>
+              </div>
+              <div id="layers-list" class="layers-list"></div>
+              <section id="layers-eligible-section" class="layers-eligible-section"></section>
+              <section id="layers-mesh-section" class="layers-mesh-section" hidden>
+                <h4 class="layers-group-title">Mesh coverage</h4>
+                <div id="layers-mesh-list" class="layers-mesh-list"></div>
+              </section>
+            </div>
           </div>
 
           <div
@@ -339,6 +398,6 @@
     </div>
 
     <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-    <script src="/app.js?v=43"></script>
+    <script src="/app.js?v=47"></script>
   </body>
 </html>

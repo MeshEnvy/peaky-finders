@@ -20,6 +20,14 @@ from peaky_finders.web.chat_dem import (
     snap_peak_to_local_dem,
 )
 from peaky_finders.web.geocode import GeocodeError, geocode_place_ranked
+from peaky_finders.web.chat_overlay import (
+    format_general_overlays_for_prompt,
+    list_general_overlays_catalog,
+    list_overlay_values,
+    point_in_eligible,
+    query_overlay_at_point,
+    sites_in_overlay,
+)
 from peaky_finders.web.projects import project_geocode_aoi
 from peaky_finders.web.viewshed_service import ensure_point_viewshed
 from peaky_finders.web.viewshed_rasters import normalize_point_coords
@@ -110,6 +118,66 @@ WEB_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
             },
             "required": [],
+            "additionalProperties": False,
+        },
+    ),
+    _tool(
+        "list_general_overlays",
+        "List informational general_overlay maps (id, name, description, attribute fields).",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+    ),
+    _tool(
+        "query_overlay_at_point",
+        "Return attributes of the general_overlay polygon containing a point.",
+        {
+            "type": "object",
+            "properties": {
+                "map_id": {"type": "string"},
+                "lat": {"type": "number"},
+                "lon": {"type": "number"},
+            },
+            "required": ["map_id", "lat", "lon"],
+            "additionalProperties": False,
+        },
+    ),
+    _tool(
+        "list_overlay_values",
+        "Distinct values for an attribute on a general_overlay map (e.g. list all field offices).",
+        {
+            "type": "object",
+            "properties": {
+                "map_id": {"type": "string"},
+                "attribute": {"type": "string"},
+                "limit": {"type": "integer", "default": 50},
+            },
+            "required": ["map_id", "attribute"],
+            "additionalProperties": False,
+        },
+    ),
+    _tool(
+        "sites_in_overlay",
+        "Project sites whose coordinates fall in a general_overlay polygon (optional attribute filter).",
+        {
+            "type": "object",
+            "properties": {
+                "map_id": {"type": "string"},
+                "attribute": {"type": "string"},
+                "value": {"type": "string"},
+            },
+            "required": ["map_id"],
+            "additionalProperties": False,
+        },
+    ),
+    _tool(
+        "point_in_eligible",
+        "Check whether a coordinate lies on derived deployable (eligible) land.",
+        {
+            "type": "object",
+            "properties": {
+                "lat": {"type": "number"},
+                "lon": {"type": "number"},
+            },
+            "required": ["lat", "lon"],
             "additionalProperties": False,
         },
     ),
@@ -262,7 +330,66 @@ def dispatch_web_tool(name: str, args: dict[str, Any], *, ctx: WebChatContext) -
         return _query_project_dem_highest(ctx)
     if name == "show_on_map":
         return _show_on_map(ctx, args)
+    if name == "list_general_overlays":
+        return _list_general_overlays(ctx)
+    if name == "query_overlay_at_point":
+        return _query_overlay_at_point(ctx, args)
+    if name == "list_overlay_values":
+        return _list_overlay_values(ctx, args)
+    if name == "sites_in_overlay":
+        return _sites_in_overlay(ctx, args)
+    if name == "point_in_eligible":
+        return _point_in_eligible(ctx, args)
     return {"error": f"unknown tool {name!r}"}
+
+
+def _list_general_overlays(ctx: WebChatContext) -> ToolResult:
+    if not ctx.project_slug:
+        return {"error": "select a project first"}
+    return {"overlays": list_general_overlays_catalog(ctx.project_slug)}
+
+
+def _query_overlay_at_point(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
+    if not ctx.project_slug:
+        return {"error": "select a project first"}
+    return query_overlay_at_point(
+        ctx.project_slug,
+        map_id=str(args["map_id"]),
+        lat=float(args["lat"]),
+        lon=float(args["lon"]),
+    )
+
+
+def _list_overlay_values(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
+    if not ctx.project_slug:
+        return {"error": "select a project first"}
+    return list_overlay_values(
+        ctx.project_slug,
+        map_id=str(args["map_id"]),
+        attribute=str(args["attribute"]),
+        limit=int(args.get("limit", 50)),
+    )
+
+
+def _sites_in_overlay(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
+    if not ctx.project_slug:
+        return {"error": "select a project first"}
+    return sites_in_overlay(
+        ctx.project_slug,
+        map_id=str(args["map_id"]),
+        attribute=args.get("attribute"),
+        value=args.get("value"),
+    )
+
+
+def _point_in_eligible(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
+    if not ctx.project_slug:
+        return {"error": "select a project first"}
+    return point_in_eligible(
+        ctx.project_slug,
+        lat=float(args["lat"]),
+        lon=float(args["lon"]),
+    )
 
 
 def _query_project_dem_highest(ctx: WebChatContext) -> ToolResult:
@@ -601,6 +728,13 @@ def web_chat_system_prompt(
         "- Pin or viewshed on that point: call show_on_map with those exact lat/lon (or pin_id) — "
         "never re-run query_project_dem_highest for placement.\n"
         "- Without a project, say you need a project selected (or offer to map a named peak via geocode).\n\n"
+        "Project map roles:\n"
+        "- aoi / include / exclude / eligible are internal land-use layers — use point_in_eligible for deployability.\n"
+        "- general_overlay maps are informational (admin boundaries, field offices) — use overlay tools.\n\n"
+        f"{format_general_overlays_for_prompt(project_slug)}\n\n"
+        "Overlay rules:\n"
+        "- Never invent field office or district names — call list_overlay_values or query_overlay_at_point.\n"
+        "- sites_in_overlay for sites within a named office/region.\n\n"
         "Map tools: place a pin, show a place, compute a viewshed. "
         "show_on_map always saves a planned site to the project YAML and computes its viewshed.\n"
         "Coordinate rules (critical):\n"

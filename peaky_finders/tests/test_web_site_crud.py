@@ -117,7 +117,7 @@ def test_patch_type_goal_clears_sees(monkeypatch, tmp_path: Path) -> None:
                     "receiver": {"height_m": 2.0, "gain_dbi": 3.0, "loss_db": 2.0},
                 },
                 "display": {},
-                "bundle": {"inputs_root": "data", "aoi": [], "include": [], "exclude": []},
+                "bundle": {},
                 "sites": {
                     "hub": {"name": "Hub", "loc": [36.5, -115.5], "sees": ["peer"]},
                     "peer": {"name": "Peer", "loc": [36.6, -115.4], "sees": ["hub"]},

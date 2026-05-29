@@ -76,17 +76,19 @@ def test_resolved_preset_bundle_data_dir_uses_inputs_root(peaky_test_home: Path)
     assert data_dir == (sample.parent / "data").resolve()
 
 
-def test_resolved_preset_bundle_data_dir_defaults_to_peaky_home_data(
+def test_resolved_preset_bundle_data_dir_defaults_to_preset_data(
     peaky_env: Path,
 ) -> None:
     preset = SimpleNamespace(bundle=None)
-    cfg = peaky_env / "job.yaml"
+    cfg = peaky_env / "projects" / "sample" / "config.yaml"
+    if not cfg.is_file():
+        pytest.skip("sample preset missing")
     data_dir = resolved_preset_bundle_data_dir(preset_path=cfg, preset=preset)
-    assert data_dir == (peaky_env / "data").resolve()
+    assert data_dir == (cfg.parent / "data").resolve()
 
 
 def test_resolved_preset_bundle_data_dir_honors_data_dir_override(tmp_path: Path) -> None:
-    preset = SimpleNamespace(bundle=BundleConfig.model_validate({"inputs_root": "data", "aoi": []}))
+    preset = SimpleNamespace(bundle=BundleConfig())
     override = tmp_path / "custom-data"
     data_dir = resolved_preset_bundle_data_dir(
         preset_path=tmp_path / "config.yaml",

@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -25,6 +25,31 @@ from peaky_finders.web.mesh_links import (
     project_mesh_links_at_geojson,
     project_mesh_links_from_site_geojson,
     project_mesh_links_geojson,
+)
+from peaky_finders.web.maps_build_scheduler import (
+    maps_build_status,
+    schedule_all_projects_maps_maintenance,
+    schedule_maps_maintenance,
+)
+from peaky_finders.web.project_events import project_event_hub, sse_encode
+from peaky_finders.web.mesh_layers import (
+    LayerDisplayMode,
+    mesh_layer_geojson,
+    patch_mesh_layer_display_mode,
+    patch_mesh_layer_visibility,
+)
+from peaky_finders.web.project_maps import (
+    append_map_entry,
+    delete_map_entry,
+    eligible_geojson,
+    inspect_data_path,
+    map_entry_geojson,
+    patch_eligible_display_mode,
+    patch_map_display_mode,
+    patch_map_entry,
+    patch_eligible_visibility,
+    project_maps_catalog,
+    save_uploaded_dataset,
 )
 from peaky_finders.web.projects import (
     enrich_all_project_sites,
@@ -93,6 +118,33 @@ class SitePatchRequest(BaseModel):
     sees: list[str] | None = None
 
 
+class MapEntryRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=256)
+    description: str = Field(default="", max_length=4000)
+    type: str = Field(pattern="^(aoi|include|exclude|general_overlay)$")
+    path: str = Field(min_length=1, max_length=1024)
+    layers: list[str] = Field(min_length=1)
+    visible: bool = False
+
+
+class MapPatchRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=256)
+    description: str | None = Field(default=None, max_length=4000)
+    type: str | None = Field(default=None, pattern="^(aoi|include|exclude|general_overlay)$")
+    path: str | None = Field(default=None, max_length=1024)
+    layers: list[str] | None = None
+    visible: bool | None = None
+
+
+class LayerVisibilityRequest(BaseModel):
+    visible: bool
+
+
+class LayerDisplayModeRequest(BaseModel):
+    mode: LayerDisplayMode
+
+
 async def _run_boot_site_enrich() -> None:
     try:
         await asyncio.to_thread(enrich_all_project_sites, allow_network_plss=True)
@@ -102,14 +154,26 @@ async def _run_boot_site_enrich() -> None:
         print(f"boot site enrich: failed ({exc})", flush=True)
 
 
+async def _run_boot_maps_maintenance() -> None:
+    try:
+        await asyncio.to_thread(schedule_all_projects_maps_maintenance)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(f"boot maps maintenance: failed ({exc})", flush=True)
+
+
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         enrich_task = asyncio.create_task(_run_boot_site_enrich())
+        maps_task = asyncio.create_task(_run_boot_maps_maintenance())
         yield
-        enrich_task.cancel()
+        for task in (enrich_task, maps_task):
+            task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await enrich_task
+            await maps_task
 
     app = FastAPI(title="Peaky Web", version="1", lifespan=lifespan)
 
@@ -133,6 +197,197 @@ def create_app() -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/projects/{slug}/maps")
+    def api_project_maps(slug: str) -> dict[str, Any]:
+        try:
+            return project_maps_catalog(slug)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{slug}/maps/inspect")
+    def api_inspect_map_dataset(slug: str, path: str) -> dict[str, Any]:
+        try:
+            return inspect_data_path(slug, path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{slug}/maps/eligible.geojson")
+    def api_eligible_geojson(slug: str) -> dict[str, Any]:
+        try:
+            return eligible_geojson(slug)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{slug}/maps/build-status")
+    def api_maps_build_status(slug: str) -> dict[str, Any]:
+        try:
+            return maps_build_status(slug)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{slug}/events")
+    async def api_project_events(request: Request, slug: str) -> StreamingResponse:
+        cfg = peaky_projects_dir() / slug / "config.yaml"
+        if not cfg.is_file():
+            raise HTTPException(status_code=404, detail=f"project not found: {slug!r}")
+
+        hub = project_event_hub(slug)
+        cancel = asyncio.Event()
+
+        async def watch_disconnect() -> None:
+            try:
+                while not cancel.is_set():
+                    if await request.is_disconnected():
+                        cancel.set()
+                        return
+                    await asyncio.sleep(0.25)
+            except asyncio.CancelledError:
+                pass
+
+        def sync_sse_chunks():
+            status = maps_build_status(slug)
+            yield sse_encode({"op": "maps.build.status", "project": slug, **status})
+            for msg in hub.subscribe(should_stop=cancel.is_set):
+                if cancel.is_set():
+                    break
+                yield sse_encode(msg)
+
+        async def sse_iter():
+            watcher = asyncio.create_task(watch_disconnect())
+            try:
+                async for chunk in iterate_in_threadpool(sync_sse_chunks()):
+                    if cancel.is_set():
+                        break
+                    yield chunk
+            finally:
+                cancel.set()
+                watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watcher
+
+        return StreamingResponse(
+            sse_iter(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/api/projects/{slug}/maps/mesh/{layer_id}.geojson")
+    def api_mesh_layer_geojson(slug: str, layer_id: str, view: LayerDisplayMode = "all") -> dict[str, Any]:
+        try:
+            return mesh_layer_geojson(slug, layer_id, view=view)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{slug}/maps/{map_id}.geojson")
+    def api_map_geojson(slug: str, map_id: str) -> dict[str, Any]:
+        try:
+            return map_entry_geojson(slug, map_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/projects/{slug}/maps/upload")
+    async def api_upload_map_dataset(slug: str, file: UploadFile = File(...)) -> dict[str, Any]:
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="empty upload")
+        try:
+            return save_uploaded_dataset(slug, file.filename or "upload.bin", content)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/projects/{slug}/maps")
+    def api_create_map(slug: str, body: MapEntryRequest) -> dict[str, Any]:
+        try:
+            return append_map_entry(slug, body.model_dump())
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.patch("/api/projects/{slug}/maps/{map_id}")
+    def api_patch_map(slug: str, map_id: str, body: MapPatchRequest) -> dict[str, Any]:
+        try:
+            return patch_map_entry(slug, map_id, body.model_dump(exclude_unset=True))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/projects/{slug}/maps/{map_id}")
+    def api_delete_map(slug: str, map_id: str) -> dict[str, bool]:
+        try:
+            delete_map_entry(slug, map_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"ok": True}
+
+    @app.patch("/api/projects/{slug}/maps/eligible/display-mode")
+    def api_patch_eligible_display_mode(slug: str, body: LayerDisplayModeRequest) -> dict[str, Any]:
+        try:
+            return patch_eligible_display_mode(slug, body.mode)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.patch("/api/projects/{slug}/maps/eligible/visibility")
+    def api_patch_eligible_visibility(slug: str, body: LayerVisibilityRequest) -> dict[str, Any]:
+        try:
+            return patch_eligible_visibility(slug, body.visible)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.patch("/api/projects/{slug}/maps/{map_id}/display-mode")
+    def api_patch_map_display_mode(slug: str, map_id: str, body: LayerDisplayModeRequest) -> dict[str, Any]:
+        try:
+            return patch_map_display_mode(slug, map_id, body.mode)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.patch("/api/projects/{slug}/maps/mesh/{layer_id}/display-mode")
+    def api_patch_mesh_display_mode(slug: str, layer_id: str, body: LayerDisplayModeRequest) -> dict[str, Any]:
+        try:
+            return patch_mesh_layer_display_mode(slug, layer_id, body.mode)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.patch("/api/projects/{slug}/maps/mesh/{layer_id}/visibility")
+    def api_patch_mesh_visibility(slug: str, layer_id: str, body: LayerVisibilityRequest) -> dict[str, Any]:
+        try:
+            return patch_mesh_layer_visibility(slug, layer_id, body.visible)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/api/projects/{slug}/sites/{site_slug}")
     def api_project_site_detail(slug: str, site_slug: str) -> dict[str, Any]:
         try:
@@ -146,7 +401,10 @@ def create_app() -> FastAPI:
         if not patch:
             raise HTTPException(status_code=400, detail="at least one field is required")
         try:
-            return patch_project_site(slug, site_slug, patch)
+            out = patch_project_site(slug, site_slug, patch)
+            if any(k in patch for k in ("lat", "lon", "new_slug")):
+                schedule_maps_maintenance(slug)
+            return out
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SitePresetConflictError as exc:

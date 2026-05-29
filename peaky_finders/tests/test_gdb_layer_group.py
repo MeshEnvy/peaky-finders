@@ -87,21 +87,12 @@ def test_flatten_gdb_layer_jobs_expands_path_only_kml(tmp_path: Path) -> None:
     assert jobs[0][2] == gdb_layer_group_specs(g, tmp_path)[0].name
 
 
-def test_bundle_config_accepts_path_only_exclude() -> None:
-    cfg = BundleConfig.model_validate(
-        {
-            "aoi": [{"path": "aoi/test.gdb", "layers": ["boundary"]}],
-            "include": [{"path": "include/test.gdb", "layers": ["inc"]}],
-            "exclude": [{"path": "exclude/land.kml"}],
-        }
-    )
-    assert cfg.exclude[0].layers == []
-    text = canonical_bundle_land_use_config_text(cfg)
-    assert '"layers": "*"' in text
-    assert "exclude/land.kml" in text
+def test_bundle_config_accepts_empty_bundle() -> None:
+    cfg = BundleConfig()
+    assert cfg.kml_overlay is None
 
 
 def test_sample_preset_loads_with_explicit_layers() -> None:
     preset = load_preset(SAMPLE_PROJECT_CONFIG)
-    assert preset.bundle is not None
-    assert preset.bundle.exclude == []
+    assert preset.maps
+    assert not [m for m in preset.maps if m.type == "exclude"]
