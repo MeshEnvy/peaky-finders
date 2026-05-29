@@ -1,10 +1,11 @@
-"""Sequential viewshed job queue — one in-flight build per viewshed key."""
+"""Viewshed build queue — parallel across keys, coalesced per key."""
 
 from __future__ import annotations
 
-import queue
+import os
 import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -70,15 +71,25 @@ class _ViewshedJob:
     error: BaseException | None = None
 
 
-class ViewshedManager:
-    """Run viewshed builds one at a time; coalesce waiters on the same key."""
+def _default_max_workers() -> int:
+    try:
+        n = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
+    except (AttributeError, NotImplementedError):
+        n = os.cpu_count() or 4
+    return max(1, min(8, n))
 
-    def __init__(self) -> None:
+
+class ViewshedManager:
+    """Run viewshed builds in parallel; coalesce waiters on the same key."""
+
+    def __init__(self, *, max_workers: int | None = None) -> None:
+        mx = max_workers if max_workers is not None else _default_max_workers()
         self._lock = threading.Lock()
         self._jobs: dict[tuple[Any, ...], _ViewshedJob] = {}
-        self._queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
-        self._worker = threading.Thread(target=self._worker_loop, name="viewshed-manager", daemon=True)
-        self._worker.start()
+        self._executor = ThreadPoolExecutor(
+            max_workers=mx,
+            thread_name_prefix="viewshed-build",
+        )
 
     def run(self, key: tuple[Any, ...], fn: Callable[[], None]) -> None:
         job = self._enqueue(key, fn)
@@ -93,28 +104,19 @@ class ViewshedManager:
                 return job
             job = _ViewshedJob(key=key, fn=fn)
             self._jobs[key] = job
-            self._queue.put(key)
+            self._executor.submit(self._run_job, job)
             return job
 
-    def _worker_loop(self) -> None:
-        while True:
-            key = self._queue.get()
-            try:
-                with self._lock:
-                    job = self._jobs.get(key)
-                if job is None:
-                    continue
-                try:
-                    job.fn()
-                except BaseException as exc:
-                    job.error = exc
-                finally:
-                    job.event.set()
-                    with self._lock:
-                        if self._jobs.get(key) is job:
-                            del self._jobs[key]
-            finally:
-                self._queue.task_done()
+    def _run_job(self, job: _ViewshedJob) -> None:
+        try:
+            job.fn()
+        except BaseException as exc:
+            job.error = exc
+        finally:
+            job.event.set()
+            with self._lock:
+                if self._jobs.get(job.key) is job:
+                    del self._jobs[job.key]
 
 
 VIEWSHED_MANAGER = ViewshedManager()

@@ -30,14 +30,18 @@ def test_manager_coalesces_same_key() -> None:
     assert calls == ["run"]
 
 
-def test_manager_runs_jobs_sequentially() -> None:
-    mgr = ViewshedManager()
-    order: list[int] = []
+def test_manager_runs_different_keys_in_parallel() -> None:
+    mgr = ViewshedManager(max_workers=4)
+    started: list[int] = []
+    done: list[int] = []
+    gate = threading.Barrier(2)
 
     def make(n: int):
         def work() -> None:
-            order.append(n)
+            started.append(n)
+            gate.wait(timeout=1.0)
             time.sleep(0.02)
+            done.append(n)
 
         return work
 
@@ -48,4 +52,5 @@ def test_manager_runs_jobs_sequentially() -> None:
     t1.join()
     t2.join()
 
-    assert order == [1, 2]
+    assert started == [1, 2]
+    assert sorted(done) == [1, 2]

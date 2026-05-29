@@ -430,6 +430,16 @@ async function loadProjectMeshLinks(projectSlug) {
   raiseOverlayLayers()
 }
 
+function applyViewshedRasterRecords(records, refreshPanel = false) {
+  const seenUrl = new Set()
+  for (const r of records) {
+    if (!r?.url || seenUrl.has(r.url)) continue
+    seenUrl.add(r.url)
+    if (mapReady) addViewshedRaster(r, refreshPanel)
+    else pendingRasters.push(r)
+  }
+}
+
 async function loadProjectViewsheds(projectSlug, sites) {
   const eligible = rfSites(sites)
   for (const s of eligible) {
@@ -438,17 +448,34 @@ async function loadProjectViewsheds(projectSlug, sites) {
   }
   renderSitesPanel()
 
-  const seenUrl = new Set()
   try {
-    for (const s of eligible) {
-      const res = await fetch(`/api/projects/${projectSlug}/viewsheds/${s.slug}?ensure=false`)
-      if (!res.ok) continue
-      const r = await res.json()
-      if (!r?.url || seenUrl.has(r.url)) continue
-      seenUrl.add(r.url)
-      if (mapReady) addViewshedRaster(r, false)
-      else pendingRasters.push(r)
+    const batchRes = await fetch(`/api/projects/${projectSlug}/viewsheds`)
+    if (batchRes.ok) {
+      const items = await batchRes.json()
+      if (Array.isArray(items) && items.length) {
+        applyViewshedRasterRecords(items, false)
+        return
+      }
     }
+
+    const results = await Promise.all(
+      eligible.map(async (s) => {
+        try {
+          const res = await fetch(`/api/projects/${projectSlug}/viewsheds/${s.slug}?ensure=false`)
+          if (!res.ok) return null
+          return res.json()
+        } catch {
+          return null
+        } finally {
+          const entry = siteRegistry.get(s.slug)
+          if (entry?.viewshedPending) {
+            entry.viewshedPending = false
+            renderSitesPanel()
+          }
+        }
+      }),
+    )
+    applyViewshedRasterRecords(results.filter(Boolean), false)
   } finally {
     for (const s of eligible) {
       const entry = siteRegistry.get(s.slug)

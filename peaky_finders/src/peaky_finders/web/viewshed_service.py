@@ -22,7 +22,7 @@ from peaky_finders.web.viewshed_rasters import (
     resolve_point_workdir,
     resolve_splat_png_path,
 )
-from peaky_finders.web.viewshed_tiles import point_tile_layer_metadata, tile_layer_metadata
+from peaky_finders.web.viewshed_tiles import point_tile_layer_metadata
 
 
 def wait_for_site_viewshed(*, project_slug: str, site_slug: str) -> None:
@@ -69,21 +69,59 @@ def viewshed_raster_record(
     if bounds is None:
         raise FileNotFoundError(f"missing viewshed bounds for site {site_slug!r}")
 
-    tiles = tile_layer_metadata(
-        project_slug=project_slug,
-        site_slug=site_slug,
-        workdir=workdir,
-        bounds=bounds,
-    )
     return {
         "slug": site_slug,
         "digest": workdir.name,
         "url": f"/api/projects/{project_slug}/viewsheds/{site_slug}/splat.png",
+        "coordinates": latlonbox_image_coordinates(bounds),
         "opacity": _raster_opacity(preset),
         "cached": not computed,
         "computed": computed,
-        **tiles,
     }
+
+
+def list_cached_site_viewsheds(*, project_slug: str) -> list[dict[str, Any]]:
+    """Metadata for preset sites that already have ``splat.png`` (no compute)."""
+    cfg = preset_path_for_project(project_slug)
+    preset = load_preset(cfg)
+    viewsheds_root = _viewsheds_root_for_preset(cfg)
+    if viewsheds_root is None:
+        return []
+
+    opacity = _raster_opacity(preset)
+    seen_digest: set[str] = set()
+    out: list[dict[str, Any]] = []
+
+    for slug, site in sorted(preset.sites.items()):
+        if not site.participates_in_rf:
+            continue
+        workdir = resolved_viewshed_workdir_for_coords(
+            preset=preset,
+            viewshed_root=viewsheds_root,
+            lat=float(site.lat),
+            lon=float(site.lon),
+        )
+        if not (workdir / "splat.png").is_file():
+            continue
+        digest = workdir.name
+        if digest in seen_digest:
+            continue
+        seen_digest.add(digest)
+        bounds = _bounds_for_workdir(workdir)
+        if bounds is None:
+            continue
+        out.append(
+            {
+                "slug": str(slug),
+                "digest": digest,
+                "url": f"/api/projects/{project_slug}/viewsheds/{slug}/splat.png",
+                "coordinates": latlonbox_image_coordinates(bounds),
+                "opacity": opacity,
+                "cached": True,
+                "computed": False,
+            }
+        )
+    return out
 
 
 def _run_site_viewshed_build(
@@ -157,8 +195,19 @@ def get_site_viewshed(
     project_slug: str,
     site_slug: str,
     force: bool = False,
+    ensure: bool = True,
     verbose: bool = False,
 ) -> dict[str, Any]:
+    if not ensure:
+        if force:
+            raise ValueError("ensure=false cannot be combined with force=true")
+        if not viewshed_is_cached(project_slug=project_slug, site_slug=site_slug):
+            raise FileNotFoundError(f"viewshed not built for site {site_slug!r}")
+        return viewshed_raster_record(
+            project_slug=project_slug,
+            site_slug=site_slug,
+            computed=False,
+        )
     return ensure_site_viewshed(
         project_slug=project_slug,
         site_slug=site_slug,

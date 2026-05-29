@@ -44,6 +44,43 @@ def test_site_viewshed_build_uses_direct_splatter_run(tmp_path) -> None:
     assert calls == ["run"]
 
 
+def test_site_viewshed_endpoint_ensure_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
+    app = create_app()
+    client = TestClient(app)
+
+    with patch("peaky_finders.web.app.get_site_viewshed") as get_site:
+        get_site.side_effect = FileNotFoundError("viewshed not built")
+        res = client.get("/api/projects/demo/viewsheds/missing?ensure=false")
+
+    assert res.status_code == 404
+    get_site.assert_called_once()
+    assert get_site.call_args.kwargs["ensure"] is False
+
+
+def test_project_viewsheds_batch_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
+    app = create_app()
+    client = TestClient(app)
+    payload = [
+        {
+            "slug": "foo",
+            "digest": "abc123",
+            "url": "/api/projects/demo/viewsheds/foo/splat.png",
+            "coordinates": [[-116.0, 40.0], [-115.0, 40.0], [-115.0, 39.0], [-116.0, 39.0]],
+            "opacity": 0.5,
+            "cached": True,
+            "computed": False,
+        },
+    ]
+
+    with patch("peaky_finders.web.app.list_cached_site_viewsheds", return_value=payload):
+        res = client.get("/api/projects/demo/viewsheds")
+
+    assert res.status_code == 200
+    assert res.json()[0]["slug"] == "foo"
+
+
 def test_site_viewshed_endpoint_ensure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
     app = create_app()
@@ -84,25 +121,21 @@ def test_viewshed_raster_record_shape() -> None:
     ), patch(
         "peaky_finders.web.viewshed_service._bounds_for_workdir",
         return_value={"north": 40.0, "south": 39.0, "east": -115.0, "west": -116.0, "rotation": 0.0},
-    ), patch(
-        "peaky_finders.web.viewshed_service.tile_layer_metadata",
-        return_value={
-            "tile_url": "/api/projects/demo/viewsheds/foo/tiles/{z}/{x}/{y}.png",
-            "bounds": [-116.0, 39.0, -115.0, 40.0],
-            "minzoom": 8,
-            "maxzoom": 14,
-            "source_pixels": [500, 500],
-            "source_path": "splat.png",
-        },
     ):
         preset = load_preset.return_value
-        preset.sites = {"foo": __import__("types").SimpleNamespace(lat=39.5, lon=-115.5)}
+        preset.sites = {
+            "foo": __import__("types").SimpleNamespace(
+                lat=39.5,
+                lon=-115.5,
+                participates_in_rf=True,
+            ),
+        }
         rec = viewshed_raster_record(project_slug="demo", site_slug="foo", computed=False)
 
     assert rec["slug"] == "foo"
     assert rec["digest"] == "abc123"
     assert rec["url"].endswith("/splat.png")
-    assert "tile_url" in rec
+    assert len(rec["coordinates"]) == 4
 
 
 def test_normalize_point_coords_matches_tile_query() -> None:

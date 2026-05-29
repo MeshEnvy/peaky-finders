@@ -28,6 +28,7 @@ from peaky_finders.web.viewshed_service import (
     ensure_site_viewshed,
     get_point_viewshed,
     get_site_viewshed,
+    list_cached_site_viewsheds,
 )
 from peaky_finders.web.viewshed_tiles import ensure_point_viewshed_tile, ensure_viewshed_tile
 
@@ -160,17 +161,26 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return FileResponse(path, media_type="image/png")
 
+    @app.get("/api/projects/{slug}/viewsheds")
+    def api_project_viewsheds(slug: str) -> list[dict[str, Any]]:
+        try:
+            return list_cached_site_viewsheds(project_slug=slug)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/api/projects/{slug}/viewsheds/{site_slug}")
     def api_site_viewshed(
         slug: str,
         site_slug: str,
         force: bool = False,
+        ensure: bool = True,
     ) -> dict[str, Any]:
         try:
             return get_site_viewshed(
                 project_slug=slug,
                 site_slug=site_slug,
                 force=force,
+                ensure=ensure,
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
