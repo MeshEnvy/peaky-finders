@@ -60,7 +60,13 @@ def project_context(slug: str) -> dict[str, Any]:
         raise FileNotFoundError(f"project not found: {slug!r}")
     preset = load_preset(cfg)
     sites = [
-        {"slug": s, "lat": e.lat, "lon": e.lon, "type": e.type.value}
+        {
+            "slug": s,
+            "name": e.name.strip() or s,
+            "lat": e.lat,
+            "lon": e.lon,
+            "type": e.type.value,
+        }
         for s, e in sorted(preset.sites.items())
     ]
     goals: list[dict[str, Any]] = []

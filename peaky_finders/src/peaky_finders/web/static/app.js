@@ -25,6 +25,10 @@ const sitesListEmptyEl = document.getElementById('sites-list-empty')
 const siteRegistry = new Map()
 let sitesPanelCollapsed = false
 
+function siteDisplayLabel(site) {
+  return (site.name || '').trim() || site.slug
+}
+
 const chatHistory = []
 const chatMapPins = new Map()
 let chatSummary = null
@@ -87,6 +91,7 @@ function basemapStyle(key) {
   const bm = BASEMAPS[key] || BASEMAPS.osm
   return {
     version: 8,
+    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     sources: {
       basemap: {
         type: 'raster',
@@ -175,6 +180,7 @@ function overlayLayerIds() {
   for (const layerId of MAP_PIN_LAYER_IDS) {
     const entry = layers.get(layerId)
     if (entry?.layer && map.getLayer(entry.layer)) ids.push(entry.layer)
+    if (entry?.labelLayer && map.getLayer(entry.labelLayer)) ids.push(entry.labelLayer)
   }
   return ids
 }
@@ -493,7 +499,7 @@ function resetSitesPanel(sites) {
   for (const s of sites || []) {
     siteRegistry.set(s.slug, {
       slug: s.slug,
-      label: s.slug,
+      label: siteDisplayLabel(s),
       lat: s.lat,
       lon: s.lon,
       hasViewshed: false,
@@ -660,6 +666,27 @@ function ensureLayer(layerId) {
         },
       })
       ids.outline = `${layerId}-outline`
+    }
+    if (layerId === 'sites') {
+      ids.labelLayer = 'sites-labels-layer'
+      map.addLayer({
+        id: ids.labelLayer,
+        type: 'symbol',
+        source: ids.source,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-anchor': 'top',
+          'text-offset': [0, 0.8],
+          'text-size': 11,
+          'text-font': ['Open Sans Regular'],
+          'text-allow-overlap': true,
+        },
+        paint: {
+          'text-color': '#f1f5f9',
+          'text-halo-color': '#0f172a',
+          'text-halo-width': 1.5,
+        },
+      })
     }
   }
   layers.set(layerId, ids)
@@ -1040,6 +1067,7 @@ function clearOverlayLayers() {
   for (const layerId of ['viewsheds', 'goals', 'sites', 'trials', 'committed', 'mesh_links']) {
     const outlineId = `${layerId}-outline`
     if (map.getLayer(outlineId)) map.removeLayer(outlineId)
+    if (layerId === 'sites' && map.getLayer('sites-labels-layer')) map.removeLayer('sites-labels-layer')
     if (map.getLayer(`${layerId}-layer`)) map.removeLayer(`${layerId}-layer`)
     if (map.getSource(`${layerId}-src`)) map.removeSource(`${layerId}-src`)
     layers.delete(layerId)
@@ -1333,7 +1361,13 @@ async function loadContext(slug) {
     handlers['map.pin']({ layer_id: 'goals', id: g.key, lat: g.lat, lon: g.lon, label: g.key })
   }
   for (const s of ctx.sites || []) {
-    handlers['map.pin']({ layer_id: 'sites', id: s.slug, lat: s.lat, lon: s.lon, label: s.slug })
+    handlers['map.pin']({
+      layer_id: 'sites',
+      id: s.slug,
+      lat: s.lat,
+      lon: s.lon,
+      label: siteDisplayLabel(s),
+    })
   }
   raiseOverlayLayers()
   projectMeshScopeBbox = ctx.bbox || null
