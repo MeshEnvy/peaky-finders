@@ -34,6 +34,33 @@ def _overlay(*, slug: str, lat: float, lon: float) -> kml_bundle.AggregateSiteOv
     )
 
 
+def test_site_links_geojson_mutual_overlap(tmp_path: Path) -> None:
+    splats = tmp_path / "splats"
+    for slug, poly in (
+        ("a", box(-115.03, 39.00, -115.01, 39.02)),
+        ("b", box(-115.02, 39.01, -115.00, 39.03)),
+    ):
+        _write_coverage_gpkg(splats / slug / SPLAT_GPKG_NAME, poly)
+
+    gpkg_a = splats / "a" / SPLAT_GPKG_NAME
+    gpkg_b = splats / "b" / SPLAT_GPKG_NAME
+    from peaky_finders.viewshed_links import site_links_geojson
+
+    gj = site_links_geojson(
+        coverage_gpkg_by_slug={"a": gpkg_a, "b": gpkg_b},
+        sites=[
+            _overlay(slug="a", lat=39.015, lon=-115.015),
+            _overlay(slug="b", lat=39.018, lon=-115.018),
+        ],
+    )
+    assert gj["type"] == "FeatureCollection"
+    assert len(gj["features"]) == 1
+    feat = gj["features"][0]
+    assert feat["geometry"]["type"] == "LineString"
+    assert feat["properties"]["from"] == "a"
+    assert feat["properties"]["to"] == "b"
+
+
 def test_write_site_links_mutual_overlap(tmp_path: Path) -> None:
     splats = tmp_path / "splats"
     for slug, poly in (

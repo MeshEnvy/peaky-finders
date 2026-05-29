@@ -41,6 +41,9 @@ function terrainDemSourceSpec() {
 const PITCH_TERRAIN_ON = 12
 const PITCH_TERRAIN_OFF = 6
 
+const BASEMAP_REFERENCE_SOURCE = 'basemap-reference'
+const BASEMAP_REFERENCE_LAYER = 'basemap-reference'
+
 const BASEMAPS = {
   osm: {
     label: 'OpenStreetMap',
@@ -61,7 +64,10 @@ const BASEMAPS = {
     tiles: [
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     ],
-    attribution: '© Esri, Maxar, Earthstar Geographics',
+    referenceTiles: [
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    ],
+    attribution: '© Esri, Maxar, Earthstar Geographics · labels © Esri',
     maxzoom: 19,
   },
 }
@@ -145,8 +151,7 @@ function removeTerrainSource() {
 
 function overlayLayerIds() {
   const ids = []
-  for (const layerId of MESH_SCOPE_LAYER_IDS) {
-    if (MAP_PIN_LAYER_IDS.includes(layerId)) continue
+  for (const layerId of ['committed', 'viewsheds']) {
     const entry = layers.get(layerId)
     if (entry?.layer && map.getLayer(entry.layer)) ids.push(entry.layer)
     if (entry?.outline && map.getLayer(entry.outline)) ids.push(entry.outline)
@@ -154,6 +159,8 @@ function overlayLayerIds() {
   for (const { layerId } of viewshedRasterLayers) {
     if (map.getLayer(layerId)) ids.push(layerId)
   }
+  const meshLinks = layers.get('mesh_links')
+  if (meshLinks?.layer && map.getLayer(meshLinks.layer)) ids.push(meshLinks.layer)
   for (const layerId of MAP_PIN_LAYER_IDS) {
     const entry = layers.get(layerId)
     if (entry?.layer && map.getLayer(entry.layer)) ids.push(entry.layer)
@@ -340,6 +347,22 @@ async function loadSiteViewshed(projectSlug, siteSlug) {
   return res.json()
 }
 
+async function loadProjectMeshLinks(projectSlug) {
+  const res = await fetch(`/api/projects/${projectSlug}/mesh-links`)
+  if (!res.ok) return
+  const gj = await res.json()
+  const layerId = 'mesh_links'
+  for (const f of gj.features || []) {
+    const id = f.properties?.id || `${f.properties?.from}--${f.properties?.to}`
+    layerFeatureCache.set(`${layerId}:${id}`, {
+      ...f,
+      properties: { ...(f.properties || {}), id },
+    })
+  }
+  flushLayerFeatures(layerId)
+  raiseOverlayLayers()
+}
+
 async function loadProjectViewsheds(projectSlug, sites) {
   const seenUrl = new Set()
   const results = await Promise.all((sites || []).map((s) => loadSiteViewshed(projectSlug, s.slug)))
@@ -408,6 +431,40 @@ function clearViewshedRasters() {
   viewshedRasterLayers.length = 0
 }
 
+function removeBasemapReference() {
+  if (map.getLayer(BASEMAP_REFERENCE_LAYER)) map.removeLayer(BASEMAP_REFERENCE_LAYER)
+  if (map.getSource(BASEMAP_REFERENCE_SOURCE)) map.removeSource(BASEMAP_REFERENCE_SOURCE)
+}
+
+function ensureBasemapReference(bm) {
+  if (!bm.referenceTiles) {
+    removeBasemapReference()
+    return
+  }
+  const refSrc = map.getSource(BASEMAP_REFERENCE_SOURCE)
+  if (!refSrc) {
+    map.addSource(BASEMAP_REFERENCE_SOURCE, {
+      type: 'raster',
+      tiles: bm.referenceTiles,
+      tileSize: 256,
+      maxzoom: bm.maxzoom,
+    })
+  } else if (typeof refSrc.setTiles === 'function') {
+    refSrc.setTiles(bm.referenceTiles)
+  }
+  if (!map.getLayer(BASEMAP_REFERENCE_LAYER)) {
+    map.addLayer(
+      {
+        id: BASEMAP_REFERENCE_LAYER,
+        type: 'raster',
+        source: BASEMAP_REFERENCE_SOURCE,
+        paint: { 'raster-opacity': 1, 'raster-fade-duration': 0 },
+      },
+      firstOverlayLayerId(),
+    )
+  }
+}
+
 function setBasemap(key) {
   const bm = BASEMAPS[key]
   if (!bm || !mapReady) return
@@ -415,6 +472,8 @@ function setBasemap(key) {
   if (!src || typeof src.setTiles !== 'function') return
   src.setTiles(bm.tiles)
   map.setMaxZoom(bm.maxzoom)
+  if (bm.referenceTiles) ensureBasemapReference(bm)
+  else removeBasemapReference()
 }
 
 function ensureLayer(layerId) {
@@ -798,18 +857,16 @@ const handlers = {
     flushPinLayer(layerId)
   },
   'map.line': (m) => {
-    const ids = ensureLayer(m.layer_id)
-    const src = map.getSource(ids.source)
-    src.setData({
-      type: 'FeatureCollection',
-      features: [
-        {
-          type: 'Feature',
-          properties: { id: m.id },
-          geometry: { type: 'LineString', coordinates: m.coordinates },
-        },
-      ],
+    if (!mapReady) return
+    const layerId = m.layer_id
+    const id = m.id || `${layerId}:${m.coordinates?.length || 0}`
+    layerFeatureCache.set(`${layerId}:${id}`, {
+      type: 'Feature',
+      properties: { id, ...(m.properties || {}) },
+      geometry: { type: 'LineString', coordinates: m.coordinates },
     })
+    flushLayerFeatures(layerId)
+    raiseOverlayLayers()
   },
   'map.polygon': (m) => {
     if (!mapReady) return
@@ -1077,7 +1134,8 @@ async function loadContext(slug) {
   } catch (err) {
     console.warn('fitMapToMeshScope failed:', err)
   }
-  void loadProjectViewsheds(slug, ctx.sites)
+  await loadProjectViewsheds(slug, ctx.sites)
+  await loadProjectMeshLinks(slug)
   scheduleChatContextRefresh('')
 }
 

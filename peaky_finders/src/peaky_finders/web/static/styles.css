@@ -280,6 +280,13 @@ select option {
   background: var(--trial);
 }
 
+.legend-line {
+  width: 18px;
+  height: 0;
+  border-top: 2.5px solid #38bdf8;
+  flex-shrink: 0;
+}
+
 /* ── Sidebar / chat ── */
 .sidebar {
   display: flex;

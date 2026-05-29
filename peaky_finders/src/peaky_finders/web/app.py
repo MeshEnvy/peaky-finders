@@ -20,6 +20,7 @@ from peaky_finders.web.chat_context import estimate_chat_context, summarize_chat
 from peaky_finders.web.chat_history import ChatTurn
 from peaky_finders.web.dem_contours import load_dem_contours
 from peaky_finders.web.jobs import JOB_MANAGER
+from peaky_finders.web.mesh_links import project_mesh_links_geojson
 from peaky_finders.web.projects import list_projects, project_context
 from peaky_finders.sites_job import peaky_projects_dir
 from peaky_finders.web.viewshed_rasters import resolve_splat_png_path
@@ -92,6 +93,13 @@ def create_app() -> FastAPI:
     def api_project_context(slug: str) -> dict[str, Any]:
         try:
             return project_context(slug)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{slug}/mesh-links")
+    def api_project_mesh_links(slug: str) -> dict[str, Any]:
+        try:
+            return project_mesh_links_geojson(slug)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

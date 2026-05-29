@@ -5,7 +5,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from shapely import make_valid
 from shapely.geometry import Point
@@ -84,6 +84,67 @@ def mutual_site_link_slug_pairs(
         pairs.add(_canonical_pair(footprint_nodes[i].slug, footprint_nodes[j].slug))
     pairs.update(mutual_sees_slug_pairs(sees_by_slug))
     return sorted(pairs)
+
+
+def site_links_geojson(
+    *,
+    coverage_gpkg_by_slug: Mapping[str, Path],
+    sites: Sequence[AggregateSiteOverlay],
+    sees_by_slug: Mapping[str, Sequence[str]] | None = None,
+) -> dict[str, Any]:
+    """GeoJSON FeatureCollection of LineStrings for mutual site links."""
+    overlay_by_slug = {s.slug: s for s in sites}
+    footprint_nodes: list[_SiteLinkNode] = []
+    for s in sites:
+        gpkg = coverage_gpkg_by_slug.get(s.slug)
+        fp: BaseGeometry | None = None
+        if gpkg is not None:
+            loaded = read_coverage_footprint(Path(gpkg))
+            if loaded is not None and not loaded.is_empty:
+                fp = make_valid(loaded) if not loaded.is_valid else loaded
+                if fp.is_empty:
+                    fp = None
+        footprint_nodes.append(
+            _SiteLinkNode(
+                slug=s.slug,
+                folder_name=s.folder_name,
+                lat=float(s.center_lat),
+                lon=float(s.center_lon),
+                antenna_height_agl_m=float(s.antenna_height_agl_m),
+                footprint=fp,
+            ),
+        )
+
+    pair_slugs = mutual_site_link_slug_pairs(
+        footprint_nodes=footprint_nodes,
+        sees_by_slug=sees_by_slug or {},
+    )
+    features: list[dict[str, Any]] = []
+    node_by_slug = {n.slug: n for n in footprint_nodes}
+    for slug_a, slug_b in pair_slugs:
+        if slug_a not in overlay_by_slug or slug_b not in overlay_by_slug:
+            continue
+        a = node_by_slug[slug_a]
+        b = node_by_slug[slug_b]
+        features.append(
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": f"{slug_a}--{slug_b}",
+                    "from": slug_a,
+                    "to": slug_b,
+                    "label": f"{a.folder_name} ↔ {b.folder_name}",
+                },
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [
+                        [a.lon, a.lat],
+                        [b.lon, b.lat],
+                    ],
+                },
+            },
+        )
+    return {"type": "FeatureCollection", "features": features}
 
 
 def write_site_links_kml(
