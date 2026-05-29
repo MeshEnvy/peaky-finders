@@ -2,21 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from peaky_finders import kml_bundle
-from peaky_finders.preset_mapping import preset_to_request
 from peaky_finders.sites_job import (
     Preset,
     load_preset,
     peaky_projects_dir,
-    resolved_viewshed_dir,
 )
-from peaky_finders.splat_polygonize import SPLAT_GPKG_NAME
 from peaky_finders.viewshed_links import site_links_geojson
-from peaky_finders.viewshed_workspace import resolved_viewshed_workdir, viewshed_workspace_digest
-from peaky_finders.web.rf_links import rf_link_line_features_for_preset
 
 
 def _site_overlays(preset: Preset) -> list[kml_bundle.AggregateSiteOverlay]:
@@ -43,32 +37,6 @@ def _site_overlays(preset: Preset) -> list[kml_bundle.AggregateSiteOverlay]:
     return overlays
 
 
-def _coverage_gpkg_by_slug(
-    *,
-    preset: Preset,
-    bundle_cache_root: Path,
-) -> dict[str, Path]:
-    viewshed_root = resolved_viewshed_dir(bundle_cache_root)
-    out: dict[str, Path] = {}
-    for site_slug, site in preset.sites.items():
-        vd = viewshed_workspace_digest(request=preset_to_request(preset, float(site.lat), float(site.lon)))
-        data_dir = resolved_viewshed_workdir(digest=vd, viewshed_root=viewshed_root)
-        gp = data_dir / SPLAT_GPKG_NAME
-        if gp.is_file():
-            out[site_slug] = gp
-    return out
-
-
-def _merge_link_features(*feature_lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged: dict[str, dict[str, Any]] = {}
-    for features in feature_lists:
-        for feat in features:
-            feat_id = str(feat.get("properties", {}).get("id") or "")
-            if feat_id:
-                merged.setdefault(feat_id, feat)
-    return sorted(merged.values(), key=lambda f: str(f.get("properties", {}).get("id", "")))
-
-
 def project_mesh_links_geojson(slug: str) -> dict[str, Any]:
     """Return mutual site link LineStrings as GeoJSON for ``projects/<slug>``."""
     cfg = peaky_projects_dir() / slug / "config.yaml"
@@ -76,19 +44,10 @@ def project_mesh_links_geojson(slug: str) -> dict[str, Any]:
         raise FileNotFoundError(f"project not found: {slug!r}")
 
     preset = load_preset(cfg)
-    from peaky_finders.preset_overlays import standard_bundle_roots
-
-    job_path_r, bundle_cache_root, _ = standard_bundle_roots(cfg, preset)
-    _ = job_path_r
-
     overlays = _site_overlays(preset)
-    coverage = _coverage_gpkg_by_slug(preset=preset, bundle_cache_root=bundle_cache_root)
     sees_by_slug = {site_slug: entry.sees for site_slug, entry in preset.sites.items()}
-    footprint_gj = site_links_geojson(
-        coverage_gpkg_by_slug=coverage,
+    return site_links_geojson(
+        preset=preset,
         sites=overlays,
         sees_by_slug=sees_by_slug,
     )
-    rf_features = rf_link_line_features_for_preset(preset)
-    features = _merge_link_features(footprint_gj.get("features") or [], rf_features)
-    return {"type": "FeatureCollection", "features": features}
