@@ -51,6 +51,23 @@ def _canonical_slug_pair(a: str, b: str) -> tuple[str, str]:
     return (a, b) if a <= b else (b, a)
 
 
+def rf_link_line_features_for_preset(preset: Preset) -> list[dict[str, Any]]:
+    """GeoJSON LineString features for all mutual RF links across preset sites."""
+    merged: dict[str, dict[str, Any]] = {}
+    for slug, site in sorted(preset.sites.items()):
+        for feat in rf_link_line_features_from_site(
+            preset,
+            from_slug=slug,
+            from_lat=float(site.lat),
+            from_lon=float(site.lon),
+            from_label=site.name.strip() or slug,
+        ):
+            feat_id = str(feat.get("properties", {}).get("id") or "")
+            if feat_id:
+                merged.setdefault(feat_id, feat)
+    return sorted(merged.values(), key=lambda f: str(f.get("properties", {}).get("id", "")))
+
+
 def rf_link_line_features_from_site(
     preset: Preset,
     *,

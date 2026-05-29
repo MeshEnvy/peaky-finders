@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from unittest.mock import patch
 
-from peaky_finders.web.rf_links import clear_rf_link_cache, rf_link_line_features_from_site
+from peaky_finders.web.rf_links import (
+    clear_rf_link_cache,
+    rf_link_line_features_for_preset,
+    rf_link_line_features_from_site,
+)
 
 
 @dataclass
@@ -84,3 +88,31 @@ def test_rf_link_line_features_skips_out_of_range() -> None:
 
     assert features == []
     batch.assert_not_called()
+
+
+def test_rf_link_line_features_for_preset_deduplicates_pairs() -> None:
+    clear_rf_link_cache()
+    preset = _FakePreset(
+        sites={
+            "site-a": _FakeSite("Alpha", 39.0, -119.0),
+            "site-b": _FakeSite("Bravo", 39.1, -119.1),
+            "site-c": _FakeSite("Charlie", 50.0, -100.0),
+        },
+        simulation=object(),
+    )
+    with patch("peaky_finders.web.rf_links.max_hop_range_m", return_value=200_000.0), patch(
+        "peaky_finders.web.rf_links.rf_json_for_preset",
+        return_value='{"rf":"test"}',
+    ), patch(
+        "peaky_finders.web.rf_links.splatter_session",
+    ), patch(
+        "peaky_finders.web.rf_links.ensure_dem_for_points",
+    ), patch(
+        "peaky_finders.web.rf_links.mutual_hop_batch",
+        return_value=[True],
+    ) as batch:
+        features = rf_link_line_features_for_preset(preset)  # type: ignore[arg-type]
+
+    assert len(features) == 1
+    assert features[0]["properties"]["id"] == "site-a--site-b"
+    assert batch.call_count == 1

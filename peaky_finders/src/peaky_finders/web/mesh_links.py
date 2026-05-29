@@ -16,6 +16,7 @@ from peaky_finders.sites_job import (
 from peaky_finders.splat_polygonize import SPLAT_GPKG_NAME
 from peaky_finders.viewshed_links import site_links_geojson
 from peaky_finders.viewshed_workspace import resolved_viewshed_workdir, viewshed_workspace_digest
+from peaky_finders.web.rf_links import rf_link_line_features_for_preset
 
 
 def _site_overlays(preset: Preset) -> list[kml_bundle.AggregateSiteOverlay]:
@@ -58,6 +59,16 @@ def _coverage_gpkg_by_slug(
     return out
 
 
+def _merge_link_features(*feature_lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for features in feature_lists:
+        for feat in features:
+            feat_id = str(feat.get("properties", {}).get("id") or "")
+            if feat_id:
+                merged.setdefault(feat_id, feat)
+    return sorted(merged.values(), key=lambda f: str(f.get("properties", {}).get("id", "")))
+
+
 def project_mesh_links_geojson(slug: str) -> dict[str, Any]:
     """Return mutual site link LineStrings as GeoJSON for ``projects/<slug>``."""
     cfg = peaky_projects_dir() / slug / "config.yaml"
@@ -73,8 +84,11 @@ def project_mesh_links_geojson(slug: str) -> dict[str, Any]:
     overlays = _site_overlays(preset)
     coverage = _coverage_gpkg_by_slug(preset=preset, bundle_cache_root=bundle_cache_root)
     sees_by_slug = {site_slug: entry.sees for site_slug, entry in preset.sites.items()}
-    return site_links_geojson(
+    footprint_gj = site_links_geojson(
         coverage_gpkg_by_slug=coverage,
         sites=overlays,
         sees_by_slug=sees_by_slug,
     )
+    rf_features = rf_link_line_features_for_preset(preset)
+    features = _merge_link_features(footprint_gj.get("features") or [], rf_features)
+    return {"type": "FeatureCollection", "features": features}
