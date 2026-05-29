@@ -78,7 +78,7 @@ def mutual_site_link_slug_pairs(
     footprint_nodes: Sequence[_SiteLinkNode],
     sees_by_slug: Mapping[str, Sequence[str]],
 ) -> list[tuple[str, str]]:
-    """Union of mutual footprint coverage and mutual ``sees`` pairs (canonical slug order)."""
+    """Union of mutual footprint coverage and mutual ``sees`` override pairs (canonical slug order)."""
     pairs: set[tuple[str, str]] = set()
     for i, j in mutual_footprint_link_pairs(footprint_nodes):
         pairs.add(_canonical_pair(footprint_nodes[i].slug, footprint_nodes[j].slug))

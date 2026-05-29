@@ -390,8 +390,10 @@ class SiteEntry(BaseModel):
     sees: list[str] = Field(
         default_factory=list,
         description=(
-            "Other site slugs this location can reach in the field. A mesh edge is drawn when "
-            "both sites list each other (same layer as mutual viewshed links)."
+            "Field-confirmed site slugs this location can reach (boots-on-the-ground override). "
+            "Mesh edges are the union of RF checks, mutual viewshed footprints, and mutual "
+            "``sees`` pairs; listing a slug here adds guaranteed links and does not exclude "
+            "model-derived ones."
         ),
     )
 
