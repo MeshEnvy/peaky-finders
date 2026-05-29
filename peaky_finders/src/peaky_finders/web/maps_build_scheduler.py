@@ -25,6 +25,7 @@ from peaky_finders.sites_job import (
 from peaky_finders.web.project_events import publish_build_status, publish_catalog_refresh, publish_layer_phase
 from peaky_finders.web.mesh_layers import _rf_sites_with_footprints, run_mesh_rebuild
 from peaky_finders.web.project_maps import _map_entry_build_status, run_maps_rebuild
+from peaky_finders.web.settings import stderr_verbose_log
 
 LayerBuildPhase = Literal["idle", "building", "built", "stale", "unavailable"]
 LayerDisplayMode = Literal["off", "eligible", "all"]
@@ -203,6 +204,18 @@ def catalog_clips_row_phase(slug: str) -> str:
     return clips_phase
 
 
+def _merge_progress_logs(*loggers: Callable[[str], None] | None) -> Callable[[str], None] | None:
+    fns = [fn for fn in loggers if fn is not None]
+    if not fns:
+        return None
+
+    def plog(msg: str) -> None:
+        for fn in fns:
+            fn(msg)
+
+    return plog
+
+
 def _notify_build_status(slug: str) -> None:
     publish_build_status(slug, **maps_build_status(slug))
 
@@ -228,7 +241,8 @@ def _run_clips_job(slug: str) -> None:
     st.clips_error = None
     _notify_build_status(slug)
     try:
-        run_maps_rebuild(slug, progress_log=lambda m: None)
+        vlog = stderr_verbose_log()
+        run_maps_rebuild(slug, verbose_log=vlog, progress_log=vlog)
         st.clips = "built"
         publish_layer_phase(slug, layer_id="eligible", phase="built")
         publish_catalog_refresh(slug, reason="clips")
@@ -247,7 +261,12 @@ def _run_mesh_job(slug: str) -> None:
     st.mesh_error = None
     _notify_build_status(slug)
     try:
-        run_mesh_rebuild(slug, progress_log=_mesh_progress_emit(slug))
+        vlog = stderr_verbose_log()
+        run_mesh_rebuild(
+            slug,
+            verbose_log=vlog,
+            progress_log=_merge_progress_logs(vlog, _mesh_progress_emit(slug)),
+        )
         st.mesh = "built"
         publish_catalog_refresh(slug, reason="mesh")
     except Exception as exc:

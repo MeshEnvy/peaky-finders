@@ -39,8 +39,14 @@ if [ -t 0 ] && [ -t 1 ]; then
   DOCKER_FLAGS+=(-it)
 fi
 
+case "${DEBUG:-}" in 1|true|yes|on|TRUE|YES|ON)
+  echo "peaky: DEBUG=1 (verbose operation logging)" >&2
+  ;;
+esac
+
 exec docker run "${DOCKER_FLAGS[@]}" \
   --add-host=host.docker.internal:host-gateway \
+  -e DEBUG="${DEBUG:-}" \
   -e POETRY_VIRTUALENVS_CREATE=false \
   -e PEAKY_PROJECTS=/projects \
   -p 8765:8765 \

@@ -29,6 +29,7 @@ from peaky_finders.web.chat_overlay import (
     sites_in_overlay,
 )
 from peaky_finders.web.projects import project_geocode_aoi
+from peaky_finders.web.settings import debug_enabled
 from peaky_finders.web.viewshed_service import ensure_point_viewshed
 from peaky_finders.web.viewshed_rasters import normalize_point_coords
 
@@ -603,6 +604,7 @@ def _show_on_map(ctx: WebChatContext, args: dict[str, Any]) -> ToolResult:
             project_slug=ctx.project_slug,
             lat=lat,
             lon=lon,
+            verbose=debug_enabled(),
         )
         if ctx.emit:
             ctx.emit("map.viewshed", **viewshed)

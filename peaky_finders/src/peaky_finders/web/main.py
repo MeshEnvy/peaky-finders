@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from peaky_finders.web.settings import debug_enabled
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="peaky")
@@ -18,7 +20,7 @@ def main(argv: list[str] | None = None) -> None:
         "peaky_finders.web.app:app",
         host=args.host,
         port=args.port,
-        log_level="info",
+        log_level="debug" if debug_enabled() else "info",
         reload=True,
         reload_dirs=[str(Path(__file__).resolve().parents[1])],
     )

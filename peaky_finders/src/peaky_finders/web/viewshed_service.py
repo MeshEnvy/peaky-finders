@@ -7,6 +7,7 @@ from typing import Any
 from peaky_finders.sites_job import load_preset
 from peaky_finders.splat_pipeline import run_viewshed_workspace
 from peaky_finders.viewshed_workspace import resolved_viewshed_workdir_for_coords
+from peaky_finders.web.settings import debug_enabled
 from peaky_finders.web.viewshed_manager import (
     VIEWSHED_MANAGER,
     point_job_key,
@@ -23,6 +24,10 @@ from peaky_finders.web.viewshed_rasters import (
     resolve_splat_png_path,
 )
 from peaky_finders.web.viewshed_tiles import point_tile_layer_metadata
+
+
+def _viewshed_verbose(explicit: bool | None) -> bool:
+    return debug_enabled() if explicit is None else explicit
 
 
 def wait_for_site_viewshed(*, project_slug: str, site_slug: str) -> None:
@@ -128,8 +133,9 @@ def _run_site_viewshed_build(
     *,
     project_slug: str,
     site_slug: str,
-    verbose: bool = False,
+    verbose: bool | None = None,
 ) -> None:
+    verbose = _viewshed_verbose(verbose)
     cfg = preset_path_for_project(project_slug)
     preset = load_preset(cfg)
     site = preset.sites[site_slug]
@@ -160,9 +166,10 @@ def ensure_site_viewshed(
     project_slug: str,
     site_slug: str,
     force: bool = False,
-    verbose: bool = False,
+    verbose: bool | None = None,
 ) -> dict[str, Any]:
     """Ensure ``splat.png`` exists for a preset site; compute on miss via the viewshed queue."""
+    verbose = _viewshed_verbose(verbose)
     cfg = preset_path_for_project(project_slug)
     preset = load_preset(cfg)
     if site_slug not in preset.sites:
@@ -196,7 +203,7 @@ def get_site_viewshed(
     site_slug: str,
     force: bool = False,
     ensure: bool = True,
-    verbose: bool = False,
+    verbose: bool | None = None,
 ) -> dict[str, Any]:
     if not ensure:
         if force:
@@ -280,8 +287,9 @@ def _run_point_viewshed_build(
     project_slug: str,
     lat: float,
     lon: float,
-    verbose: bool = False,
+    verbose: bool | None = None,
 ) -> None:
+    verbose = _viewshed_verbose(verbose)
     lat_n, lon_n = normalize_point_coords(lat, lon)
     cfg = preset_path_for_project(project_slug)
     preset = load_preset(cfg)
@@ -318,9 +326,10 @@ def ensure_point_viewshed(
     lat: float,
     lon: float,
     force: bool = False,
-    verbose: bool = False,
+    verbose: bool | None = None,
 ) -> dict[str, Any]:
     """Ensure ``splat.png`` exists for arbitrary WGS-84 coordinates."""
+    verbose = _viewshed_verbose(verbose)
     lat_n, lon_n = normalize_point_coords(lat, lon)
 
     computed = False
@@ -351,7 +360,7 @@ def get_point_viewshed(
     lat: float,
     lon: float,
     force: bool = False,
-    verbose: bool = False,
+    verbose: bool | None = None,
 ) -> dict[str, Any]:
     lat_n, lon_n = normalize_point_coords(lat, lon)
     return ensure_point_viewshed(

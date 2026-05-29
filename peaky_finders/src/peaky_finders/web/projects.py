@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from peaky_finders.site_suggestions.rf_link import (
     rf_mutual_link_slug_pairs_from_site,
 )
 from peaky_finders.sites_job import Preset, SiteType, load_preset, maps_by_type, peaky_projects_dir, resolved_preset_bundle_data_dir
+from peaky_finders.web.settings import debug_enabled
 from peaky_finders.web.site_preset_io import (
     delete_site_from_preset,
     update_site_in_preset,
@@ -55,39 +57,46 @@ def enrich_all_project_sites(
     """
     configs = _iter_project_config_paths()
     prefix = "boot site enrich:"
-    print(f"{prefix} start: {len(configs)} project(s)", flush=True)
+    debug = debug_enabled()
+    effective_log_fp = log_fp if log_fp is not None else (sys.stderr if debug else None)
+
+    if debug:
+        print(f"{prefix} start: {len(configs)} project(s)", flush=True)
 
     projects_processed = 0
     total_network = 0
     total_updated = 0
 
     for index, (slug, cfg) in enumerate(configs, start=1):
-        print(f"{prefix} [{index}/{len(configs)}] {slug}", flush=True)
+        if debug:
+            print(f"{prefix} [{index}/{len(configs)}] {slug}", flush=True)
         try:
             network_count, updated = enrich_all_preset_sites(
                 cfg,
                 allow_network_plss=allow_network_plss,
                 http_pool=http_pool,
-                log_fp=log_fp,
+                log_fp=effective_log_fp,
             )
         except Exception as exc:
-            print(f"{prefix} [{index}/{len(configs)}] {slug}: skipped ({exc})", flush=True)
+            if debug:
+                print(f"{prefix} [{index}/{len(configs)}] {slug}: skipped ({exc})", flush=True)
             continue
         projects_processed += 1
         total_network += network_count
         total_updated += updated
-        if updated or network_count:
+        if debug and (updated or network_count):
             print(
                 f"{prefix} [{index}/{len(configs)}] {slug}: "
                 f"{updated} site(s) updated, {network_count} PLSS lookup(s)",
                 flush=True,
             )
 
-    print(
-        f"{prefix} done: {projects_processed}/{len(configs)} project(s), "
-        f"{total_updated} site(s) updated, {total_network} PLSS lookup(s)",
-        flush=True,
-    )
+    if debug:
+        print(
+            f"{prefix} done: {projects_processed}/{len(configs)} project(s), "
+            f"{total_updated} site(s) updated, {total_network} PLSS lookup(s)",
+            flush=True,
+        )
     return projects_processed, total_network, total_updated
 
 

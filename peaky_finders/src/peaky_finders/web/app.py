@@ -59,6 +59,7 @@ from peaky_finders.web.projects import (
     project_site_detail,
     remove_project_site,
 )
+from peaky_finders.web.settings import log_debug_mode_at_boot
 from peaky_finders.web.site_preset_io import SitePresetConflictError
 from peaky_finders.sites_job import peaky_projects_dir
 from peaky_finders.web.viewshed_rasters import resolve_splat_png_path
@@ -166,6 +167,7 @@ async def _run_boot_maps_maintenance() -> None:
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        log_debug_mode_at_boot()
         enrich_task = asyncio.create_task(_run_boot_site_enrich())
         maps_task = asyncio.create_task(_run_boot_maps_maintenance())
         yield
