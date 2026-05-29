@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -44,20 +45,6 @@ def test_site_viewshed_build_uses_direct_splatter_run(tmp_path) -> None:
     assert calls == ["run"]
 
 
-def test_site_viewshed_endpoint_ensure_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
-    app = create_app()
-    client = TestClient(app)
-
-    with patch("peaky_finders.web.app.get_site_viewshed") as get_site:
-        get_site.side_effect = FileNotFoundError("viewshed not built")
-        res = client.get("/api/projects/demo/viewsheds/missing?ensure=false")
-
-    assert res.status_code == 404
-    get_site.assert_called_once()
-    assert get_site.call_args.kwargs["ensure"] is False
-
-
 def test_project_viewsheds_batch_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
     app = create_app()
@@ -81,7 +68,7 @@ def test_project_viewsheds_batch_endpoint(monkeypatch: pytest.MonkeyPatch) -> No
     assert res.json()[0]["slug"] == "foo"
 
 
-def test_site_viewshed_endpoint_ensure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_site_viewshed_get_cached(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
     app = create_app()
     client = TestClient(app)
@@ -103,21 +90,43 @@ def test_site_viewshed_endpoint_ensure(monkeypatch: pytest.MonkeyPatch) -> None:
     assert res.json()["cached"] is True
 
 
-def test_viewshed_raster_record_shape() -> None:
+def test_site_viewshed_get_ensures_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
+    app = create_app()
+    client = TestClient(app)
+    payload = {
+        "slug": "foo",
+        "digest": "abc123",
+        "url": "/api/projects/demo/viewsheds/foo/splat.png",
+        "coordinates": [[-116.0, 40.0], [-115.0, 40.0], [-115.0, 39.0], [-116.0, 39.0]],
+        "opacity": 0.5,
+        "cached": False,
+        "computed": True,
+    }
+
+    with patch("peaky_finders.web.app.get_site_viewshed", return_value=payload) as get_site:
+        res = client.get("/api/projects/demo/viewsheds/foo")
+
+    assert res.status_code == 200
+    assert res.json()["computed"] is True
+    get_site.assert_called_once_with(project_slug="demo", site_slug="foo", force=False)
+
+
+def test_viewshed_raster_record_shape(tmp_path: Path) -> None:
+    workdir = tmp_path / "abc123"
+    workdir.mkdir()
+    (workdir / "splat.png").write_bytes(b"x")
     with patch(
-        "peaky_finders.web.viewshed_service.resolve_splat_png_path",
-        return_value=__import__("pathlib").Path("/tmp/splat.png"),
-    ), patch(
         "peaky_finders.web.viewshed_service.preset_path_for_project",
-        return_value=__import__("pathlib").Path("/tmp/config.yaml"),
+        return_value=tmp_path / "config.yaml",
     ), patch(
         "peaky_finders.web.viewshed_service.load_preset",
     ) as load_preset, patch(
         "peaky_finders.web.viewshed_service._viewsheds_root_for_preset",
-        return_value=__import__("pathlib").Path("/tmp/viewsheds"),
+        return_value=tmp_path / "viewsheds",
     ), patch(
         "peaky_finders.web.viewshed_service.resolved_viewshed_workdir_for_coords",
-        return_value=__import__("pathlib").Path("/tmp/viewsheds/abc123"),
+        return_value=workdir,
     ), patch(
         "peaky_finders.web.viewshed_service._bounds_for_workdir",
         return_value={"north": 40.0, "south": 39.0, "east": -115.0, "west": -116.0, "rotation": 0.0},

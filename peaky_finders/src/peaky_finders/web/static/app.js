@@ -554,40 +554,24 @@ async function loadProjectViewsheds(projectSlug, sites) {
   }
   renderSitesPanel()
 
-  try {
-    const batchRes = await fetch(`/api/projects/${projectSlug}/viewsheds`)
-    if (batchRes.ok) {
-      const items = await batchRes.json()
-      if (Array.isArray(items) && items.length) {
-        applyViewshedRasterRecords(items, false)
-        return
-      }
-    }
-
-    const results = await Promise.all(
-      eligible.map(async (s) => {
-        try {
-          const res = await fetch(`/api/projects/${projectSlug}/viewsheds/${s.slug}?ensure=false`)
-          if (!res.ok) return null
-          return res.json()
-        } catch {
-          return null
-        } finally {
-          const entry = siteRegistry.get(s.slug)
-          if (entry?.viewshedPending) {
-            entry.viewshedPending = false
-            renderSitesPanel()
-          }
+  for (const s of eligible) {
+    const slug = s.slug
+    void (async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectSlug}/viewsheds/${encodeURIComponent(slug)}`)
+        if (!res.ok) return
+        const record = await res.json()
+        if (record?.url) applyViewshedRasterRecords([record], false)
+      } catch {
+        /* ignore */
+      } finally {
+        const entry = siteRegistry.get(slug)
+        if (entry?.viewshedPending) {
+          entry.viewshedPending = false
+          renderSitesPanel()
         }
-      }),
-    )
-    applyViewshedRasterRecords(results.filter(Boolean), false)
-  } finally {
-    for (const s of eligible) {
-      const entry = siteRegistry.get(s.slug)
-      if (entry?.viewshedPending) entry.viewshedPending = false
-    }
-    renderSitesPanel()
+      }
+    })()
   }
 }
 
@@ -714,7 +698,7 @@ async function ensureViewshedForEntry(id) {
       )
     } else if (entry.slug) {
       res = await fetch(
-        `/api/projects/${currentProjectSlug}/viewsheds/${encodeURIComponent(entry.slug)}?ensure=true`,
+        `/api/projects/${currentProjectSlug}/viewsheds/${encodeURIComponent(entry.slug)}`,
       )
     } else {
       return false

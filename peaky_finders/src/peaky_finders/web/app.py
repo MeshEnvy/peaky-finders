@@ -511,14 +511,12 @@ def create_app() -> FastAPI:
         slug: str,
         site_slug: str,
         force: bool = False,
-        ensure: bool = True,
     ) -> dict[str, Any]:
         try:
             return get_site_viewshed(
                 project_slug=slug,
                 site_slug=site_slug,
                 force=force,
-                ensure=ensure,
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
