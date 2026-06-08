@@ -189,6 +189,9 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert resp.status == 200
         assert 'id="map"' in body
         assert "leaflet" in body
+        assert "Street: street" in body
+        assert "Topo: topo" in body
+        assert "Satellite: satellite" in body
         assert '"name": "Hub"' in body
         assert "1 site" in body
     finally:

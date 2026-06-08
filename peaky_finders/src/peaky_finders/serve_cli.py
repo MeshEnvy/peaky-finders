@@ -55,7 +55,8 @@ def _html_page(title: str, body: str, *, wide: bool = False, extra_head: str = "
         "    .leaflet-tooltip.site-label {{ background: #fff; border: 1px solid #4a6cf7; "
         "border-radius: 0.25rem; padding: 0.15rem 0.45rem; font-weight: 600; font-size: 0.8rem; "
         "box-shadow: 0 1px 3px rgba(0,0,0,0.12); color: #1a1a1a; }}\n"
-        "    .leaflet-tooltip.site-label::before {{ border-top-color: #4a6cf7; }}"
+        "    .leaflet-tooltip.site-label::before {{ border-top-color: #4a6cf7; }}\n"
+        "    .leaflet-control-layers {{ font-size: 0.85rem; }}"
         if wide
         else ""
     )
@@ -171,11 +172,24 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
 <script>
 (function () {{
   const sites = {sites_json};
-  const map = L.map("map", {{ scrollWheelZoom: true }});
-  L.tileLayer("https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png", {{
+  const street = L.tileLayer("https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png", {{
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  }}).addTo(map);
+  }});
+  const topo = L.tileLayer("https://{{s}}.tile.opentopomap.org/{{z}}/{{x}}/{{y}}.png", {{
+    maxZoom: 17,
+    attribution: 'Map: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> '
+      + '(<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
+  }});
+  const satellite = L.tileLayer(
+    "https://server.arcgis.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}",
+    {{
+      maxZoom: 19,
+      attribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a>',
+    }}
+  );
+  const map = L.map("map", {{ scrollWheelZoom: true, layers: [street] }});
+  L.control.layers({{ Street: street, Topo: topo, Satellite: satellite }}).addTo(map);
 
   const bounds = [];
   for (const site of sites) {{
@@ -358,8 +372,16 @@ def _run_serve_once(
 ) -> HTTPServer:
     handler = make_serve_handler(projects_dir)
     server = HTTPServer((host, port), handler)
+    server.allow_reuse_address = True
     server.verbose = verbose  # type: ignore[attr-defined]
     return server
+
+
+def _stop_serve_server(server: HTTPServer, thread: threading.Thread | None) -> None:
+    server.shutdown()
+    if thread is not None:
+        thread.join(timeout=10)
+    server.server_close()
 
 
 def _run_serve_with_reload(
@@ -394,19 +416,15 @@ def _run_serve_with_reload(
                 time.sleep(poll_s)
                 if _reload_detected(snapshots, existing):
                     print("serve: source changed, restarting", flush=True)
-                    server.shutdown()
-                    thread.join(timeout=10)
+                    _stop_serve_server(server, thread)
+                    server = None
+                    thread = None
                     break
     except KeyboardInterrupt:
         print("serve: stopped", flush=True)
         if server is not None:
-            server.shutdown()
-        if thread is not None:
-            thread.join(timeout=5)
+            _stop_serve_server(server, thread)
         return 0
-    finally:
-        if server is not None:
-            server.server_close()
     return 0
 
 
