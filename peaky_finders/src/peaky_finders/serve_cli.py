@@ -109,15 +109,20 @@ def _load_project_sites(project_dir: Path) -> dict[str, SiteEntry]:
 def _serialize_project_sites(sites: dict[str, SiteEntry]) -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
     for site_slug, entry in sorted(sites.items()):
-        out.append(
-            {
-                "slug": site_slug,
-                "name": entry.name,
-                "lat": entry.lat,
-                "lon": entry.lon,
-                "type": entry.type.value,
-            }
-        )
+        row: dict[str, object] = {
+            "slug": site_slug,
+            "name": entry.name,
+            "lat": entry.lat,
+            "lon": entry.lon,
+            "type": entry.type.value,
+        }
+        if entry.elevation_m is not None:
+            row["elevation_m"] = entry.elevation_m
+        for key in ("description", "plss", "mlrs", "rationale"):
+            val = getattr(entry, key)
+            if val and str(val).strip():
+                row[key] = str(val).strip()
+        out.append(row)
     return out
 
 
