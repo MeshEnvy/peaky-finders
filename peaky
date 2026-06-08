@@ -47,21 +47,30 @@ fi
 
 SERVE_PORT="${PEAKY_SERVE_PORT:-8080}"
 if [ ${#filtered[@]} -gt 0 ] && [ "${filtered[0]}" = "serve" ]; then
+  serve_no_reload=0
+  serve_has_reload=0
   i=1
   while [ $i -lt ${#filtered[@]} ]; do
     arg="${filtered[$i]}"
+    if [ "$arg" = "--no-reload" ]; then
+      serve_no_reload=1
+    fi
+    if [ "$arg" = "--reload" ]; then
+      serve_has_reload=1
+    fi
     if [ "$arg" = "--port" ] && [ $((i + 1)) -lt ${#filtered[@]} ]; then
       SERVE_PORT="${filtered[$((i + 1))]}"
-      break
     fi
     if [[ "$arg" == --port=* ]]; then
       SERVE_PORT="${arg#--port=}"
-      break
     fi
     i=$((i + 1))
   done
+  if [ "$serve_no_reload" -eq 0 ] && [ "$serve_has_reload" -eq 0 ]; then
+    filtered=(serve --reload "${filtered[@]:1}")
+  fi
   DOCKER_FLAGS+=(-p "${SERVE_PORT}:${SERVE_PORT}")
-  DOCKER_FLAGS+=(-e "PEAKY_HOME=/app" -e "PEAKY_PROJECTS=/app/projects")
+  DOCKER_FLAGS+=(-v "$ROOT:/app" -e "PEAKY_HOME=/app" -e "PEAKY_PROJECTS=/app/projects")
 fi
 
 run_cmd=(docker run "${DOCKER_FLAGS[@]}" \

@@ -4,7 +4,7 @@
 #   docker build --target dev -t peaky:dev .
 #
 # Production:
-#   docker build --target latest -t peaky:latest .
+#   docker build --target latest -t peaky-finders .
 
 FROM rust:bookworm AS rust-toolchain
 
@@ -45,11 +45,12 @@ FROM python:3.11-slim-bookworm AS runtime-base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     MPLBACKEND=Agg \
+    PEAKY_HOME=/.peaky \
     SPLAT_CACHE=/.peaky/splat_cache \
     POETRY_VIRTUALENVS_CREATE=false \
     POETRY_NO_INTERACTION=1
 
-WORKDIR /project
+WORKDIR /.peaky
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gdal-bin \
@@ -87,4 +88,4 @@ FROM runtime-base AS latest
 COPY peaky_finders/ /app/peaky_finders/
 WORKDIR /app/peaky_finders
 RUN poetry install --only main --no-interaction
-WORKDIR /project
+WORKDIR /.peaky

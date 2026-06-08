@@ -54,9 +54,9 @@ cd projects/nevada
 | `kmz` | Aggregate KMZ assembly |
 | `stamp` | Prerequisite stamp files for staleness edges |
 | `inspect` | GDB layer/attribute listing |
-| `serve` | Local web UI — project selector at `PEAKY_HOME` (default `~/.peaky`); lists `<home>/projects` |
+| `serve` | Local web UI — project selector at `PEAKY_HOME` (default `~/.peaky`); project page shows Leaflet/OSM map of preset sites |
 
-Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, Docker publishes `PEAKY_SERVE_PORT` (default 8080).
+Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, `--reload` polls `peaky_finders` source (on by default via `./peaky serve`), Docker publishes `PEAKY_SERVE_PORT` (default 8080).
 
 ## Build DAG
 
@@ -117,7 +117,7 @@ Helpers: `resolved_preset_build_dir`, `resolved_bundle_dir`, `resolved_preset_cl
 
 | Var | Role |
 |-----|------|
-| `PEAKY_HOME` | repo root (CLI); `~/.peaky` (`peaky serve` when unset) |
+| `PEAKY_HOME` | `~/.peaky` (`peaky serve`); repo root (CLI via `./peaky`) |
 | `PEAKY_PROJECTS` | Project presets root (default: `<PEAKY_HOME>/projects`) |
 | `PEAKY_SHARE` | Optional shared tooling root |
 | `SPLAT_CACHE` | Global Skadi tile mirror (default: `<peaky_home>/splat_cache`) |
@@ -141,10 +141,11 @@ All outbound fetches throttled via `http_pool.py`:
 - Locked preset writes: `preset_yaml_transaction` / `update_preset_yaml_tree`
 - Site suggest via `peaky build --suggest` → `site_suggestions/preset_io.py`
 - `./peaky` contract: mount `$PWD` as `/project`, run CLI from project cwd
+- Published **`peaky-finders`** image: mount `~/.peaky` → `/.peaky`, `PEAKY_HOME=/.peaky`; projects under `projects/`, cache under `splat_cache/`
 
 ## Active threads
 
-- **`web2` branch** — `peaky serve` project selector + empty-template scaffold via web form
+- **`web2` branch** — `peaky serve` project selector, site map on `/p/<slug>/`, scaffold via web form
 
 ## Invariants
 
