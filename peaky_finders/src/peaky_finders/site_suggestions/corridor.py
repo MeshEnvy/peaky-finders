@@ -1213,20 +1213,22 @@ def corridor_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
         sites_capturing_goal,
         uncaptured_goal_keys,
     )
-    from peaky_finders.site_suggestions.providers.mesh_backbone.geom import goals_from_config
+    from peaky_finders.site_suggestions.providers.mesh_backbone.geom import goals_from_preset
 
     if not mesh_connectivity_complete(ctx):
         return False
 
     mb = ctx.cfg.mesh_backbone
     blocked = ctx.corridor_state.blocked_goal_keys if ctx.corridor_state else set()
-    required = set(mb.goals.keys()) - blocked
+    required = set(ctx.preset.goals.keys()) - blocked
     if not required:
         return True
 
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
-    uncaptured = uncaptured_goal_keys(mb, sites, footprints) - blocked
+    uncaptured = uncaptured_goal_keys(
+        ctx.preset.goals, sites, footprints, ctx.preset, verbose=ctx.verbose
+    ) - blocked
     if uncaptured:
         return False
 
@@ -1236,10 +1238,12 @@ def corridor_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
 
     adjacency = hop_adjacency(sites, footprints)
     reachable = hop_reachable_from(start_slugs=seed_slugs, adjacency=adjacency)
-    goals = goals_from_config(mb)
+    goals = goals_from_preset(ctx.preset.goals)
     for key in required:
         goal = goals[key]
-        captors = sites_capturing_goal(goal, sites, footprints)
+        captors = sites_capturing_goal(
+            goal, sites, footprints, preset=ctx.preset, verbose=ctx.verbose
+        )
         if not captors or not (captors & reachable):
             return False
     return True

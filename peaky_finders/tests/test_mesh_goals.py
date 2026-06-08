@@ -24,8 +24,8 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.goals import (
 from peaky_finders.site_suggestions.mesh_connectivity import main_footprint_slugs
 from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import analysis_sites
 from peaky_finders.sites_job import (
+    GoalEntry,
     SuggestConfig,
-    MeshBackboneGoalEntry,
     MeshBackboneRouting,
     MeshBackboneStrategyConfig,
     SiteEntry,
@@ -88,6 +88,9 @@ def _disconnected_ctx() -> SiteSuggestionContext:
                 "main": {"name": "Main", "loc": [41.5, -119.0]},
                 "sat": {"name": "Sat", "loc": [36.2, -115.3]},
             },
+            "goals": {
+                "g0": {"name": "G0", "loc": [39.0, -115.5]},
+            },
         },
     )
     preset = load_preset(preset_path)
@@ -103,7 +106,6 @@ def _disconnected_ctx() -> SiteSuggestionContext:
             strategy=SiteSuggestionStrategy.MESH_BACKBONE,
             mesh_backbone=MeshBackboneStrategyConfig(
                 routing=MeshBackboneRouting.CORRIDOR,
-                goals={"g0": MeshBackboneGoalEntry(loc=(39.0, -115.5))},
                 corridor_grid_cell_m=500.0,
                 max_candidates_per_round=8,
             ),
@@ -247,7 +249,7 @@ def test_goals_satisfied_since_counts_newly_captured_bridge() -> None:
             baseline=baseline,
             tracked_keys=tracked,
         )
-        assert done == {"bridge:sat", "g0"}
+        assert done == {"bridge:sat"}
 
 
 def test_bridge_goal_captured_when_satellite_hops_to_main() -> None:

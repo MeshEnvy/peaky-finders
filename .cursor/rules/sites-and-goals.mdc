@@ -21,7 +21,7 @@ Preset `sites:` entries are **repeater locations**. Each site gets splatter RF c
 
 ## Goals = coverage attractors
 
-Preset `suggest.mesh_backbone.goals` (and ephemeral `bridge:*` healing goals) are **map points where coverage is desired**. They are **not** repeaters:
+Preset top-level `goals:` (and ephemeral `bridge:*` healing goals) are **map points where coverage is desired**. They are **not** repeaters:
 
 - No viewshed until a **site** is placed to capture them.
 - Inputs to the site suggestion planner — **attractors** for search and scoring.

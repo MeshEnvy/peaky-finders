@@ -12,8 +12,15 @@ from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.coverage_footprint import read_coverage_footprint
 from peaky_finders.site_suggestions.context import BackboneSite, SiteSuggestionContext
-from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_config
-from peaky_finders.sites_job import MeshBackboneStrategyConfig, Preset, SiteSuggestionStrategy, SiteType
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_preset
+from peaky_finders.site_suggestions.rf_link import (
+    ensure_dem_for_points,
+    max_hop_range_m,
+    mutual_hop_batch,
+    rf_json_for_preset,
+    splatter_session,
+)
+from peaky_finders.sites_job import GoalEntry, Preset, SiteSuggestionStrategy, SiteType
 
 
 def backbone_sites_from_preset(sites: Mapping[str, object]) -> list[BackboneSite]:
@@ -24,7 +31,7 @@ def backbone_sites_from_preset(sites: Mapping[str, object]) -> list[BackboneSite
     return out
 
 
-def sites_capturing_goal(
+def sites_capturing_goal_footprint(
     goal: GoalPoint,
     sites: Sequence[BackboneSite],
     footprints: Mapping[str, BaseGeometry | None],
@@ -41,25 +48,110 @@ def sites_capturing_goal(
     return out
 
 
-def captured_goal_keys(
-    cfg: MeshBackboneStrategyConfig,
+def _rf_viable_goal_site_pairs(
+    preset: Preset,
+    goals: Mapping[str, GoalEntry],
+    sites: Sequence[BackboneSite],
+    footprint_captors: Mapping[str, set[str]],
+    *,
+    verbose: bool = False,
+) -> set[tuple[str, str]]:
+    """Goal/site slug pairs with mutual RF hop where footprint already covers the goal."""
+    pairs: list[tuple[float, float, float, float]] = []
+    pair_keys: list[tuple[str, str]] = []
+    max_hop_m = max_hop_range_m(preset)
+    for key, goal in goals.items():
+        gp = GoalPoint(key=str(key), lat=float(goal.lat), lon=float(goal.lon))
+        for slug in footprint_captors.get(key, ()):
+            site = next((s for s in sites if s.slug == slug), None)
+            if site is None:
+                continue
+            pairs.append((float(goal.lat), float(goal.lon), float(site.lat), float(site.lon)))
+            pair_keys.append((key, slug))
+    if not pairs:
+        return set()
+    rf_json = rf_json_for_preset(preset)
+    points = [(lat_a, lon_a) for lat_a, lon_a, _, _ in pairs]
+    points.extend((lat_b, lon_b) for _, _, lat_b, lon_b in pairs)
+    session = splatter_session(verbose=verbose)
+    ensure_dem_for_points(
+        session,
+        points,
+        buffer_m=max_hop_m * 0.05 + 5000.0,
+    )
+    viable = mutual_hop_batch(session, pairs, rf_json=rf_json)
+    return {pair_keys[i] for i, ok in enumerate(viable) if ok}
+
+
+def sites_capturing_goal(
+    goal: GoalPoint,
     sites: Sequence[BackboneSite],
     footprints: Mapping[str, BaseGeometry | None],
+    *,
+    preset: Preset,
+    rf_pairs: set[tuple[str, str]] | None = None,
+    verbose: bool = False,
 ) -> set[str]:
-    goals = goals_from_config(cfg)
+    """Site slugs that capture a goal (footprint covers point and mutual RF link)."""
+    footprint_slugs = sites_capturing_goal_footprint(goal, sites, footprints)
+    if not footprint_slugs:
+        return set()
+    if rf_pairs is None:
+        goals_map = {goal.key: preset.goals[goal.key]} if goal.key in preset.goals else {}
+        if not goals_map:
+            return set()
+        rf_pairs = _rf_viable_goal_site_pairs(
+            preset,
+            goals_map,
+            sites,
+            {goal.key: footprint_slugs},
+            verbose=verbose,
+        )
+    return {slug for gk, slug in rf_pairs if gk == goal.key and slug in footprint_slugs}
+
+
+def captured_goal_keys(
+    goals: Mapping[str, GoalEntry],
+    sites: Sequence[BackboneSite],
+    footprints: Mapping[str, BaseGeometry | None],
+    preset: Preset,
+    *,
+    verbose: bool = False,
+) -> set[str]:
+    goal_points = goals_from_preset(goals)
+    if not goal_points:
+        return set()
+    footprint_captors = {
+        key: sites_capturing_goal_footprint(gp, sites, footprints)
+        for key, gp in goal_points.items()
+    }
+    rf_pairs = _rf_viable_goal_site_pairs(
+        preset, goals, sites, footprint_captors, verbose=verbose
+    )
     return {
         key
-        for key, goal in goals.items()
-        if sites_capturing_goal(goal, sites, footprints)
+        for key, gp in goal_points.items()
+        if sites_capturing_goal(
+            gp,
+            sites,
+            footprints,
+            preset=preset,
+            rf_pairs=rf_pairs,
+        )
     }
 
 
 def uncaptured_goal_keys(
-    cfg: MeshBackboneStrategyConfig,
+    goals: Mapping[str, GoalEntry],
     sites: Sequence[BackboneSite],
     footprints: Mapping[str, BaseGeometry | None],
+    preset: Preset,
+    *,
+    verbose: bool = False,
 ) -> set[str]:
-    return set(cfg.goals.keys()) - captured_goal_keys(cfg, sites, footprints)
+    return set(goals.keys()) - captured_goal_keys(
+        goals, sites, footprints, preset, verbose=verbose
+    )
 
 
 def hop_adjacency(
@@ -212,20 +304,22 @@ def mesh_grow_goals_complete(ctx: SiteSuggestionContext) -> bool:
     """True when every preset goal is captured (connectivity ignored)."""
     if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
         return False
-    mb = ctx.cfg.mesh_backbone
-    if not mb.goals:
+    goals = ctx.preset.goals
+    if not goals:
         return True
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
-    return not uncaptured_goal_keys(mb, sites, footprints)
+    return not uncaptured_goal_keys(
+        goals, sites, footprints, ctx.preset, verbose=ctx.verbose
+    )
 
 
 def mesh_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
     """True when every goal is captured by a site hop-connected to preset seeds."""
     if ctx.cfg.strategy != SiteSuggestionStrategy.MESH_BACKBONE:
         return False
-    mb = ctx.cfg.mesh_backbone
-    if not mb.goals:
+    goals = ctx.preset.goals
+    if not goals:
         return True
 
     if not mesh_connectivity_complete(ctx):
@@ -233,7 +327,9 @@ def mesh_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
 
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
-    uncaptured = uncaptured_goal_keys(mb, sites, footprints)
+    uncaptured = uncaptured_goal_keys(
+        goals, sites, footprints, ctx.preset, verbose=ctx.verbose
+    )
     if uncaptured:
         return False
 
@@ -243,9 +339,15 @@ def mesh_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
 
     adjacency = hop_adjacency(sites, footprints)
     reachable = hop_reachable_from(start_slugs=seed_slugs, adjacency=adjacency)
-    goals = goals_from_config(mb)
-    for key, goal in goals.items():
-        captors = sites_capturing_goal(goal, sites, footprints)
+    goal_points = goals_from_preset(goals)
+    for key, goal in goal_points.items():
+        captors = sites_capturing_goal(
+            goal,
+            sites,
+            footprints,
+            preset=ctx.preset,
+            verbose=ctx.verbose,
+        )
         if not captors or not (captors & reachable):
             return False
     return True

@@ -16,7 +16,7 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     sites_capturing_goal,
     uncaptured_goal_keys,
 )
-from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_config
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_preset
 from peaky_finders.site_suggestions.providers.mesh_backbone.provider import MeshBackboneStrategy
 from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import active_attractor_goal, grow_goals
 
@@ -29,7 +29,7 @@ __all__ = [
     "backbone_sites_from_preset",
     "captured_goal_keys",
     "footprints_for_backbone_sites",
-    "goals_from_config",
+    "goals_from_preset",
     "grow_goals",
     "hop_adjacency",
     "hop_connected_components",

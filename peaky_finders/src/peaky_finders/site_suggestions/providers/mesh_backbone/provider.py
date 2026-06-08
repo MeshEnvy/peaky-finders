@@ -46,9 +46,10 @@ class MeshBackboneStrategy:
             corridor_kml=corridor,
         )
 
-    def validate_config(self, cfg: SuggestConfig) -> None:
-        if not cfg.mesh_backbone.goals:
-            raise ValueError("mesh-backbone strategy requires mesh_backbone.goals")
+    def validate_config(self, cfg: SuggestConfig, preset: Preset) -> None:
+        del cfg
+        if not preset.goals:
+            raise ValueError("mesh-backbone strategy requires top-level goals:")
 
     def max_suggested_nodes(self, cfg: SuggestConfig) -> int | None:
         cap = cfg.mesh_backbone.max_nodes
@@ -89,7 +90,7 @@ class MeshBackboneStrategy:
         suggest_log(verbose, f"  planner_raster_dimension: {cfg.planner_raster_dimension}")
         suggest_log(verbose, f"  max_candidates_per_round: {mb.max_candidates_per_round}")
         suggest_log(verbose, f"  frontier_sample_spacing_m: {mb.frontier_sample_spacing_m}")
-        suggest_log(verbose, f"  configured goals: {len(mb.goals)}")
+        suggest_log(verbose, f"  configured goals: {len(preset.goals)}")
         if mb.max_nodes is not None:
             suggest_log(verbose, f"  max_nodes: {mb.max_nodes}")
         suggest_log(verbose, f"  routing: {mb.routing.value}")

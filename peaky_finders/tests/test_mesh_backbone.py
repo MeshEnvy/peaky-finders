@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from peaky_finders.site_suggestions.providers.mesh_backbone.geom import goals_from_config
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import goals_from_preset
 from peaky_finders.sites_job import (
+    GoalEntry,
     SuggestConfig,
-    MeshBackboneGoalEntry,
     MeshBackboneStrategyConfig,
     SiteSuggestionStrategy,
     load_preset,
@@ -44,24 +44,21 @@ _PRESET_SIMULATION = {
 
 def test_mesh_backbone_config_defaults() -> None:
     cfg = MeshBackboneStrategyConfig()
-    assert cfg.goals == {}
     assert cfg.max_candidates_per_round == 48
     assert cfg.frontier_sample_spacing_m == 500.0
 
 
-def test_goals_from_config() -> None:
-    cfg = MeshBackboneStrategyConfig(
-        goals={
-            "reno": MeshBackboneGoalEntry(loc=(39.5296, -119.8138)),
-            "elko": MeshBackboneGoalEntry(loc=(40.8324, -115.7631)),
-        }
-    )
-    goals = goals_from_config(cfg)
-    assert set(goals) == {"elko", "reno"}
-    assert goals["reno"].lat == pytest.approx(39.5296)
+def test_goals_from_preset() -> None:
+    goals = {
+        "reno": GoalEntry(name="Reno", loc=(39.5296, -119.8138)),
+        "elko": GoalEntry(name="Elko", loc=(40.8324, -115.7631)),
+    }
+    pts = goals_from_preset(goals)
+    assert set(pts) == {"elko", "reno"}
+    assert pts["reno"].lat == pytest.approx(39.5296)
 
 
-def test_preset_loads_mesh_grow_block(tmp_path: Path) -> None:
+def test_preset_loads_top_level_goals(tmp_path: Path) -> None:
     preset_path = tmp_path / "job.yaml"
     write_preset_document(
         preset_path,
@@ -71,11 +68,12 @@ def test_preset_loads_mesh_grow_block(tmp_path: Path) -> None:
             "suggest": {
                 "strategy": "mesh-backbone",
                 "mesh_backbone": {
-                    "goals": {
-                        "goal-a": {"loc": [39.0, -119.0]},
-                        "goal-b": {"loc": [40.0, -118.0]},
-                    },
+                    "goal_order": ["goal-a", "goal-b"],
                 },
+            },
+            "goals": {
+                "goal-a": {"name": "Goal A", "loc": [39.0, -119.0]},
+                "goal-b": {"name": "Goal B", "loc": [40.0, -118.0]},
             },
             "sites": {
                 "seed": {"name": "Seed", "loc": [39.0, -119.0]},
@@ -83,8 +81,8 @@ def test_preset_loads_mesh_grow_block(tmp_path: Path) -> None:
         },
     )
     preset = load_preset(preset_path)
-    mb = preset.suggest.mesh_backbone
-    assert len(mb.goals) == 2
+    assert len(preset.goals) == 2
+    assert preset.suggest.mesh_backbone.goal_order == ["goal-a", "goal-b"]
     assert preset.suggest.strategy == SiteSuggestionStrategy.MESH_BACKBONE
 
 
