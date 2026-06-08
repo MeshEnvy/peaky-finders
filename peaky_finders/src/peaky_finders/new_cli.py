@@ -33,6 +33,18 @@ def _project_template_text() -> str:
     return ref.read_text(encoding="utf-8")
 
 
+def discover_projects(projects_root: Path | None = None) -> list[str]:
+    """Return sorted project slugs (dirs with ``config.yaml``) under *projects_root*."""
+    root = peaky_projects_dir() if projects_root is None else Path(projects_root).expanduser().resolve()
+    if not root.is_dir():
+        return []
+    slugs: list[str] = []
+    for child in root.iterdir():
+        if child.is_dir() and (child / "config.yaml").is_file():
+            slugs.append(child.name)
+    return sorted(slugs)
+
+
 def resolve_new_project_dir(
     slug: str,
     *,

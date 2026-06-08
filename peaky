@@ -61,6 +61,7 @@ if [ ${#filtered[@]} -gt 0 ] && [ "${filtered[0]}" = "serve" ]; then
     i=$((i + 1))
   done
   DOCKER_FLAGS+=(-p "${SERVE_PORT}:${SERVE_PORT}")
+  DOCKER_FLAGS+=(-e "PEAKY_HOME=/app" -e "PEAKY_PROJECTS=/app/projects")
 fi
 
 run_cmd=(docker run "${DOCKER_FLAGS[@]}" \
