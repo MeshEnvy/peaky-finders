@@ -37,7 +37,7 @@ def main() -> None:
     p_serve = sub.add_parser(
         "serve",
         parents=[build_serve_parser()],
-        help="Run local web UI (stub empty page)",
+        help="Run local web UI (project selector under PEAKY_HOME)",
     )
     p_serve.set_defaults(_handler=run_serve)
 
