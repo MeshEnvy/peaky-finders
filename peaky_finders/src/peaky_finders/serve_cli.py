@@ -19,7 +19,13 @@ from pydantic import ValidationError
 from peaky_finders.new_cli import discover_projects, scaffold_project, validate_project_slug
 from peaky_finders.serve_html import landing_html, project_error_html, project_html
 from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked, load_project_site_links
-from peaky_finders.serve_viewshed import ServeViewshedError, ensure_site_viewshed_overlay, ensure_site_viewshed_png
+from peaky_finders.serve_sites import append_planned_site_to_preset
+from peaky_finders.serve_viewshed import (
+    ServeViewshedError,
+    ensure_coords_viewshed_png,
+    ensure_site_viewshed_overlay,
+    ensure_site_viewshed_png,
+)
 from peaky_finders.sites_job import SiteEntry, load_preset_sites
 
 SERVE_STATIC_DIR = Path(__file__).resolve().parent / "serve_static"
@@ -41,6 +47,9 @@ _STATIC_MIME: dict[str, str] = {
 
 _PROJECT_PATH_RE = re.compile(r"^/p/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_SITES_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/?$")
+_API_PROJECT_VIEWSHED_PREFETCH_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/prefetch/?$"
+)
 _API_PROJECT_VIEWSHED_META_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_VIEWSHED_PNG_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/splat\.png$"
@@ -65,6 +74,12 @@ def resolve_serve_projects_dir() -> Path:
     if raw:
         return Path(raw).expanduser().resolve()
     return resolve_serve_peaky_home() / "projects"
+
+
+def _parse_json_body(body: bytes) -> object:
+    if not body:
+        return {}
+    return json.loads(body.decode("utf-8"))
 
 
 def _parse_form_body(body: bytes) -> dict[str, str]:
@@ -228,6 +243,36 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                 self._send_bytes(payload, "application/json")
                 return
 
+            viewshed_prefetch_match = _API_PROJECT_VIEWSHED_PREFETCH_RE.match(path)
+            if viewshed_prefetch_match:
+                slug = viewshed_prefetch_match.group(1)
+                project_dir = projects_dir / slug
+                if not (project_dir / "config.yaml").is_file():
+                    self.send_error(404)
+                    return
+                qs = parse_qs(parsed.query)
+                try:
+                    lat = float(qs.get("lat", [""])[0])
+                    lon = float(qs.get("lon", [""])[0])
+                except (IndexError, TypeError, ValueError) as e:
+                    payload = json.dumps(
+                        {"slug": slug, "error": f"lat and lon query params required: {e}"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                verbose = bool(getattr(self.server, "verbose", False))
+                try:
+                    ensure_coords_viewshed_png(project_dir, lat, lon, verbose=verbose)
+                except ServeViewshedError as e:
+                    payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=503)
+                    return
+                payload = json.dumps({"slug": slug, "lat": lat, "lon": lon, "ok": True}).encode(
+                    "utf-8"
+                )
+                self._send_bytes(payload, "application/json")
+                return
+
             viewshed_meta_match = _API_PROJECT_VIEWSHED_META_RE.match(path)
             if viewshed_meta_match:
                 slug = viewshed_meta_match.group(1)
@@ -341,12 +386,71 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
-            if parsed.path != "/projects":
+            path = parsed.path
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+
+            sites_match = _API_PROJECT_SITES_RE.match(path)
+            if sites_match:
+                project_slug = sites_match.group(1)
+                project_dir = projects_dir / project_slug
+                preset_path = project_dir / "config.yaml"
+                if not preset_path.is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    raw = _parse_json_body(body)
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": f"invalid JSON: {e}"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                if not isinstance(raw, dict):
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": "body must be a JSON object"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                name = str(raw.get("name", ""))
+                try:
+                    lat = float(raw["lat"])
+                    lon = float(raw["lon"])
+                except (KeyError, TypeError, ValueError) as e:
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": f"lat and lon required: {e}"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                try:
+                    site_slug = append_planned_site_to_preset(
+                        preset_path,
+                        name=name,
+                        lat=lat,
+                        lon=lon,
+                    )
+                    site_map = _load_project_sites(project_dir)
+                    site_entry = site_map[site_slug]
+                    site_row = _serialize_project_sites({site_slug: site_entry})[0]
+                except (ValueError, ValidationError) as e:
+                    payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                except OSError as e:
+                    payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=500)
+                    return
+                payload = json.dumps(
+                    {"slug": project_slug, "site": site_row},
+                    sort_keys=True,
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=201)
+                return
+
+            if path != "/projects":
                 self.send_error(404)
                 return
 
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length)
             fields = _parse_form_body(body)
             slug = fields.get("slug", "").strip()
 

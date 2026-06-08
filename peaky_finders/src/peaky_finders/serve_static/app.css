@@ -71,3 +71,8 @@ body.wide #map {
   background-color: rgba(52, 211, 153, 0.2);
   color: #34d399;
 }
+
+.map-shell.add-site-mode #map,
+.map-shell.add-site-mode .maplibregl-canvas {
+  cursor: crosshair;
+}

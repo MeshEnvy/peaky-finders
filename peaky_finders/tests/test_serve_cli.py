@@ -393,6 +393,167 @@ suggest:
         server.server_close()
 
 
+def test_post_project_site_creates_planned_site(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps({"name": "Ridge Top", "lat": 39.6, "lon": -119.4}).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request(
+            "POST",
+            "/api/p/mesh-demo/sites",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 201
+        assert payload["slug"] == "mesh-demo"
+        assert payload["site"]["slug"] == "ridge-top"
+        assert payload["site"]["name"] == "Ridge Top"
+        assert payload["site"]["type"] == "planned"
+        assert payload["site"]["lat"] == 39.6
+        assert payload["site"]["lon"] == -119.4
+
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/api/p/mesh-demo/sites")
+        resp = conn.getresponse()
+        sites_payload = json.loads(resp.read().decode("utf-8"))
+        slugs = {row["slug"] for row in sites_payload["sites"]}
+        assert "ridge-top" in slugs
+        assert "hub" in slugs
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_project_site_dedupes_slug(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+    preset_path = projects_dir / "mesh-demo" / "config.yaml"
+    text = preset_path.read_text(encoding="utf-8")
+    insert = """  ridge-top:
+    type: planned
+    name: Ridge Top
+    loc: [39.1, -119.1]
+"""
+    marker = "\nlinks:"
+    assert marker in text
+    preset_path.write_text(text.replace(marker, f"\n{insert}{marker}", 1), encoding="utf-8")
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps({"name": "Ridge Top", "lat": 39.2, "lon": -119.2}).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request(
+            "POST",
+            "/api/p/mesh-demo/sites",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 201
+        assert payload["site"]["slug"] == "ridge-top-2"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_project_site_rejects_invalid_coords(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps({"name": "Bad", "lat": 95.0, "lon": -119.0}).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request(
+            "POST",
+            "/api/p/mesh-demo/sites",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 422
+        assert "error" in payload
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_project_site_when_suggest_goals_use_site_slug_loc(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    project_dir = projects_dir / "nevada-like"
+    project_dir.mkdir(parents=True)
+    (project_dir / "config.yaml").write_text(
+        """
+sites:
+  hub:
+    name: Hub
+    loc: [39.5, -119.5]
+  russell-peak:
+    name: Russell Peak
+    loc: [39.9, -119.3]
+links: []
+suggest:
+  strategy: mesh-backbone
+  mesh_backbone:
+    goals:
+      russel-bridge:
+        loc: russell-peak
+      slpt-bridge:
+        loc: slpt-south-entrance
+""".strip(),
+        encoding="utf-8",
+    )
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps({"name": "Foo", "lat": 40.8, "lon": -120.36}).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request(
+            "POST",
+            "/api/p/nevada-like/sites",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 201
+        assert payload["site"]["slug"] == "foo"
+        assert payload["site"]["name"] == "Foo"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_project_page_includes_add_site_controls(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/p/mesh-demo/")
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8")
+        assert resp.status == 200
+        assert 'id="add-site-mode"' in body
+        assert 'id="site-panel-create"' in body
+        assert 'id="site-panel-slug-preview"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_run_serve_exits_on_keyboard_interrupt(monkeypatch) -> None:
     class _FakeServer:
         def __init__(self, *_args, **_kwargs) -> None:
