@@ -18,10 +18,15 @@ import peaky_finders
 from pydantic import ValidationError
 
 from peaky_finders.new_cli import discover_projects, scaffold_project, validate_project_slug
+from peaky_finders.serve_viewshed import ServeViewshedError, ensure_site_viewshed_overlay, ensure_site_viewshed_png
 from peaky_finders.sites_job import SiteEntry, load_preset_sites
 
 _PROJECT_PATH_RE = re.compile(r"^/p/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_SITES_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/?$")
+_API_PROJECT_VIEWSHED_META_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
+_API_PROJECT_VIEWSHED_PNG_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/splat\.png$"
+)
 
 
 def resolve_serve_peaky_home() -> Path:
@@ -155,6 +160,7 @@ def _project_error_html(slug: str, project_dir: Path, message: str) -> bytes:
 def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> bytes:
     serialized = _serialize_project_sites(sites)
     sites_json = json.dumps(serialized)
+    project_slug_json = json.dumps(slug)
     site_count = len(serialized)
     site_noun = "site" if site_count == 1 else "sites"
     extra_head = (
@@ -180,6 +186,7 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" crossorigin=""></script>
 <script>
 (function () {{
+  const projectSlug = {project_slug_json};
   const sites = {sites_json};
 
   const TERRAIN_SOURCE = "terrain-dem";
@@ -189,6 +196,7 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
   const SITES_SOURCE = "sites";
   const SITES_CIRCLE = "sites-circle";
   const SITES_LABELS = "sites-labels";
+  const VIEWSHED_RASTER_OPACITY = 0.75;
   const PITCH_TERRAIN_ON = 12;
   const PITCH_TERRAIN_OFF = 6;
 
@@ -216,7 +224,7 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
     const bm = BASEMAPS[key] || BASEMAPS.street;
     return {{
       version: 8,
-      glyphs: "https://demotiles.maplibre.org/font/{{fontstack}}/{{range}}.pbf",
+      glyphs: "https://protomaps.github.io/basemaps-assets/fonts/{{fontstack}}/{{range}}.pbf",
       sources: {{
         basemap: {{
           type: "raster",
@@ -369,6 +377,56 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
     if (map.getSource(BASEMAP_REFERENCE_SOURCE)) map.removeSource(BASEMAP_REFERENCE_SOURCE);
   }}
 
+  function viewshedSourceId(slug) {{
+    return `viewshed-${{slug}}`;
+  }}
+
+  function viewshedLayerId(slug) {{
+    return `viewshed-${{slug}}-raster`;
+  }}
+
+  function viewshedMetaUrl(siteSlug) {{
+    return `/api/p/${{projectSlug}}/viewsheds/${{siteSlug}}`;
+  }}
+
+  function addViewshedLayer(vs) {{
+    const sourceId = viewshedSourceId(vs.slug);
+    const layerId = viewshedLayerId(vs.slug);
+    if (map.getSource(sourceId)) return;
+    map.addSource(sourceId, {{
+      type: "image",
+      url: vs.url,
+      coordinates: vs.coordinates,
+    }});
+    map.addLayer({{
+      id: layerId,
+      type: "raster",
+      source: sourceId,
+      paint: {{
+        "raster-opacity": VIEWSHED_RASTER_OPACITY,
+        "raster-fade-duration": 0,
+      }},
+    }});
+    raiseSiteLayers();
+  }}
+
+  async function loadViewshedForSite(site) {{
+    try {{
+      const resp = await fetch(viewshedMetaUrl(site.slug));
+      if (!resp.ok) return;
+      const vs = await resp.json();
+      if (vs && vs.url && vs.coordinates) addViewshedLayer(vs);
+    }} catch (_) {{
+      /* overlay optional */
+    }}
+  }}
+
+  function loadAllViewsheds() {{
+    for (const site of sites) {{
+      void loadViewshedForSite(site);
+    }}
+  }}
+
   function addSiteLayers() {{
     if (map.getSource(SITES_SOURCE)) {{
       map.getSource(SITES_SOURCE).setData(sitesGeoJson());
@@ -395,7 +453,7 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
         "text-size": 12,
         "text-offset": [0, -1.4],
         "text-anchor": "bottom",
-        "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+        "text-font": ["Noto Sans Bold"],
         "text-allow-overlap": true,
       }},
       paint: {{
@@ -439,6 +497,7 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
   map.on("load", () => {{
     mapReady = true;
     addSiteLayers();
+    loadAllViewsheds();
     const basemapKey = document.getElementById("basemap").value;
     if (BASEMAPS[basemapKey].referenceTiles) {{
       ensureBasemapReference(BASEMAPS[basemapKey]);
@@ -492,6 +551,78 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                     return
                 payload = json.dumps({"slug": slug, "sites": sites}).encode("utf-8")
                 self._send_bytes(payload, "application/json")
+                return
+
+            viewshed_meta_match = _API_PROJECT_VIEWSHED_META_RE.match(path)
+            if viewshed_meta_match:
+                slug = viewshed_meta_match.group(1)
+                site_slug = viewshed_meta_match.group(2)
+                project_dir = projects_dir / slug
+                if not (project_dir / "config.yaml").is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    site_map = _load_project_sites(project_dir)
+                except (ValueError, ValidationError) as e:
+                    payload = json.dumps({"slug": slug, "site": site_slug, "error": str(e)}).encode(
+                        "utf-8"
+                    )
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                if site_slug not in site_map:
+                    self.send_error(404)
+                    return
+                verbose = bool(getattr(self.server, "verbose", False))
+                try:
+                    overlay = ensure_site_viewshed_overlay(
+                        slug,
+                        project_dir,
+                        site_slug,
+                        site_map[site_slug],
+                        verbose=verbose,
+                    )
+                except ServeViewshedError as e:
+                    payload = json.dumps(
+                        {"slug": slug, "site": site_slug, "error": str(e)}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=503)
+                    return
+                payload = json.dumps({"project": slug, **overlay}).encode("utf-8")
+                self._send_bytes(payload, "application/json")
+                return
+
+            viewshed_png_match = _API_PROJECT_VIEWSHED_PNG_RE.match(path)
+            if viewshed_png_match:
+                slug = viewshed_png_match.group(1)
+                site_slug = viewshed_png_match.group(2)
+                project_dir = projects_dir / slug
+                if not (project_dir / "config.yaml").is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    site_map = _load_project_sites(project_dir)
+                except (ValueError, ValidationError):
+                    self.send_error(404)
+                    return
+                if site_slug not in site_map:
+                    self.send_error(404)
+                    return
+                verbose = bool(getattr(self.server, "verbose", False))
+                try:
+                    png_path = ensure_site_viewshed_png(
+                        project_dir,
+                        site_slug,
+                        site_map[site_slug],
+                        verbose=verbose,
+                    )
+                    body = png_path.read_bytes()
+                except ServeViewshedError:
+                    self.send_error(503)
+                    return
+                except OSError:
+                    self.send_error(503)
+                    return
+                self._send_bytes(body, "image/png")
                 return
 
             match = _PROJECT_PATH_RE.match(path)
