@@ -15,11 +15,13 @@ from peaky_finders.new_cli import scaffold_project
 from peaky_finders.serve_cli import (
     _reload_detected,
     _reload_snapshots,
+    _serialize_project_sites,
     build_serve_parser,
     make_serve_handler,
     resolve_serve_projects_dir,
     run_serve,
 )
+from peaky_finders.sites_job import SiteEntry, SiteType
 
 
 def _start_server(projects_dir: Path):
@@ -243,6 +245,7 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert "Satellite" in body
         assert '"name": "Hub"' in body
         assert "1 site" in body
+        assert 'id="site-panel"' in body
         assert "/static/project-map.js" in body
         assert 'data-bs-theme="dark"' in body
         assert "bootstrap@5.3.3" in body
@@ -260,6 +263,10 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert "function resetHomeView()" in js_body
         assert "stopImmediatePropagation" in js_body
         assert "visualizePitch: true" in js_body
+        assert "function selectSite" in js_body
+        assert "queryRenderedFeatures" in js_body
+        assert "setViewshedVisible" in js_body
+        assert "function renderPanel" in js_body
     finally:
         server.shutdown()
         server.server_close()
@@ -318,6 +325,66 @@ def test_api_project_sites_json(tmp_path: Path) -> None:
         assert payload["sites"][0]["name"] == "Hub"
         assert payload["sites"][0]["lat"] == 39.5
         assert payload["sites"][0]["lon"] == -119.5
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_serialize_project_sites_includes_metadata() -> None:
+    sites = {
+        "peak": SiteEntry(
+            type=SiteType.INSTALLED,
+            name="Peak",
+            loc=(39.5, -119.5),
+            elevation_m=1713.0,
+            plss="NV; T.30N R.23E",
+            mlrs="NV210300N0230E0SN360",
+            rationale="Approved site",
+        ),
+    }
+    row = _serialize_project_sites(sites)[0]
+    assert row["elevation_m"] == 1713.0
+    assert row["plss"] == "NV; T.30N R.23E"
+    assert row["mlrs"] == "NV210300N0230E0SN360"
+    assert row["rationale"] == "Approved site"
+    assert "description" not in row
+
+
+def test_api_project_sites_json_with_metadata(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    project_dir = projects_dir / "rich"
+    project_dir.mkdir(parents=True)
+    (project_dir / "config.yaml").write_text(
+        """
+sites:
+  peak:
+    name: Peak
+    loc: [39.5, -119.5]
+    elevation_m: 1713.0
+    plss: NV; T.30N R.23E
+    mlrs: NV210300N0230E0SN360
+    rationale: Approved site
+links: []
+suggest:
+  strategy: mesh-backbone
+  mesh_backbone:
+    goals:
+      russel-bridge:
+        loc: russell-peak
+""".strip(),
+        encoding="utf-8",
+    )
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/api/p/rich/sites")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        site = payload["sites"][0]
+        assert site["elevation_m"] == 1713.0
+        assert site["plss"] == "NV; T.30N R.23E"
     finally:
         server.shutdown()
         server.server_close()

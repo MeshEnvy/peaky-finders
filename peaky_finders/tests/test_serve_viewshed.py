@@ -214,10 +214,18 @@ def test_project_page_loads_viewsheds_on_demand(tmp_path: Path) -> None:
         resp = conn.getresponse()
         body = resp.read().decode("utf-8")
         assert resp.status == 200
-        assert "loadAllViewsheds" in body
-        assert "loadViewshedForSite" in body
-        assert "viewshedMetaUrl" in body
+        assert "/static/project-map.js" in body
         assert '"mesh-demo"' in body
+
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/static/project-map.js")
+        js_resp = conn.getresponse()
+        js_body = js_resp.read().decode("utf-8")
+        assert js_resp.status == 200
+        assert "loadAllViewsheds" in js_body
+        assert "loadViewshedForSite" in js_body
+        assert "viewshedMetaUrl" in js_body
+        assert "setViewshedVisible" in js_body
     finally:
         server.shutdown()
         server.server_close()

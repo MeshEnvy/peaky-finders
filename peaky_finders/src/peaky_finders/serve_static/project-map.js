@@ -10,6 +10,7 @@
   const SITES_SOURCE = "sites";
   const SITES_CIRCLE = "sites-circle";
   const SITES_LABELS = "sites-labels";
+  const SITES_SELECTED = "sites-selected";
   const LINKS_SOURCE = "site-links";
   const LINKS_LAYER = "site-links-line";
   const VIEWSHED_RASTER_OPACITY = 0.75;
@@ -110,6 +111,15 @@
 
   let mapReady = false;
   let terrainActive = false;
+  let selectedSlug = null;
+  let siteLinksPayload = null;
+  const viewshedVisible = new Map();
+  const viewshedLoading = new Set();
+  const siteBySlug = new Map(sites.map((s) => [s.slug, s]));
+  const sitePanel = document.getElementById("site-panel");
+  const sitePanelClose = document.getElementById("site-panel-close");
+  const sitePanelViewshed = document.getElementById("site-panel-viewshed");
+  const sitePanelViewshedHint = document.getElementById("site-panel-viewshed-hint");
 
   function ensureTerrainSource() {
     if (map.getSource(TERRAIN_SOURCE)) return;
@@ -188,14 +198,16 @@
       const resp = await fetch(linksApiUrl());
       if (!resp.ok) return;
       const payload = await resp.json();
+      siteLinksPayload = payload;
       if (payload && payload.geojson) addSiteLinksLayer(payload.geojson);
+      if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));
     } catch (_) {
       /* links optional */
     }
   }
 
   function raiseSiteLayers() {
-    for (const id of [LINKS_LAYER, SITES_CIRCLE, SITES_LABELS]) {
+    for (const id of [LINKS_LAYER, SITES_CIRCLE, SITES_LABELS, SITES_SELECTED]) {
       if (map.getLayer(id)) {
         try {
           map.moveLayer(id);
@@ -276,35 +288,74 @@
     return `/api/p/${projectSlug}/viewsheds/${siteSlug}`;
   }
 
+  function isViewshedVisible(slug) {
+    return viewshedVisible.get(slug) !== false;
+  }
+
+  function setViewshedVisible(slug, visible) {
+    viewshedVisible.set(slug, visible);
+    const layerId = viewshedLayerId(slug);
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
+    } else if (visible) {
+      const site = siteBySlug.get(slug);
+      if (site) void loadViewshedForSite(site);
+    }
+    if (slug === selectedSlug) syncViewshedCheckbox();
+  }
+
+  function syncViewshedCheckbox() {
+    if (!selectedSlug) return;
+    sitePanelViewshed.checked = isViewshedVisible(selectedSlug);
+    sitePanelViewshedHint.textContent = viewshedLoading.has(selectedSlug) ? "Loading…" : "";
+  }
+
   function addViewshedLayer(vs) {
     const sourceId = viewshedSourceId(vs.slug);
     const layerId = viewshedLayerId(vs.slug);
-    if (map.getSource(sourceId)) return;
-    map.addSource(sourceId, {
-      type: "image",
-      url: vs.url,
-      coordinates: vs.coordinates,
-    });
-    map.addLayer({
-      id: layerId,
-      type: "raster",
-      source: sourceId,
-      paint: {
-        "raster-opacity": VIEWSHED_RASTER_OPACITY,
-        "raster-fade-duration": 0,
-      },
-    });
+    if (!map.getSource(sourceId)) {
+      map.addSource(sourceId, {
+        type: "image",
+        url: vs.url,
+        coordinates: vs.coordinates,
+      });
+      map.addLayer({
+        id: layerId,
+        type: "raster",
+        source: sourceId,
+        paint: {
+          "raster-opacity": VIEWSHED_RASTER_OPACITY,
+          "raster-fade-duration": 0,
+        },
+      });
+    }
+    if (!isViewshedVisible(vs.slug)) {
+      map.setLayoutProperty(layerId, "visibility", "none");
+    }
+    viewshedLoading.delete(vs.slug);
+    if (vs.slug === selectedSlug) syncViewshedCheckbox();
     raiseSiteLayers();
   }
 
   async function loadViewshedForSite(site) {
+    viewshedLoading.add(site.slug);
+    if (site.slug === selectedSlug) syncViewshedCheckbox();
     try {
       const resp = await fetch(viewshedMetaUrl(site.slug));
-      if (!resp.ok) return;
+      if (!resp.ok) {
+        viewshedLoading.delete(site.slug);
+        if (site.slug === selectedSlug) syncViewshedCheckbox();
+        return;
+      }
       const vs = await resp.json();
       if (vs && vs.url && vs.coordinates) addViewshedLayer(vs);
+      else {
+        viewshedLoading.delete(site.slug);
+        if (site.slug === selectedSlug) syncViewshedCheckbox();
+      }
     } catch (_) {
-      /* overlay optional */
+      viewshedLoading.delete(site.slug);
+      if (site.slug === selectedSlug) syncViewshedCheckbox();
     }
   }
 
@@ -317,6 +368,7 @@
   function addSiteLayers() {
     if (map.getSource(SITES_SOURCE)) {
       map.getSource(SITES_SOURCE).setData(sitesGeoJson());
+      updateSelectedLayer();
       return;
     }
     map.addSource(SITES_SOURCE, { type: "geojson", data: sitesGeoJson() });
@@ -348,6 +400,124 @@
         "text-halo-color": "#1a1a1a",
         "text-halo-width": 2,
       },
+    });
+    map.addLayer({
+      id: SITES_SELECTED,
+      type: "circle",
+      source: SITES_SOURCE,
+      filter: ["==", ["get", "slug"], ""],
+      paint: {
+        "circle-radius": 11,
+        "circle-color": "#4a6cf7",
+        "circle-stroke-width": 3,
+        "circle-stroke-color": "#fbbf24",
+        "circle-opacity": 0.35,
+      },
+    });
+  }
+
+  function updateSelectedLayer() {
+    if (!map.getLayer(SITES_SELECTED)) return;
+    map.setFilter(SITES_SELECTED, ["==", ["get", "slug"], selectedSlug || ""]);
+  }
+
+  function formatCoord(n) {
+    return Number(n).toFixed(6);
+  }
+
+  function setSectionVisible(sectionId, visible) {
+    const el = document.getElementById(sectionId);
+    if (el) el.hidden = !visible;
+  }
+
+  function linkedPeersForSite(slug) {
+    if (!siteLinksPayload || !Array.isArray(siteLinksPayload.links)) return [];
+    const peers = [];
+    for (const row of siteLinksPayload.links) {
+      if (!row.linked) continue;
+      if (row.a === slug) peers.push(row.b);
+      else if (row.b === slug) peers.push(row.a);
+    }
+    return peers.sort();
+  }
+
+  function renderPanel(site) {
+    if (!site) return;
+    document.getElementById("site-panel-name").textContent = site.name;
+    const badge = document.getElementById("site-panel-type");
+    badge.textContent = site.type;
+    badge.className = `site-panel__badge badge site-panel__badge--${site.type}`;
+    document.getElementById("site-panel-coords").textContent =
+      `${formatCoord(site.lat)}, ${formatCoord(site.lon)}`;
+    const elevEl = document.getElementById("site-panel-elevation");
+    if (site.elevation_m != null) {
+      elevEl.textContent = `${site.elevation_m} m`;
+      elevEl.classList.remove("text-muted");
+    } else {
+      elevEl.textContent = "—";
+      elevEl.classList.add("text-muted");
+    }
+    const plss = site.plss || "";
+    setSectionVisible("site-panel-plss-section", !!plss);
+    document.getElementById("site-panel-plss").textContent = plss;
+    const mlrs = site.mlrs || "";
+    setSectionVisible("site-panel-mlrs-section", !!mlrs);
+    document.getElementById("site-panel-mlrs").textContent = mlrs;
+    const desc = site.description || "";
+    setSectionVisible("site-panel-desc-section", !!desc);
+    document.getElementById("site-panel-desc").textContent = desc;
+    const rationale = site.rationale || "";
+    setSectionVisible("site-panel-rationale-section", !!rationale);
+    document.getElementById("site-panel-rationale").textContent = rationale;
+    const peers = linkedPeersForSite(site.slug);
+    setSectionVisible("site-panel-links-section", peers.length > 0);
+    const linksEl = document.getElementById("site-panel-links");
+    linksEl.innerHTML = "";
+    for (const peer of peers) {
+      const li = document.createElement("li");
+      li.textContent = peer;
+      linksEl.appendChild(li);
+    }
+    syncViewshedCheckbox();
+  }
+
+  function selectSite(slug) {
+    const site = siteBySlug.get(slug);
+    if (!site) return;
+    selectedSlug = slug;
+    sitePanel.hidden = false;
+    renderPanel(site);
+    updateSelectedLayer();
+    raiseSiteLayers();
+  }
+
+  function deselectSite() {
+    selectedSlug = null;
+    sitePanel.hidden = true;
+    updateSelectedLayer();
+  }
+
+  function wireSiteInteractions() {
+    const siteLayerIds = [SITES_CIRCLE, SITES_LABELS];
+    for (const layerId of siteLayerIds) {
+      map.on("mouseenter", layerId, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", layerId, () => {
+        map.getCanvas().style.cursor = "";
+      });
+    }
+    map.on("click", (ev) => {
+      const feats = map.queryRenderedFeatures(ev.point, { layers: siteLayerIds });
+      if (feats.length) {
+        const slug = feats[0].properties && feats[0].properties.slug;
+        if (slug) {
+          ev.preventDefault();
+          selectSite(slug);
+        }
+        return;
+      }
+      deselectSite();
     });
   }
 
@@ -389,6 +559,7 @@
   map.on("load", () => {
     mapReady = true;
     addSiteLayers();
+    wireSiteInteractions();
     void loadSiteLinks();
     loadAllViewsheds();
     const basemapKey = document.getElementById("basemap").value;
@@ -405,5 +576,12 @@
   });
   document.getElementById("show-links").addEventListener("change", (ev) => {
     setSiteLinksVisible(ev.target.checked);
+  });
+  sitePanelClose.addEventListener("click", deselectSite);
+  sitePanelViewshed.addEventListener("change", (ev) => {
+    if (selectedSlug) setViewshedVisible(selectedSlug, ev.target.checked);
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && selectedSlug) deselectSite();
   });
 })();

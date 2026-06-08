@@ -36,3 +36,38 @@ body.wide #map {
 .maplibre-ctrl-attrib {
   font-size: 0.7rem;
 }
+
+.site-panel {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  width: 20rem;
+  max-width: calc(100% - 1.5rem);
+  z-index: 2;
+  overflow-y: auto;
+}
+
+.site-panel[hidden] {
+  display: none !important;
+}
+
+.site-panel__value {
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.site-panel__badge--installed {
+  background-color: rgba(74, 108, 247, 0.2);
+  color: #8ba4ff;
+}
+
+.site-panel__badge--planned {
+  background-color: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+
+.site-panel__badge--suggested {
+  background-color: rgba(52, 211, 153, 0.2);
+  color: #34d399;
+}
