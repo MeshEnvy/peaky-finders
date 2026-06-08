@@ -21,9 +21,14 @@ from peaky_finders.site_suggestions.rf_link import (
 )
 from peaky_finders.sites_job import (
     GoalEntry,
+    Preset,
     SiteEntry,
     load_preset_for_coverage,
+    resolved_bundle_dir,
+    resolved_viewshed_dir,
 )
+from peaky_finders.splat_polygonize import SPLAT_GPKG_NAME
+from peaky_finders.viewshed_workspace import resolved_viewshed_workdir_for_coords
 
 _links_eval_lock = threading.Lock()
 
@@ -35,15 +40,19 @@ def _load_links_preset(project_dir: Path) -> Preset:
         raise ServeLinksError(f"invalid preset: {e}") from e
 
 
-def _site_footprint(project_dir: Path, slug: str) -> object | None:
-    from peaky_finders.build_configure import configure_preset_build
-
+def _site_footprint(project_dir: Path, slug: str, *, preset: Preset) -> object | None:
+    site = preset.sites.get(slug)
+    if site is None:
+        return None
     preset_path = project_dir / "config.yaml"
-    plan = configure_preset_build(preset_path=preset_path)
-    for ws in plan.viewshed_workspaces:
-        if slug in ws.site_slugs:
-            return read_coverage_footprint(ws.splat_gpkg)
-    return None
+    viewshed_root = resolved_viewshed_dir(resolved_bundle_dir(preset_path=preset_path))
+    workdir = resolved_viewshed_workdir_for_coords(
+        preset=preset,
+        viewshed_root=viewshed_root,
+        lat=float(site.lat),
+        lon=float(site.lon),
+    )
+    return read_coverage_footprint(workdir / SPLAT_GPKG_NAME)
 
 
 def _footprint_covers_goal(footprint, *, lat: float, lon: float) -> bool:
@@ -156,7 +165,7 @@ def load_project_goal_links(
         if not ok:
             continue
         if site_slug not in footprints:
-            footprints[site_slug] = _site_footprint(project_dir, site_slug)
+            footprints[site_slug] = _site_footprint(project_dir, site_slug, preset=preset)
         fp = footprints[site_slug]
         captured = _footprint_covers_goal(fp, lat=lat_g, lon=lon_g)
         records.append(
