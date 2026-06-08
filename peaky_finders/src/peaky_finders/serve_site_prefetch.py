@@ -36,10 +36,35 @@ def load_site_placement_prefetch(
     except ServeLinksError as e:
         raise ServeSitePrefetchError(str(e)) from e
 
+    link_features: list[dict[str, object]] = []
+    for row in links:
+        slug = str(row["slug"])
+        site = sites.get(slug)
+        if site is None:
+            continue
+        link_features.append(
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [
+                        [float(lon), float(lat)],
+                        [float(site.lon), float(site.lat)],
+                    ],
+                },
+                "properties": {
+                    "slug": slug,
+                    "manual": bool(row.get("manual")),
+                    "distance_km": row.get("distance_km"),
+                },
+            }
+        )
+
     return {
         "lat": lat,
         "lon": lon,
         "plss": plss_mlrs["plss"],
         "mlrs": plss_mlrs["mlrs"],
         "links": links,
+        "links_geojson": {"type": "FeatureCollection", "features": link_features},
     }

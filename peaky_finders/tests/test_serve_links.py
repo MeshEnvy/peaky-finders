@@ -201,6 +201,8 @@ def test_load_coords_site_links_rf_batch(tmp_path: Path) -> None:
     assert mock_batch.called
     assert all(row["linked"] for row in records)
     assert all(not row["manual"] for row in records)
+    assert all("distance_km" in row for row in records)
+    assert all(isinstance(row["distance_km"], (int, float)) for row in records)
 
 
 def test_project_page_includes_site_links_toggle(tmp_path: Path) -> None:
