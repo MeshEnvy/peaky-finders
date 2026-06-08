@@ -126,6 +126,10 @@ def test_load_project_site_links_manual_only(tmp_path: Path) -> None:
     assert len(payload["links"]) == 3
     assert all(row["manual"] for row in payload["links"])
     assert len(payload["geojson"]["features"]) == 3
+    for feature in payload["geojson"]["features"]:
+        dist = feature["properties"]["distance_km"]
+        assert isinstance(dist, (int, float))
+        assert dist > 0
 
 
 def test_api_project_links_manual(tmp_path: Path) -> None:
@@ -219,7 +223,14 @@ def test_project_page_includes_site_links_toggle(tmp_path: Path) -> None:
         assert resp.status == 200
         assert 'id="show-links"' in body
         assert "Site links" in body
-        assert "site-links-line" in body
+        assert "/static/project-map.js" in body
+
+        conn.request("GET", "/static/project-map.js")
+        js_resp = conn.getresponse()
+        js_body = js_resp.read().decode("utf-8")
+        assert js_resp.status == 200
+        assert "site-links-line" in js_body
+        assert "site-links-label" in js_body
     finally:
         server.shutdown()
         server.server_close()

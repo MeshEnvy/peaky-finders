@@ -13,8 +13,10 @@
   const SITES_SELECTED = "sites-selected";
   const LINKS_SOURCE = "site-links";
   const LINKS_LAYER = "site-links-line";
+  const LINKS_LABELS_LAYER = "site-links-label";
   const DRAFT_LINKS_SOURCE = "draft-site-links";
   const DRAFT_LINKS_LAYER = "draft-site-links-line";
+  const DRAFT_LINKS_LABELS_LAYER = "draft-site-links-label";
   const VIEWSHED_RASTER_OPACITY = 0.75;
   const DRAFT_VIEWSHED_SLUG = "_draft";
   const PITCH_TERRAIN_ON = 12;
@@ -342,8 +344,47 @@
   }
 
   function removeDraftLinksLayer() {
+    if (map.getLayer(DRAFT_LINKS_LABELS_LAYER)) map.removeLayer(DRAFT_LINKS_LABELS_LAYER);
     if (map.getLayer(DRAFT_LINKS_LAYER)) map.removeLayer(DRAFT_LINKS_LAYER);
     if (map.getSource(DRAFT_LINKS_SOURCE)) map.removeSource(DRAFT_LINKS_SOURCE);
+  }
+
+  function linksGeoJsonWithLabels(geojson) {
+    if (!geojson || !geojson.features) return geojson;
+    return {
+      type: geojson.type || "FeatureCollection",
+      features: geojson.features.map((feature) => {
+        const props = feature.properties || {};
+        const label = formatLinkDistanceKm(props.distance_km);
+        return {
+          ...feature,
+          properties: { ...props, label: label || "" },
+        };
+      }),
+    };
+  }
+
+  function linkLabelsLayerSpec(layerId, sourceId, visibility) {
+    return {
+      id: layerId,
+      type: "symbol",
+      source: sourceId,
+      filter: ["!=", ["get", "label"], ""],
+      layout: {
+        "symbol-placement": "line-center",
+        "text-field": ["get", "label"],
+        "text-size": 11,
+        "text-font": ["Noto Sans Regular"],
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+        visibility,
+      },
+      paint: {
+        "text-color": "#e8eaed",
+        "text-halo-color": "#1a1a1a",
+        "text-halo-width": 2,
+      },
+    };
   }
 
   function addDraftLinksLayer(geojson) {
@@ -351,12 +392,13 @@
       removeDraftLinksLayer();
       return;
     }
+    const labeled = linksGeoJsonWithLabels(geojson);
     if (map.getSource(DRAFT_LINKS_SOURCE)) {
-      map.getSource(DRAFT_LINKS_SOURCE).setData(geojson);
+      map.getSource(DRAFT_LINKS_SOURCE).setData(labeled);
       raiseSiteLayers();
       return;
     }
-    map.addSource(DRAFT_LINKS_SOURCE, { type: "geojson", data: geojson });
+    map.addSource(DRAFT_LINKS_SOURCE, { type: "geojson", data: labeled });
     map.addLayer(
       {
         id: DRAFT_LINKS_LAYER,
@@ -375,6 +417,7 @@
       },
       SITES_CIRCLE,
     );
+    map.addLayer(linkLabelsLayerSpec(DRAFT_LINKS_LABELS_LAYER, DRAFT_LINKS_SOURCE, "visible"), SITES_CIRCLE);
     raiseSiteLayers();
   }
 
@@ -501,19 +544,23 @@
   }
 
   function setSiteLinksVisible(visible) {
-    if (!mapReady || !map.getLayer(LINKS_LAYER)) return;
-    map.setLayoutProperty(LINKS_LAYER, "visibility", visible ? "visible" : "none");
+    if (!mapReady) return;
+    const vis = visible ? "visible" : "none";
+    if (map.getLayer(LINKS_LAYER)) map.setLayoutProperty(LINKS_LAYER, "visibility", vis);
+    if (map.getLayer(LINKS_LABELS_LAYER)) map.setLayoutProperty(LINKS_LABELS_LAYER, "visibility", vis);
   }
 
   function addSiteLinksLayer(geojson) {
     if (!geojson || !geojson.features || !geojson.features.length) return;
+    const labeled = linksGeoJsonWithLabels(geojson);
+    const linkVisibility = document.getElementById("show-links").checked ? "visible" : "none";
     if (map.getSource(LINKS_SOURCE)) {
-      map.getSource(LINKS_SOURCE).setData(geojson);
+      map.getSource(LINKS_SOURCE).setData(labeled);
       setSiteLinksVisible(document.getElementById("show-links").checked);
       raiseSiteLayers();
       return;
     }
-    map.addSource(LINKS_SOURCE, { type: "geojson", data: geojson });
+    map.addSource(LINKS_SOURCE, { type: "geojson", data: labeled });
     map.addLayer(
       {
         id: LINKS_LAYER,
@@ -527,11 +574,12 @@
         layout: {
           "line-cap": "round",
           "line-join": "round",
-          visibility: document.getElementById("show-links").checked ? "visible" : "none",
+          visibility: linkVisibility,
         },
       },
       SITES_CIRCLE,
     );
+    map.addLayer(linkLabelsLayerSpec(LINKS_LABELS_LAYER, LINKS_SOURCE, linkVisibility), SITES_CIRCLE);
     raiseSiteLayers();
   }
 
@@ -549,7 +597,15 @@
   }
 
   function raiseSiteLayers() {
-    for (const id of [DRAFT_LINKS_LAYER, LINKS_LAYER, SITES_CIRCLE, SITES_LABELS, SITES_SELECTED]) {
+    for (const id of [
+      DRAFT_LINKS_LAYER,
+      DRAFT_LINKS_LABELS_LAYER,
+      LINKS_LAYER,
+      LINKS_LABELS_LAYER,
+      SITES_CIRCLE,
+      SITES_LABELS,
+      SITES_SELECTED,
+    ]) {
       if (map.getLayer(id)) {
         try {
           map.moveLayer(id);
