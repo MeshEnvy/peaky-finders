@@ -37,6 +37,7 @@ When two designs compete, pick the **simpler present** and break callers — doc
 Run from a project directory containing `config.yaml`:
 
 ```bash
+../../peaky new my-region       # scaffold projects/my-region/ (from repo root)
 cd projects/nevada
 ../../peaky build              # incremental DAG (bundle → viewsheds → mesh → KMZ)
 ../../peaky build --suggest    # site solver → append to preset YAML
@@ -45,6 +46,7 @@ cd projects/nevada
 
 | Command | Role |
 |---------|------|
+| `new` | Scaffold project: `config.yaml` + `data/` layout under `PEAKY_PROJECTS` |
 | `build` | Incremental preset DAG; `--target`, `-j`, `--force`, `--dry-run`, `--suggest` |
 | `bundle` | Granular: `clip`, `composite`, `eligible`, `reference`, `resolve`, `plss`, `dem` |
 | `mesh` | `links`, `pairwise`, `depth`, `eligible-union` |
