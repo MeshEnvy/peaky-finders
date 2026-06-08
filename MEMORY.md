@@ -54,7 +54,7 @@ cd projects/nevada
 | `kmz` | Aggregate KMZ assembly |
 | `stamp` | Prerequisite stamp files for staleness edges |
 | `inspect` | GDB layer/attribute listing |
-| `serve` | Local web UI — Bootstrap 5 dark theme; project selector at `PEAKY_HOME`; MapLibre map with RF viewshed overlays (Street/Topo/Satellite, 3D terrain on tilt). Click site → info panel (coords, elevation, PLSS/MLRS, description, rationale, linked sites, per-site viewshed toggle). Compass resets to north-up 2D and fits all sites with 30 km padding (same fit on initial load). |
+| `serve` | Local web UI — Bootstrap 5 dark theme; project selector at `PEAKY_HOME`; MapLibre map with RF viewshed overlays (Street/Topo/Satellite, 3D terrain on tilt). Click site → info panel (coords, elevation, PLSS/MLRS, description, rationale, linked sites, per-site viewshed toggle). Compass resets to north-up 2D and fits all sites with 30 km padding. Per-browser map prefs (camera, basemap, site links) in `localStorage` keyed by project slug (`peaky.map.v1.<slug>`); first visit fits sites. |
 
 Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, `--reload` polls `peaky_finders` + `serve_static/` (on by default via `./peaky serve`), Docker publishes `PEAKY_SERVE_PORT` (default 8080). UI in `serve_html.py`; assets at `/static/` (`app.css`, `project-map.js`) plus root favicons/manifest in `serve_static/`. Project map loads all viewsheds on open; panel toggles hide/show per site. APIs: `GET /api/p/<slug>/sites` (metadata incl. `elevation_m`, `plss`, `mlrs`, …); `GET /api/p/<slug>/viewsheds/<site>` (JSON bounds + PNG URL) and `GET …/splat.png`; site links `GET /api/p/<slug>/links` and `GET /api/p/<slug>/links/<a>/<b>`.
 
@@ -70,7 +70,7 @@ Progressive, on-demand shell over the **same** preset + splatter + build artifac
 | HTTP layer | — | Thin: `serve_cli.py` routes + `serve_html.py` + MapLibre; logic in `serve_*.py` |
 | Site links | Build mesh `links` KML + footprint mutual coverage | On-demand splatter `link_mutual_*` via `serve_links.py` |
 
-New web features: call existing pipeline helpers; add `serve_<area>.py` wrappers — do not reimplement splatter, digests, or preset parsing in handlers. Agent rule: `.cursor/rules/serve-web-ui.mdc`; skill: `peaky-serve`.
+Map UI prefs (camera, basemap, site links) persist in browser `localStorage` per slug — not in `config.yaml` (avoids multi-user clobber). Agent rule: `.cursor/rules/serve-web-ui.mdc`; skill: `peaky-serve`.
 
 ## Build DAG
 
