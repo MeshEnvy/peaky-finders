@@ -1,9 +1,18 @@
 ---
-description: Conventional Commits; subject line under 50 characters
+description: Commit only conversation-scoped changes; Conventional Commits; subject under 50 chars
 alwaysApply: true
 ---
 
 # Commit style
+
+## Scope (when the user says "commit")
+
+Commit **only changes from the current conversation** — not the entire working tree.
+
+1. Identify files you edited or discussed in this thread.
+2. Stage those paths explicitly (`git add <path>…`); never `git add .` or `git add -A` unless the user asks to commit everything.
+3. Before committing, run `git status` / `git diff` and **exclude** unrelated dirty files (pre-existing edits, other tasks, accidental changes).
+4. If it is unclear which files belong to this conversation, **ask** before staging.
 
 Use **Conventional Commits** for every commit. Keep the **subject line under 50 characters** (including type, optional scope, and description).
 
