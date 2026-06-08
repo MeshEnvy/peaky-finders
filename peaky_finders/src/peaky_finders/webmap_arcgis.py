@@ -14,6 +14,8 @@ from typing import Any, Iterator
 
 import geopandas as gpd
 
+from peaky_finders.http_pool import ARCGIS_HTTP_POOL, HttpPool, http_run
+
 DEFAULT_UA = "Mozilla/5.0 (compatible; peaky_finders/webmap_arcgis)"
 
 
@@ -73,16 +75,36 @@ def layer_definition_where(layer: dict[str, Any]) -> str:
     return "1=1"
 
 
-def fetch_json(url: str, *, timeout_s: float, user_agent: str = DEFAULT_UA) -> dict[str, Any]:
-    req = urllib.request.Request(url, headers={"User-Agent": user_agent})
-    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-        raw = resp.read()
-    return json.loads(raw.decode("utf-8"))
+def fetch_json(
+    url: str,
+    *,
+    timeout_s: float,
+    user_agent: str = DEFAULT_UA,
+    http_pool: HttpPool | None = None,
+) -> dict[str, Any]:
+    def _fetch() -> dict[str, Any]:
+        req = urllib.request.Request(url, headers={"User-Agent": user_agent})
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read()
+        return json.loads(raw.decode("utf-8"))
+
+    return http_run(http_pool, ARCGIS_HTTP_POOL, _fetch)
 
 
-def fetch_layer_metadata(layer_url: str, *, timeout_s: float, user_agent: str = DEFAULT_UA) -> dict[str, Any]:
+def fetch_layer_metadata(
+    layer_url: str,
+    *,
+    timeout_s: float,
+    user_agent: str = DEFAULT_UA,
+    http_pool: HttpPool | None = None,
+) -> dict[str, Any]:
     base = strip_layer_base_url(layer_url)
-    return fetch_json(f"{base}?f=json", timeout_s=timeout_s, user_agent=user_agent)
+    return fetch_json(
+        f"{base}?f=json",
+        timeout_s=timeout_s,
+        user_agent=user_agent,
+        http_pool=http_pool,
+    )
 
 
 def fetch_layer_feature_count(
@@ -91,13 +113,19 @@ def fetch_layer_feature_count(
     where: str,
     timeout_s: float,
     user_agent: str = DEFAULT_UA,
+    http_pool: HttpPool | None = None,
 ) -> int | None:
     """Return feature count from ArcGIS ``query`` with ``returnCountOnly`` (cheap)."""
 
     base = strip_layer_base_url(layer_url)
     qs = urllib.parse.urlencode({"where": where, "returnCountOnly": "true", "f": "json"})
     try:
-        data = fetch_json(f"{base}/query?{qs}", timeout_s=timeout_s, user_agent=user_agent)
+        data = fetch_json(
+            f"{base}/query?{qs}",
+            timeout_s=timeout_s,
+            user_agent=user_agent,
+            http_pool=http_pool,
+        )
     except Exception:
         return None
     if isinstance(data, dict) and data.get("error"):
@@ -138,6 +166,7 @@ def iter_arcgis_geojson_features(
     timeout_s: float,
     max_features: int | None,
     user_agent: str = DEFAULT_UA,
+    http_pool: HttpPool | None = None,
 ) -> Iterator[dict[str, Any]]:
     base = strip_layer_base_url(layer_url)
     offset = 0
@@ -163,7 +192,12 @@ def iter_arcgis_geojson_features(
         )
         qurl = f"{base}/query?{qs}"
         try:
-            data = fetch_json(qurl, timeout_s=timeout_s, user_agent=user_agent)
+            data = fetch_json(
+                qurl,
+                timeout_s=timeout_s,
+                user_agent=user_agent,
+                http_pool=http_pool,
+            )
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
             raise RuntimeError(f"query failed ({qurl}): {e}") from e
 
