@@ -1,0 +1,32 @@
+---
+description: Incremental build DAG — graph targets, executor waves, staleness
+globs: peaky_finders/src/peaky_finders/{build_graph,build_executor,build_configure,build_fresh_checks,build_cli,build_keys,build_stamp_inputs}.py
+alwaysApply: false
+---
+
+# Build DAG
+
+`peaky build` runs an incremental DAG: configure → graph → topo-sort → wave-parallel executor.
+
+## Adding a target
+
+1. **Graph** — define `PeakyGraphTarget` in `build_graph.py` (id, `depends_on`, outputs, mtime prereqs).
+2. **Executor** — wire the run function in `build_executor.py`.
+3. **Freshness** — add checks in `build_fresh_checks.py`; stamp inputs in `build_stamp_inputs.py` when needed.
+4. **Granular CLI** — keep `peaky bundle *` / `peaky mesh *` consistent with the DAG node implementation.
+
+## Parallelism
+
+- Waves from topological sort; within a wave, `-j` caps concurrent targets.
+- Bound workers: `mx = min(parallelism, len(wave))`.
+- Collect results safely; preserve deterministic order after parallel collection when output order matters.
+
+## Staleness
+
+- Skip fresh nodes unless `--force`.
+- `--dry-run` prints build/fresh flags without executing.
+- `--target` selects a subgraph root (`all`, `kmz`, `bundle`, `mesh`, `viewsheds`, `viewshed/<slug>`).
+
+## Verbose
+
+Under `--verbose`, log start/progress/end per target with stable prefix and `flush=True` (see verbose-logging rule).

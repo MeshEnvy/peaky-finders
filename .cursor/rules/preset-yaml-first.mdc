@@ -1,18 +1,18 @@
 ---
-description: Prefer preset YAML (e.g. nevada.yaml) for tunable inputs; avoid hard-coding or CLI-only parameters
+description: Prefer preset YAML (projects/<slug>/config.yaml) for tunables; avoid hard-coding or CLI-only parameters
 alwaysApply: true
 ---
 
 # Preset YAML first
 
-Tunable **run configuration** for Peaky lives in **one preset file per job** — a root-level `<name>.yaml` loaded by `load_preset` / `Preset` in `sites_job.py` (RF blocks, `simulation`, `display`, `bundle` AOI/include/exclude, `sites`, etc.). **`nevada.yaml` is the reference shape.** Legacy `.json` job presets are not supported.
+Tunable **run configuration** for Peaky lives in **one preset file per project** — `projects/<slug>/config.yaml` loaded by `load_preset` / `Preset` in `sites_job.py` (RF blocks, `simulation`, `display`, `bundle` AOI/include/exclude, `sites`, etc.). **`projects/nevada/config.yaml` is the reference shape.** Legacy `.json` job presets are not supported.
 
 Use `write_preset_document` / `dump_preset_yaml_document` when authoring writes; tooling that edits PLSS strings uses ruamel round-trip load/dump via `read_preset_yaml_tree` so `#` comments are preserved where possible.
 
 ## Do this
 
 - **Add or change parameters in the preset YAML** (and extend the `Preset` model / parsing if the schema needs new fields).
-- **Treat ``peaky … <PRESET.yaml>`` as the primary interface**: values should make sense when read from the file alone — reproducible, reviewable, diffable (with `#` rationale where helpful).
+- **Treat ``cd projects/<slug> && peaky build`` as the primary interface**: values should make sense when read from the file alone — reproducible, reviewable, diffable (with `#` rationale where helpful).
 - **Use CLI flags** for true one-off workflow controls (e.g. caps, parallelism, “which phase”, local paths), not as the main place to store RF, sites, or bundle definitions.
 
 ## Avoid

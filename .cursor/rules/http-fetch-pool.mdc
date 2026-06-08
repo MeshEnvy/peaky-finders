@@ -1,0 +1,31 @@
+---
+description: Route outbound HTTP through HttpPool throttling in fetch modules
+globs: peaky_finders/src/peaky_finders/{http_pool,skadi_dem,plss_mlrs_fetch,webmap_arcgis}.py
+alwaysApply: false
+---
+
+# HTTP fetch pool
+
+Outbound HTTP in Peaky goes through [`http_pool.py`](peaky_finders/src/peaky_finders/http_pool.py) — bounded concurrency plus minimum inter-request spacing.
+
+## Do this
+
+- Wrap fetch bodies in `pool.run(fn)` or `http_run(pool, default, fn)`.
+- Reuse module pools: `SKADI_HTTP_POOL`, `CADNSDI_HTTP_POOL`, `ARCGIS_HTTP_POOL`, `NOMINATIM_HTTP_POOL`.
+- Add a **new named pool** only for a distinct backend or rate-limit policy.
+- Cap fan-out at call sites; pool limits are global per backend.
+
+## Avoid
+
+- Raw `requests.get` / `urllib` in hot paths without the pool.
+- One-off bypasses ("just this quick request").
+- Unbounded `ThreadPoolExecutor` over HTTP when the pool already serializes starts.
+
+## Example
+
+```python
+from peaky_finders.http_pool import SKADI_HTTP_POOL, http_run
+
+def fetch_tile(url: str) -> bytes:
+    return http_run(None, SKADI_HTTP_POOL, lambda: _get(url).content)
+```
