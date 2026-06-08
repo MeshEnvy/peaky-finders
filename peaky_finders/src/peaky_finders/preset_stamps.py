@@ -59,13 +59,8 @@ def _site_propagation_stamp_body(entry: SiteEntry) -> str:
     return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
-def _sites_sees_stamp_body(preset: Preset) -> str:
-    edges: list[tuple[str, str]] = []
-    for slug, ent in sorted(preset.sites.items()):
-        for target in sorted(ent.sees):
-            a, b = sorted((slug, target))
-            edges.append((a, b))
-    edges.sort()
+def _links_stamp_body(preset: Preset) -> str:
+    edges = sorted(preset.links)
     return json.dumps({"edges": edges}, sort_keys=True, ensure_ascii=False)
 
 
@@ -90,8 +85,8 @@ def compute_stamp_hex(section: str, preset: Preset, *, preset_path: Path, data_d
         return _hex(_display_stamp_body(preset))
     if section == "topology":
         return _hex(_topology_stamp_body(preset))
-    if section == "sites_sees":
-        return _hex(_sites_sees_stamp_body(preset))
+    if section == "links":
+        return _hex(_links_stamp_body(preset))
     if section == "display_kml":
         return display_kml_inputs_digest(preset.display.kml)
     if section == "display_kmz":
@@ -136,7 +131,7 @@ def compute_stamp_hex(section: str, preset: Preset, *, preset_path: Path, data_d
 
 
 def list_stamp_sections(preset: Preset) -> list[str]:
-    sections = ["simulation", "display", "display_kml", "display_kmz", "mesh", "topology", "sites_sees"]
+    sections = ["simulation", "display", "display_kml", "display_kmz", "mesh", "topology", "links"]
     sections.extend(sorted(f"site__{slug}" for slug in preset.sites.keys()))
     if preset.land is not None:
         require_land_config(preset)

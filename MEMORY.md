@@ -99,7 +99,8 @@ One YAML per project — `projects/<slug>/config.yaml` (legacy `.json` unsupport
 | `land` | GDB inputs: `inputs_root`, `reference`, `aoi`, `include`, `exclude` |
 | `mesh` | Pairwise/depth build knobs, raster size, worker counts |
 | `suggest` | `peaky build --suggest` planner (`land-grab` / `mesh-backbone`) |
-| `sites` | Installed/suggested sites (`loc`, optional `plss`/`mlrs`, `sees`) |
+| `sites` | Installed/suggested sites (`loc`, optional `plss`/`mlrs`) |
+| `links` | Manual mutual site pairs `[[a, b], …]` (field-verified; unioned with viewshed mutual coverage) |
 
 CLI `peaky bundle` unchanged; artifact dir remains `<preset>/build/bundle/`. Build stamps: `land_*`, `display_kml`, `display_kmz`, `mesh` (replaces `bundle_*` stamp names).
 

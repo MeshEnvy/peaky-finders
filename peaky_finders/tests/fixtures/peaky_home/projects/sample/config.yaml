@@ -48,16 +48,17 @@ sites:
   hub:
     name: Hub Site
     loc: [40.42619, -119.5]
-    sees: [peer-a, peer-b, peer-c]
   peer-a:
     name: Peer A
     loc: [39.90951, -119.4]
-    sees: [hub]
   peer-b:
     name: Peer B
     loc: [39.91342, -119.3]
-    sees: [hub]
   peer-c:
     name: Peer C
     loc: [40.40376, -119.6]
-    sees: [hub]
+
+links:
+  - [hub, peer-a]
+  - [hub, peer-b]
+  - [hub, peer-c]

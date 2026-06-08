@@ -441,28 +441,41 @@ class SiteEntry(BaseModel):
     plss: str | None = None
     mlrs: str | None = None
     rationale: str | None = None
-    sees: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Other site slugs this location can reach in the field. A mesh edge is drawn when "
-            "both sites list each other (same layer as mutual viewshed links)."
-        ),
-    )
 
-    @field_validator("sees", mode="before")
-    @classmethod
-    def _coerce_sees(cls, v: Any) -> list[str]:
-        if v is None:
-            return []
-        if not isinstance(v, (list, tuple)):
-            raise ValueError("sees must be a list of site slugs")
-        out: list[str] = []
-        for item in v:
-            slug = str(item).strip()
-            if not slug:
-                raise ValueError("sees entries must be non-empty site slugs")
-            out.append(slug)
-        return out
+
+def _coerce_link_pair(item: Any, *, index: int) -> tuple[str, str]:
+    if not isinstance(item, (list, tuple)) or len(item) != 2:
+        raise ValueError(f"links[{index}] must be a two-element list [site-a, site-b]")
+    a = str(item[0]).strip()
+    b = str(item[1]).strip()
+    if not a or not b:
+        raise ValueError(f"links[{index}] slugs must be non-empty")
+    return tuple(sorted((a, b)))
+
+
+def _reject_legacy_site_sees(raw: Mapping[str, Any]) -> None:
+    sites = raw.get("sites")
+    if not isinstance(sites, Mapping):
+        return
+    for slug, site in sites.items():
+        if isinstance(site, Mapping) and "sees" in site:
+            raise ValueError(
+                f"sites.{slug}.sees is removed; use top-level links: [[site-a, site-b], ...]"
+            )
+
+
+def _validate_preset_links(sites: dict[str, SiteEntry], links: list[tuple[str, str]]) -> None:
+    seen: set[tuple[str, str]] = set()
+    for a, b in links:
+        if a == b:
+            raise ValueError(f"links pair [{a!r}, {b!r}] must not link a site to itself")
+        if a not in sites:
+            raise ValueError(f"links references unknown site slug {a!r}")
+        if b not in sites:
+            raise ValueError(f"links references unknown site slug {b!r}")
+        if (a, b) in seen:
+            raise ValueError(f"duplicate links pair [{a!r}, {b!r}]")
+        seen.add((a, b))
 
 
 class GdbAttributeRule(BaseModel):
@@ -1307,7 +1320,7 @@ def resolved_kmz_document_layers(preset: Preset):
 
 
 class Preset(BaseModel):
-    """One YAML preset: simulation RF, land masks, mesh/suggest knobs, and ``sites``."""
+    """One YAML preset: simulation RF, land masks, mesh/suggest knobs, sites, and manual links."""
 
     simulation: SimulationConfig
     display: DisplayConfig
@@ -1315,12 +1328,30 @@ class Preset(BaseModel):
     mesh: MeshConfig | None = None
     suggest: SuggestConfig | None = None
     sites: dict[str, SiteEntry]
+    links: list[tuple[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "Manual mutual site pairs (field-verified). Each entry is [site-a, site-b]; "
+            "unioned with mutual viewshed footprint overlap for mesh edge KML."
+        ),
+    )
+
+    @field_validator("links", mode="before")
+    @classmethod
+    def _coerce_links(cls, v: Any) -> list[tuple[str, str]]:
+        if v is None:
+            return []
+        if isinstance(v, Mapping):
+            raise ValueError("links must be a list of [site-a, site-b] pairs, not a mapping")
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("links must be a list of [site-a, site-b] pairs")
+        return [_coerce_link_pair(item, index=i) for i, item in enumerate(v)]
 
     @model_validator(mode="after")
-    def _sites_non_empty_and_sees_valid(self) -> Preset:
+    def _sites_non_empty_and_links_valid(self) -> Preset:
         if not self.sites:
             raise ValueError("sites must contain at least one entry")
-        _validate_site_sees_refs(self.sites)
+        _validate_preset_links(self.sites, self.links)
         return self
 
 
@@ -1360,19 +1391,6 @@ def resolved_eligible_union_build_dir(bundle_cache_root: Path) -> Path:
     return (root.parent / "eligible_union").resolve()
 
 
-def _validate_site_sees_refs(sites: dict[str, SiteEntry]) -> None:
-    for slug, entry in sites.items():
-        seen_sees: set[str] = set()
-        for target in entry.sees:
-            if target not in sites:
-                raise ValueError(f"sites.{slug}.sees references unknown site slug {target!r}")
-            if target == slug:
-                raise ValueError(f"sites.{slug}.sees must not include the site itself")
-            if target in seen_sees:
-                raise ValueError(f"duplicate slug in sites.{slug}.sees: {target!r}")
-            seen_sees.add(target)
-
-
 def coerce_preset_sites(sites_raw: Any) -> dict[str, SiteEntry]:
     """Parse and validate only the ``sites`` section of a preset mapping."""
     if isinstance(sites_raw, list):
@@ -1390,6 +1408,11 @@ def coerce_preset_sites(sites_raw: Any) -> dict[str, SiteEntry]:
             by_slug[slug] = SiteEntry.model_validate(dict(ent))
         sites = by_slug
     elif isinstance(sites_raw, Mapping):
+        for slug, site in sites_raw.items():
+            if isinstance(site, Mapping) and "sees" in site:
+                raise ValueError(
+                    f"sites.{slug}.sees is removed; use top-level links: [[site-a, site-b], ...]"
+                )
         sites = {
             str(slug): SiteEntry.model_validate(dict(site)) for slug, site in sites_raw.items()
         }
@@ -1398,7 +1421,6 @@ def coerce_preset_sites(sites_raw: Any) -> dict[str, SiteEntry]:
 
     if not sites:
         raise ValueError("sites must contain at least one entry")
-    _validate_site_sees_refs(sites)
     return sites
 
 
@@ -1409,6 +1431,7 @@ def parse_preset_sites_dict(raw: Mapping[str, Any]) -> dict[str, SiteEntry]:
 
 def parse_preset_dict(raw: Mapping[str, Any]) -> Preset:
     """Coerce/validate a preset mapping (same rules as :func:`load_preset` without file I/O)."""
+    _reject_legacy_site_sees(raw)
     raw = {**raw, "sites": coerce_preset_sites(raw.get("sites"))}
     return Preset.model_validate(raw)
 
@@ -1445,7 +1468,7 @@ def viewshed_polygon_coverage_kml_arcname(site_slug: str) -> str:
 
 
 def mesh_edges_site_to_site_kml_arcname() -> str:
-    """Path inside KMZ for mutual site link LineStrings (viewshed and/or ``sites.*.sees``)."""
+    """Path inside KMZ for mutual site link LineStrings (viewshed and/or preset ``links``)."""
     return "sites/mesh/edges/site_to_site.kml"
 
 

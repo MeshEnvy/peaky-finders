@@ -118,7 +118,7 @@ def mesh_links_mtime_prereqs(plan: BuildConfigurePlan, preset: Preset) -> tuple[
 
     preset_f = Path(plan.preset_path).expanduser().resolve()
     parts = list(footprints_all(plan, preset))
-    for sec in ("topology", "sites_sees", "display_kml", "mesh"):
+    for sec in ("topology", "links", "display_kml", "mesh"):
         parts.append(stamp_path(preset_f, sec).resolve())
     if plan.has_land:
         parts.append(dem_bulk_stamp_path(plan))
@@ -362,7 +362,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
                 sorted(
                     {
                         "stamp:topology",
-                        "stamp:sites_sees",
+                        "stamp:links",
                         *[f"viewshed:{site_workspace_digest(plan, slug)}:footprint" for slug in site_slugs],
                     }
                 )

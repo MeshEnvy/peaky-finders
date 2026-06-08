@@ -298,8 +298,6 @@ sites:
       - 40.42619
       - -119.35167
     elevation_m: 1713.0
-    sees:
-      - russell-peak
     rationale: BLM surface management (national SMA); approved with explicit 
       user-documented permission.
     plss: NV; Mount Diablo Meridian; T.30N R.23E; Sec. 36 — CadNSDI 
@@ -312,8 +310,6 @@ sites:
       - 39.90951
       - -119.3289
     elevation_m: 1420.0
-    sees:
-      - poito
     rationale: BLM surface management (national SMA); approved with explicit 
       user-documented permission.
     plss: NV; Mount Diablo Meridian; T.24N R.24E; Sec. 31 — CadNSDI 
@@ -373,3 +369,6 @@ sites:
     plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 22 — CadNSDI 
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN220
     mlrs: NV210170N0210E0SN220
+
+links:
+  - [poito, russell-peak]
