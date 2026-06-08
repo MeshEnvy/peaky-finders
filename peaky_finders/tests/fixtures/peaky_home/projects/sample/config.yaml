@@ -1,6 +1,6 @@
 # Minimal project preset for integration-style tests (not production data).
 simulation:
-  provider: los
+  provider: splatter
   radius_km: 10.0
   modem_presets:
     meshcore-us:

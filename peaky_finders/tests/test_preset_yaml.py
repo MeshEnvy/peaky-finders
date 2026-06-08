@@ -38,7 +38,7 @@ def test_require_preset_yaml_path_wrong_suffix() -> None:
 
 def test_resolved_coverage_dispatcher_max_workers_defaults() -> None:
     preset = load_preset(FIXTURE_MINIMAL)
-    assert preset.simulation.max_workers.los == 1
+    assert preset.simulation.max_workers.splatter == 1
     assert resolved_coverage_dispatcher_max_workers(preset) == 1
 
 

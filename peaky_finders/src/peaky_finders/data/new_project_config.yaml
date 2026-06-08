@@ -1,6 +1,6 @@
 # Peaky Finders project preset — edit paths, layers, and sites before building.
 simulation:
-  provider: los
+  provider: splatter
   radius_km: 50.0
   modem_presets:
     meshcore-us:

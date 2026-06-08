@@ -40,7 +40,7 @@ def _minimal_simulation() -> SimulationConfig:
             "environment": "test-desert",
             "transmitter": {"height_m": 2.0, "gain_dbi": 3.0, "loss_db": 2.0},
             "receiver": {"height_m": 2.0, "gain_dbi": 3.0, "loss_db": 2.0},
-            "provider": CoverageProvider.LOS,
+            "provider": CoverageProvider.SPLATTER,
             "radius_km": 60.0,
         }
     )
