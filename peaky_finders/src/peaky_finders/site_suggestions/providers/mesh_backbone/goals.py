@@ -16,7 +16,7 @@ from peaky_finders.site_suggestions.mesh_connectivity import (
     mesh_connectivity_complete,
     uncaptured_healing_goals,
 )
-from peaky_finders.sites_job import BundleSiteSuggestionsConfig, SiteSuggestionStrategy
+from peaky_finders.sites_job import SuggestConfig, SiteSuggestionStrategy
 
 LAND_GRAB_COVERAGE_GOAL_KEY = "__land_grab_coverage__"
 

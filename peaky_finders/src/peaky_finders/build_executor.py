@@ -181,8 +181,8 @@ def _site_slug_to_viewshed_digest(job: Preset) -> dict[str, str]:
 def _mesh_depth_stamp_mtime_prereqs(plan: BuildConfigurePlan) -> tuple[Path, ...]:
     preset_f = Path(plan.preset_path).expanduser().resolve()
     parts: list[Path] = []
-    if plan.has_bundle:
-        for sec in ("bundle_kml_overlay", "bundle_mesh_coverage"):
+    if plan.has_land:
+        for sec in ("display_kml", "mesh"):
             parts.append(stamp_path(preset_f, sec).resolve())
     return tuple(p for p in parts if p.is_file())
 
@@ -295,8 +295,8 @@ def target_stale(plan: BuildConfigurePlan, preset: Preset, node: PeakyGraphTarge
         if plan.mesh_depth_complete is None:
             return False
         mx = 4096
-        if preset.bundle and preset.bundle.mesh_coverage is not None:
-            mx = preset.bundle.mesh_coverage.max_raster_dimension
+        if preset.land and preset.mesh is not None:
+            mx = preset.mesh.max_raster_dimension
         sdir = plan.mesh_depth_complete.parent.expanduser().resolve()
         vds = _sorted_viewshed_digests(preset)
         slug_to_digest = _site_slug_to_viewshed_digest(preset)

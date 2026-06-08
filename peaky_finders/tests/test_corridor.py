@@ -27,7 +27,7 @@ from peaky_finders.site_suggestions.corridor_scoring import (
 from peaky_finders.site_suggestions.depth_grid import build_coverage_depth_grid
 from peaky_finders.site_suggestions.providers.mesh_backbone.candidates import generate_corridor_grow_candidates
 from peaky_finders.sites_job import (
-    BundleSiteSuggestionsConfig,
+    SuggestConfig,
     MeshBackboneGoalEntry,
     MeshBackboneRouting,
     MeshBackboneStrategyConfig,
@@ -77,7 +77,7 @@ def _ctx(*, eligible, goals: dict[str, tuple[float, float]], footprint=None) -> 
         aoi_ll=eligible,
         target_ll=eligible,
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=mb),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=mb),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,

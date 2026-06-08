@@ -95,9 +95,13 @@ One YAML per project — `projects/<slug>/config.yaml` (legacy `.json` unsupport
 | Section | Contents |
 |---------|----------|
 | `simulation` | RF/modem/env, splatter params, `max_workers` |
-| `display` | KML/overlay styling |
-| `bundle` | AOI/include/exclude GDB layers, mesh/suggest knobs |
+| `display` | Viewshed raster (`colormap`, `transparency`, dBm range) + `kml` styles + `kmz` layer toggles |
+| `land` | GDB inputs: `inputs_root`, `reference`, `aoi`, `include`, `exclude` |
+| `mesh` | Pairwise/depth build knobs, raster size, worker counts |
+| `suggest` | `peaky build --suggest` planner (`land-grab` / `mesh-backbone`) |
 | `sites` | Installed/suggested sites (`loc`, optional `plss`/`mlrs`, `sees`) |
+
+CLI `peaky bundle` unchanged; artifact dir remains `<preset>/build/bundle/`. Build stamps: `land_*`, `display_kml`, `display_kmz`, `mesh` (replaces `bundle_*` stamp names).
 
 Model: `Preset` in `sites_job.py`. Writes: `update_preset_yaml_tree` (ruamel round-trip, file lock).
 

@@ -172,24 +172,38 @@ def resolved_mesh_site_links_kml(preset_path: Path) -> Path:
     return resolved_preset_build_dir(path) / "mesh" / "links" / "site_to_site.kml"
 
 
-def resolved_preset_bundle_data_dir(
+def resolved_preset_land_data_dir(
     *,
     preset_path: Path,
     preset: Preset,
     cli_override: Path | None = None,
 ) -> Path:
-    """GDB ``bundle.*`` path root: CLI override, else ``<preset-dir>/<bundle.inputs_root>``, else ``<PEAKY_HOME>/data``."""
+    """GDB ``land.*`` path root: CLI override, else ``<preset-dir>/<land.inputs_root>``, else ``<PEAKY_HOME>/data``."""
     if cli_override is not None:
         return Path(cli_override).expanduser().resolve()
-    bundle = preset.bundle
-    if bundle is not None and bundle.inputs_root is not None:
-        raw = str(bundle.inputs_root).strip()
+    land = preset.land
+    if land is not None and land.inputs_root is not None:
+        raw = str(land.inputs_root).strip()
         if raw:
             root = Path(raw)
             if root.is_absolute():
                 return root.resolve()
             return (Path(preset_path).expanduser().resolve().parent / root).resolve()
     return (peaky_home() / "data").resolve()
+
+
+def resolved_preset_bundle_data_dir(
+    *,
+    preset_path: Path,
+    preset: Preset,
+    cli_override: Path | None = None,
+) -> Path:
+    """Alias for :func:`resolved_preset_land_data_dir` (artifact dir name unchanged)."""
+    return resolved_preset_land_data_dir(
+        preset_path=preset_path,
+        preset=preset,
+        cli_override=cli_override,
+    )
 
 
 def _preset_yaml_typ_rt() -> YAML:
@@ -590,14 +604,14 @@ def _gdb_layer_group_payload(g: GdbLayerGroup) -> dict[str, Any]:
     return {"layers": [s.canonical_dict() for s in sorted_specs], "path": g.path}
 
 
-def canonical_bundle_aoi_config_text(pre: BundleConfig) -> str:
+def canonical_land_aoi_config_text(pre: LandConfig) -> str:
     """Deterministic text for AOI cache keys (sorted groups, sorted layers within each group)."""
     sorted_groups = sorted(pre.aoi, key=_gdb_layer_group_sort_key)
     payload = {"aoi": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
 
 
-def canonical_bundle_land_use_config_text(pre: BundleConfig) -> str:
+def canonical_land_land_use_config_text(pre: LandConfig) -> str:
     """Deterministic text block for hashing include/exclude only (not AOI)."""
     def groups_payload(groups: list[GdbLayerGroup]) -> list[dict[str, Any]]:
         sorted_groups = sorted(groups, key=_gdb_layer_group_sort_key)
@@ -926,7 +940,7 @@ class LandGrabStrategyConfig(BaseModel):
     )
 
 
-class BundleSiteSuggestionsConfig(BaseModel):
+class SuggestConfig(BaseModel):
     """Site suggestion planner (``peaky build --suggest``)."""
 
     model_config = ConfigDict(extra="ignore")
@@ -961,8 +975,8 @@ class BundleSiteSuggestionsConfig(BaseModel):
     )
 
 
-class BundleMeshCoverageConfig(BaseModel):
-    """Knobs for raster footprint-depth layers inside the aggregate KMZ."""
+class MeshConfig(BaseModel):
+    """Knobs for mesh pairwise / depth analysis and aggregate KMZ footprint layers."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -1022,7 +1036,7 @@ class BundleMeshKmzLayers(BaseModel):
 
 
 class BundleKmlOverlayStyles(BaseModel):
-    """Per-role KML debug styles under ``bundle.kml_overlay``. ``default`` is required when this block is present."""
+    """Per-role KML polygon/line styles under ``display.kml``. ``default`` is required when this block is present."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -1034,7 +1048,7 @@ class BundleKmlOverlayStyles(BaseModel):
     summits: BundleKmlLayerStyle | None = None
     reference: BundleKmlLayerStyle | None = Field(
         default=None,
-        description="Fallback style for bundle.reference sidecar KML when an entry omits ``style``.",
+        description="Fallback style for land.reference sidecar KML when an entry omits ``style``.",
     )
     viewshed_coverage: BundleKmlLayerStyle | None = Field(
         default=None,
@@ -1061,13 +1075,32 @@ class BundleKmzLayers(BaseModel):
     mesh: BundleMeshKmzLayers = Field(default_factory=BundleMeshKmzLayers)
 
 
-class BundleKmzConfig(BaseModel):
+class DisplayKmzConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     layers: BundleKmzLayers = Field(default_factory=BundleKmzLayers)
 
 
-class BundleConfig(BaseModel):
+class DisplayConfig(BaseModel):
+    """Viewshed raster styling plus optional KMZ presentation (``display.kml``, ``display.kmz``)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    colormap: str = "plasma"
+    transparency: float = 50.0
+    min_dbm: float = -130.0
+    max_dbm: float = -80.0
+    kml: BundleKmlOverlayStyles | None = Field(
+        default=None,
+        description="KML sidecar polygon/line styles for aggregate KMZ and clip caches.",
+    )
+    kmz: DisplayKmzConfig | None = Field(
+        default=None,
+        description="Aggregate ``doc.kml`` initial layer visibility (Google Earth checkboxes).",
+    )
+
+
+class LandConfig(BaseModel):
     """GDB-driven AOI polygon plus land-use include / exclude for ``peaky build`` bundle stages."""
 
     model_config = ConfigDict(extra="ignore")
@@ -1075,8 +1108,8 @@ class BundleConfig(BaseModel):
     inputs_root: str | None = Field(
         default=None,
         description=(
-            "Directory for bundle GDB paths; relative to the preset file unless absolute. "
-            "Default: repo ``data/``."
+            "Directory for land GDB paths; relative to the preset file unless absolute. "
+            "Default: ``<PEAKY_HOME>/data``."
         ),
     )
     reference: list[BundleReferenceLayerEntry] = Field(
@@ -1086,29 +1119,24 @@ class BundleConfig(BaseModel):
     aoi: list[GdbLayerGroup] = Field(default_factory=list)
     include: list[GdbLayerGroup] = Field(default_factory=list)
     exclude: list[GdbLayerGroup] = Field(default_factory=list)
-    kml_overlay: BundleKmlOverlayStyles | None = Field(
-        default=None,
-        description="Optional KML sidecar styles (filled polygons in Google Earth). Omit to skip style injection.",
-    )
-    kmz: BundleKmzConfig | None = Field(
-        default=None,
-        description="Optional aggregate KMZ doc.kml initial layer visibility (Google Earth checkboxes).",
-    )
-    mesh_coverage: BundleMeshCoverageConfig | None = Field(
-        default=None,
-        description="Optional footprint depth raster grid size for aggregate KMZ mesh layers.",
-    )
-    site_suggestions: BundleSiteSuggestionsConfig | None = Field(
-        default=None,
-        description="Greedy site planner knobs for ``peaky build --suggest``.",
-    )
 
 
-def resolved_site_suggestions_config(bundle: BundleConfig | None) -> BundleSiteSuggestionsConfig:
-    """``bundle.site_suggestions`` or defaults."""
-    if bundle is None or bundle.site_suggestions is None:
-        return BundleSiteSuggestionsConfig()
-    return bundle.site_suggestions
+def resolved_suggest_config(suggest: SuggestConfig | None) -> SuggestConfig:
+    """``suggest`` section or defaults."""
+    if suggest is None:
+        return SuggestConfig()
+    return suggest
+
+
+def resolved_mesh_config(mesh: MeshConfig | None) -> MeshConfig:
+    """``mesh`` section or defaults."""
+    if mesh is None:
+        return MeshConfig()
+    return mesh
+
+
+def resolved_display_kml(preset: Preset) -> BundleKmlOverlayStyles | None:
+    return preset.display.kml
 
 
 def _reference_entry_payload(e: BundleReferenceLayerEntry) -> dict[str, Any]:
@@ -1124,8 +1152,8 @@ def _reference_entry_payload(e: BundleReferenceLayerEntry) -> dict[str, Any]:
     return d
 
 
-def canonical_bundle_reference_config_text(pre: BundleConfig) -> str:
-    """Deterministic JSON for ``bundle.reference`` cache keys."""
+def canonical_land_reference_config_text(pre: LandConfig) -> str:
+    """Deterministic JSON for ``land.reference`` cache keys."""
     payload = {
         "reference": sorted((_reference_entry_payload(e) for e in pre.reference), key=lambda x: x["id"])
     }
@@ -1195,42 +1223,42 @@ _DEFAULT_MESH_DEPTH_BY_BAND: dict[str, BundleKmlLayerStyle] = {
 
 
 def resolved_viewshed_coverage_kml_style(kml_overlay: BundleKmlOverlayStyles | None) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.viewshed_coverage``, else semi-transparent green fill and no outline."""
+    """Preset ``display.kml.viewshed_coverage``, else semi-transparent green fill and no outline."""
     if kml_overlay is None or kml_overlay.viewshed_coverage is None:
         return DEFAULT_VIEWSHED_COVERAGE_KML_STYLE
     return kml_overlay.viewshed_coverage
 
 
-def resolved_mesh_pairwise_enabled(mesh_coverage: BundleMeshCoverageConfig | None) -> bool:
-    """Preset ``bundle.mesh_coverage.pairwise``; default enabled."""
-    if mesh_coverage is None:
+def resolved_mesh_pairwise_enabled(mesh: MeshConfig | None) -> bool:
+    """Preset ``mesh.pairwise``; default enabled."""
+    if mesh is None:
         return True
-    return mesh_coverage.pairwise
+    return mesh.pairwise
 
 
-def resolved_mesh_depth_enabled(mesh_coverage: BundleMeshCoverageConfig | None) -> bool:
-    """Preset ``bundle.mesh_coverage.depth``; default enabled."""
-    if mesh_coverage is None:
+def resolved_mesh_depth_enabled(mesh: MeshConfig | None) -> bool:
+    """Preset ``mesh.depth``; default enabled."""
+    if mesh is None:
         return True
-    return mesh_coverage.depth
+    return mesh.depth
 
 
 def resolved_mesh_pairwise_kml_style(kml_overlay: BundleKmlOverlayStyles | None) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.mesh.pairwise``, else semi-transparent red fill."""
+    """Preset ``display.kml.mesh.pairwise``, else semi-transparent red fill."""
     if kml_overlay is None or kml_overlay.mesh is None or kml_overlay.mesh.pairwise is None:
         return DEFAULT_MESH_PAIRWISE_KML_STYLE
     return kml_overlay.mesh.pairwise
 
 
 def resolved_mesh_pairwise_eligible_kml_style(kml_overlay: BundleKmlOverlayStyles | None) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.mesh.pairwise_eligible``, else semi-transparent yellow fill."""
+    """Preset ``display.kml.mesh.pairwise_eligible``, else semi-transparent yellow fill."""
     if kml_overlay is None or kml_overlay.mesh is None or kml_overlay.mesh.pairwise_eligible is None:
         return DEFAULT_MESH_PAIRWISE_ELIGIBLE_KML_STYLE
     return kml_overlay.mesh.pairwise_eligible
 
 
 def resolved_mesh_pairwise_peak_pin_kml_style(kml_overlay: BundleKmlOverlayStyles | None) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.mesh.pairwise_peak_pin``, else red-tinted pushpin."""
+    """Preset ``display.kml.mesh.pairwise_peak_pin``, else red-tinted pushpin."""
     if kml_overlay is None or kml_overlay.mesh is None or kml_overlay.mesh.pairwise_peak_pin is None:
         return DEFAULT_MESH_PAIRWISE_PEAK_PIN_STYLE
     return kml_overlay.mesh.pairwise_peak_pin
@@ -1239,7 +1267,7 @@ def resolved_mesh_pairwise_peak_pin_kml_style(kml_overlay: BundleKmlOverlayStyle
 def resolved_mesh_pairwise_eligible_peak_pin_kml_style(
     kml_overlay: BundleKmlOverlayStyles | None,
 ) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.mesh.pairwise_eligible_peak_pin``, else yellow-tinted pushpin."""
+    """Preset ``display.kml.mesh.pairwise_eligible_peak_pin``, else yellow-tinted pushpin."""
     if kml_overlay is None or kml_overlay.mesh is None or kml_overlay.mesh.pairwise_eligible_peak_pin is None:
         return DEFAULT_MESH_PAIRWISE_ELIGIBLE_PEAK_PIN_STYLE
     return kml_overlay.mesh.pairwise_eligible_peak_pin
@@ -1264,13 +1292,14 @@ def resolved_mesh_depth_band_kml_style(
     return override if override is not None else base
 
 
-def resolved_kmz_document_layers(bundle: BundleConfig | None):
-    """Build :class:`peaky_finders.kml_bundle.KmzDocumentLayerVisibility` from ``bundle.kmz.layers``."""
+def resolved_kmz_document_layers(preset: Preset):
+    """Build :class:`peaky_finders.kml_bundle.KmzDocumentLayerVisibility` from ``display.kmz.layers``."""
     from peaky_finders.kml_bundle import KmzDocumentLayerVisibility
 
-    if bundle is None or bundle.kmz is None:
+    kmz = preset.display.kmz
+    if kmz is None:
         return KmzDocumentLayerVisibility()
-    flat = bundle.kmz.layers.model_dump()
+    flat = kmz.layers.model_dump()
     mesh = flat.pop("mesh", None) or {}
     for k, v in mesh.items():
         flat[f"mesh_{k}"] = v
@@ -1278,12 +1307,14 @@ def resolved_kmz_document_layers(bundle: BundleConfig | None):
 
 
 class Preset(BaseModel):
-    """One JSON file per preset: simulation RF + ``sites``."""
+    """One YAML preset: simulation RF, land masks, mesh/suggest knobs, and ``sites``."""
 
     simulation: SimulationConfig
-    display: dict[str, Any]
+    display: DisplayConfig
+    land: LandConfig | None = None
+    mesh: MeshConfig | None = None
+    suggest: SuggestConfig | None = None
     sites: dict[str, SiteEntry]
-    bundle: BundleConfig | None = None
 
     @model_validator(mode="after")
     def _sites_non_empty_and_sees_valid(self) -> Preset:
@@ -1394,13 +1425,10 @@ def load_preset(path: Path) -> Preset:
 
 
 def load_preset_for_coverage(path: Path) -> Preset:
-    """Load preset for splatter/viewshed; ``bundle.site_suggestions`` does not affect RF."""
+    """Load preset for splatter/viewshed; ``suggest`` does not affect RF."""
     raw = read_preset_document(path)
-    bundle = raw.get("bundle")
-    if isinstance(bundle, Mapping):
-        bundle_copy = dict(bundle)
-        bundle_copy.pop("site_suggestions", None)
-        raw = {**raw, "bundle": bundle_copy}
+    if "suggest" in raw:
+        raw = {k: v for k, v in raw.items() if k != "suggest"}
     return parse_preset_dict(raw)
 
 

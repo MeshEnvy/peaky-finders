@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fixture_paths import PEAKY_TEST_HOME, SAMPLE_PROJECT_CONFIG
 
-from peaky_finders.bundle_build import _clip_stem, aoi_inputs_fingerprint_body, require_bundle_config
+from peaky_finders.bundle_build import _clip_stem, aoi_inputs_fingerprint_body, require_land_config
 from peaky_finders.bundle_clips import (
     clip_layer_fingerprint_body,
     clip_layer_sha,
@@ -18,11 +18,11 @@ from peaky_finders.bundle_clips import (
     resolved_clips_cache_root,
 )
 from peaky_finders.sites_job import BundleReferenceLayerEntry
-from peaky_finders.sites_job import BundleConfig, load_preset
+from peaky_finders.sites_job import LandConfig, load_preset
 
 
-def _minimal_bundle_config() -> BundleConfig:
-    return BundleConfig.model_validate(
+def _minimal_bundle_config() -> LandConfig:
+    return LandConfig.model_validate(
         {
             "aoi": [
                 {
@@ -124,7 +124,7 @@ def test_plan_clip_build_result_paths_under_clips_root(tmp_path: Path) -> None:
 
 def test_plan_with_sample_project_preset() -> None:
     preset = load_preset(SAMPLE_PROJECT_CONFIG)
-    plc = require_bundle_config(preset)
+    plc = require_land_config(preset)
     data_dir = SAMPLE_PROJECT_CONFIG.parent / "data"
     clips = resolved_clips_cache_root(PEAKY_TEST_HOME / "share")
     planned = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips)

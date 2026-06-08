@@ -21,8 +21,10 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 | Section | Purpose |
 |---------|---------|
 | `simulation` | RF modem/env presets, splatter params, `max_workers` |
-| `display` | KML/overlay styling |
-| `bundle` | GDB layer refs (AOI/include/exclude), mesh/suggest config |
+| `display` | Viewshed raster + `display.kml` / `display.kmz` presentation |
+| `land` | GDB layer refs: `reference`, `aoi`, `include`, `exclude` |
+| `mesh` | Pairwise/depth analysis knobs |
+| `suggest` | Site planner for `build --suggest` |
 | `sites` | Site entries: `loc`, `sees`, optional `plss`/`mlrs` |
 
 Legacy `.json` presets are rejected.

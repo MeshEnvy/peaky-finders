@@ -19,7 +19,7 @@ from peaky_finders.site_suggestions.providers.protocol import (
     StrategyRefineSettings,
 )
 from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
-from peaky_finders.sites_job import BundleSiteSuggestionsConfig, Preset
+from peaky_finders.sites_job import SuggestConfig, Preset
 
 
 class LandGrabStrategy:
@@ -27,7 +27,7 @@ class LandGrabStrategy:
     def name(self) -> str:
         return "land-grab"
 
-    def planner_hooks(self, cfg: BundleSiteSuggestionsConfig) -> StrategyPlannerHooks:
+    def planner_hooks(self, cfg: SuggestConfig) -> StrategyPlannerHooks:
         del cfg
         return StrategyPlannerHooks(
             trial_mode=CandidateTrialMode.COVERAGE,
@@ -35,10 +35,10 @@ class LandGrabStrategy:
             corridor_kml=False,
         )
 
-    def validate_config(self, cfg: BundleSiteSuggestionsConfig) -> None:
+    def validate_config(self, cfg: SuggestConfig) -> None:
         del cfg
 
-    def max_suggested_nodes(self, cfg: BundleSiteSuggestionsConfig) -> int | None:
+    def max_suggested_nodes(self, cfg: SuggestConfig) -> int | None:
         del cfg
         return None
 
@@ -49,7 +49,7 @@ class LandGrabStrategy:
         self,
         *,
         verbose: bool,
-        cfg: BundleSiteSuggestionsConfig,
+        cfg: SuggestConfig,
         goal: int,
         grid: CoverageDepthGrid,
         seed_paths: list[Path],
@@ -100,10 +100,10 @@ class LandGrabStrategy:
         )
         _log(verbose, f"  seed footprints loaded: {len(seed_paths)}")
 
-    def goal_depth(self, cfg: BundleSiteSuggestionsConfig) -> int:
+    def goal_depth(self, cfg: SuggestConfig) -> int:
         return int(cfg.land_grab.coverage_goal_depth)
 
-    def refine_settings(self, cfg: BundleSiteSuggestionsConfig) -> StrategyRefineSettings:
+    def refine_settings(self, cfg: SuggestConfig) -> StrategyRefineSettings:
         lg = cfg.land_grab
         return StrategyRefineSettings(
             refine_enabled=bool(lg.refine_enabled),
@@ -112,7 +112,7 @@ class LandGrabStrategy:
             refine_spacing_m=float(lg.refine_spacing_m),
         )
 
-    def resolve_step_budget(self, cfg: BundleSiteSuggestionsConfig, cli_n: int) -> int | None:
+    def resolve_step_budget(self, cfg: SuggestConfig, cli_n: int) -> int | None:
         del cfg
         if int(cli_n) == SOLVE_UNTIL_COMPLETE:
             return None

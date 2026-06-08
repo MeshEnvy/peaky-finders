@@ -261,14 +261,13 @@ def test_load_preset_for_coverage_ignores_site_suggestions(tmp_path: Path) -> No
     raw = config_path.read_text(encoding="utf-8")
     config_path.write_text(
         raw.replace(
-            "  exclude: []\n",
-            "  exclude: []\n"
-            "  site_suggestions:\n"
-            "    strategy: mesh-backbone\n"
-            "    mesh_backbone:\n"
-            "      goals:\n"
-            "        russel-bridge:\n"
-            "          loc: russell-peak\n",
+            "  exclude: []\n\nsites:",
+            "  exclude: []\n\nsuggest:\n"
+            "  strategy: mesh-backbone\n"
+            "  mesh_backbone:\n"
+            "    goals:\n"
+            "      russel-bridge:\n"
+            "        loc: russell-peak\n\nsites:",
         ),
         encoding="utf-8",
     )
@@ -279,5 +278,5 @@ def test_load_preset_for_coverage_ignores_site_suggestions(tmp_path: Path) -> No
         load_preset(config_path)
 
     preset = load_preset_for_coverage(config_path)
-    assert preset.bundle is not None
+    assert preset.land is not None
     assert preset.sites["hub"].name == "Hub"

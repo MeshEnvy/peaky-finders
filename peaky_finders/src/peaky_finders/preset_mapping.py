@@ -263,9 +263,9 @@ def preset_to_request(
         situation_fraction=_f(sim.situation_pct),
         time_fraction=_f(sim.time_pct),
         fresnel_clearance_fraction=float(sim.fresnel_clearance_fraction),
-        colormap=str(disp["colormap"]),
-        min_dbm=_f(disp["min_dbm"]),
-        max_dbm=_f(disp["max_dbm"]),
+        colormap=str(disp.colormap),
+        min_dbm=_f(disp.min_dbm),
+        max_dbm=_f(disp.max_dbm),
         high_resolution=high_resolution,
         modem=lm,
     )

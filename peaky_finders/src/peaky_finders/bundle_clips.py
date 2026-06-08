@@ -34,7 +34,7 @@ from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.sites_job import (
-    BundleConfig,
+    LandConfig,
     BundleKmlOverlayStyles,
     BundleReferenceLayerEntry,
     GdbLayerGroup,
@@ -199,20 +199,20 @@ def composite_aoi_fingerprint_body(clip_shas: list[str]) -> str:
     return f"format={COMPOSITE_AOI_FORMAT}\nclips\n{lines}\n"
 
 
-def _include_config_json(pre: BundleConfig) -> str:
+def _include_config_json(pre: LandConfig) -> str:
     sorted_groups = sorted(pre.include, key=_gdb_layer_group_sort_key)
     payload = {"include": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
-def _exclude_config_json(pre: BundleConfig) -> str:
+def _exclude_config_json(pre: LandConfig) -> str:
     sorted_groups = sorted(pre.exclude, key=_gdb_layer_group_sort_key)
     payload = {"exclude": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def composite_include_fingerprint_body(
-    pre: BundleConfig, data_dir: Path, *, aoi_mask_sha: str, gdb_fingerprint_fn: Any
+    pre: LandConfig, data_dir: Path, *, aoi_mask_sha: str, gdb_fingerprint_fn: Any
 ) -> str:
     from peaky_finders.bundle_build import _unique_sorted_include_gdb_roots
 
@@ -233,7 +233,7 @@ def composite_include_fingerprint_body(
 
 
 def composite_exclude_fingerprint_body(
-    pre: BundleConfig, data_dir: Path, *, aoi_mask_sha: str, gdb_fingerprint_fn: Any
+    pre: LandConfig, data_dir: Path, *, aoi_mask_sha: str, gdb_fingerprint_fn: Any
 ) -> str:
     from peaky_finders.bundle_build import _unique_sorted_exclude_gdb_roots
 
@@ -266,7 +266,7 @@ def eligible_fingerprint_body(*, include_sha: str, exclude_sha: str, bundle_land
 
 def plan_clip_build_result(
     *,
-    plc: BundleConfig,
+    plc: LandConfig,
     data_dir: Path,
     clips_root: Path,
 ) -> ClipBuildResult:
@@ -373,7 +373,7 @@ def _plan_clip_layer_job(
 
 def plan_clip_layer_jobs(
     *,
-    plc: BundleConfig,
+    plc: LandConfig,
     data_dir: Path,
     clips_root: Path,
 ) -> tuple[tuple[PlannedClipLayer, ...], ClipBuildResult]:
@@ -433,7 +433,7 @@ def aoi_mask_sha_from_body(mask_body: str) -> str:
 
 def _sorted_layer_job_gpkgs_for_clip_shas(
     *,
-    plc: BundleConfig,
+    plc: LandConfig,
     role: ClipRole,
     clips_root: Path,
     data_dir: Path,
@@ -532,7 +532,7 @@ def reference_entry_sha(body: str) -> str:
 
 def plan_reference_entries(
     *,
-    plc: BundleConfig,
+    plc: LandConfig,
     data_dir: Path,
     clips_root: Path,
 ) -> dict[str, str]:
@@ -647,7 +647,7 @@ def list_exclude_layer_kmz_entries(
         aoi_inputs_fingerprint_body,
     )
 
-    plc = preset.bundle
+    plc = preset.land
     if plc is None:
         return []
 
@@ -714,7 +714,7 @@ def list_include_layer_kmz_entries(
         aoi_inputs_fingerprint_body,
     )
 
-    plc = preset.bundle
+    plc = preset.land
     if plc is None:
         return []
 
@@ -766,7 +766,7 @@ def list_include_layer_kmz_entries(
 
 def sync_eligible_include_layer_slices(
     *,
-    plc: BundleConfig,
+    plc: LandConfig,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -889,7 +889,7 @@ def list_eligible_layer_kmz_entries(
         aoi_inputs_fingerprint_body,
     )
 
-    plc = preset.bundle
+    plc = preset.land
     if plc is None:
         return []
 
@@ -1097,7 +1097,7 @@ def build_clip_layer(
 
 def _clip_shas_for_composite(
     *,
-    plc: BundleConfig,
+    plc: LandConfig,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -1137,7 +1137,7 @@ def _clip_shas_for_composite(
 
 def build_composite_aoi(
     *,
-    plc: BundleConfig,
+    plc: LandConfig,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -1197,7 +1197,7 @@ def build_composite_aoi(
 
 def build_composite_include(
     *,
-    plc: BundleConfig,
+    plc: LandConfig,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -1258,7 +1258,7 @@ def build_composite_include(
 
 def build_composite_exclude(
     *,
-    plc: BundleConfig,
+    plc: LandConfig,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -1322,7 +1322,7 @@ def build_composite_exclude(
 
 def build_eligible_workspace(
     *,
-    plc: BundleConfig,
+    plc: LandConfig,
     data_dir: Path,
     clips_root: Path,
     mask_body: str,
@@ -1445,7 +1445,7 @@ def build_eligible_workspace(
 def build_reference_entry(
     *,
     entry_id: str,
-    plc: BundleConfig,
+    plc: LandConfig,
     data_dir: Path,
     clips_root: Path,
     aoi_sha: str,
@@ -1523,7 +1523,7 @@ def build_reference_entry(
             return entry_sha
 
         merged = gpd.GeoDataFrame(pd.concat(pieces_ll, ignore_index=True), crs="EPSG:4326")
-        overlay = _overlay_for_reference_entry(ent, plc)
+        overlay = _overlay_for_reference_entry(ent, kml_overlay)
         if progress_log:
             progress_log(f"{ref_dir.name}: write reference.gpkg + kml …")
         _write_geodataframe_gpkg_and_kml(

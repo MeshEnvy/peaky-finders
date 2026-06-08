@@ -31,7 +31,7 @@ from peaky_finders.site_suggestions.corridor_kml import (
 )
 from peaky_finders.site_suggestions.planner import CandidateOutcome, CandidateTrial
 from peaky_finders.sites_job import (
-    BundleSiteSuggestionsConfig,
+    SuggestConfig,
     MeshBackboneGoalEntry,
     MeshBackboneStrategyConfig,
 )
@@ -42,7 +42,7 @@ def _minimal_ctx(tmp_path: Path) -> SiteSuggestionContext:
         goals={"east": MeshBackboneGoalEntry(loc=(39.0, -115.0))},
         goal_order=["east"],
     )
-    cfg = BundleSiteSuggestionsConfig(mesh_backbone=mb)
+    cfg = SuggestConfig(mesh_backbone=mb)
     ctx = SiteSuggestionContext(
         preset=None,  # type: ignore[arg-type]
         plan=None,  # type: ignore[arg-type]

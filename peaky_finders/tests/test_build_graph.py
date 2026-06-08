@@ -12,7 +12,7 @@ from peaky_finders.build_executor import target_stale
 from peaky_finders.build_graph import build_target_graph, dem_bulk_stamp_path, mesh_links_mtime_prereqs, topo_sort
 from peaky_finders.preset_stamps import stamp_path, write_stamp
 from peaky_finders.sites_job import (
-    BundleMeshCoverageConfig,
+    MeshConfig,
     load_preset,
     resolved_mesh_depth_enabled,
     resolved_mesh_pairwise_enabled,
@@ -25,11 +25,11 @@ def _sample_preset_with_mesh_coverage(tmp_path: Path, *, pairwise: bool, depth: 
     config_path = proj / "config.yaml"
     text = config_path.read_text(encoding="utf-8")
     block = (
-        "  mesh_coverage:\n"
-        f"    pairwise: {'true' if pairwise else 'false'}\n"
-        f"    depth: {'true' if depth else 'false'}\n"
+        "mesh:\n"
+        f"  pairwise: {'true' if pairwise else 'false'}\n"
+        f"  depth: {'true' if depth else 'false'}\n"
     )
-    patched = text.replace("  exclude: []\n\nsites:", f"  exclude: []\n{block}\nsites:")
+    patched = text.replace("  exclude: []\n\nsites:", f"  exclude: []\n\n{block}\nsites:")
     config_path.write_text(patched, encoding="utf-8")
     return config_path
 
@@ -37,7 +37,7 @@ def _sample_preset_with_mesh_coverage(tmp_path: Path, *, pairwise: bool, depth: 
 def test_mesh_coverage_disable_helpers() -> None:
     assert resolved_mesh_pairwise_enabled(None) is True
     assert resolved_mesh_depth_enabled(None) is True
-    cfg = BundleMeshCoverageConfig(pairwise=False, depth=True)
+    cfg = MeshConfig(pairwise=False, depth=True)
     assert resolved_mesh_pairwise_enabled(cfg) is False
     assert resolved_mesh_depth_enabled(cfg) is True
 

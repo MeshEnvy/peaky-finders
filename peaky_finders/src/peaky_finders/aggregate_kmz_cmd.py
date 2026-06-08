@@ -8,7 +8,7 @@ from pathlib import Path
 
 from peaky_finders.bundle_build import (
     bundle_directory_for_preset,
-    require_bundle_config,
+    require_land_config,
 )
 from peaky_finders.cli import (
     _bundle_render_cache_root,
@@ -52,14 +52,14 @@ def run_aggregate_kmz(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"Invalid preset YAML: {e}", file=sys.stderr)
         return 2
-    if job.bundle is None:
-        print("kmz requires a preset with bundle.* (AOI / land-use)", file=sys.stderr)
+    if job.land is None:
+        print("kmz requires a preset with land.* (AOI / land-use)", file=sys.stderr)
         return 2
 
     bundle_cache_root = _bundle_render_cache_root(job_path)
     bundle_bb_data_dir = _bundle_render_data_dir(args, job_path, job)
 
-    _ = require_bundle_config(job)
+    _ = require_land_config(job)
 
     bundle_dir = bundle_directory_for_preset(
         preset_path=job_path,
@@ -72,15 +72,15 @@ def run_aggregate_kmz(args: argparse.Namespace) -> int:
 
     preset_id = resolved_preset_slug(job_path)
 
-    kml_ov = job.bundle.kml_overlay if job.bundle else None
+    kml_ov = job.display.kml if job.land else None
     viewshed_cov_style = resolved_viewshed_coverage_kml_style(kml_ov)
 
     pairwise_geom_root = resolved_mesh_pairwise_dir(bundle_cache_root)
     mesh_depth_geom_root = resolved_mesh_depth_dir(bundle_cache_root)
 
     max_raster_dim = 4096
-    if job.bundle and job.bundle.mesh_coverage is not None:
-        max_raster_dim = job.bundle.mesh_coverage.max_raster_dimension
+    if job.land and job.mesh is not None:
+        max_raster_dim = job.mesh.max_raster_dimension
 
     slug_to_digest: dict[str, str] = {}
     for slug, site in job.sites.items():

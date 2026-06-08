@@ -13,10 +13,10 @@ from peaky_finders.bundle_build import (
     gdb_layer_group_specs,
 )
 from peaky_finders.sites_job import (
-    BundleConfig,
+    LandConfig,
     GdbLayerGroup,
     _gdb_layer_group_payload,
-    canonical_bundle_land_use_config_text,
+    canonical_land_land_use_config_text,
     load_preset,
 )
 
@@ -88,7 +88,7 @@ def test_flatten_gdb_layer_jobs_expands_path_only_kml(tmp_path: Path) -> None:
 
 
 def test_bundle_config_accepts_path_only_exclude() -> None:
-    cfg = BundleConfig.model_validate(
+    cfg = LandConfig.model_validate(
         {
             "aoi": [{"path": "aoi/test.gdb", "layers": ["boundary"]}],
             "include": [{"path": "include/test.gdb", "layers": ["inc"]}],
@@ -96,12 +96,12 @@ def test_bundle_config_accepts_path_only_exclude() -> None:
         }
     )
     assert cfg.exclude[0].layers == []
-    text = canonical_bundle_land_use_config_text(cfg)
+    text = canonical_land_land_use_config_text(cfg)
     assert '"layers": "*"' in text
     assert "exclude/land.kml" in text
 
 
 def test_sample_preset_loads_with_explicit_layers() -> None:
     preset = load_preset(SAMPLE_PROJECT_CONFIG)
-    assert preset.bundle is not None
-    assert preset.bundle.exclude == []
+    assert preset.land is not None
+    assert preset.land.exclude == []

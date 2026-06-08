@@ -32,7 +32,7 @@ display:
   min_dbm: -130.0
   max_dbm: -80.0
 
-bundle:
+land:
   inputs_root: data
   aoi:
     - path: aoi/region.gdb

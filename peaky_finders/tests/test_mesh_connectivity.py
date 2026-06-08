@@ -24,7 +24,7 @@ from peaky_finders.site_suggestions.mesh_connectivity import (
 )
 from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import grow_goals, main_footprint_slugs
 from peaky_finders.sites_job import (
-    BundleSiteSuggestionsConfig,
+    SuggestConfig,
     MeshBackboneGoalEntry,
     MeshBackboneStrategyConfig,
     SiteEntry,
@@ -95,7 +95,7 @@ def test_bridge_uncaptured_until_satellite_in_main_hop_component() -> None:
         aoi_ll=box(-120.0, 35.0, -114.0, 42.0),
         target_ll=box(-120.0, 35.0, -114.0, 42.0),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -154,7 +154,7 @@ def test_mesh_healing_needed_when_disconnected_even_if_goals_captured() -> None:
         aoi_ll=box(-116.5, 38.5, -114.5, 39.5),
         target_ll=box(-116.5, 38.5, -114.5, 39.5),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -189,7 +189,7 @@ def test_minimum_component_gap_uses_pins_not_overlapping_footprints() -> None:
         aoi_ll=box(-117.0, 38.5, -114.0, 39.5),
         target_ll=box(-117.0, 38.5, -114.0, 39.5),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -236,7 +236,7 @@ def test_healing_context_yields_bridge_goals_on_satellite_pins() -> None:
         aoi_ll=box(-120.0, 35.0, -114.0, 42.0),
         target_ll=box(-120.0, 35.0, -114.0, 42.0),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(
+        cfg=SuggestConfig(
             strategy=SiteSuggestionStrategy.MESH_BACKBONE,
             mesh_backbone=MeshBackboneStrategyConfig(
                 goals={"g0": MeshBackboneGoalEntry(loc=(39.0, -115.5))},
@@ -290,7 +290,7 @@ def test_healing_goals_one_bridge_goal_per_satellite_component() -> None:
         aoi_ll=box(-120.0, 35.0, -114.0, 42.0),
         target_ll=box(-120.0, 35.0, -114.0, 42.0),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -335,7 +335,7 @@ def test_mesh_connectivity_incomplete_when_two_anchor_islands() -> None:
         aoi_ll=box(-120.0, 35.0, -114.0, 42.0),
         target_ll=box(-120.0, 35.0, -114.0, 42.0),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,

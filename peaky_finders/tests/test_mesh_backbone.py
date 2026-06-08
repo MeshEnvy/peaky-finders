@@ -8,7 +8,7 @@ import pytest
 
 from peaky_finders.site_suggestions.providers.mesh_backbone.geom import goals_from_config
 from peaky_finders.sites_job import (
-    BundleSiteSuggestionsConfig,
+    SuggestConfig,
     MeshBackboneGoalEntry,
     MeshBackboneStrategyConfig,
     SiteSuggestionStrategy,
@@ -68,16 +68,14 @@ def test_preset_loads_mesh_grow_block(tmp_path: Path) -> None:
         {
             "simulation": dict(_PRESET_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
-            "bundle": {
-                "site_suggestions": {
-                    "strategy": "mesh-backbone",
-                    "mesh_backbone": {
-                        "goals": {
-                            "goal-a": {"loc": [39.0, -119.0]},
-                            "goal-b": {"loc": [40.0, -118.0]},
-                        },
+            "suggest": {
+                "strategy": "mesh-backbone",
+                "mesh_backbone": {
+                    "goals": {
+                        "goal-a": {"loc": [39.0, -119.0]},
+                        "goal-b": {"loc": [40.0, -118.0]},
                     },
-                }
+                },
             },
             "sites": {
                 "seed": {"name": "Seed", "loc": [39.0, -119.0]},
@@ -85,16 +83,16 @@ def test_preset_loads_mesh_grow_block(tmp_path: Path) -> None:
         },
     )
     preset = load_preset(preset_path)
-    mb = preset.bundle.site_suggestions.mesh_backbone
+    mb = preset.suggest.mesh_backbone
     assert len(mb.goals) == 2
-    assert preset.bundle.site_suggestions.strategy == SiteSuggestionStrategy.MESH_BACKBONE
+    assert preset.suggest.strategy == SiteSuggestionStrategy.MESH_BACKBONE
 
 
 def test_mesh_backbone_strategy_in_registry() -> None:
     from peaky_finders.site_suggestions.providers.mesh_backbone import MeshBackboneStrategy
     from peaky_finders.site_suggestions.providers.registry import resolve_site_suggestion_strategy
 
-    cfg = BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE)
+    cfg = SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE)
     provider = resolve_site_suggestion_strategy(cfg)
     assert isinstance(provider, MeshBackboneStrategy)
     assert provider.name == "mesh-backbone"

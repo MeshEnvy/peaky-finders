@@ -60,9 +60,9 @@ def ground_overlay_color_kml(*, opacity_pct: float) -> str:
     return f"{alpha:02x}ffffff"
 
 
-def overlay_opacity_pct_from_display_transparency(display: dict[str, Any]) -> float:
+def overlay_opacity_pct_from_display_transparency(display: Any) -> float:
     """``display.transparency`` is percent transparent (0 = solid, 100 = invisible), same as Meshtastic UI."""
-    raw = display.get("transparency")
+    raw = display.transparency if hasattr(display, "transparency") else display.get("transparency")  # type: ignore[union-attr]
     if raw is None:
         return 100.0
     try:

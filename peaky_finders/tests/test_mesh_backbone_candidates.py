@@ -20,7 +20,7 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import (
 )
 from peaky_finders.site_suggestions.providers.mesh_backbone import MeshBackboneStrategy
 from peaky_finders.sites_job import (
-    BundleSiteSuggestionsConfig,
+    SuggestConfig,
     MeshBackboneGoalEntry,
     MeshBackboneStrategyConfig,
     SiteSuggestionStrategy,
@@ -46,7 +46,7 @@ def _mesh_ctx(
         aoi_ll=eligible,
         target_ll=eligible,
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -98,7 +98,7 @@ def test_generate_mesh_grow_candidates_on_frontier() -> None:
         aoi_ll=eligible,
         target_ll=eligible,
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -272,7 +272,7 @@ def test_score_mesh_grow_trial_heal_ignores_satellite_hop() -> None:
         aoi_ll=eligible,
         target_ll=eligible,
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(
+        cfg=SuggestConfig(
             strategy=SiteSuggestionStrategy.MESH_BACKBONE,
             mesh_backbone=MeshBackboneStrategyConfig(
                 goals={"g0": MeshBackboneGoalEntry(loc=(39.0, -115.5))},
@@ -334,7 +334,7 @@ def test_healing_candidates_sample_from_main_mesh_not_satellite_grid() -> None:
         aoi_ll=eligible,
         target_ll=eligible,
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(
+        cfg=SuggestConfig(
             strategy=SiteSuggestionStrategy.MESH_BACKBONE,
             mesh_backbone=MeshBackboneStrategyConfig(
                 goals={"g0": MeshBackboneGoalEntry(loc=(39.0, -115.5))},
@@ -365,7 +365,7 @@ def test_mesh_backbone_max_nodes_counts_preset_sites() -> None:
         aoi_ll=box(-116.5, 38.5, -114.5, 39.5),
         target_ll=box(-116.5, 38.5, -114.5, 39.5),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(
+        cfg=SuggestConfig(
             strategy=SiteSuggestionStrategy.MESH_BACKBONE,
             mesh_backbone=MeshBackboneStrategyConfig(max_nodes=2),
         ),

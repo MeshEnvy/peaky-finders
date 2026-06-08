@@ -74,7 +74,7 @@ def run_viewshed_batch(
             requests_json=requests_json,
         )
         if rc == 0:
-            kml_ov = preset.bundle.kml_overlay if preset.bundle else None
+            kml_ov = preset.display.kml if preset.land else None
             style = resolved_viewshed_coverage_kml_style(kml_ov)
             vectorize_coverage_footprints_parallel(
                 workdirs=[ws.workdir for ws in workspaces],
