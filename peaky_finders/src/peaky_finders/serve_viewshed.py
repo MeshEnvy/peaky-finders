@@ -90,6 +90,22 @@ def _load_viewshed_preset(project_dir: Path) -> Preset:
         raise ServeViewshedError(f"invalid preset: {e}") from e
 
 
+def ensure_coords_viewshed_png(
+    project_dir: Path,
+    lat: float,
+    lon: float,
+    *,
+    verbose: bool = False,
+) -> Path:
+    """Warm viewshed workspace cache for a coordinate (no preset site entry required)."""
+    if not (-90.0 <= lat <= 90.0):
+        raise ServeViewshedError(f"lat out of bounds: {lat}")
+    if not (-180.0 <= lon <= 180.0):
+        raise ServeViewshedError(f"lon out of bounds: {lon}")
+    site = SiteEntry(name="Preview", loc=(lat, lon))
+    return ensure_site_viewshed_png(project_dir, "_prefetch", site, verbose=verbose)
+
+
 def resolve_site_viewshed_workdir(project_dir: Path, preset: Preset, site: SiteEntry) -> Path:
     """Filesystem workspace for one site's propagation fingerprint."""
     bundle_root = resolved_bundle_dir(preset_path=project_dir / "config.yaml")

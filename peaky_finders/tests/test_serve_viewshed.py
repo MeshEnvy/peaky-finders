@@ -288,3 +288,32 @@ def test_load_preset_for_coverage_ignores_site_suggestions(tmp_path: Path) -> No
     preset = load_preset_for_coverage(config_path)
     assert preset.land is not None
     assert preset.sites["hub"].name == "Hub"
+
+
+def test_viewshed_prefetch_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+
+    calls: list[tuple[float, float]] = []
+
+    def _fake_prefetch(project_dir: Path, lat: float, lon: float, *, verbose: bool = False) -> Path:
+        calls.append((lat, lon))
+        return project_dir / "build" / "viewsheds" / "warm" / "splat.png"
+
+    monkeypatch.setattr("peaky_finders.serve_cli.ensure_coords_viewshed_png", _fake_prefetch)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/api/p/demo/viewsheds/prefetch?lat=39.6&lon=-119.4")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert payload["ok"] is True
+        assert payload["lat"] == 39.6
+        assert payload["lon"] == -119.4
+        assert calls == [(39.6, -119.4)]
+    finally:
+        server.shutdown()
+        server.server_close()

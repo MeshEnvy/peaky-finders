@@ -104,9 +104,10 @@ def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -
       <a class="btn btn-sm btn-outline-secondary" href="/">&larr; Projects</a>
       <div class="d-flex align-items-center gap-2 me-auto">
         <h1 class="h5 mb-0">{html.escape(slug)}</h1>
-        <span class="badge text-bg-secondary">{site_count} {site_noun}</span>
+        <span id="site-count-badge" class="badge text-bg-secondary">{site_count} {site_noun}</span>
       </div>
       <div class="d-flex flex-wrap align-items-center gap-2 gap-md-3">
+        <button type="button" id="add-site-mode" class="btn btn-sm btn-outline-primary">Add site</button>
         <div class="d-flex align-items-center gap-2">
           <label for="basemap" class="form-label mb-0 small text-muted">Map</label>
           <select id="basemap" class="form-select form-select-sm" style="width: auto;" title="Base map">
@@ -129,43 +130,70 @@ def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -
   <div id="map"></div>
   <aside id="site-panel" class="site-panel card shadow" hidden>
     <div class="card-body">
-      <div class="site-panel__header d-flex align-items-start justify-content-between gap-2 mb-3">
-        <h2 class="site-panel__title h6 mb-0" id="site-panel-name"></h2>
-        <button type="button" class="btn-close btn-close-sm" id="site-panel-close" title="Close" aria-label="Close"></button>
+      <div id="site-panel-view">
+        <div class="site-panel__header d-flex align-items-start justify-content-between gap-2 mb-3">
+          <h2 class="site-panel__title h6 mb-0" id="site-panel-name"></h2>
+          <button type="button" class="btn-close btn-close-sm" id="site-panel-close" title="Close" aria-label="Close"></button>
+        </div>
+        <span class="site-panel__badge badge mb-3" id="site-panel-type"></span>
+        <div class="site-panel__section mb-2">
+          <span class="site-panel__label small text-muted text-uppercase">Coordinates</span>
+          <p class="site-panel__value small mb-0" id="site-panel-coords"></p>
+        </div>
+        <div class="site-panel__section mb-2">
+          <span class="site-panel__label small text-muted text-uppercase">Elevation</span>
+          <p class="site-panel__value small mb-0" id="site-panel-elevation"></p>
+        </div>
+        <div class="site-panel__section mb-2" id="site-panel-plss-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">PLSS</span>
+          <p class="site-panel__value small mb-0" id="site-panel-plss"></p>
+        </div>
+        <div class="site-panel__section mb-2" id="site-panel-mlrs-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">MLRS</span>
+          <p class="site-panel__value small mb-0" id="site-panel-mlrs"></p>
+        </div>
+        <div class="site-panel__section mb-2" id="site-panel-desc-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">Description</span>
+          <p class="site-panel__value small mb-0" id="site-panel-desc"></p>
+        </div>
+        <div class="site-panel__section mb-2" id="site-panel-rationale-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">Rationale</span>
+          <p class="site-panel__value small mb-0" id="site-panel-rationale"></p>
+        </div>
+        <div class="site-panel__section mb-2" id="site-panel-links-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">Linked sites</span>
+          <ul class="site-panel__links small mb-0 ps-3" id="site-panel-links"></ul>
+        </div>
+        <div class="site-panel__viewshed form-check border-top pt-2 mt-2">
+          <input class="form-check-input" type="checkbox" id="site-panel-viewshed" checked>
+          <label class="form-check-label small" for="site-panel-viewshed">Show viewshed</label>
+          <span class="site-panel__viewshed-hint small text-muted ms-1" id="site-panel-viewshed-hint"></span>
+        </div>
       </div>
-      <span class="site-panel__badge badge mb-3" id="site-panel-type"></span>
-      <div class="site-panel__section mb-2">
-        <span class="site-panel__label small text-muted text-uppercase">Coordinates</span>
-        <p class="site-panel__value small mb-0" id="site-panel-coords"></p>
-      </div>
-      <div class="site-panel__section mb-2">
-        <span class="site-panel__label small text-muted text-uppercase">Elevation</span>
-        <p class="site-panel__value small mb-0" id="site-panel-elevation"></p>
-      </div>
-      <div class="site-panel__section mb-2" id="site-panel-plss-section" hidden>
-        <span class="site-panel__label small text-muted text-uppercase">PLSS</span>
-        <p class="site-panel__value small mb-0" id="site-panel-plss"></p>
-      </div>
-      <div class="site-panel__section mb-2" id="site-panel-mlrs-section" hidden>
-        <span class="site-panel__label small text-muted text-uppercase">MLRS</span>
-        <p class="site-panel__value small mb-0" id="site-panel-mlrs"></p>
-      </div>
-      <div class="site-panel__section mb-2" id="site-panel-desc-section" hidden>
-        <span class="site-panel__label small text-muted text-uppercase">Description</span>
-        <p class="site-panel__value small mb-0" id="site-panel-desc"></p>
-      </div>
-      <div class="site-panel__section mb-2" id="site-panel-rationale-section" hidden>
-        <span class="site-panel__label small text-muted text-uppercase">Rationale</span>
-        <p class="site-panel__value small mb-0" id="site-panel-rationale"></p>
-      </div>
-      <div class="site-panel__section mb-2" id="site-panel-links-section" hidden>
-        <span class="site-panel__label small text-muted text-uppercase">Linked sites</span>
-        <ul class="site-panel__links small mb-0 ps-3" id="site-panel-links"></ul>
-      </div>
-      <div class="site-panel__viewshed form-check border-top pt-2 mt-2">
-        <input class="form-check-input" type="checkbox" id="site-panel-viewshed" checked>
-        <label class="form-check-label small" for="site-panel-viewshed">Show viewshed</label>
-        <span class="site-panel__viewshed-hint small text-muted ms-1" id="site-panel-viewshed-hint"></span>
+      <div id="site-panel-create" hidden>
+        <div class="site-panel__header d-flex align-items-start justify-content-between gap-2 mb-3">
+          <h2 class="site-panel__title h6 mb-0">New site</h2>
+          <button type="button" class="btn-close btn-close-sm" id="site-panel-create-close" title="Close" aria-label="Close"></button>
+        </div>
+        <span class="site-panel__badge badge site-panel__badge--planned mb-3">planned</span>
+        <div class="site-panel__section mb-2">
+          <label class="site-panel__label small text-muted text-uppercase" for="site-panel-create-name">Name</label>
+          <input id="site-panel-create-name" type="text" class="form-control form-control-sm" required>
+        </div>
+        <div class="site-panel__section mb-2">
+          <span class="site-panel__label small text-muted text-uppercase">Slug</span>
+          <p class="site-panel__value small mb-0 font-monospace text-muted" id="site-panel-slug-preview"></p>
+        </div>
+        <div class="site-panel__section mb-2">
+          <span class="site-panel__label small text-muted text-uppercase">Coordinates</span>
+          <p class="site-panel__value small mb-0" id="site-panel-create-coords"></p>
+        </div>
+        <p class="site-panel__viewshed-hint small text-muted mb-2" id="site-panel-create-viewshed-hint"></p>
+        <div id="site-panel-create-error" class="alert alert-danger py-2 small mb-2" role="alert" hidden></div>
+        <div class="site-panel__create-actions d-flex gap-2 mt-3">
+          <button type="button" id="site-panel-create-save" class="btn btn-primary btn-sm">Save</button>
+          <button type="button" id="site-panel-create-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+        </div>
       </div>
     </div>
   </aside>
