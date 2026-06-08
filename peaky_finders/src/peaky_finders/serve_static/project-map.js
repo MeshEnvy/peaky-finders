@@ -194,6 +194,11 @@
   let siteLinksPayload = null;
   let goalLinksPayload = null;
   const viewshedVisible = new Map();
+  if (savedMapState?.viewshedVisible && typeof savedMapState.viewshedVisible === "object") {
+    for (const [slug, visible] of Object.entries(savedMapState.viewshedVisible)) {
+      viewshedVisible.set(slug, visible !== false);
+    }
+  }
   const viewshedLoading = new Set();
   const siteBySlug = new Map(sites.map((s) => [s.slug, s]));
   const goalBySlug = new Map(goals.map((g) => [g.slug, g]));
@@ -217,9 +222,20 @@
   const sitePanelCreateBadge = document.getElementById("site-panel-create-badge");
   const sitePanelCreateLinksLabel = document.getElementById("site-panel-create-links-label");
   const sitePanelViewshedSection = document.getElementById("site-panel-viewshed-section");
-  const addModeBtn = document.getElementById("add-mode-btn");
+  const entityPanel = document.getElementById("entity-panel");
+  const entityPanelToggle = document.getElementById("entity-panel-toggle");
+  const entityPanelSitesList = document.getElementById("entity-panel-sites-list");
+  const entityPanelGoalsList = document.getElementById("entity-panel-goals-list");
+  const entityPanelSitesPane = document.getElementById("entity-panel-sites-pane");
+  const entityPanelGoalsPane = document.getElementById("entity-panel-goals-pane");
+  const entityPanelAddSite = document.getElementById("entity-panel-add-site");
+  const entityPanelAddGoal = document.getElementById("entity-panel-add-goal");
   const siteCountBadge = document.getElementById("site-count-badge");
   const goalCountBadge = document.getElementById("goal-count-badge");
+  const siteHidden = new Set(savedMapState?.hiddenSites || []);
+  const goalHidden = new Set(savedMapState?.hiddenGoals || []);
+  let entityPanelOpen = false;
+  let entityPanelTab = "sites";
 
   function ensureTerrainSource() {
     if (map.getSource(TERRAIN_SOURCE)) return;
@@ -330,8 +346,11 @@
 
   function setAddPlacementMode(kind) {
     addPlacementMode = kind;
-    if (addModeBtn) {
-      addModeBtn.classList.toggle("active", !!kind);
+    if (entityPanelAddSite) {
+      entityPanelAddSite.classList.toggle("active", kind === "site");
+    }
+    if (entityPanelAddGoal) {
+      entityPanelAddGoal.classList.toggle("active", kind === "goal");
     }
     if (mapShell) {
       mapShell.classList.toggle("add-placement-mode", !!kind);
@@ -339,6 +358,339 @@
     }
     syncMapCursor();
     if (!kind) cancelCreate();
+  }
+
+  function setEntityPanelOpen(open) {
+    entityPanelOpen = !!open;
+    if (entityPanel) entityPanel.hidden = !entityPanelOpen;
+    if (mapShell) mapShell.classList.toggle("entity-panel-open", entityPanelOpen);
+    if (entityPanelToggle) {
+      entityPanelToggle.classList.toggle("active", entityPanelOpen);
+      entityPanelToggle.setAttribute("aria-expanded", entityPanelOpen ? "true" : "false");
+    }
+  }
+
+  function setEntityTab(tab) {
+    entityPanelTab = tab === "goals" ? "goals" : "sites";
+    for (const btn of document.querySelectorAll("[data-entity-tab]")) {
+      const active = btn.getAttribute("data-entity-tab") === entityPanelTab;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    }
+    if (entityPanelSitesPane) entityPanelSitesPane.hidden = entityPanelTab !== "sites";
+    if (entityPanelGoalsPane) entityPanelGoalsPane.hidden = entityPanelTab !== "goals";
+  }
+
+  function siteVisibilityFilter() {
+    if (!siteHidden.size) return null;
+    return ["!", ["in", ["get", "slug"], ["literal", [...siteHidden]]]];
+  }
+
+  function goalVisibilityFilter() {
+    if (!goalHidden.size) return null;
+    return ["!", ["in", ["get", "slug"], ["literal", [...goalHidden]]]];
+  }
+
+  function applySiteLayerFilters() {
+    if (!mapReady) return;
+    const hiddenFilter = siteVisibilityFilter();
+    for (const layerId of [SITES_CIRCLE, SITES_LABELS]) {
+      if (!map.getLayer(layerId)) continue;
+      map.setFilter(layerId, hiddenFilter || true);
+    }
+    updateSelectedLayer();
+  }
+
+  function applyGoalLayerFilters() {
+    if (!mapReady) return;
+    const hiddenFilter = goalVisibilityFilter();
+    for (const layerId of [GOALS_CIRCLE, GOALS_LABELS]) {
+      if (!map.getLayer(layerId)) continue;
+      map.setFilter(layerId, hiddenFilter || true);
+    }
+    updateGoalSelectedLayer();
+  }
+
+  function filterSiteLinksGeoJson(geojson) {
+    if (!geojson || !geojson.features || !siteHidden.size) return geojson;
+    return {
+      type: geojson.type || "FeatureCollection",
+      features: geojson.features.filter((feature) => {
+        const props = feature.properties || {};
+        return !siteHidden.has(props.a) && !siteHidden.has(props.b);
+      }),
+    };
+  }
+
+  function filterGoalLinksGeoJson(geojson) {
+    if (!geojson || !geojson.features) return geojson;
+    if (!goalHidden.size && !siteHidden.size) return geojson;
+    return {
+      type: geojson.type || "FeatureCollection",
+      features: geojson.features.filter((feature) => {
+        const props = feature.properties || {};
+        return !goalHidden.has(props.goal) && !siteHidden.has(props.site);
+      }),
+    };
+  }
+
+  function refreshFilteredLinks() {
+    if (siteLinksPayload && siteLinksPayload.geojson) {
+      addSiteLinksLayer(siteLinksPayload.geojson);
+    }
+    if (goalLinksPayload && goalLinksPayload.geojson) {
+      addGoalLinksLayer(goalLinksPayload.geojson);
+    }
+  }
+
+  function applyViewshedVisibilityForSite(slug) {
+    const layerId = viewshedLayerId(slug);
+    if (!map.getLayer(layerId)) return;
+    const visible = !siteHidden.has(slug) && isViewshedVisible(slug);
+    map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
+  }
+
+  function applyEntityVisibility() {
+    applySiteLayerFilters();
+    applyGoalLayerFilters();
+    for (const site of sites) {
+      applyViewshedVisibilityForSite(site.slug);
+    }
+    refreshFilteredLinks();
+    renderEntityPanel();
+  }
+
+  function isSiteHidden(slug) {
+    return siteHidden.has(slug);
+  }
+
+  function isGoalHidden(slug) {
+    return goalHidden.has(slug);
+  }
+
+  function setSiteHidden(slug, hidden) {
+    if (hidden) siteHidden.add(slug);
+    else siteHidden.delete(slug);
+    applyEntityVisibility();
+    scheduleSaveMapState();
+  }
+
+  function setGoalHidden(slug, hidden) {
+    if (hidden) goalHidden.add(slug);
+    else goalHidden.delete(slug);
+    applyEntityVisibility();
+    scheduleSaveMapState();
+  }
+
+  function removeViewshedLayer(slug) {
+    const layerId = viewshedLayerId(slug);
+    const sourceId = viewshedSourceId(slug);
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
+    viewshedLoading.delete(slug);
+  }
+
+  function siteDeleteUrl(slug) {
+    return `/api/p/${projectSlug}/sites/${encodeURIComponent(slug)}`;
+  }
+
+  function goalDeleteUrl(slug) {
+    return `/api/p/${projectSlug}/goals/${encodeURIComponent(slug)}`;
+  }
+
+  function unregisterSite(slug) {
+    const idx = sites.findIndex((s) => s.slug === slug);
+    if (idx >= 0) sites.splice(idx, 1);
+    siteBySlug.delete(slug);
+    siteHidden.delete(slug);
+    viewshedVisible.delete(slug);
+    removeViewshedLayer(slug);
+    if (selectedSlug === slug) deselectSite();
+    addSiteLayers();
+    updateSiteCountBadge();
+    renderEntityPanel();
+  }
+
+  function unregisterGoal(slug) {
+    const idx = goals.findIndex((g) => g.slug === slug);
+    if (idx >= 0) goals.splice(idx, 1);
+    goalBySlug.delete(slug);
+    goalHidden.delete(slug);
+    if (selectedGoalSlug === slug) deselectSite();
+    addGoalLayers();
+    updateGoalCountBadge();
+    renderEntityPanel();
+  }
+
+  async function deleteSite(slug) {
+    const site = siteBySlug.get(slug);
+    if (!site) return;
+    if (!confirm(`Delete site "${site.name}" permanently?`)) return;
+    try {
+      const resp = await fetch(siteDeleteUrl(slug), { method: "DELETE" });
+      if (!resp.ok) return;
+      unregisterSite(slug);
+      await loadSiteLinks();
+      await loadGoalLinks();
+    } catch (_) {
+      /* network error */
+    }
+  }
+
+  async function deleteGoal(slug) {
+    const goal = goalBySlug.get(slug);
+    if (!goal) return;
+    if (!confirm(`Delete goal "${goal.name}" permanently?`)) return;
+    try {
+      const resp = await fetch(goalDeleteUrl(slug), { method: "DELETE" });
+      if (!resp.ok) return;
+      unregisterGoal(slug);
+      await loadGoalLinks();
+    } catch (_) {
+      /* network error */
+    }
+  }
+
+  function renderEntityPanel() {
+    if (entityPanelSitesList) {
+      entityPanelSitesList.innerHTML = "";
+      const sortedSites = [...sites].sort((a, b) => a.name.localeCompare(b.name));
+      if (!sortedSites.length) {
+        const empty = document.createElement("div");
+        empty.className = "entity-panel__empty";
+        empty.textContent = "No sites yet.";
+        entityPanelSitesList.appendChild(empty);
+      }
+      for (const site of sortedSites) {
+        entityPanelSitesList.appendChild(buildSiteEntityRow(site));
+      }
+    }
+    if (entityPanelGoalsList) {
+      entityPanelGoalsList.innerHTML = "";
+      const sortedGoals = [...goals].sort((a, b) => a.name.localeCompare(b.name));
+      if (!sortedGoals.length) {
+        const empty = document.createElement("div");
+        empty.className = "entity-panel__empty";
+        empty.textContent = "No goals yet.";
+        entityPanelGoalsList.appendChild(empty);
+      }
+      for (const goal of sortedGoals) {
+        entityPanelGoalsList.appendChild(buildGoalEntityRow(goal));
+      }
+    }
+  }
+
+  function buildSiteEntityRow(site) {
+    const row = document.createElement("div");
+    row.className = "entity-panel__row";
+    if (selectedSlug === site.slug) row.classList.add("entity-panel__row--selected");
+    if (isSiteHidden(site.slug)) row.classList.add("entity-panel__row--hidden");
+
+    const main = document.createElement("div");
+    main.className = "entity-panel__main";
+    const name = document.createElement("div");
+    name.className = "entity-panel__name";
+    name.textContent = site.name;
+    const meta = document.createElement("div");
+    meta.className = "entity-panel__meta";
+    meta.textContent = site.type || "installed";
+    main.appendChild(name);
+    main.appendChild(meta);
+
+    const controls = document.createElement("div");
+    controls.className = "entity-panel__controls";
+
+    const eyeBtn = document.createElement("button");
+    eyeBtn.type = "button";
+    eyeBtn.className = "btn btn-sm btn-outline-secondary";
+    eyeBtn.title = isSiteHidden(site.slug) ? "Show site" : "Hide site";
+    eyeBtn.textContent = isSiteHidden(site.slug) ? "Show" : "Hide";
+    eyeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      setSiteHidden(site.slug, !isSiteHidden(site.slug));
+    });
+
+    const vsCheck = document.createElement("input");
+    vsCheck.type = "checkbox";
+    vsCheck.className = "form-check-input";
+    vsCheck.title = "Show viewshed";
+    vsCheck.checked = isViewshedVisible(site.slug);
+    vsCheck.disabled = isSiteHidden(site.slug);
+    vsCheck.addEventListener("click", (ev) => ev.stopPropagation());
+    vsCheck.addEventListener("change", (ev) => {
+      ev.stopPropagation();
+      setViewshedVisible(site.slug, ev.target.checked);
+      applyViewshedVisibilityForSite(site.slug);
+      scheduleSaveMapState();
+    });
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn btn-sm btn-outline-danger";
+    delBtn.title = "Delete site";
+    delBtn.textContent = "Del";
+    delBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void deleteSite(site.slug);
+    });
+
+    controls.appendChild(eyeBtn);
+    controls.appendChild(vsCheck);
+    controls.appendChild(delBtn);
+
+    row.appendChild(main);
+    row.appendChild(controls);
+    row.addEventListener("click", () => selectSite(site.slug));
+    return row;
+  }
+
+  function buildGoalEntityRow(goal) {
+    const row = document.createElement("div");
+    row.className = "entity-panel__row";
+    if (selectedGoalSlug === goal.slug) row.classList.add("entity-panel__row--selected");
+    if (isGoalHidden(goal.slug)) row.classList.add("entity-panel__row--hidden");
+
+    const main = document.createElement("div");
+    main.className = "entity-panel__main";
+    const name = document.createElement("div");
+    name.className = "entity-panel__name";
+    name.textContent = goal.name;
+    const meta = document.createElement("div");
+    meta.className = "entity-panel__meta";
+    meta.textContent = "goal";
+    main.appendChild(name);
+    main.appendChild(meta);
+
+    const controls = document.createElement("div");
+    controls.className = "entity-panel__controls";
+
+    const eyeBtn = document.createElement("button");
+    eyeBtn.type = "button";
+    eyeBtn.className = "btn btn-sm btn-outline-secondary";
+    eyeBtn.title = isGoalHidden(goal.slug) ? "Show goal" : "Hide goal";
+    eyeBtn.textContent = isGoalHidden(goal.slug) ? "Show" : "Hide";
+    eyeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      setGoalHidden(goal.slug, !isGoalHidden(goal.slug));
+    });
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn btn-sm btn-outline-danger";
+    delBtn.title = "Delete goal";
+    delBtn.textContent = "Del";
+    delBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void deleteGoal(goal.slug);
+    });
+
+    controls.appendChild(eyeBtn);
+    controls.appendChild(delBtn);
+
+    row.appendChild(main);
+    row.appendChild(controls);
+    row.addEventListener("click", () => selectGoal(goal.slug));
+    return row;
   }
 
   function updateSiteCountBadge() {
@@ -358,6 +710,7 @@
     siteBySlug.set(site.slug, site);
     addSiteLayers();
     updateSiteCountBadge();
+    renderEntityPanel();
   }
 
   function registerGoal(goal) {
@@ -365,6 +718,7 @@
     goalBySlug.set(goal.slug, goal);
     addGoalLayers();
     updateGoalCountBadge();
+    renderEntityPanel();
   }
 
   function syncCreateSlugPreview() {
@@ -646,6 +1000,9 @@
       showLinks: document.getElementById("show-links").checked,
       showGoalLinks: document.getElementById("show-goal-links").checked,
       viewshedOpacity,
+      hiddenSites: [...siteHidden],
+      hiddenGoals: [...goalHidden],
+      viewshedVisible: Object.fromEntries(viewshedVisible),
     };
   }
 
@@ -665,15 +1022,21 @@
   }
 
   function addGoalLinksLayer(geojson) {
-    if (!geojson || !geojson.features || !geojson.features.length) return;
+    const filtered = filterGoalLinksGeoJson(geojson);
+    if (!filtered || !filtered.features || !filtered.features.length) {
+      if (map.getLayer(GOAL_LINKS_LAYER)) map.removeLayer(GOAL_LINKS_LAYER);
+      if (map.getSource(GOAL_LINKS_SOURCE)) map.removeSource(GOAL_LINKS_SOURCE);
+      raiseSiteLayers();
+      return;
+    }
     const linkVisibility = document.getElementById("show-goal-links").checked ? "visible" : "none";
     if (map.getSource(GOAL_LINKS_SOURCE)) {
-      map.getSource(GOAL_LINKS_SOURCE).setData(geojson);
+      map.getSource(GOAL_LINKS_SOURCE).setData(filtered);
       setGoalLinksVisible(document.getElementById("show-goal-links").checked);
       raiseSiteLayers();
       return;
     }
-    map.addSource(GOAL_LINKS_SOURCE, { type: "geojson", data: geojson });
+    map.addSource(GOAL_LINKS_SOURCE, { type: "geojson", data: filtered });
     map.addLayer(
       {
         id: GOAL_LINKS_LAYER,
@@ -722,8 +1085,15 @@
   }
 
   function addSiteLinksLayer(geojson) {
-    if (!geojson || !geojson.features || !geojson.features.length) return;
-    const labeled = linksGeoJsonWithLabels(geojson);
+    const filtered = filterSiteLinksGeoJson(geojson);
+    if (!filtered || !filtered.features || !filtered.features.length) {
+      if (map.getLayer(LINKS_LABELS_LAYER)) map.removeLayer(LINKS_LABELS_LAYER);
+      if (map.getLayer(LINKS_LAYER)) map.removeLayer(LINKS_LAYER);
+      if (map.getSource(LINKS_SOURCE)) map.removeSource(LINKS_SOURCE);
+      raiseSiteLayers();
+      return;
+    }
+    const labeled = linksGeoJsonWithLabels(filtered);
     const linkVisibility = document.getElementById("show-links").checked ? "visible" : "none";
     if (map.getSource(LINKS_SOURCE)) {
       map.getSource(LINKS_SOURCE).setData(labeled);
@@ -980,8 +1350,8 @@
     viewshedVisible.set(slug, visible);
     const layerId = viewshedLayerId(slug);
     if (map.getLayer(layerId)) {
-      map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
-    } else if (visible) {
+      applyViewshedVisibilityForSite(slug);
+    } else if (visible && !siteHidden.has(slug)) {
       const site = siteBySlug.get(slug);
       if (site) void loadViewshedForSite(site);
     }
@@ -1014,8 +1384,10 @@
         },
       });
     }
-    if (!isViewshedVisible(vs.slug)) {
+    if (!isViewshedVisible(vs.slug) || siteHidden.has(vs.slug)) {
       map.setLayoutProperty(layerId, "visibility", "none");
+    } else {
+      map.setLayoutProperty(layerId, "visibility", "visible");
     }
     viewshedLoading.delete(vs.slug);
     if (vs.slug === selectedSlug) syncViewshedCheckbox();
@@ -1054,7 +1426,7 @@
   function addGoalLayers() {
     if (map.getSource(GOALS_SOURCE)) {
       map.getSource(GOALS_SOURCE).setData(goalsGeoJson());
-      updateGoalSelectedLayer();
+      applyGoalLayerFilters();
       return;
     }
     map.addSource(GOALS_SOURCE, { type: "geojson", data: goalsGeoJson() });
@@ -1100,17 +1472,13 @@
         "circle-opacity": 0.35,
       },
     });
-  }
-
-  function updateGoalSelectedLayer() {
-    if (!map.getLayer(GOALS_SELECTED)) return;
-    map.setFilter(GOALS_SELECTED, ["==", ["get", "slug"], selectedGoalSlug || ""]);
+    applyGoalLayerFilters();
   }
 
   function addSiteLayers() {
     if (map.getSource(SITES_SOURCE)) {
       map.getSource(SITES_SOURCE).setData(sitesGeoJson());
-      updateSelectedLayer();
+      applySiteLayerFilters();
       return;
     }
     map.addSource(SITES_SOURCE, { type: "geojson", data: sitesGeoJson() });
@@ -1156,11 +1524,35 @@
         "circle-opacity": 0.35,
       },
     });
+    applySiteLayerFilters();
+  }
+
+  function updateGoalSelectedLayer() {
+    if (!map.getLayer(GOALS_SELECTED)) return;
+    const hiddenFilter = goalVisibilityFilter();
+    if (hiddenFilter) {
+      map.setFilter(GOALS_SELECTED, [
+        "all",
+        ["==", ["get", "slug"], selectedGoalSlug || ""],
+        hiddenFilter,
+      ]);
+    } else {
+      map.setFilter(GOALS_SELECTED, ["==", ["get", "slug"], selectedGoalSlug || ""]);
+    }
   }
 
   function updateSelectedLayer() {
     if (!map.getLayer(SITES_SELECTED)) return;
-    map.setFilter(SITES_SELECTED, ["==", ["get", "slug"], selectedSlug || ""]);
+    const hiddenFilter = siteVisibilityFilter();
+    if (hiddenFilter) {
+      map.setFilter(SITES_SELECTED, [
+        "all",
+        ["==", ["get", "slug"], selectedSlug || ""],
+        hiddenFilter,
+      ]);
+    } else {
+      map.setFilter(SITES_SELECTED, ["==", ["get", "slug"], selectedSlug || ""]);
+    }
   }
 
   function formatCoord(n) {
@@ -1170,17 +1562,6 @@
   function setSectionVisible(sectionId, visible) {
     const el = document.getElementById(sectionId);
     if (el) el.hidden = !visible;
-  }
-
-  function linkedPeersForSite(slug) {
-    if (!siteLinksPayload || !Array.isArray(siteLinksPayload.links)) return [];
-    const peers = [];
-    for (const row of siteLinksPayload.links) {
-      if (!row.linked) continue;
-      if (row.a === slug) peers.push(row.b);
-      else if (row.b === slug) peers.push(row.a);
-    }
-    return peers.sort();
   }
 
   function linkedPeersForSite(slug) {
@@ -1320,6 +1701,7 @@
     updateSelectedLayer();
     updateGoalSelectedLayer();
     raiseSiteLayers();
+    renderEntityPanel();
   }
 
   function selectSite(slug) {
@@ -1331,10 +1713,10 @@
     sitePanel.hidden = false;
     showPanelView();
     renderPanel(site);
-    renderPanel(site);
     updateSelectedLayer();
     updateGoalSelectedLayer();
     raiseSiteLayers();
+    renderEntityPanel();
   }
 
   function deselectSite() {
@@ -1441,6 +1823,9 @@
     void loadGoalLinks();
     loadAllViewsheds();
     updateGoalCountBadge();
+    setEntityTab("sites");
+    renderEntityPanel();
+    applyEntityVisibility();
     const basemapKey = document.getElementById("basemap").value;
     setBasemap(basemapKey);
     if (savedMapState) {
@@ -1488,16 +1873,35 @@
       void saveNewPlacement();
     }
   });
-  for (const btn of document.querySelectorAll("[data-add-kind]")) {
+  if (entityPanelToggle) {
+    entityPanelToggle.addEventListener("click", () => {
+      setEntityPanelOpen(!entityPanelOpen);
+    });
+  }
+  for (const btn of document.querySelectorAll("[data-entity-tab]")) {
     btn.addEventListener("click", () => {
-      const kind = btn.getAttribute("data-add-kind");
-      if (kind === "site" || kind === "goal") {
-        setAddPlacementMode(addPlacementMode === kind ? null : kind);
-      }
+      setEntityTab(btn.getAttribute("data-entity-tab") || "sites");
+    });
+  }
+  if (entityPanelAddSite) {
+    entityPanelAddSite.addEventListener("click", () => {
+      setEntityPanelOpen(true);
+      setEntityTab("sites");
+      setAddPlacementMode(addPlacementMode === "site" ? null : "site");
+    });
+  }
+  if (entityPanelAddGoal) {
+    entityPanelAddGoal.addEventListener("click", () => {
+      setEntityPanelOpen(true);
+      setEntityTab("goals");
+      setAddPlacementMode(addPlacementMode === "goal" ? null : "goal");
     });
   }
   sitePanelViewshed.addEventListener("change", (ev) => {
-    if (selectedSlug) setViewshedVisible(selectedSlug, ev.target.checked);
+    if (selectedSlug) {
+      setViewshedVisible(selectedSlug, ev.target.checked);
+      scheduleSaveMapState();
+    }
   });
   if (sitePanelCreateViewshed) {
     sitePanelCreateViewshed.addEventListener("change", (ev) => {

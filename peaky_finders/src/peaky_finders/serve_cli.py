@@ -22,11 +22,11 @@ from peaky_finders.serve_goal_links import (
     evaluate_goal_site_prefetch_links,
     load_project_goal_links,
 )
-from peaky_finders.serve_goals import append_goal_to_preset
+from peaky_finders.serve_goals import append_goal_to_preset, delete_goal_from_preset
 from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked, load_project_site_links
 from peaky_finders.serve_plss_mlrs import apply_plss_mlrs_from_loc_cache
 from peaky_finders.serve_site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
-from peaky_finders.serve_sites import append_planned_site_to_preset
+from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset
 from peaky_finders.serve_viewshed import (
     ServeViewshedError,
     ensure_coords_viewshed_overlay,
@@ -55,7 +55,13 @@ _STATIC_MIME: dict[str, str] = {
 
 _PROJECT_PATH_RE = re.compile(r"^/p/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_SITES_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/?$")
+_API_PROJECT_SITE_SLUG_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/([a-zA-Z][a-zA-Z0-9_-]*)/?$"
+)
 _API_PROJECT_GOALS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/goals/?$")
+_API_PROJECT_GOAL_SLUG_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/goals/([a-zA-Z][a-zA-Z0-9_-]*)/?$"
+)
 _API_PROJECT_GOALS_PREFETCH_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/goals/prefetch/?$"
 )
@@ -748,6 +754,68 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
             self.send_response(303)
             self.send_header("Location", f"/p/{slug}/")
             self.end_headers()
+
+        def do_DELETE(self) -> None:
+            parsed = urlparse(self.path)
+            path = parsed.path
+
+            site_match = _API_PROJECT_SITE_SLUG_RE.match(path)
+            if site_match:
+                project_slug = site_match.group(1)
+                site_slug = site_match.group(2)
+                preset_path = projects_dir / project_slug / "config.yaml"
+                if not preset_path.is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    deleted = delete_site_from_preset(preset_path, site_slug)
+                except ValueError as e:
+                    if "not found" in str(e):
+                        self.send_error(404)
+                        return
+                    payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                except OSError as e:
+                    payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=500)
+                    return
+                payload = json.dumps(
+                    {"slug": project_slug, "deleted": deleted},
+                    sort_keys=True,
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=200)
+                return
+
+            goal_match = _API_PROJECT_GOAL_SLUG_RE.match(path)
+            if goal_match:
+                project_slug = goal_match.group(1)
+                goal_slug = goal_match.group(2)
+                preset_path = projects_dir / project_slug / "config.yaml"
+                if not preset_path.is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    deleted = delete_goal_from_preset(preset_path, goal_slug)
+                except ValueError as e:
+                    if "not found" in str(e):
+                        self.send_error(404)
+                        return
+                    payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                except OSError as e:
+                    payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=500)
+                    return
+                payload = json.dumps(
+                    {"slug": project_slug, "deleted": deleted},
+                    sort_keys=True,
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=200)
+                return
+
+            self.send_error(404)
 
         def _send_html(self, body: bytes, *, status: int = 200) -> None:
             self._send_bytes(body, "text/html; charset=utf-8", status=status, extra_headers={"Cache-Control": "no-store"})

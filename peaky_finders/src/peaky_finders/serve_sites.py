@@ -68,3 +68,35 @@ def append_planned_site_to_preset(
     # Sites-only edit — do not require unrelated sections (e.g. suggest goals with site-slug
     # ``loc`` refs) to pass full :class:`Preset` validation; same as suggest append.
     return str(update_preset_yaml_tree(preset_path, mutator, validate=False))
+
+
+def _scrub_manual_links_for_site(links_raw: Any, site_slug: str) -> list[list[str]]:
+    """Drop preset ``links`` pairs that reference *site_slug*."""
+    if not isinstance(links_raw, list):
+        return []
+    kept: list[list[str]] = []
+    for pair in links_raw:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            continue
+        a, b = str(pair[0]).strip(), str(pair[1]).strip()
+        if a == site_slug or b == site_slug:
+            continue
+        kept.append([a, b])
+    return kept
+
+
+def delete_site_from_preset(preset_path: Path, site_slug: str) -> str:
+    """Remove a site from ``sites`` and scrub manual ``links`` pairs; return deleted slug."""
+    slug = str(site_slug).strip()
+    if not slug:
+        raise ValueError("site slug is required")
+
+    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> str:
+        sites_raw = root.get("sites")
+        if not isinstance(sites_raw, dict) or slug not in sites_raw:
+            raise ValueError(f"site not found: {slug!r}")
+        del sites_raw[slug]
+        root["links"] = _scrub_manual_links_for_site(root.get("links"), slug)
+        return slug
+
+    return str(update_preset_yaml_tree(preset_path, mutator, validate=False))

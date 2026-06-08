@@ -651,6 +651,92 @@ def test_project_page_includes_add_controls(tmp_path: Path) -> None:
         server.server_close()
 
 
+def test_delete_project_site(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+    preset_path = projects_dir / "mesh-demo" / "config.yaml"
+    from peaky_finders.serve_sites import append_planned_site_to_preset
+
+    slug = append_planned_site_to_preset(
+        preset_path,
+        name="Ridge Top",
+        lat=39.6,
+        lon=-119.4,
+    )
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("DELETE", f"/api/p/mesh-demo/sites/{slug}")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert payload["deleted"] == slug
+
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("DELETE", "/api/p/mesh-demo/sites/missing")
+        resp = conn.getresponse()
+        assert resp.status == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_project_goal(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    project_dir = projects_dir / "goal-demo"
+    project_dir.mkdir(parents=True)
+    (project_dir / "config.yaml").write_text(
+        """
+simulation:
+  modem_presets:
+    m:
+      frequency_mhz: 910.525
+      bandwidth_khz: 62.5
+      spreading_factor: 7
+      coding_rate: 5
+      implementation_margin_db: 3.0
+      power_dbm: 22.0
+      sensitivity_dbm: -121.0
+  environment_presets:
+    e:
+      climate: desert
+      polarization: vertical
+      clutter_height_m: 1.0
+  modem: m
+  environment: e
+  transmitter: {height_m: 2.0, gain_dbi: 2.0, loss_db: 0.0}
+  receiver: {height_m: 2.0, gain_dbi: 2.0, loss_db: 0.0}
+display:
+  colormap: rainbow
+  min_dbm: -130.0
+  max_dbm: -80.0
+sites:
+  hub:
+    name: Hub
+    loc: [39.5, -119.5]
+goals:
+  bridge:
+    name: Bridge
+    loc: [39.9, -119.3]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("DELETE", "/api/p/goal-demo/goals/bridge")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert payload["deleted"] == "bridge"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_run_serve_exits_on_keyboard_interrupt(monkeypatch) -> None:
     class _FakeServer:
         def __init__(self, *_args, **_kwargs) -> None:

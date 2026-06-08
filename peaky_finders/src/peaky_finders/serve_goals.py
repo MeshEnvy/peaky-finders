@@ -48,3 +48,19 @@ def append_goal_to_preset(
         return goal_slug
 
     return str(update_preset_yaml_tree(preset_path, mutator, validate=False))
+
+
+def delete_goal_from_preset(preset_path: Path, goal_slug: str) -> str:
+    """Remove a goal from ``goals``; return deleted slug."""
+    slug = str(goal_slug).strip()
+    if not slug:
+        raise ValueError("goal slug is required")
+
+    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> str:
+        goals_raw = root.get("goals")
+        if not isinstance(goals_raw, dict) or slug not in goals_raw:
+            raise ValueError(f"goal not found: {slug!r}")
+        del goals_raw[slug]
+        return slug
+
+    return str(update_preset_yaml_tree(preset_path, mutator, validate=False))
