@@ -115,13 +115,7 @@ def project_html(
         <span id="goal-count-badge" class="badge text-bg-secondary">{goal_count} {goal_noun}</span>
       </div>
       <div class="d-flex flex-wrap align-items-center gap-2 gap-md-3">
-        <div class="btn-group">
-          <button type="button" id="add-mode-btn" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">+ Add</button>
-          <ul class="dropdown-menu dropdown-menu-dark">
-            <li><button type="button" class="dropdown-item" data-add-kind="site">Site (repeater)</button></li>
-            <li><button type="button" class="dropdown-item" data-add-kind="goal">Goal (coverage target)</button></li>
-          </ul>
-        </div>
+        <button type="button" id="entity-panel-toggle" class="btn btn-sm btn-outline-secondary" title="Sites and goals" aria-expanded="false" aria-controls="entity-panel">Sites</button>
         <div class="d-flex align-items-center gap-2">
           <label for="basemap" class="form-label mb-0 small text-muted">Map</label>
           <select id="basemap" class="form-select form-select-sm" style="width: auto;" title="Base map">
@@ -150,6 +144,32 @@ def project_html(
   </div>
 </header>
 <div class="map-shell">
+  <aside id="entity-panel" class="entity-panel card shadow" hidden aria-label="Sites and goals">
+    <div class="entity-panel__header card-header py-2 px-2 border-bottom-0">
+      <ul class="nav nav-tabs card-header-tabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button type="button" class="nav-link active" id="entity-tab-sites" data-entity-tab="sites" role="tab" aria-selected="true">Sites</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button type="button" class="nav-link" id="entity-tab-goals" data-entity-tab="goals" role="tab" aria-selected="false">Goals</button>
+        </li>
+      </ul>
+    </div>
+    <div class="entity-panel__body card-body p-0 d-flex flex-column">
+      <div id="entity-panel-sites-pane" class="entity-panel__pane flex-grow-1" role="tabpanel">
+        <div id="entity-panel-sites-list" class="entity-panel__list"></div>
+        <div class="entity-panel__footer border-top p-2">
+          <button type="button" id="entity-panel-add-site" class="btn btn-sm btn-outline-primary w-100" title="Add site">+ Site</button>
+        </div>
+      </div>
+      <div id="entity-panel-goals-pane" class="entity-panel__pane flex-grow-1" hidden role="tabpanel">
+        <div id="entity-panel-goals-list" class="entity-panel__list"></div>
+        <div class="entity-panel__footer border-top p-2">
+          <button type="button" id="entity-panel-add-goal" class="btn btn-sm btn-outline-primary w-100" title="Add goal">+ Goal</button>
+        </div>
+      </div>
+    </div>
+  </aside>
   <div id="map"></div>
   <aside id="site-panel" class="site-panel card shadow" hidden>
     <div class="card-body">
