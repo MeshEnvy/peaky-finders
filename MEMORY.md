@@ -56,7 +56,7 @@ cd projects/nevada
 | `inspect` | GDB layer/attribute listing |
 | `serve` | Local web UI — project selector at `PEAKY_HOME` (default `~/.peaky`); project page MapLibre map with on-demand RF viewshed `splat.png` overlays (Street/Topo/Satellite basemaps, 3D terrain on tilt) |
 
-Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, `--reload` polls `peaky_finders` source (on by default via `./peaky serve`), Docker publishes `PEAKY_SERVE_PORT` (default 8080). Static favicons/manifest in `serve_static/` (favicon.ico/svg/png, apple-touch-icon, site.webmanifest). Project map fetches on-demand RF viewsheds: `GET /api/p/<slug>/viewsheds/<site>` (JSON bounds + PNG URL) and `GET …/splat.png` (PNG; splatter run when not cached under `<preset>/build/viewsheds/<digest>/`).
+Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, `--reload` polls `peaky_finders` source (on by default via `./peaky serve`), Docker publishes `PEAKY_SERVE_PORT` (default 8080). Static favicons/manifest in `serve_static/` (favicon.ico/svg/png, apple-touch-icon, site.webmanifest). Project map fetches on-demand RF viewsheds: `GET /api/p/<slug>/viewsheds/<site>` (JSON bounds + PNG URL) and `GET …/splat.png` (PNG; splatter run when not cached under `<preset>/build/viewsheds/<digest>/`). Site links: `GET /api/p/<slug>/links` (all linked pairs + GeoJSON lines; splatter `link_mutual_batch` + preset `links`) and `GET /api/p/<slug>/links/<a>/<b>` (single pair `{linked, manual}`).
 
 ## Web UI (`peaky serve`)
 
@@ -68,6 +68,7 @@ Progressive, on-demand shell over the **same** preset + splatter + build artifac
 | Viewsheds | All sites via build graph / `run_viewshed_batch` | One site via `ensure_site_viewshed_png` → `run_viewshed_coverage` |
 | Artifacts | `<preset>/build/…` | Same paths; serve reads cache if build already ran |
 | HTTP layer | — | Thin: `serve_cli.py` routes + MapLibre; logic in `serve_*.py` |
+| Site links | Build mesh `links` KML + footprint mutual coverage | On-demand splatter `link_mutual_*` via `serve_links.py` |
 
 New web features: call existing pipeline helpers; add `serve_<area>.py` wrappers — do not reimplement splatter, digests, or preset parsing in handlers. Agent rule: `.cursor/rules/serve-web-ui.mdc`; skill: `peaky-serve`.
 
