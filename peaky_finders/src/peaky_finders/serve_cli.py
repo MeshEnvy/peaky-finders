@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
-import threading
+import subprocess
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -37,6 +39,8 @@ from peaky_finders.serve_viewshed import (
 from peaky_finders.sites_job import GoalEntry, SiteEntry, load_preset_goals, load_preset_sites
 
 SERVE_STATIC_DIR = Path(__file__).resolve().parent / "serve_static"
+SERVE_RELOAD_CHILD_ENV = "PEAKY_SERVE_RELOAD_CHILD"
+SERVE_RELOAD_POLL_S = 0.5
 
 _SERVE_STATIC_FILES: dict[str, tuple[str, str]] = {
     "/favicon.ico": ("favicon.ico", "image/x-icon"),
@@ -110,16 +114,6 @@ def _parse_json_body(body: bytes) -> object:
 def _parse_form_body(body: bytes) -> dict[str, str]:
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
     return {k: (v[0] if v else "") for k, v in parsed.items()}
-
-
-def _static_file_mtimes(static_dir: Path) -> dict[str, float]:
-    if not static_dir.is_dir():
-        return {}
-    out: dict[str, float] = {}
-    for path in static_dir.rglob("*"):
-        if path.is_file():
-            out[str(path.resolve())] = path.stat().st_mtime
-    return out
 
 
 def _read_serve_static(url_path: str) -> tuple[bytes, str] | None:
@@ -866,29 +860,73 @@ def build_serve_parser() -> argparse.ArgumentParser:
     return p
 
 
-def resolve_serve_reload_watch_dirs() -> list[Path]:
-    """Directories polled for ``--reload`` (installed ``peaky_finders`` package tree)."""
-    return [Path(peaky_finders.__file__).resolve().parent]
+def resolve_serve_reload_roots() -> list[Path]:
+    """Source trees polled for ``--reload`` (package ``*.py`` + ``serve_static/``)."""
+    roots = [Path(peaky_finders.__file__).resolve().parent]
+    static_root = SERVE_STATIC_DIR.resolve()
+    if static_root.is_dir():
+        roots.append(static_root)
+    return roots
 
 
-def _py_file_mtimes(root: Path) -> dict[str, float]:
-    if not root.is_dir():
-        return {}
-    out: dict[str, float] = {}
-    for path in root.rglob("*.py"):
-        if path.is_file():
-            out[str(path.resolve())] = path.stat().st_mtime
+def _is_serve_reload_child() -> bool:
+    return os.environ.get(SERVE_RELOAD_CHILD_ENV, "").strip() == "1"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _reload_fingerprints(roots: list[Path]) -> dict[str, str]:
+    static_root = SERVE_STATIC_DIR.resolve()
+    out: dict[str, str] = {}
+    for root in roots:
+        if not root.is_dir():
+            continue
+        if root == static_root:
+            paths = (path for path in root.rglob("*") if path.is_file())
+        else:
+            paths = root.rglob("*.py")
+        for path in paths:
+            if path.is_file():
+                out[str(path.resolve())] = _sha256_file(path)
     return out
 
 
-def _reload_snapshots(watch_dirs: list[Path]) -> dict[Path, dict[str, float]]:
-    out = {root: _py_file_mtimes(root) for root in watch_dirs}
-    out[SERVE_STATIC_DIR] = _static_file_mtimes(SERVE_STATIC_DIR)
-    return out
+def _reload_changed(before: dict[str, str], roots: list[Path]) -> bool:
+    return _reload_fingerprints(roots) != before
 
 
-def _reload_detected(before: dict[Path, dict[str, float]], watch_dirs: list[Path]) -> bool:
-    return any(_py_file_mtimes(root) != before[root] for root in watch_dirs)
+def _serve_child_argv(host: str, port: int, *, verbose: bool) -> list[str]:
+    argv = [
+        sys.executable,
+        "-m",
+        "peaky_finders.peaky_cli",
+        "serve",
+        "--no-reload",
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+    if verbose:
+        argv.append("--verbose")
+    return argv
+
+
+def _terminate_serve_child(proc: subprocess.Popen[bytes], *, timeout_s: float = 10.0) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 def _run_serve_once(
@@ -905,55 +943,45 @@ def _run_serve_once(
     return server
 
 
-def _stop_serve_server(server: HTTPServer, thread: threading.Thread | None) -> None:
-    server.shutdown()
-    if thread is not None:
-        thread.join(timeout=10)
-    server.server_close()
-
-
-def _run_serve_with_reload(
+def _supervise_serve_reload(
     host: str,
     port: int,
     *,
     verbose: bool,
-    projects_dir: Path,
-    watch_dirs: list[Path],
-    poll_s: float = 0.5,
+    poll_s: float = SERVE_RELOAD_POLL_S,
 ) -> int:
-    existing = [d for d in watch_dirs if d.is_dir()]
-    if not existing:
+    roots = [root for root in resolve_serve_reload_roots() if root.is_dir()]
+    if not roots:
         print("serve: reload disabled — watch path missing", flush=True)
-        return _run_serve_blocking(host, port, verbose=verbose, projects_dir=projects_dir)
+        return _run_serve_blocking(host, port, verbose=verbose, projects_dir=resolve_serve_projects_dir())
 
     print("serve: reload enabled", flush=True)
-    for watch_dir in existing:
-        print(f"serve: watching {watch_dir}", flush=True)
+    for root in roots:
+        print(f"serve: watching {root}", flush=True)
 
-    server: HTTPServer | None = None
-    thread: threading.Thread | None = None
+    child_env = {**os.environ, SERVE_RELOAD_CHILD_ENV: "1"}
+    child_argv = _serve_child_argv(host, port, verbose=verbose)
+    proc: subprocess.Popen[bytes] | None = None
+
     try:
         while True:
-            snapshots = _reload_snapshots(existing)
-            server = _run_serve_once(host, port, verbose=verbose, projects_dir=projects_dir)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
+            proc = subprocess.Popen(child_argv, env=child_env)
+            fingerprints = _reload_fingerprints(roots)
             print(f"serve: running http://{host}:{port}/", flush=True)
 
-            while thread.is_alive():
+            while proc.poll() is None:
                 time.sleep(poll_s)
-                if _reload_detected(snapshots, existing):
+                if _reload_changed(fingerprints, roots):
                     print("serve: source changed, restarting", flush=True)
-                    _stop_serve_server(server, thread)
-                    server = None
-                    thread = None
+                    _terminate_serve_child(proc)
                     break
+            else:
+                return int(proc.returncode or 0)
     except KeyboardInterrupt:
         print("serve: stopped", flush=True)
-        if server is not None:
-            _stop_serve_server(server, thread)
+        if proc is not None:
+            _terminate_serve_child(proc)
         return 0
-    return 0
 
 
 def _run_serve_blocking(
@@ -987,14 +1015,8 @@ def run_serve(args: argparse.Namespace) -> int:
     print(f"serve: PEAKY_HOME={peaky_home}", flush=True)
     print(f"serve: projects={projects_dir}", flush=True)
 
-    if reload_enabled:
-        return _run_serve_with_reload(
-            host,
-            port,
-            verbose=verbose,
-            projects_dir=projects_dir,
-            watch_dirs=resolve_serve_reload_watch_dirs(),
-        )
+    if reload_enabled and not _is_serve_reload_child():
+        return _supervise_serve_reload(host, port, verbose=verbose)
 
     print(f"serve: starting http://{host}:{port}/", flush=True)
     return _run_serve_blocking(host, port, verbose=verbose, projects_dir=projects_dir)
