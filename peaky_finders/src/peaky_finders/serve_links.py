@@ -85,16 +85,19 @@ def _line_feature(
     manual: bool,
 ) -> dict[str, object]:
     a, b = canonical_site_pair(slug_a, slug_b)
+    lat_a, lon_a = float(site_a.lat), float(site_a.lon)
+    lat_b, lon_b = float(site_b.lat), float(site_b.lon)
+    distance_km = round(_haversine_m(lat_a, lon_a, lat_b, lon_b) / 1000.0, 1)
     return {
         "type": "Feature",
         "geometry": {
             "type": "LineString",
             "coordinates": [
-                [float(site_a.lon), float(site_a.lat)],
-                [float(site_b.lon), float(site_b.lat)],
+                [lon_a, lat_a],
+                [lon_b, lat_b],
             ],
         },
-        "properties": {"a": a, "b": b, "manual": manual},
+        "properties": {"a": a, "b": b, "manual": manual, "distance_km": distance_km},
     }
 
 
