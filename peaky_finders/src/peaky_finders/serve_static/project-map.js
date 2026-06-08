@@ -14,6 +14,7 @@
   const LINKS_SOURCE = "site-links";
   const LINKS_LAYER = "site-links-line";
   const VIEWSHED_RASTER_OPACITY = 0.75;
+  const DRAFT_VIEWSHED_SLUG = "_draft";
   const PITCH_TERRAIN_ON = 12;
   const PITCH_TERRAIN_OFF = 6;
   const SITE_FIT_BUFFER_KM = 30;
@@ -318,7 +319,7 @@
       .addTo(map);
     sitePanel.hidden = false;
     showPanelCreate();
-    prefetchViewshedAt(lat, lon);
+    void loadDraftViewshedAt(lat, lon);
     sitePanelCreateName.focus();
   }
 
@@ -328,6 +329,7 @@
     pendingCreateLat = null;
     pendingCreateLon = null;
     removeDraftMarker();
+    removeDraftViewshed();
     setCreateError("");
     if (selectedSlug) {
       sitePanel.hidden = false;
@@ -373,6 +375,7 @@
         return;
       }
       removeDraftMarker();
+      removeDraftViewshed();
       pendingCreateLat = null;
       pendingCreateLon = null;
       createMode = false;
@@ -549,25 +552,43 @@
     return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
   }
 
-  let prefetchViewshedActive = false;
+  let draftViewshedLoading = false;
 
   function updateCreateViewshedHint() {
     const el = document.getElementById("site-panel-create-viewshed-hint");
     if (!el) return;
-    el.textContent = prefetchViewshedActive ? "Computing viewshed…" : "";
+    el.textContent = draftViewshedLoading ? "Computing viewshed…" : "";
   }
 
-  function prefetchViewshedAt(lat, lon) {
-    prefetchViewshedActive = true;
+  function removeDraftViewshed() {
+    const sourceId = viewshedSourceId(DRAFT_VIEWSHED_SLUG);
+    const layerId = viewshedLayerId(DRAFT_VIEWSHED_SLUG);
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
+    viewshedLoading.delete(DRAFT_VIEWSHED_SLUG);
+  }
+
+  async function loadDraftViewshedAt(lat, lon) {
+    removeDraftViewshed();
+    draftViewshedLoading = true;
     updateCreateViewshedHint();
-    void fetch(viewshedPrefetchUrl(lat, lon))
-      .catch(() => {
-        /* prefetch optional */
-      })
-      .finally(() => {
-        prefetchViewshedActive = false;
-        updateCreateViewshedHint();
-      });
+    try {
+      const resp = await fetch(viewshedPrefetchUrl(lat, lon));
+      if (!resp.ok) return;
+      const vs = await resp.json();
+      if (vs && vs.url && vs.coordinates) {
+        addViewshedLayer({ ...vs, slug: DRAFT_VIEWSHED_SLUG });
+        const layerId = viewshedLayerId(DRAFT_VIEWSHED_SLUG);
+        if (map.getLayer(layerId)) {
+          map.setLayoutProperty(layerId, "visibility", "visible");
+        }
+      }
+    } catch (_) {
+      /* draft viewshed optional */
+    } finally {
+      draftViewshedLoading = false;
+      updateCreateViewshedHint();
+    }
   }
 
   function isViewshedVisible(slug) {
