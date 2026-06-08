@@ -46,19 +46,33 @@ The first `./peaky` run builds the Docker image automatically. After Dockerfile 
 
 ## Creating a new project
 
-### Option A — standalone directory (recommended)
+From the **repo root** (no `config.yaml` required):
+
+```bash
+./peaky new my-region
+# → projects/my-region/config.yaml + data/{aoi,include,exclude}/
+cd projects/my-region
+../../peaky build --verbose
+```
+
+Standalone directory (scaffold in cwd):
+
+```bash
+mkdir my-region && cd my-region
+../peaky new my-region --here
+../peaky build --verbose
+```
+
+Edit `config.yaml`; add GDB/KML files under `data/`. List GDB layers with `peaky inspect data/aoi/your.gdb`.
+
+Git ignores `projects/` artifacts but allows committing `projects/**/config.yaml` (see [`.gitignore`](.gitignore)).
+
+### Manual copy (alternative)
 
 ```bash
 mkdir -p my-region/data/{aoi,include,exclude}
 cp peaky_finders/tests/fixtures/peaky_home/projects/sample/config.yaml my-region/config.yaml
-# Edit config.yaml; add GDB/KML files under my-region/data/
-cd my-region
-../peaky build --verbose
 ```
-
-### Option B — under repo `projects/`
-
-Use the same tree at `projects/my-region/`. Git ignores `projects/` artifacts but allows committing `projects/**/config.yaml` (see [`.gitignore`](.gitignore)).
 
 ### Critical rule
 

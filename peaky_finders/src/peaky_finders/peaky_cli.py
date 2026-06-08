@@ -11,6 +11,7 @@ from peaky_finders.build_cli import build_build_parser, run_build
 from peaky_finders.cli import build_granular_viewshed_argument_parser, run_splat
 from peaky_finders.inspect_cli import build_inspect_parser, run_inspect
 from peaky_finders.mesh_commands import run_mesh_entry
+from peaky_finders.new_cli import build_new_parser, run_new
 from peaky_finders.stamp_cli import build_stamp_parser, run_stamp
 
 
@@ -19,11 +20,18 @@ def main() -> None:
         prog="peaky",
         description=(
             "Peaky Finders: run from a project directory containing config.yaml. "
-            "``peaky build`` runs the preset DAG incrementally "
+            "``peaky new`` scaffolds a project; ``peaky build`` runs the preset DAG incrementally "
             "(bundle, viewshed, mesh, KMZ); granular peaky bundle/viewshed/mesh/stamp/kmz for recipes."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_new = sub.add_parser(
+        "new",
+        parents=[build_new_parser()],
+        help="Scaffold a new project (config.yaml + data/ layout)",
+    )
+    p_new.set_defaults(_handler=run_new)
 
     build_p = build_build_parser()
     pb = sub.add_parser("build", parents=[build_p], help="Run incremental preset build graph")
