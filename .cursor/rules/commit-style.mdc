@@ -13,6 +13,7 @@ Commit **only changes from the current conversation** — not the entire working
 2. Stage those paths explicitly (`git add <path>…`); never `git add .` or `git add -A` unless the user asks to commit everything.
 3. Before committing, run `git status` / `git diff` and **exclude** unrelated dirty files (pre-existing edits, other tasks, accidental changes).
 4. If it is unclear which files belong to this conversation, **ask** before staging.
+5. **Split when it helps** — if conversation changes span distinct logical units (e.g. feature + docs + agent rule), make **multiple commits** with one concern each; stage and commit sequentially, not one catch-all commit.
 
 Use **Conventional Commits** for every commit. Keep the **subject line under 50 characters** (including type, optional scope, and description).
 
@@ -29,6 +30,7 @@ Use **Conventional Commits** for every commit. Keep the **subject line under 50 
 ## Do
 
 - One logical change per commit; subject states **what** and **why** in few words.
+- Prefer **several focused commits** over one mixed commit when the conversation touched unrelated areas.
 - Prefer narrow scope over long descriptions.
 
 ```text
