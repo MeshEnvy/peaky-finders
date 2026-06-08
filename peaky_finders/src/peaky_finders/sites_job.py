@@ -6,7 +6,9 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Mapping, Sequence
+import threading
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -229,8 +231,44 @@ def dump_preset_yaml_document(y: YAML, data: Any, path: Path) -> None:
     path = Path(path).expanduser()
     require_preset_yaml_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
+    tmp = path.with_name(path.name + ".partial")
+    with tmp.open("w", encoding="utf-8") as fh:
         y.dump(data, fh)
+    tmp.replace(path)
+
+
+_preset_yaml_locks: dict[str, threading.Lock] = {}
+_preset_yaml_locks_mu = threading.Lock()
+
+
+def _preset_yaml_lock(path: Path) -> threading.Lock:
+    key = str(Path(path).expanduser().resolve())
+    with _preset_yaml_locks_mu:
+        return _preset_yaml_locks.setdefault(key, threading.Lock())
+
+
+@contextmanager
+def preset_yaml_transaction(path: Path) -> Iterator[tuple[YAML, Any]]:
+    """Hold the per-preset in-process lock while reading the round-trip YAML tree."""
+    path = Path(path).expanduser().resolve()
+    with _preset_yaml_lock(path):
+        yaml_rt, root = read_preset_yaml_tree(path)
+        yield yaml_rt, root
+
+
+def update_preset_yaml_tree(
+    path: Path,
+    mutator: Callable[[YAML, Any], Any],
+    *,
+    validate: bool = True,
+) -> Any:
+    """Read, mutate, optionally validate, and atomically write preset YAML under lock."""
+    with preset_yaml_transaction(path) as (yaml_rt, root):
+        result = mutator(yaml_rt, root)
+        if validate:
+            parse_preset_dict(root)
+        dump_preset_yaml_document(yaml_rt, root, path)
+        return result
 
 
 def read_preset_document(path: Path) -> dict[str, Any]:
@@ -245,8 +283,10 @@ def read_preset_document(path: Path) -> dict[str, Any]:
 def write_preset_document(path: Path, payload: Mapping[str, Any]) -> None:
     """Overwrite preset with YAML (fresh round-trip serialization; callers that need preserved comments avoid this)."""
     require_preset_yaml_path(path)
-    y = _preset_yaml_typ_rt()
-    dump_preset_yaml_document(y, dict(payload), path)
+    path = Path(path).expanduser().resolve()
+    with _preset_yaml_lock(path):
+        y = _preset_yaml_typ_rt()
+        dump_preset_yaml_document(y, dict(payload), path)
 
 
 class CoverageProvider(StrEnum):
