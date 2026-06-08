@@ -235,3 +235,70 @@ def load_project_site_links(
         "links": records,
         "geojson": {"type": "FeatureCollection", "features": features},
     }
+
+
+def load_coords_site_links(
+    project_dir: Path,
+    lat: float,
+    lon: float,
+    sites: Mapping[str, SiteEntry],
+    *,
+    verbose: bool = False,
+) -> list[dict[str, object]]:
+    """Evaluate RF links from draft coordinates to each existing site within hop range."""
+    if not (-90.0 <= lat <= 90.0):
+        raise ServeLinksError(f"lat out of bounds: {lat}")
+    if not (-180.0 <= lon <= 180.0):
+        raise ServeLinksError(f"lon out of bounds: {lon}")
+
+    preset = _load_links_preset(project_dir)
+    if preset.land is None:
+        raise ServeLinksError("preset land.* required for RF link checks")
+
+    rf_pairs: list[tuple[str, float, float]] = []
+    for slug, site in sorted(sites.items()):
+        site_lat, site_lon = float(site.lat), float(site.lon)
+        if not _pair_within_hop_range(
+            preset,
+            lat_a=lat,
+            lon_a=lon,
+            lat_b=site_lat,
+            lon_b=site_lon,
+        ):
+            continue
+        rf_pairs.append((slug, site_lat, site_lon))
+
+    if not rf_pairs:
+        return []
+
+    rf_json = rf_json_for_preset(preset)
+    max_hop_m = max_hop_range_m(preset)
+    coord_pairs = [(lat, lon, site_lat, site_lon) for _, site_lat, site_lon in rf_pairs]
+    points = [(lat, lon)]
+    points.extend((site_lat, site_lon) for _, site_lat, site_lon in rf_pairs)
+
+    with _links_eval_lock:
+        session = splatter_session(verbose=verbose)
+        if verbose:
+            print(
+                f"serve links prefetch: {len(rf_pairs)} RF pair(s) at ({lat:.6f}, {lon:.6f})",
+                flush=True,
+            )
+        ensure_dem_for_points(
+            session,
+            points,
+            buffer_m=max_hop_m * 0.05 + 5000.0,
+        )
+        viable = mutual_hop_batch(session, coord_pairs, rf_json=rf_json)
+
+    if len(viable) != len(rf_pairs):
+        raise ServeLinksError(
+            f"RF batch length mismatch: {len(viable)} results for {len(rf_pairs)} pair(s)"
+        )
+
+    records: list[dict[str, object]] = []
+    for (slug, _, _), ok in zip(rf_pairs, viable):
+        if ok:
+            records.append({"slug": slug, "linked": True, "manual": False})
+    records.sort(key=lambda row: str(row["slug"]))
+    return records

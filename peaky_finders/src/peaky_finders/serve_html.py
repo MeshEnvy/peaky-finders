@@ -188,6 +188,18 @@ def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -
           <span class="site-panel__label small text-muted text-uppercase">Coordinates</span>
           <p class="site-panel__value small mb-0" id="site-panel-create-coords"></p>
         </div>
+        <div class="site-panel__section mb-2" id="site-panel-create-plss-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">PLSS</span>
+          <p class="site-panel__value small mb-0" id="site-panel-create-plss"></p>
+        </div>
+        <div class="site-panel__section mb-2" id="site-panel-create-mlrs-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">MLRS</span>
+          <p class="site-panel__value small mb-0" id="site-panel-create-mlrs"></p>
+        </div>
+        <div class="site-panel__section mb-2" id="site-panel-create-links-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">Linked sites</span>
+          <ul class="site-panel__links small mb-0 ps-3" id="site-panel-create-links"></ul>
+        </div>
         <p class="site-panel__viewshed-hint small text-muted mb-2" id="site-panel-create-viewshed-hint"></p>
         <div id="site-panel-create-error" class="alert alert-danger py-2 small mb-2" role="alert" hidden></div>
         <div class="site-panel__create-actions d-flex gap-2 mt-3">

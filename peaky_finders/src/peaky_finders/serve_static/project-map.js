@@ -313,6 +313,7 @@
     sitePanelCreateName.value = "";
     sitePanelCreateCoords.textContent = `${formatCoord(lat)}, ${formatCoord(lon)}`;
     syncCreateSlugPreview();
+    resetCreatePrefetchUI();
     removeDraftMarker();
     draftMarker = new maplibregl.Marker({ color: "#fbbf24" })
       .setLngLat([lon, lat])
@@ -320,7 +321,37 @@
     sitePanel.hidden = false;
     showPanelCreate();
     void loadDraftViewshedAt(lat, lon);
+    void loadPlacementPrefetchAt(lat, lon);
     sitePanelCreateName.focus();
+  }
+
+  function resetCreatePrefetchUI() {
+    setSectionVisible("site-panel-create-plss-section", false);
+    setSectionVisible("site-panel-create-mlrs-section", false);
+    setSectionVisible("site-panel-create-links-section", false);
+    document.getElementById("site-panel-create-plss").textContent = "";
+    document.getElementById("site-panel-create-mlrs").textContent = "";
+    const linksEl = document.getElementById("site-panel-create-links");
+    if (linksEl) linksEl.innerHTML = "";
+  }
+
+  function renderCreatePrefetch(payload) {
+    const plss = payload.plss || "";
+    setSectionVisible("site-panel-create-plss-section", !!plss);
+    document.getElementById("site-panel-create-plss").textContent = plss || "—";
+    const mlrs = payload.mlrs || "";
+    setSectionVisible("site-panel-create-mlrs-section", !!mlrs);
+    document.getElementById("site-panel-create-mlrs").textContent = mlrs || "—";
+    const links = Array.isArray(payload.links) ? payload.links : [];
+    const peers = links.filter((row) => row.linked).map((row) => row.slug).sort();
+    setSectionVisible("site-panel-create-links-section", peers.length > 0);
+    const linksEl = document.getElementById("site-panel-create-links");
+    linksEl.innerHTML = "";
+    for (const peer of peers) {
+      const li = document.createElement("li");
+      li.textContent = peer;
+      linksEl.appendChild(li);
+    }
   }
 
   function cancelCreate() {
@@ -330,6 +361,7 @@
     pendingCreateLon = null;
     removeDraftMarker();
     removeDraftViewshed();
+    resetCreatePrefetchUI();
     setCreateError("");
     if (selectedSlug) {
       sitePanel.hidden = false;
@@ -552,7 +584,16 @@
     return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
   }
 
+  function sitesPrefetchUrl(lat, lon) {
+    const params = new URLSearchParams({
+      lat: String(lat),
+      lon: String(lon),
+    });
+    return `/api/p/${projectSlug}/sites/prefetch?${params}`;
+  }
+
   let draftViewshedLoading = false;
+  let placementPrefetchGen = 0;
 
   function updateCreateViewshedHint() {
     const el = document.getElementById("site-panel-create-viewshed-hint");
@@ -566,6 +607,23 @@
     if (map.getLayer(layerId)) map.removeLayer(layerId);
     if (map.getSource(sourceId)) map.removeSource(sourceId);
     viewshedLoading.delete(DRAFT_VIEWSHED_SLUG);
+  }
+
+  async function loadPlacementPrefetchAt(lat, lon) {
+    const gen = ++placementPrefetchGen;
+    resetCreatePrefetchUI();
+    try {
+      const resp = await fetch(sitesPrefetchUrl(lat, lon));
+      if (gen !== placementPrefetchGen) return;
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      if (gen !== placementPrefetchGen) return;
+      if (payload && (payload.plss || payload.mlrs || payload.links)) {
+        renderCreatePrefetch(payload);
+      }
+    } catch (_) {
+      /* placement prefetch optional */
+    }
   }
 
   async function loadDraftViewshedAt(lat, lon) {
