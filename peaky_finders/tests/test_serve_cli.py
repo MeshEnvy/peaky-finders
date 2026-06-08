@@ -18,9 +18,12 @@ from fixture_paths import SAMPLE_PROJECT_CONFIG
 from peaky_finders.new_cli import scaffold_project
 from peaky_finders.plss_mlrs_fetch import loc_stamp, write_plss_mlrs_loc_cache
 from peaky_finders.serve_cli import (
-    _reload_detected,
-    _reload_snapshots,
+    SERVE_RELOAD_CHILD_ENV,
+    _is_serve_reload_child,
+    _reload_changed,
+    _reload_fingerprints,
     _serialize_project_sites,
+    _serve_child_argv,
     build_serve_parser,
     make_serve_handler,
     resolve_serve_projects_dir,
@@ -59,36 +62,67 @@ def test_reload_detects_py_change(tmp_path: Path) -> None:
     src.mkdir()
     module = src / "app.py"
     module.write_text("x = 1\n", encoding="utf-8")
-    before = _reload_snapshots([src])
-    assert _reload_detected(before, [src]) is False
+    before = _reload_fingerprints([src])
+    assert _reload_changed(before, [src]) is False
     module.write_text("x = 2\n", encoding="utf-8")
+    assert _reload_changed(before, [src]) is True
+
+
+def test_reload_ignores_mtime_only_change(tmp_path: Path) -> None:
+    src = tmp_path / "pkg"
+    src.mkdir()
+    module = src / "app.py"
+    module.write_text("x = 1\n", encoding="utf-8")
+    before = _reload_fingerprints([src])
     future = time.time() + 2.0
     os.utime(module, (future, future))
-    assert _reload_detected(before, [src]) is True
+    assert _reload_changed(before, [src]) is False
+
+
+def test_serve_child_argv_uses_no_reload() -> None:
+    argv = _serve_child_argv("127.0.0.1", 9090, verbose=True)
+    assert "--no-reload" in argv
+    assert "--reload" not in argv
+    assert argv[argv.index("--host") + 1] == "127.0.0.1"
+    assert argv[argv.index("--port") + 1] == "9090"
+    assert "--verbose" in argv
+
+
+def test_is_serve_reload_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(SERVE_RELOAD_CHILD_ENV, raising=False)
+    assert _is_serve_reload_child() is False
+    monkeypatch.setenv(SERVE_RELOAD_CHILD_ENV, "1")
+    assert _is_serve_reload_child() is True
 
 
 def test_run_serve_reload_uses_supervisor(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
-    def _fake_reload(*_args: object, **_kwargs: object) -> int:
-        calls.append("reload")
+    def _fake_supervisor(*_args: object, **_kwargs: object) -> int:
+        calls.append("supervisor")
         return 0
 
     def _fake_blocking(*_args: object, **_kwargs: object) -> int:
         calls.append("blocking")
         return 0
 
-    monkeypatch.setattr("peaky_finders.serve_cli._run_serve_with_reload", _fake_reload)
+    monkeypatch.setattr("peaky_finders.serve_cli._supervise_serve_reload", _fake_supervisor)
     monkeypatch.setattr("peaky_finders.serve_cli._run_serve_blocking", _fake_blocking)
+    monkeypatch.delenv(SERVE_RELOAD_CHILD_ENV, raising=False)
     monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-reload-test-projects")
 
     args = build_serve_parser().parse_args(["--reload"])
     assert run_serve(args) == 0
-    assert calls == ["reload"]
+    assert calls == ["supervisor"]
 
     args = build_serve_parser().parse_args(["--reload", "--no-reload"])
     assert run_serve(args) == 0
-    assert calls == ["reload", "blocking"]
+    assert calls == ["supervisor", "blocking"]
+
+    monkeypatch.setenv(SERVE_RELOAD_CHILD_ENV, "1")
+    args = build_serve_parser().parse_args(["--reload"])
+    assert run_serve(args) == 0
+    assert calls == ["supervisor", "blocking", "blocking"]
 
 
 def test_resolve_serve_projects_dir_defaults_to_peaky_home_projects(
