@@ -948,7 +948,11 @@ def _read_and_clip_gdb_layer_to_aoi(
         gt = _geom_type_for_layer(ds, layer)
         if kind == "exclude":
             if gt is None:
-                raise ValueError(f"Exclude layer {layer!r} not found in {resolved}")
+                available = [lyr for lyr, _ in _list_layers_pair_rows(ds)]
+                raise ValueError(
+                    f"Exclude layer {layer!r} not found in {resolved}; "
+                    f"available layers: {available}"
+                )
             if not _ogr_layer_metadata_polygon_eligible(gt, resolved):
                 raise ValueError(
                     f"Exclude layer {preset_path}::{layer} has geometry {gt!r}; "
