@@ -1,26 +1,32 @@
 ---
-description: Greenfield — legacy support is explicitly out of scope
+description: Greenfield — break freely to simplify; no legacy support unless explicitly requested
 alwaysApply: true
 ---
 
-# Greenfield: legacy support is out of scope
+# Greenfield: break to simplify
 
-This repo is **greenfield**. **Do not implement legacy support** — no backward compatibility, migrations for old data, dual code paths, deprecations with graceful periods, or “still works with v1” behavior unless the user **explicitly** requests it for a specific case.
+This repo is **greenfield**. **Optimize for the cleanest present design** — not continuity with past behavior, local caches, or hypothetical old callers.
 
-Treat continuity with past behavior as **non-requirements**: optimizing for a clean present design beats preserving old callers, caches, or formats.
+## Default stance
 
-## Expectations
+- **Breaking changes are welcome** when they remove complexity, dead paths, or awkward APIs.
+- **Delete** old code, flags, and formats — do not wrap, alias, or deprecate them.
+- **One way** to do each thing; no dual code paths for old vs new shapes.
+- **Invalidate caches** (`projects/<slug>/build/`, Skadi mirror, stamp files) when layout or digests change — users re-run `peaky build --force`.
 
-- Prefer **clean breaks** over compatibility shims (rename/remove APIs freely when it improves the design).
-- **Caches** (e.g. per-project ``projects/<slug>/build/``, downloaded tiles): safe to invalidate, relocate, or delete formats when behavior changes — document breaking build layout in commits or release notes only if the user cares.
-- **CLI / config / file formats**: OK to change in breaking ways; update callers and defaults rather than supporting old shapes.
-- **Dependencies**: OK to bump majors and adopt new APIs without maintaining fallbacks for older versions.
+## Do this
 
-## Avoid
+- Rename/remove APIs, preset fields, CLI flags, and artifact paths when the new shape is clearer.
+- Update all callers, tests, `projects/nevada/config.yaml`, and **MEMORY.md** in the same change set.
+- Choose the bolder refactor when it eliminates branches, adapters, or "temporary" shims.
 
-- Proactively offering or implementing legacy fallbacks, adapters, or compatibility modes.
-- “Keep the old path working too” unless the user explicitly asks for that narrow exception.
-- Feature flags or version branching purely for old behavior.
-- Long explanations of what broke for hypothetical old users — this project does not owe continuity to past releases.
+## Avoid (unless user explicitly requests a narrow exception)
 
-When in doubt, choose the **simpler, bolder** change and mention breaking impact briefly only when useful for the user’s next steps — **do not** add compatibility layers preemptively.
+- Backward compatibility, migration scripts, version branching, feature flags for old behavior.
+- "Keep the old path working too" / gradual deprecation periods.
+- Supporting legacy preset formats (e.g. `.json`), old YAML keys, or removed CLI entry points.
+- Compat layers "for safety" — greenfield means **break and fix forward**.
+
+## When in doubt
+
+Pick the **simpler, bolder** change. Mention breaking impact briefly in the commit if useful; **do not** add compatibility layers preemptively.
