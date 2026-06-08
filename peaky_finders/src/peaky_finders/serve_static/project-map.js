@@ -13,6 +13,8 @@
   const SITES_SELECTED = "sites-selected";
   const LINKS_SOURCE = "site-links";
   const LINKS_LAYER = "site-links-line";
+  const DRAFT_LINKS_SOURCE = "draft-site-links";
+  const DRAFT_LINKS_LAYER = "draft-site-links-line";
   const VIEWSHED_RASTER_OPACITY = 0.75;
   const DRAFT_VIEWSHED_SLUG = "_draft";
   const PITCH_TERRAIN_ON = 12;
@@ -336,6 +338,49 @@
     document.getElementById("site-panel-create-mlrs").textContent = "";
     const linksEl = document.getElementById("site-panel-create-links");
     if (linksEl) linksEl.innerHTML = "";
+    removeDraftLinksLayer();
+  }
+
+  function removeDraftLinksLayer() {
+    if (map.getLayer(DRAFT_LINKS_LAYER)) map.removeLayer(DRAFT_LINKS_LAYER);
+    if (map.getSource(DRAFT_LINKS_SOURCE)) map.removeSource(DRAFT_LINKS_SOURCE);
+  }
+
+  function addDraftLinksLayer(geojson) {
+    if (!mapReady || !geojson || !geojson.features || !geojson.features.length) {
+      removeDraftLinksLayer();
+      return;
+    }
+    if (map.getSource(DRAFT_LINKS_SOURCE)) {
+      map.getSource(DRAFT_LINKS_SOURCE).setData(geojson);
+      raiseSiteLayers();
+      return;
+    }
+    map.addSource(DRAFT_LINKS_SOURCE, { type: "geojson", data: geojson });
+    map.addLayer(
+      {
+        id: DRAFT_LINKS_LAYER,
+        type: "line",
+        source: DRAFT_LINKS_SOURCE,
+        paint: {
+          "line-color": ["case", ["get", "manual"], "#0d9488", "#4a6cf7"],
+          "line-width": 2.5,
+          "line-opacity": 0.85,
+        },
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+          visibility: "visible",
+        },
+      },
+      SITES_CIRCLE,
+    );
+    raiseSiteLayers();
+  }
+
+  function formatLinkDistanceKm(distanceKm) {
+    if (distanceKm == null || Number.isNaN(Number(distanceKm))) return null;
+    return `${Number(distanceKm).toFixed(1)} km`;
   }
 
   function renderCreatePrefetch(payload) {
@@ -346,15 +391,21 @@
     setSectionVisible("site-panel-create-mlrs-section", !!mlrs);
     document.getElementById("site-panel-create-mlrs").textContent = mlrs || "—";
     const links = Array.isArray(payload.links) ? payload.links : [];
-    const peers = links.filter((row) => row.linked).map((row) => row.slug).sort();
-    setSectionVisible("site-panel-create-links-section", peers.length > 0);
+    const linked = links.filter((row) => row.linked);
+    setSectionVisible("site-panel-create-links-section", linked.length > 0);
     const linksEl = document.getElementById("site-panel-create-links");
     linksEl.innerHTML = "";
-    for (const peer of peers) {
+    for (const row of linked) {
+      const slug = row.slug;
+      const site = siteBySlug.get(slug);
+      const label = site ? site.name : slug;
+      const dist = formatLinkDistanceKm(row.distance_km);
       const li = document.createElement("li");
-      li.textContent = peer;
+      li.textContent = dist ? `${label} — ${dist}` : label;
       linksEl.appendChild(li);
     }
+    if (payload.links_geojson) addDraftLinksLayer(payload.links_geojson);
+    else removeDraftLinksLayer();
   }
 
   function cancelCreate() {
@@ -498,7 +549,7 @@
   }
 
   function raiseSiteLayers() {
-    for (const id of [LINKS_LAYER, SITES_CIRCLE, SITES_LABELS, SITES_SELECTED]) {
+    for (const id of [DRAFT_LINKS_LAYER, LINKS_LAYER, SITES_CIRCLE, SITES_LABELS, SITES_SELECTED]) {
       if (map.getLayer(id)) {
         try {
           map.moveLayer(id);
@@ -622,7 +673,7 @@
       if (!resp.ok) return;
       const payload = await resp.json();
       if (gen !== placementPrefetchGen) return;
-      if (payload && (payload.plss || payload.mlrs || payload.links)) {
+      if (payload && (payload.plss || payload.mlrs || payload.links || payload.links_geojson)) {
         renderCreatePrefetch(payload);
       }
     } catch (_) {

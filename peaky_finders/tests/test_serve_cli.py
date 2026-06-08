@@ -464,6 +464,8 @@ def test_api_sites_prefetch(tmp_path: Path) -> None:
         assert payload["plss"] == "NV; Sec. 1"
         assert payload["mlrs"] == "NV123"
         assert isinstance(payload["links"], list)
+        assert payload["links_geojson"]["type"] == "FeatureCollection"
+        assert isinstance(payload["links_geojson"]["features"], list)
     finally:
         server.shutdown()
         server.server_close()

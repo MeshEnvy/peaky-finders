@@ -297,8 +297,16 @@ def load_coords_site_links(
         )
 
     records: list[dict[str, object]] = []
-    for (slug, _, _), ok in zip(rf_pairs, viable):
+    for (slug, site_lat, site_lon), ok in zip(rf_pairs, viable):
         if ok:
-            records.append({"slug": slug, "linked": True, "manual": False})
-    records.sort(key=lambda row: str(row["slug"]))
+            dist_km = _haversine_m(lat, lon, site_lat, site_lon) / 1000.0
+            records.append(
+                {
+                    "slug": slug,
+                    "linked": True,
+                    "manual": False,
+                    "distance_km": round(dist_km, 1),
+                }
+            )
+    records.sort(key=lambda row: (float(row["distance_km"]), str(row["slug"])))
     return records
