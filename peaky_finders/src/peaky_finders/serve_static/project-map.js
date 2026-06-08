@@ -15,6 +15,7 @@
   const VIEWSHED_RASTER_OPACITY = 0.75;
   const PITCH_TERRAIN_ON = 12;
   const PITCH_TERRAIN_OFF = 6;
+  const SITE_FIT_BUFFER_KM = 30;
 
   const BASEMAPS = {
     street: {
@@ -65,6 +66,13 @@
     };
   }
 
+  function kmToDegreeDeltas(latDeg, km) {
+    const m = km * 1000;
+    const latDelta = m / 111_320;
+    const lonDelta = m / (111_320 * Math.cos((latDeg * Math.PI) / 180));
+    return { latDelta, lonDelta };
+  }
+
   function sitesGeoJson() {
     return {
       type: "FeatureCollection",
@@ -85,7 +93,20 @@
     pitch: 0,
     attributionControl: { compact: true },
   });
-  map.addControl(new maplibregl.NavigationControl(), "top-right");
+  const navControl = new maplibregl.NavigationControl({ visualizePitch: true });
+  map.addControl(navControl, "top-right");
+  const compassButton = navControl._container.querySelector(".maplibregl-ctrl-compass");
+  if (compassButton) {
+    compassButton.addEventListener(
+      "click",
+      (e) => {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        resetHomeView();
+      },
+      true,
+    );
+  }
 
   let mapReady = false;
   let terrainActive = false;
@@ -332,20 +353,25 @@
 
   function fitSites() {
     if (!sites.length) return;
-    if (sites.length === 1) {
-      map.setCenter([sites[0].lon, sites[0].lat]);
-      map.setZoom(10);
-      return;
-    }
     const lons = sites.map((site) => site.lon);
     const lats = sites.map((site) => site.lat);
+    const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+    const { latDelta, lonDelta } = kmToDegreeDeltas(centerLat, SITE_FIT_BUFFER_KM);
     map.fitBounds(
       [
-        [Math.min(...lons), Math.min(...lats)],
-        [Math.max(...lons), Math.max(...lats)],
+        [Math.min(...lons) - lonDelta, Math.min(...lats) - latDelta],
+        [Math.max(...lons) + lonDelta, Math.max(...lats) + latDelta],
       ],
       { padding: 48, bearing: 0, pitch: 0, maxZoom: 15 },
     );
+  }
+
+  function resetHomeView() {
+    if (terrainActive) {
+      terrainActive = false;
+      hideTerrainOverlays();
+    }
+    fitSites();
   }
 
   function setBasemap(key) {

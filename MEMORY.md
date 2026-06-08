@@ -54,7 +54,7 @@ cd projects/nevada
 | `kmz` | Aggregate KMZ assembly |
 | `stamp` | Prerequisite stamp files for staleness edges |
 | `inspect` | GDB layer/attribute listing |
-| `serve` | Local web UI — Bootstrap 5 dark theme; project selector at `PEAKY_HOME`; MapLibre map with RF viewshed overlays (Street/Topo/Satellite, 3D terrain on tilt) |
+| `serve` | Local web UI — Bootstrap 5 dark theme; project selector at `PEAKY_HOME`; MapLibre map with RF viewshed overlays (Street/Topo/Satellite, 3D terrain on tilt). Compass resets to north-up 2D and fits all sites with 30 km padding (same fit on initial load). |
 
 Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, `--reload` polls `peaky_finders` + `serve_static/` (on by default via `./peaky serve`), Docker publishes `PEAKY_SERVE_PORT` (default 8080). UI in `serve_html.py`; assets at `/static/` (`app.css`, `project-map.js`) plus root favicons/manifest in `serve_static/`. Project map loads all viewsheds on open. APIs: `GET /api/p/<slug>/viewsheds/<site>` (JSON bounds + PNG URL) and `GET …/splat.png`; site links `GET /api/p/<slug>/links` and `GET /api/p/<slug>/links/<a>/<b>`.
 
