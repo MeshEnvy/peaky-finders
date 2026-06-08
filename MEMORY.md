@@ -4,7 +4,7 @@ Living snapshot of **current** architecture and repo state. **Agents: read this 
 
 ## Agent contract
 
-1. **Read first** — Load MEMORY.md at the start of any task that touches presets, build, CLI, bundle, mesh, viewsheds, or dev workflow. Treat it as source of truth over stale chat or assumed v3/v2 behavior.
+1. **Read first** — Load MEMORY.md at the start of any task that touches presets, build, CLI, serve/web UI, bundle, mesh, viewsheds, or dev workflow. Treat it as source of truth over stale chat or assumed v3/v2 behavior.
 2. **Update always** — If the task changes architecture, APIs, paths, flags, or workflows, update MEMORY.md before marking done. Remove obsolete rows; do not append without pruning.
 3. **Greenfield** — Prefer breaking simplifications over compatibility. Delete old paths; invalidate caches; rename freely. No shims, migrations, dual code paths, or deprecation periods unless the user explicitly requests one narrow exception.
 
@@ -26,7 +26,7 @@ When two designs compete, pick the **simpler present** and break callers — doc
 |------|-------|
 | Repo | Greenfield — aggressive breaking changes OK |
 | Domain | LoRa mesh site planning — splatter RF coverage, terrain mesh, eligible land |
-| Interface | **CLI** from project dir (`config.yaml` in cwd); **`peaky serve`** web stub (branch `web2`) |
+| Interface | **CLI** from project dir (`config.yaml` in cwd); **`peaky serve`** progressive web UI (on-demand over shared pipeline) |
 | RF engine | `splatter` submodule (PyO3 Fresnel/FSPL) |
 | Build | Incremental preset DAG (`peaky build`) |
 | Dev/test | Docker — `./peaky`, `./peaky-test` |
@@ -54,9 +54,22 @@ cd projects/nevada
 | `kmz` | Aggregate KMZ assembly |
 | `stamp` | Prerequisite stamp files for staleness edges |
 | `inspect` | GDB layer/attribute listing |
-| `serve` | Local web UI — project selector at `PEAKY_HOME` (default `~/.peaky`); project page MapLibre map of preset sites (Street/Topo/Satellite basemaps, 3D terrain on tilt) |
+| `serve` | Local web UI — project selector at `PEAKY_HOME` (default `~/.peaky`); project page MapLibre map with on-demand RF viewshed `splat.png` overlays (Street/Topo/Satellite basemaps, 3D terrain on tilt) |
 
-Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, `--reload` polls `peaky_finders` source (on by default via `./peaky serve`), Docker publishes `PEAKY_SERVE_PORT` (default 8080).
+Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, `--reload` polls `peaky_finders` source (on by default via `./peaky serve`), Docker publishes `PEAKY_SERVE_PORT` (default 8080). Project map fetches on-demand RF viewsheds: `GET /api/p/<slug>/viewsheds/<site>` (JSON bounds + PNG URL) and `GET …/splat.png` (PNG; splatter run when not cached under `<preset>/build/viewsheds/<digest>/`).
+
+## Web UI (`peaky serve`)
+
+Progressive, on-demand shell over the **same** preset + splatter + build artifacts as the CLI — not a forked product.
+
+| Aspect | CLI / build | Web |
+|--------|-------------|-----|
+| Scheduling | Batch (`peaky build`, DAG waves, `-j`) | Per HTTP request (user toggles map layer, opens project) |
+| Viewsheds | All sites via build graph / `run_viewshed_batch` | One site via `ensure_site_viewshed_png` → `run_viewshed_coverage` |
+| Artifacts | `<preset>/build/…` | Same paths; serve reads cache if build already ran |
+| HTTP layer | — | Thin: `serve_cli.py` routes + MapLibre; logic in `serve_*.py` |
+
+New web features: call existing pipeline helpers; add `serve_<area>.py` wrappers — do not reimplement splatter, digests, or preset parsing in handlers. Agent rule: `.cursor/rules/serve-web-ui.mdc`; skill: `peaky-serve`.
 
 ## Build DAG
 
@@ -143,10 +156,6 @@ All outbound fetches throttled via `http_pool.py`:
 - `./peaky` contract: mount `$PWD` as `/project`, run CLI from project cwd
 - Published **`peaky-finders`** image: mount `~/.peaky` → `/.peaky`, `PEAKY_HOME=/.peaky`; projects under `projects/`, cache under `splat_cache/`
 
-## Active threads
-
-- **`web2` branch** — `peaky serve` project selector, site map on `/p/<slug>/`, scaffold via web form
-
 ## Invariants
 
 - **MEMORY first**: read before work, update before done (`.cursor/rules/memory-maintenance.mdc`)
@@ -172,6 +181,7 @@ All outbound fetches throttled via `http_pool.py`:
 | `parallel-design` / `parallel-execution` | Multi-core patterns |
 | `verbose-logging` | `--verbose` lifecycle |
 | `commit-style` / `communication-style` | Commits and prose |
+| `serve-web-ui` | Progressive web UI; reuse CLI/pipeline logic |
 
 ### Skills (`.cursor/skills/`)
 
@@ -182,3 +192,4 @@ All outbound fetches throttled via `http_pool.py`:
 | `peaky-bundle` | Clips, eligible land, Skadi DEM |
 | `peaky-build` | Build DAG, staleness, granular targets |
 | `peaky-dev` | `./peaky`, `./peaky-test`, Docker |
+| `peaky-serve` | `peaky serve` on-demand web over shared pipeline |

@@ -1,0 +1,41 @@
+---
+description: Web UI design — progressive, on-demand shell over shared CLI/pipeline logic
+globs: peaky_finders/src/peaky_finders/{serve_cli,serve_viewshed,serve_*.py}.py
+alwaysApply: false
+---
+
+# Web UI (`peaky serve`)
+
+The web interface is a **progressive, on-demand** front end over the same preset + build + splatter stack as the CLI. It is not a parallel product surface.
+
+## Intent
+
+| CLI / build | Web (`peaky serve`) |
+|-------------|----------------------|
+| Batch orchestration (`peaky build`, `-j`, DAG waves) | One unit of work per HTTP request (e.g. one site's viewshed overlay) |
+| Runs ahead of need; staleness skips fresh targets | Runs when the user opens a map layer or hits an API |
+| Primary workflow from project cwd | Project picker at `PEAKY_HOME`; map/API under `/p/<slug>/`, `/api/p/<slug>/…` |
+
+Same **core functions**, different **scheduling**: build fans out many sites; serve lazy-loads per request.
+
+## Do
+
+- **Reuse pipeline modules** — `load_preset`, `preset_to_request`, `viewshed_workspace_digest`, `run_viewshed_coverage`, `ensure_splat_raster_png`, build path helpers, freshness checks.
+- **Share artifact layout** — e.g. `<preset>/build/viewsheds/<digest>/`; serve reads cache when build already materialized the workspace.
+- **Keep HTTP thin** — routing, HTML/MapLibre, JSON in `serve_cli.py`; callable helpers in `serve_*.py` that CLI or build could call later.
+- **Add features progressively** — expose the next capability as an endpoint or UI action, wired to existing logic.
+
+## Avoid
+
+- Reimplementing splatter, preset parsing, workspace digests, or staleness rules inside serve handlers.
+- Batch-all-sites-on-page-load when only one overlay was requested (splatter viewsheds are cheap individually; still prefer on-demand).
+- Web-only tunables that belong in preset YAML — read `config.yaml` like the CLI does.
+- A second code path for the same output artifact unless the CLI path is genuinely wrong.
+
+## Example (viewsheds)
+
+Build: configure all site workspaces → `run_viewshed_batch` / per-site nodes in the DAG.
+
+Serve: `GET /api/p/<slug>/viewsheds/<site>` → `ensure_site_viewshed_png` → same workspace dir, `run_viewshed_coverage` when not cached.
+
+See `.cursor/skills/peaky-serve/SKILL.md` and MEMORY.md § Web UI.
