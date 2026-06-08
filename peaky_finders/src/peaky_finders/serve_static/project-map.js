@@ -17,7 +17,7 @@
   const DRAFT_LINKS_SOURCE = "draft-site-links";
   const DRAFT_LINKS_LAYER = "draft-site-links-line";
   const DRAFT_LINKS_LABELS_LAYER = "draft-site-links-label";
-  const VIEWSHED_RASTER_OPACITY = 0.75;
+  const VIEWSHED_OPACITY_DEFAULT = 0.75;
   const DRAFT_VIEWSHED_SLUG = "_draft";
   const PITCH_TERRAIN_ON = 12;
   const PITCH_TERRAIN_OFF = 6;
@@ -72,6 +72,7 @@
   }
 
   const savedMapState = loadMapState();
+  let viewshedOpacity = savedMapState?.viewshedOpacity ?? VIEWSHED_OPACITY_DEFAULT;
 
   function syncToolbarFromSaved(saved) {
     if (!saved) return;
@@ -79,6 +80,10 @@
     if (basemapEl && BASEMAPS[saved.basemap]) basemapEl.value = saved.basemap;
     const linksEl = document.getElementById("show-links");
     if (linksEl && typeof saved.showLinks === "boolean") linksEl.checked = saved.showLinks;
+    const opacityEl = document.getElementById("viewshed-opacity");
+    if (opacityEl && typeof saved.viewshedOpacity === "number") {
+      opacityEl.value = Math.round(saved.viewshedOpacity * 100);
+    }
   }
 
   syncToolbarFromSaved(savedMapState);
@@ -531,6 +536,7 @@
       pitch: map.getPitch(),
       basemap: document.getElementById("basemap").value,
       showLinks: document.getElementById("show-links").checked,
+      viewshedOpacity,
     };
   }
 
@@ -682,6 +688,22 @@
     return `viewshed-${slug}-raster`;
   }
 
+  function applyViewshedOpacityToAllLayers() {
+    if (!mapReady) return;
+    const slugs = [...sites.map((site) => site.slug), DRAFT_VIEWSHED_SLUG];
+    for (const slug of slugs) {
+      const layerId = viewshedLayerId(slug);
+      if (map.getLayer(layerId)) {
+        map.setPaintProperty(layerId, "raster-opacity", viewshedOpacity);
+      }
+    }
+  }
+
+  function setViewshedOpacity(opacity) {
+    viewshedOpacity = Math.max(0, Math.min(1, opacity));
+    applyViewshedOpacityToAllLayers();
+  }
+
   function viewshedMetaUrl(siteSlug) {
     return `/api/p/${projectSlug}/viewsheds/${siteSlug}`;
   }
@@ -793,7 +815,7 @@
         type: "raster",
         source: sourceId,
         paint: {
-          "raster-opacity": VIEWSHED_RASTER_OPACITY,
+          "raster-opacity": viewshedOpacity,
           "raster-fade-duration": 0,
         },
       });
@@ -1073,6 +1095,10 @@
   });
   document.getElementById("show-links").addEventListener("change", (ev) => {
     setSiteLinksVisible(ev.target.checked);
+    scheduleSaveMapState();
+  });
+  document.getElementById("viewshed-opacity").addEventListener("input", (ev) => {
+    setViewshedOpacity(Number(ev.target.value) / 100);
     scheduleSaveMapState();
   });
   sitePanelClose.addEventListener("click", deselectSite);
