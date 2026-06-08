@@ -116,6 +116,34 @@ def test_landing_lists_projects(tmp_path: Path) -> None:
         assert "alpha" in body
         assert 'href="/p/beta/"' in body
         assert "Create empty template" in body
+        assert 'href="/favicon.svg"' in body
+        assert 'href="/site.webmanifest"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_serve_favicon_assets(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/favicon.ico")
+        resp = conn.getresponse()
+        body = resp.read()
+        assert resp.status == 200
+        assert resp.getheader("Content-Type") == "image/x-icon"
+        assert len(body) > 0
+
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/site.webmanifest")
+        resp = conn.getresponse()
+        manifest = resp.read().decode("utf-8")
+        assert resp.status == 200
+        assert resp.getheader("Content-Type") == "application/manifest+json"
+        assert '"short_name": "Peaky"' in manifest
     finally:
         server.shutdown()
         server.server_close()

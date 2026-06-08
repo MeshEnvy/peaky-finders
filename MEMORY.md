@@ -56,7 +56,7 @@ cd projects/nevada
 | `inspect` | GDB layer/attribute listing |
 | `serve` | Local web UI — project selector at `PEAKY_HOME` (default `~/.peaky`); project page MapLibre map with on-demand RF viewshed `splat.png` overlays (Street/Topo/Satellite basemaps, 3D terrain on tilt) |
 
-Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, `--reload` polls `peaky_finders` source (on by default via `./peaky serve`), Docker publishes `PEAKY_SERVE_PORT` (default 8080). Project map fetches on-demand RF viewsheds: `GET /api/p/<slug>/viewsheds/<site>` (JSON bounds + PNG URL) and `GET …/splat.png` (PNG; splatter run when not cached under `<preset>/build/viewsheds/<digest>/`).
+Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, `--reload` polls `peaky_finders` source (on by default via `./peaky serve`), Docker publishes `PEAKY_SERVE_PORT` (default 8080). Static favicons/manifest in `serve_static/` (favicon.ico/svg/png, apple-touch-icon, site.webmanifest). Project map fetches on-demand RF viewsheds: `GET /api/p/<slug>/viewsheds/<site>` (JSON bounds + PNG URL) and `GET …/splat.png` (PNG; splatter run when not cached under `<preset>/build/viewsheds/<digest>/`).
 
 ## Web UI (`peaky serve`)
 

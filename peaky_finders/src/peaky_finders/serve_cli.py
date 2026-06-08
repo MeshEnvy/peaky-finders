@@ -21,6 +21,26 @@ from peaky_finders.new_cli import discover_projects, scaffold_project, validate_
 from peaky_finders.serve_viewshed import ServeViewshedError, ensure_site_viewshed_overlay, ensure_site_viewshed_png
 from peaky_finders.sites_job import SiteEntry, load_preset_sites
 
+SERVE_STATIC_DIR = Path(__file__).resolve().parent / "serve_static"
+
+_SERVE_STATIC_FILES: dict[str, tuple[str, str]] = {
+    "/favicon.ico": ("favicon.ico", "image/x-icon"),
+    "/favicon.svg": ("favicon.svg", "image/svg+xml"),
+    "/favicon-96x96.png": ("favicon-96x96.png", "image/png"),
+    "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+    "/site.webmanifest": ("site.webmanifest", "application/manifest+json"),
+    "/web-app-manifest-192x192.png": ("web-app-manifest-192x192.png", "image/png"),
+    "/web-app-manifest-512x512.png": ("web-app-manifest-512x512.png", "image/png"),
+}
+
+_FAVICON_HEAD = """\
+  <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
+  <meta name="theme-color" content="#111820" />"""
+
 _PROJECT_PATH_RE = re.compile(r"^/p/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_SITES_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/?$")
 _API_PROJECT_VIEWSHED_META_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
@@ -74,6 +94,7 @@ def _html_page(title: str, body: str, *, wide: bool = False, extra_head: str = "
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{html.escape(title)}</title>
+  {_FAVICON_HEAD}
   {extra_head}
   <style>
     :root {{ font-family: system-ui, sans-serif; line-height: 1.5; color: #1a1a1a; background: #f6f7f9; }}
@@ -639,6 +660,17 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                     return
                 self._send_html(_project_html(slug, project_dir, sites))
                 return
+
+            static = _SERVE_STATIC_FILES.get(path)
+            if static is not None:
+                filename, content_type = static
+                file_path = SERVE_STATIC_DIR / filename
+                if file_path.is_file():
+                    try:
+                        self._send_bytes(file_path.read_bytes(), content_type)
+                    except OSError:
+                        self.send_error(503)
+                    return
 
             self.send_error(404)
 
