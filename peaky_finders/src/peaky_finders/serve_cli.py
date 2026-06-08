@@ -22,6 +22,7 @@ from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked
 from peaky_finders.serve_sites import append_planned_site_to_preset
 from peaky_finders.serve_viewshed import (
     ServeViewshedError,
+    ensure_coords_viewshed_overlay,
     ensure_coords_viewshed_png,
     ensure_site_viewshed_overlay,
     ensure_site_viewshed_png,
@@ -49,6 +50,9 @@ _PROJECT_PATH_RE = re.compile(r"^/p/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_SITES_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/?$")
 _API_PROJECT_VIEWSHED_PREFETCH_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/prefetch/?$"
+)
+_API_PROJECT_VIEWSHED_PREFETCH_PNG_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/prefetch/splat\.png$"
 )
 _API_PROJECT_VIEWSHED_META_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_VIEWSHED_PNG_RE = re.compile(
@@ -119,6 +123,16 @@ def _read_serve_static(url_path: str) -> tuple[bytes, str] | None:
 
 def _load_project_sites(project_dir: Path) -> dict[str, SiteEntry]:
     return load_preset_sites(project_dir / "config.yaml")
+
+
+def _parse_lat_lon_query(query: str) -> tuple[float, float]:
+    qs = parse_qs(query)
+    try:
+        lat = float(qs.get("lat", [""])[0])
+        lon = float(qs.get("lon", [""])[0])
+    except (IndexError, TypeError, ValueError) as e:
+        raise ValueError(f"lat and lon query params required: {e}") from e
+    return lat, lon
 
 
 def _serialize_project_sites(sites: dict[str, SiteEntry]) -> list[dict[str, object]]:
@@ -243,6 +257,31 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                 self._send_bytes(payload, "application/json")
                 return
 
+            viewshed_prefetch_png_match = _API_PROJECT_VIEWSHED_PREFETCH_PNG_RE.match(path)
+            if viewshed_prefetch_png_match:
+                slug = viewshed_prefetch_png_match.group(1)
+                project_dir = projects_dir / slug
+                if not (project_dir / "config.yaml").is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    lat, lon = _parse_lat_lon_query(parsed.query)
+                except ValueError as e:
+                    self.send_error(422)
+                    return
+                verbose = bool(getattr(self.server, "verbose", False))
+                try:
+                    png_path = ensure_coords_viewshed_png(project_dir, lat, lon, verbose=verbose)
+                    body = png_path.read_bytes()
+                except ServeViewshedError:
+                    self.send_error(503)
+                    return
+                except OSError:
+                    self.send_error(503)
+                    return
+                self._send_bytes(body, "image/png")
+                return
+
             viewshed_prefetch_match = _API_PROJECT_VIEWSHED_PREFETCH_RE.match(path)
             if viewshed_prefetch_match:
                 slug = viewshed_prefetch_match.group(1)
@@ -250,26 +289,28 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                 if not (project_dir / "config.yaml").is_file():
                     self.send_error(404)
                     return
-                qs = parse_qs(parsed.query)
                 try:
-                    lat = float(qs.get("lat", [""])[0])
-                    lon = float(qs.get("lon", [""])[0])
-                except (IndexError, TypeError, ValueError) as e:
+                    lat, lon = _parse_lat_lon_query(parsed.query)
+                except ValueError as e:
                     payload = json.dumps(
-                        {"slug": slug, "error": f"lat and lon query params required: {e}"}
+                        {"slug": slug, "error": str(e)}
                     ).encode("utf-8")
                     self._send_bytes(payload, "application/json", status=422)
                     return
                 verbose = bool(getattr(self.server, "verbose", False))
                 try:
-                    ensure_coords_viewshed_png(project_dir, lat, lon, verbose=verbose)
+                    overlay = ensure_coords_viewshed_overlay(
+                        slug,
+                        project_dir,
+                        lat,
+                        lon,
+                        verbose=verbose,
+                    )
                 except ServeViewshedError as e:
                     payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
                     self._send_bytes(payload, "application/json", status=503)
                     return
-                payload = json.dumps({"slug": slug, "lat": lat, "lon": lon, "ok": True}).encode(
-                    "utf-8"
-                )
+                payload = json.dumps({"project": slug, **overlay}).encode("utf-8")
                 self._send_bytes(payload, "application/json")
                 return
 

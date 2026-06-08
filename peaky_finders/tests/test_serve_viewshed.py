@@ -297,11 +297,25 @@ def test_viewshed_prefetch_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
     calls: list[tuple[float, float]] = []
 
-    def _fake_prefetch(project_dir: Path, lat: float, lon: float, *, verbose: bool = False) -> Path:
+    def _fake_overlay(
+        project_slug: str,
+        project_dir: Path,
+        lat: float,
+        lon: float,
+        *,
+        verbose: bool = False,
+    ) -> dict[str, object]:
+        del project_dir, verbose
         calls.append((lat, lon))
-        return project_dir / "build" / "viewsheds" / "warm" / "splat.png"
+        return {
+            "slug": "_draft",
+            "url": f"/api/p/{project_slug}/viewsheds/prefetch/splat.png?lat={lat}&lon={lon}",
+            "coordinates": [[-119.5, 39.7], [-119.3, 39.7], [-119.3, 39.5], [-119.5, 39.5]],
+            "lat": lat,
+            "lon": lon,
+        }
 
-    monkeypatch.setattr("peaky_finders.serve_cli.ensure_coords_viewshed_png", _fake_prefetch)
+    monkeypatch.setattr("peaky_finders.serve_cli.ensure_coords_viewshed_overlay", _fake_overlay)
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
@@ -310,10 +324,42 @@ def test_viewshed_prefetch_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         resp = conn.getresponse()
         payload = json.loads(resp.read().decode("utf-8"))
         assert resp.status == 200
-        assert payload["ok"] is True
+        assert payload["project"] == "demo"
+        assert payload["slug"] == "_draft"
         assert payload["lat"] == 39.6
         assert payload["lon"] == -119.4
+        assert payload["url"] == "/api/p/demo/viewsheds/prefetch/splat.png?lat=39.6&lon=-119.4"
+        assert len(payload["coordinates"]) == 4
         assert calls == [(39.6, -119.4)]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_viewshed_prefetch_png_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+
+    png_bytes = b"\x89PNG\r\n\x1a\ndraft"
+
+    def _fake_png(project_dir: Path, lat: float, lon: float, *, verbose: bool = False) -> Path:
+        del project_dir, lat, lon, verbose
+        out = tmp_path / "draft.png"
+        out.write_bytes(png_bytes)
+        return out
+
+    monkeypatch.setattr("peaky_finders.serve_cli.ensure_coords_viewshed_png", _fake_png)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/api/p/demo/viewsheds/prefetch/splat.png?lat=39.6&lon=-119.4")
+        resp = conn.getresponse()
+        body = resp.read()
+        assert resp.status == 200
+        assert resp.getheader("Content-Type") == "image/png"
+        assert body == png_bytes
     finally:
         server.shutdown()
         server.server_close()
