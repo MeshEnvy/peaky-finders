@@ -36,11 +36,11 @@ DAG nodes in `build_graph.py` mirror these; keep granular commands consistent wi
 ## Data flow
 
 ```
-bundle.* GDB paths (preset) → clip layers → composites → eligible GPKG
+land.* GDB paths (preset) → clip layers → composites → eligible GPKG
   → resolve.json sidecars → viewshed/mesh inputs
 ```
 
-GDB paths resolve under `<preset-dir>/<bundle.inputs_root>` unless absolute.
+GDB paths resolve under `<preset-dir>/<land.inputs_root>` unless absolute.
 
 ## Skadi DEM
 

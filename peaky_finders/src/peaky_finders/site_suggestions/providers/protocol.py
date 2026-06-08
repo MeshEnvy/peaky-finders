@@ -10,7 +10,7 @@ from typing import Protocol
 from peaky_finders.site_suggestions.candidates import SiteCandidate
 from peaky_finders.site_suggestions.context import SiteSuggestionContext
 from peaky_finders.site_suggestions.depth_grid import CoverageDepthGrid
-from peaky_finders.sites_job import BundleSiteSuggestionsConfig, Preset
+from peaky_finders.sites_job import SuggestConfig, Preset
 
 
 class CandidateTrialMode(str, Enum):
@@ -46,11 +46,11 @@ class SiteSuggestionStrategyProvider(Protocol):
     @property
     def name(self) -> str: ...
 
-    def planner_hooks(self, cfg: BundleSiteSuggestionsConfig) -> StrategyPlannerHooks: ...
+    def planner_hooks(self, cfg: SuggestConfig) -> StrategyPlannerHooks: ...
 
-    def validate_config(self, cfg: BundleSiteSuggestionsConfig) -> None: ...
+    def validate_config(self, cfg: SuggestConfig) -> None: ...
 
-    def max_suggested_nodes(self, cfg: BundleSiteSuggestionsConfig) -> int | None:
+    def max_suggested_nodes(self, cfg: SuggestConfig) -> int | None:
         """Optional cap on backbone site count (installed + suggested); ``None`` = no cap."""
 
     def prepare_suggest_context(self, ctx: SiteSuggestionContext, *, suggest_root: Path) -> None: ...
@@ -59,7 +59,7 @@ class SiteSuggestionStrategyProvider(Protocol):
         self,
         *,
         verbose: bool,
-        cfg: BundleSiteSuggestionsConfig,
+        cfg: SuggestConfig,
         goal: int,
         grid: CoverageDepthGrid,
         seed_paths: list[Path],
@@ -67,11 +67,11 @@ class SiteSuggestionStrategyProvider(Protocol):
         jobs: int,
     ) -> None: ...
 
-    def goal_depth(self, cfg: BundleSiteSuggestionsConfig) -> int: ...
+    def goal_depth(self, cfg: SuggestConfig) -> int: ...
 
-    def refine_settings(self, cfg: BundleSiteSuggestionsConfig) -> StrategyRefineSettings: ...
+    def refine_settings(self, cfg: SuggestConfig) -> StrategyRefineSettings: ...
 
-    def resolve_step_budget(self, cfg: BundleSiteSuggestionsConfig, cli_n: int) -> int | None:
+    def resolve_step_budget(self, cfg: SuggestConfig, cli_n: int) -> int | None:
         """Max goals to satisfy from CLI ``--suggest[=N]``; ``None`` = until ``planning_complete``."""
 
     def planning_complete(self, ctx: SiteSuggestionContext) -> bool:

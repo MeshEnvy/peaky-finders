@@ -102,7 +102,7 @@ def _limit_nested_blas_threads() -> None:
 
 
 def _polygon_style_dict(preset: Preset) -> dict:
-    kml_ov = preset.bundle.kml_overlay if preset.bundle else None
+    kml_ov = preset.display.kml if preset.land else None
     return resolved_viewshed_coverage_kml_style(kml_ov).model_dump()
 
 
@@ -135,7 +135,7 @@ def _ensure_footprint(
     if not ws.output_ppm.is_file():
         return None
     if footprint_vectorize_needed(ws.workdir):
-        kml_ov = preset.bundle.kml_overlay if preset.bundle else None
+        kml_ov = preset.display.kml if preset.land else None
         style = resolved_viewshed_coverage_kml_style(kml_ov)
         if not write_coverage_footprints(data_dir=ws.workdir, polygon_style=style):
             return None

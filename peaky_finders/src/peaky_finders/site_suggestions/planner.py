@@ -55,7 +55,7 @@ from peaky_finders.sites_job import (
     Preset,
     SiteSuggestionCoverageTarget,
     load_preset,
-    resolved_site_suggestions_config,
+    resolved_suggest_config,
 )
 
 
@@ -1206,10 +1206,10 @@ def plan_greedy_site_suggestions(
     on_pick: Callable[[PlannedSuggestion], str] | None = None,
 ) -> list[PlannedSuggestion]:
     """Run the site-suggestion solver until ``planning_complete`` or ``suggest_cli_n`` goal(s) are satisfied."""
-    if preset.bundle is None:
-        raise ValueError("site suggestions require preset bundle.*")
+    if preset.land is None:
+        raise ValueError("site suggestions require preset land.*")
 
-    cfg = resolved_site_suggestions_config(preset.bundle)
+    cfg = resolved_suggest_config(preset.suggest)
     provider = resolve_site_suggestion_strategy(cfg)
     hooks = provider.planner_hooks(cfg)
     provider.validate_config(cfg)

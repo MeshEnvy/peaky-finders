@@ -8,7 +8,7 @@ from peaky_finders.site_suggestions.candidates import SiteCandidate
 from peaky_finders.site_suggestions.refine_peaks import regional_peak_candidates_around_centers
 from peaky_finders.site_suggestions.providers.protocol import StrategyRefineSettings
 from peaky_finders.site_suggestions.providers.mesh_backbone import MeshBackboneStrategy
-from peaky_finders.sites_job import BundleSiteSuggestionsConfig, SiteSuggestionStrategy
+from peaky_finders.sites_job import SuggestConfig, SiteSuggestionStrategy
 
 
 def test_regional_peaks_ranks_by_elevation_within_radius() -> None:
@@ -68,7 +68,7 @@ def test_regional_peaks_per_seed_cap() -> None:
 
 
 def test_mesh_backbone_refine_settings_include_peaks() -> None:
-    cfg = BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE)
+    cfg = SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE)
     refine = MeshBackboneStrategy().refine_settings(cfg)
     assert refine.refine_peaks_enabled is True
     assert refine.refine_peak_radius_m == 400.0
@@ -105,7 +105,7 @@ def test_attach_frontier_peak_candidates() -> None:
         aoi_ll=eligible,
         target_ll=eligible,
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -132,6 +132,6 @@ def test_attach_frontier_peak_candidates() -> None:
 def test_strategy_refine_settings_peak_defaults_off_for_land_grab() -> None:
     from peaky_finders.site_suggestions.providers.land_grab import LandGrabStrategy
 
-    cfg = BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.LAND_GRAB)
+    cfg = SuggestConfig(strategy=SiteSuggestionStrategy.LAND_GRAB)
     refine = LandGrabStrategy().refine_settings(cfg)
     assert refine.refine_peaks_enabled is False

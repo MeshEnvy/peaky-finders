@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from peaky_finders.sites_job import (
-    BundleConfig,
+    LandConfig,
     load_preset,
     peaky_home,
     peaky_projects_dir,
@@ -81,14 +81,14 @@ def test_resolved_preset_bundle_data_dir_uses_inputs_root(peaky_test_home: Path)
 def test_resolved_preset_bundle_data_dir_defaults_to_peaky_home_data(
     peaky_env: Path,
 ) -> None:
-    preset = SimpleNamespace(bundle=None)
+    preset = SimpleNamespace(land=None)
     cfg = peaky_env / "job.yaml"
     data_dir = resolved_preset_bundle_data_dir(preset_path=cfg, preset=preset)
     assert data_dir == (peaky_env / "data").resolve()
 
 
 def test_resolved_preset_bundle_data_dir_honors_cli_override(tmp_path: Path) -> None:
-    preset = SimpleNamespace(bundle=BundleConfig.model_validate({"inputs_root": "data", "aoi": []}))
+    preset = SimpleNamespace(land=LandConfig.model_validate({"inputs_root": "data", "aoi": []}))
     override = tmp_path / "custom-data"
     data_dir = resolved_preset_bundle_data_dir(
         preset_path=tmp_path / "config.yaml",

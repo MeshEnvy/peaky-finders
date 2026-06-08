@@ -17,7 +17,7 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
 )
 from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint
 from peaky_finders.sites_job import (
-    BundleSiteSuggestionsConfig,
+    SuggestConfig,
     MeshBackboneGoalEntry,
     MeshBackboneStrategyConfig,
     SiteSuggestionStrategy,
@@ -74,7 +74,7 @@ def test_mesh_grow_planning_complete_when_goals_captured_and_connected() -> None
         aoi_ll=box(-116.5, 38.5, -114.5, 39.5),
         target_ll=box(-116.5, 38.5, -114.5, 39.5),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,

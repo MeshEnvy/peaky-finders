@@ -18,7 +18,7 @@ from peaky_finders.bundle_build import (
     bundle_paths,
     effective_skadi_prefetch_workers,
     load_composite_aoi_polygon,
-    require_bundle_config,
+    require_land_config,
 )
 from peaky_finders.bundle_clips import (
     ClipRole,
@@ -56,7 +56,7 @@ _ROLES_CLIP: tuple[ClipRole, ...] = ("aoi", "include", "exclude")
 def _bundle_context(preset_path: Path) -> tuple[Path, object, object, Path, Path, Path, str]:
     preset_path = Path(preset_path).expanduser().resolve()
     preset = load_preset(preset_path)
-    plc = require_bundle_config(preset)
+    plc = require_land_config(preset)
     data_dir = resolved_preset_bundle_data_dir(preset_path=preset_path, preset=preset)
     cache_root = resolved_bundle_dir(preset_path=preset_path)
     clips_root = resolved_preset_clips_dir(preset_path)
@@ -71,7 +71,7 @@ def run_bundle_clip(role: str, layer: str, preset_path: Path) -> int:
     rr: ClipRole = role  # type: ignore[assignment]
     _preset_path, preset, plc, data_dir, _cache_root, clips_root, mask_body = _bundle_context(preset_path)
     _ = preset
-    kml_overlay = plc.kml_overlay
+    kml_overlay = preset.display.kml
     gdb_fp = _file_tree_mtime_size_fingerprint
 
     grp = plc.aoi if rr == "aoi" else plc.include if rr == "include" else plc.exclude
@@ -144,7 +144,7 @@ def run_bundle_composite(which: str, preset_path: Path) -> int:
         print(f"bundle composite: expected one of {sorted(allowed)}; got {which!r}", file=sys.stderr)
         return 2
     _preset_path, _preset, plc, data_dir, _cr, clips_root, mask_body = _bundle_context(preset_path)
-    kml_overlay = plc.kml_overlay
+    kml_overlay = preset.display.kml
     builders = {
         "aoi": build_composite_aoi,
         "include": build_composite_include,
@@ -162,14 +162,14 @@ def run_bundle_composite(which: str, preset_path: Path) -> int:
 
 
 def run_bundle_eligible(preset_path: Path, *, verbose: bool = False) -> int:
-    _preset_path, _preset, plc, data_dir, _cr, clips_root, mask_body = _bundle_context(preset_path)
+    _preset_path, preset, plc, data_dir, _cr, clips_root, mask_body = _bundle_context(preset_path)
     vlog = (lambda msg: print(f"bundle eligible: {msg}", flush=True)) if verbose else None
     build_eligible_workspace(
         plc=plc,
         data_dir=data_dir,
         clips_root=clips_root,
         mask_body=mask_body,
-        kml_overlay=plc.kml_overlay,
+        kml_overlay=preset.display.kml,
         verbose_log=vlog,
         progress_log=vlog,
     )
@@ -178,7 +178,7 @@ def run_bundle_eligible(preset_path: Path, *, verbose: bool = False) -> int:
 
 
 def run_bundle_reference(entry_id: str, preset_path: Path) -> int:
-    _preset_path, _preset, plc, data_dir, _cache_root, clips_root, _mask_body = _bundle_context(preset_path)
+    _preset_path, preset, plc, data_dir, _cache_root, clips_root, _mask_body = _bundle_context(preset_path)
     if not plc.reference:
         print("bundle reference: preset has no bundle.reference entries", file=sys.stderr)
         return 2
@@ -191,7 +191,7 @@ def run_bundle_reference(entry_id: str, preset_path: Path) -> int:
             data_dir=data_dir,
             clips_root=clips_root,
             aoi_sha=clip_meta.aoi_sha,
-            kml_overlay=plc.kml_overlay,
+            kml_overlay=preset.display.kml,
         )
     except KeyError as e:
         print(f"bundle reference: {e}", file=sys.stderr)

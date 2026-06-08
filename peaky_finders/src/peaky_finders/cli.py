@@ -100,7 +100,7 @@ def _bundle_land_use_layers_for_kmz(
 ]:
     """``(nets, zpairs, refs, exclude links, include links, eligible_slice links)``.
 
-    ``reference_links`` entries are ``(folder_label, kml_path_in_kmz, visible)`` from ``preset.bundle.reference``.
+    ``reference_links`` entries are ``(folder_label, kml_path_in_kmz, visible)`` from ``preset.land.reference``.
     Per-role layer links pair ``NetworkLink`` label with KMZ arcname (``*/layers/*.kml`` trees).
     """
     from peaky_finders.bundle_clips import (
@@ -138,7 +138,7 @@ def _bundle_land_use_layers_for_kmz(
     use_eligible_slices = False
 
     ref_links: list[tuple[str, str, bool]] = []
-    b = preset.bundle if preset is not None else None
+    b = preset.land if preset is not None else None
     if b is not None:
         resolve_ref = read_bundle_resolve(bundle_dir).get("reference")
         for ent in b.reference:
@@ -249,7 +249,7 @@ def package_aggregate_kmz(
         mesh_pairwise_eligible_network_links=[
             (ttl, arc) for ttl, p, arc in eligible_pairwise_layers if p.is_file()
         ],
-        layer_visibility=resolved_kmz_document_layers(job.bundle),
+        layer_visibility=resolved_kmz_document_layers(job),
     )
 
     kmz_path = resolved_aggregate_kmz_path(job_path)
@@ -338,9 +338,9 @@ def run_splat(args: argparse.Namespace) -> int:
         print(f"Invalid preset or RF parameters: {e}", file=sys.stderr)
         return 2
 
-    if job.bundle is None:
+    if job.land is None:
         print(
-            "coverage requires preset bundle.* (AOI / land-use); "
+            "coverage requires preset land.* (AOI / land-use); "
             "workspaces live under <preset-dir>/build/viewsheds/<propagation-digest>/.",
             file=sys.stderr,
         )
@@ -384,7 +384,7 @@ def run_splat(args: argparse.Namespace) -> int:
         )
     )
 
-    kml_ov = job.bundle.kml_overlay if job.bundle else None
+    kml_ov = job.display.kml if job.land else None
     viewshed_cov_style = resolved_viewshed_coverage_kml_style(kml_ov)
 
     if phase_opt == "request":

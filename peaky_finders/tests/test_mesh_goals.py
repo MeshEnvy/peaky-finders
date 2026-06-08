@@ -24,7 +24,7 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.goals import (
 from peaky_finders.site_suggestions.mesh_connectivity import main_footprint_slugs
 from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import analysis_sites
 from peaky_finders.sites_job import (
-    BundleSiteSuggestionsConfig,
+    SuggestConfig,
     MeshBackboneGoalEntry,
     MeshBackboneRouting,
     MeshBackboneStrategyConfig,
@@ -99,7 +99,7 @@ def _disconnected_ctx() -> SiteSuggestionContext:
         aoi_ll=eligible,
         target_ll=eligible,
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(
+        cfg=SuggestConfig(
             strategy=SiteSuggestionStrategy.MESH_BACKBONE,
             mesh_backbone=MeshBackboneStrategyConfig(
                 routing=MeshBackboneRouting.CORRIDOR,

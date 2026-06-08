@@ -22,19 +22,19 @@ def sorted_unique_clip_input_paths(
 
 
 def stamp_input_paths(plan: BuildConfigurePlan, section: str) -> tuple[Path, ...]:
-    """Input GDB files wired into bundle stamp prerequisites."""
+    """Input GDB files wired into land stamp prerequisites."""
 
-    if section == "bundle_aoi":
+    if section == "land_aoi":
         return sorted_unique_clip_input_paths(plan.clip_layers, roles=("aoi",))
-    if section == "bundle_include":
+    if section == "land_include":
         return sorted_unique_clip_input_paths(plan.clip_layers, roles=("include",))
-    if section == "bundle_exclude":
+    if section == "land_exclude":
         return sorted_unique_clip_input_paths(plan.clip_layers, roles=("exclude",))
-    if section == "bundle_land_use":
+    if section == "land_use":
         return sorted_unique_clip_input_paths(plan.clip_layers, roles=("include", "exclude"))
     return ()
 
 
-def bundle_stamp_section_for_clip_role(role: str) -> str:
-    mapping = {"aoi": "bundle_aoi", "include": "bundle_include", "exclude": "bundle_exclude"}
+def land_stamp_section_for_clip_role(role: str) -> str:
+    mapping = {"aoi": "land_aoi", "include": "land_include", "exclude": "land_exclude"}
     return mapping[str(role)]

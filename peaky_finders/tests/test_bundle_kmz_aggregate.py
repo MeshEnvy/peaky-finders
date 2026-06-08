@@ -16,7 +16,7 @@ from peaky_finders.bundle_clips import (
     read_composite_exclude_manifest,
     read_composite_include_manifest,
 )
-from peaky_finders.sites_job import BundleConfig, GdbLayerGroup, GdbLayerSpec
+from peaky_finders.sites_job import LandConfig, GdbLayerGroup, GdbLayerSpec
 from peaky_finders.splat_polygonize import (
     GX_DRAW_ORDER_MESH_DEPTH_D1,
     GX_DRAW_ORDER_MESH_PAIRWISE,

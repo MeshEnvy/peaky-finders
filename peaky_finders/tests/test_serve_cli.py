@@ -214,13 +214,12 @@ sites:
     name: Hub
     loc: [39.5, -119.5]
     sees: []
-bundle:
-  site_suggestions:
-    strategy: mesh-backbone
-    mesh_backbone:
-      goals:
-        russel-bridge:
-          loc: russell-peak
+suggest:
+  strategy: mesh-backbone
+  mesh_backbone:
+    goals:
+      russel-bridge:
+        loc: russell-peak
 """.strip(),
         encoding="utf-8",
     )
