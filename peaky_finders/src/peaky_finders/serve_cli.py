@@ -18,6 +18,7 @@ import peaky_finders
 from pydantic import ValidationError
 
 from peaky_finders.new_cli import discover_projects, scaffold_project, validate_project_slug
+from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked, load_project_site_links
 from peaky_finders.serve_viewshed import ServeViewshedError, ensure_site_viewshed_overlay, ensure_site_viewshed_png
 from peaky_finders.sites_job import SiteEntry, load_preset_sites
 
@@ -47,6 +48,10 @@ _API_PROJECT_VIEWSHED_META_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/vi
 _API_PROJECT_VIEWSHED_PNG_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/splat\.png$"
 )
+_API_PROJECT_LINK_PAIR_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/links/([a-zA-Z][a-zA-Z0-9_-]*)/([a-zA-Z][a-zA-Z0-9_-]*)/?$"
+)
+_API_PROJECT_LINKS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/links/?$")
 
 
 def resolve_serve_peaky_home() -> Path:
@@ -200,6 +205,10 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
       <option value="topo">Topo</option>
       <option value="satellite">Satellite</option>
     </select>
+    <label for="show-links">
+      <input id="show-links" type="checkbox" checked>
+      Site links
+    </label>
     <p class="map-hint">Tilt the map (right-click drag or compass) for 3D terrain.</p>
   </div>
 </div>
@@ -217,6 +226,8 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
   const SITES_SOURCE = "sites";
   const SITES_CIRCLE = "sites-circle";
   const SITES_LABELS = "sites-labels";
+  const LINKS_SOURCE = "site-links";
+  const LINKS_LAYER = "site-links-line";
   const VIEWSHED_RASTER_OPACITY = 0.75;
   const PITCH_TERRAIN_ON = 12;
   const PITCH_TERRAIN_OFF = 6;
@@ -328,8 +339,63 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
     if (map.getSource(TERRAIN_SOURCE)) map.removeSource(TERRAIN_SOURCE);
   }}
 
+  function linksApiUrl() {{
+    return `/api/p/${{projectSlug}}/links`;
+  }}
+
+  function setSiteLinksVisible(visible) {{
+    if (!mapReady || !map.getLayer(LINKS_LAYER)) return;
+    map.setLayoutProperty(LINKS_LAYER, "visibility", visible ? "visible" : "none");
+  }}
+
+  function addSiteLinksLayer(geojson) {{
+    if (!geojson || !geojson.features || !geojson.features.length) return;
+    if (map.getSource(LINKS_SOURCE)) {{
+      map.getSource(LINKS_SOURCE).setData(geojson);
+      setSiteLinksVisible(document.getElementById("show-links").checked);
+      raiseSiteLayers();
+      return;
+    }}
+    map.addSource(LINKS_SOURCE, {{ type: "geojson", data: geojson }});
+    map.addLayer(
+      {{
+        id: LINKS_LAYER,
+        type: "line",
+        source: LINKS_SOURCE,
+        paint: {{
+          "line-color": [
+            "case",
+            ["get", "manual"],
+            "#0d9488",
+            "#4a6cf7",
+          ],
+          "line-width": 2.5,
+          "line-opacity": 0.85,
+        }},
+        layout: {{
+          "line-cap": "round",
+          "line-join": "round",
+          visibility: document.getElementById("show-links").checked ? "visible" : "none",
+        }},
+      }},
+      SITES_CIRCLE,
+    );
+    raiseSiteLayers();
+  }}
+
+  async function loadSiteLinks() {{
+    try {{
+      const resp = await fetch(linksApiUrl());
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      if (payload && payload.geojson) addSiteLinksLayer(payload.geojson);
+    }} catch (_) {{
+      /* links optional */
+    }}
+  }}
+
   function raiseSiteLayers() {{
-    for (const id of [SITES_CIRCLE, SITES_LABELS]) {{
+    for (const id of [LINKS_LAYER, SITES_CIRCLE, SITES_LABELS]) {{
       if (map.getLayer(id)) {{
         try {{
           map.moveLayer(id);
@@ -518,6 +584,7 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
   map.on("load", () => {{
     mapReady = true;
     addSiteLayers();
+    void loadSiteLinks();
     loadAllViewsheds();
     const basemapKey = document.getElementById("basemap").value;
     if (BASEMAPS[basemapKey].referenceTiles) {{
@@ -530,6 +597,9 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
   map.on("pitch", syncTerrainFromPitch);
   document.getElementById("basemap").addEventListener("change", (ev) => {{
     setBasemap(ev.target.value);
+  }});
+  document.getElementById("show-links").addEventListener("change", (ev) => {{
+    setSiteLinksVisible(ev.target.checked);
   }});
 }})();
 </script>"""
@@ -571,6 +641,70 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                     self._send_bytes(payload, "application/json", status=422)
                     return
                 payload = json.dumps({"slug": slug, "sites": sites}).encode("utf-8")
+                self._send_bytes(payload, "application/json")
+                return
+
+            link_pair_match = _API_PROJECT_LINK_PAIR_RE.match(path)
+            if link_pair_match:
+                slug = link_pair_match.group(1)
+                site_a = link_pair_match.group(2)
+                site_b = link_pair_match.group(3)
+                project_dir = projects_dir / slug
+                if not (project_dir / "config.yaml").is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    site_map = _load_project_sites(project_dir)
+                except (ValueError, ValidationError) as e:
+                    payload = json.dumps(
+                        {"slug": slug, "a": site_a, "b": site_b, "error": str(e)}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                verbose = bool(getattr(self.server, "verbose", False))
+                try:
+                    result = evaluate_site_pair_linked(
+                        project_dir,
+                        site_a,
+                        site_b,
+                        site_map,
+                        verbose=verbose,
+                    )
+                except ServeLinksError as e:
+                    payload = json.dumps(
+                        {"slug": slug, "a": site_a, "b": site_b, "error": str(e)}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=503)
+                    return
+                payload = json.dumps({"project": slug, **result}).encode("utf-8")
+                self._send_bytes(payload, "application/json")
+                return
+
+            links_match = _API_PROJECT_LINKS_RE.match(path)
+            if links_match:
+                slug = links_match.group(1)
+                project_dir = projects_dir / slug
+                if not (project_dir / "config.yaml").is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    site_map = _load_project_sites(project_dir)
+                except (ValueError, ValidationError) as e:
+                    payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                verbose = bool(getattr(self.server, "verbose", False))
+                try:
+                    payload_obj = load_project_site_links(
+                        project_dir,
+                        site_map,
+                        verbose=verbose,
+                    )
+                except ServeLinksError as e:
+                    payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=503)
+                    return
+                payload = json.dumps({"project": slug, **payload_obj}).encode("utf-8")
                 self._send_bytes(payload, "application/json")
                 return
 

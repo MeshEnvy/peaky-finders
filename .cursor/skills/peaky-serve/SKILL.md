@@ -25,6 +25,7 @@ Do not fork business logic in HTTP handlers. Add or call helpers in `serve_*.py`
 |--------|------|
 | `serve_cli.py` | stdlib `HTTPServer`, pages, API routes, MapLibre project map |
 | `serve_viewshed.py` | On-demand RF viewshed PNG + MapLibre metadata |
+| `serve_links.py` | On-demand mutual site links (`link_mutual_viable` / `link_mutual_batch`) |
 | `new_cli.py` | Project discovery/scaffold (shared with CLI `peaky new`) |
 
 Runtime roots: `PEAKY_HOME` (default `~/.peaky`), `PEAKY_PROJECTS` (default `<home>/projects`). Dev: `./peaky serve` mounts repo, `--reload` on package source.
@@ -37,6 +38,14 @@ Runtime roots: `PEAKY_HOME` (default `~/.peaky`), `PEAKY_PROJECTS` (default `<ho
 4. Else → `run_viewshed_coverage` + `ensure_splat_raster_png` (same as CLI viewshed path).
 
 API: `GET /api/p/<slug>/viewsheds/<site>` (JSON bounds + PNG URL), `GET …/splat.png`.
+
+## Site links pattern
+
+1. Load preset; union preset `links` (manual) with splatter pairwise RF checks.
+2. Reuse `site_suggestions/rf_link.py` (`splatter_session`, `mutual_hop_viable`, `mutual_hop_batch`).
+3. Prefilter pairs beyond `simulation.radius_km`; preload DEM tiles once per request.
+
+API: `GET /api/p/<slug>/links` (linked pairs + GeoJSON lines), `GET /api/p/<slug>/links/<a>/<b>` (`{linked, manual}`).
 
 ## Adding a feature
 
