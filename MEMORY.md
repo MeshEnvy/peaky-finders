@@ -54,7 +54,7 @@ cd projects/nevada
 | `kmz` | Aggregate KMZ assembly |
 | `stamp` | Prerequisite stamp files for staleness edges |
 | `inspect` | GDB layer/attribute listing |
-| `serve` | Local web UI — project selector at `PEAKY_HOME` (default `~/.peaky`); project page shows Leaflet/OSM map of preset sites |
+| `serve` | Local web UI — project selector at `PEAKY_HOME` (default `~/.peaky`); project page Leaflet map of preset sites (Street/Topo/Satellite base layers) |
 
 Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, `--reload` polls `peaky_finders` source (on by default via `./peaky serve`), Docker publishes `PEAKY_SERVE_PORT` (default 8080).
 
