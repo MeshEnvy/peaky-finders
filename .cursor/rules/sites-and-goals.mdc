@@ -1,0 +1,36 @@
+---
+description: Domain vocabulary — sites (repeaters + viewsheds) vs goals (coverage attractors)
+alwaysApply: true
+---
+
+# Sites vs goals
+
+## Sites = repeaters with viewsheds
+
+Preset `sites:` entries are **repeater locations**. Each site gets splatter RF coverage (viewshed). Types (`SiteType` in `sites_job.py`):
+
+| `type` | Meaning | May move? |
+|--------|---------|-----------|
+| `installed` | Deployed repeater | **No** |
+| `planned` | Committed future site (user-placed, e.g. `peaky serve` Add site) | **No** |
+| `suggested` | Algorithm output from `peaky build --suggest` | **Yes** — re-suggest may replace |
+
+- **Installed and planned sites must not move** — treat `loc` as authoritative; suggest never relocates them.
+- **Suggested sites may move** when `--suggest` runs again (especially with `--replace-suggested`).
+- All site types participate in build mesh/viewsheds; they are coverage **sources**.
+
+## Goals = coverage attractors
+
+Preset `suggest.mesh_backbone.goals` (and ephemeral `bridge:*` healing goals) are **map points where coverage is desired**. They are **not** repeaters:
+
+- No viewshed until a **site** is placed to capture them.
+- Inputs to the site suggestion planner — **attractors** for search and scoring.
+- User-authored in YAML; solver grows `type: suggested` sites toward them.
+
+## Relationship
+
+- **Goals** say *where we want coverage*.
+- **Sites** say *where repeaters are* (or where suggest proposes one).
+- `peaky build --suggest` adds/replaces `type: suggested` sites to satisfy goals; it does not edit goals or move installed/planned sites.
+
+See [MEMORY.md](../../MEMORY.md) § Domain model and skill `peaky-preset`.

@@ -20,7 +20,7 @@ Update MEMORY.md in the **same commit/PR** when you change anything in the table
 
 | Area | Examples |
 |------|----------|
-| Preset schema | `Preset` fields, `config.yaml` sections |
+| Preset schema | `Preset` fields, `config.yaml` sections, sites vs goals vocabulary |
 | Build DAG | New targets, executor nodes, staleness keys |
 | Artifact layout | Paths under `<preset>/build/`, `resolved_*` helpers |
 | CLI surface | `peaky_cli` subcommands, flags, defaults |

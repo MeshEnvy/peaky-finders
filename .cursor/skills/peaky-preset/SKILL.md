@@ -24,11 +24,32 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 | `display` | Viewshed raster + `display.kml` / `display.kmz` presentation |
 | `land` | GDB layer refs: `reference`, `aoi`, `include`, `exclude` |
 | `mesh` | Pairwise/depth analysis knobs |
-| `suggest` | Site planner for `build --suggest` |
-| `sites` | Site entries: `loc`, optional `plss`/`mlrs` |
+| `suggest` | Site planner for `build --suggest`; `mesh_backbone.goals` = coverage attractors |
+| `sites` | Repeaters with viewsheds — see **Sites vs goals** below |
 | `links` | Manual mutual site pairs `[[a, b], …]` |
 
 Legacy `.json` presets are rejected.
+
+## Sites vs goals
+
+**Sites** (`sites:`) are **repeaters** — each has a splatter viewshed. **Goals** (`suggest.mesh_backbone.goals`) are **coverage attractors** — map points where coverage is desired; no viewshed until a site captures them.
+
+### Site types (`SiteType`)
+
+| `type` | Role | Position |
+|--------|------|----------|
+| `installed` | Deployed repeater | Fixed — must not move |
+| `planned` | User-committed future site | Fixed — must not move |
+| `suggested` | `build --suggest` output | May move — `--replace-suggested` drops prior suggestions |
+
+Suggest **never relocates** `installed` or `planned` sites. Only `type: suggested` entries are removed/replaced on re-suggest.
+
+### Goals
+
+- User-defined `loc: [lat, lon]` under `suggest.mesh_backbone.goals` (slug keys).
+- Planner attractors for mesh-backbone / land-grab strategies.
+- Ephemeral `bridge:*` goals appear when healing disconnected mesh components.
+- A goal is “captured” when an existing site’s viewshed covers the point (or hop-connectivity rules for bridge goals).
 
 ## Path helpers
 

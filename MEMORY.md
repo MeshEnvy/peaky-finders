@@ -32,6 +32,29 @@ When two designs compete, pick the **simpler present** and break callers — doc
 | Dev/test | Docker — `./peaky`, `./peaky-test` |
 | Reference preset | `projects/nevada/config.yaml` |
 
+## Domain model: sites vs goals
+
+**Sites** are repeater locations — each gets a splatter RF **viewshed**. Preset key: `sites:` (slug → entry with `loc: [lat, lon]`).
+
+| `type` | Role | Position |
+|--------|------|----------|
+| `installed` | Deployed repeater | **Fixed** — must not move |
+| `planned` | User-committed future site (e.g. serve **Add site**) | **Fixed** — must not move |
+| `suggested` | Output of `peaky build --suggest` | **May move** — re-suggest may replace with a better pick |
+
+Build, mesh, and serve treat every site type as a coverage source. Suggest **never relocates** `installed` or `planned` sites; only `type: suggested` entries are removed/replaced (`--replace-suggested`).
+
+**Goals** are map points where coverage is **desired** — planner **attractors**, not repeaters. No viewshed until a site is placed. Preset key: `suggest.mesh_backbone.goals` (slug → `loc: [lat, lon]`); ephemeral `bridge:*` goals appear during connectivity healing.
+
+| Concept | Sites | Goals |
+|---------|-------|-------|
+| What | Repeaters (actual or candidate) | Coverage targets |
+| Viewshed | Yes (per site) | No |
+| Who writes | User (`installed`/`planned`) or suggest (`suggested`) | User in preset YAML |
+| Solver use | Seeds, constraints, mesh nodes | What to capture / grow toward |
+
+Rule: `.cursor/rules/sites-and-goals.mdc`. Skill detail: `peaky-preset`.
+
 ## CLI commands
 
 Run from a project directory containing `config.yaml`:
@@ -99,8 +122,8 @@ One YAML per project — `projects/<slug>/config.yaml` (legacy `.json` unsupport
 | `display` | Viewshed raster (`colormap`, `transparency`, dBm range) + `kml` styles + `kmz` layer toggles |
 | `land` | GDB inputs: `inputs_root`, `reference`, `aoi`, `include`, `exclude` |
 | `mesh` | Pairwise/depth build knobs, raster size, worker counts |
-| `suggest` | `peaky build --suggest` planner (`land-grab` / `mesh-backbone`) |
-| `sites` | Installed/suggested sites (`loc`, optional `plss`/`mlrs`) |
+| `suggest` | Site planner (`land-grab` / `mesh-backbone`); `mesh_backbone.goals` = coverage attractors |
+| `sites` | Repeaters with viewsheds — `installed` / `planned` (fixed) / `suggested` (replaceable) |
 | `links` | Manual mutual site pairs `[[a, b], …]` (field-verified; unioned with viewshed mutual coverage) |
 
 CLI `peaky bundle` unchanged; artifact dir remains `<preset>/build/bundle/`. Build stamps: `land_*`, `display_kml`, `display_kmz`, `mesh` (replaces `bundle_*` stamp names).
@@ -178,6 +201,7 @@ All outbound fetches throttled via `http_pool.py`:
 | Rule | Topic |
 |------|-------|
 | `memory-maintenance` | Read MEMORY before work; update before done |
+| `sites-and-goals` | Sites (repeaters + viewsheds) vs goals (coverage attractors) |
 | `greenfield-no-backcompat` | Break freely to simplify; no shims |
 | `preset-yaml-first` | Tunables in preset YAML |
 | `preset-yaml-writes` | Locked ruamel round-trip writes |
