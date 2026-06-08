@@ -120,6 +120,11 @@ def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -
           <input id="show-links" class="form-check-input" type="checkbox" checked>
           <label class="form-check-label small" for="show-links">Site links</label>
         </div>
+        <div class="d-flex align-items-center gap-2">
+          <label for="viewshed-opacity" class="form-label mb-0 small text-muted">Viewshed</label>
+          <input id="viewshed-opacity" type="range" class="form-range" min="0" max="100" value="75"
+            style="width: 5.5rem;" title="Viewshed opacity">
+        </div>
         <span class="text-muted small d-none d-md-inline">Tilt for 3D terrain</span>
       </div>
     </div>

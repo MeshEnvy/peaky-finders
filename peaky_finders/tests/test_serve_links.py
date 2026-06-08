@@ -223,6 +223,7 @@ def test_project_page_includes_site_links_toggle(tmp_path: Path) -> None:
         assert resp.status == 200
         assert 'id="show-links"' in body
         assert "Site links" in body
+        assert 'id="viewshed-opacity"' in body
         assert "/static/project-map.js" in body
 
         conn.request("GET", "/static/project-map.js")
@@ -231,6 +232,8 @@ def test_project_page_includes_site_links_toggle(tmp_path: Path) -> None:
         assert js_resp.status == 200
         assert "site-links-line" in js_body
         assert "site-links-label" in js_body
+        assert "setViewshedOpacity" in js_body
+        assert "viewshed-opacity" in js_body
     finally:
         server.shutdown()
         server.server_close()
