@@ -52,11 +52,13 @@ def _html_page(title: str, body: str, *, wide: bool = False, extra_head: str = "
         "    body.wide #map { width: 100%; height: calc(100vh - 7rem); min-height: 20rem; "
         "border-top: 1px solid #d8dce3; }\n"
         "    .site-count {{ color: #555; font-size: 0.9rem; margin-bottom: 0.75rem; }}\n"
-        "    .leaflet-tooltip.site-label {{ background: #fff; border: 1px solid #4a6cf7; "
-        "border-radius: 0.25rem; padding: 0.15rem 0.45rem; font-weight: 600; font-size: 0.8rem; "
-        "box-shadow: 0 1px 3px rgba(0,0,0,0.12); color: #1a1a1a; }}\n"
-        "    .leaflet-tooltip.site-label::before {{ border-top-color: #4a6cf7; }}\n"
-        "    .leaflet-control-layers {{ font-size: 0.85rem; }}"
+        "    .map-controls {{ display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; "
+        "font-size: 0.9rem; }}\n"
+        "    .map-controls label {{ font-weight: 600; margin: 0; }}\n"
+        "    .map-controls select {{ padding: 0.35rem 0.5rem; border: 1px solid #ccc; "
+        "border-radius: 0.35rem; background: #fff; }}\n"
+        "    .map-hint {{ color: #666; font-size: 0.85rem; margin: 0; }}\n"
+        "    .maplibre-ctrl-attrib {{ font-size: 0.7rem; }}"
         if wide
         else ""
     )
@@ -156,60 +158,299 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
     site_count = len(serialized)
     site_noun = "site" if site_count == 1 else "sites"
     extra_head = (
-        '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" '
-        'integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">'
+        '<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" '
+        'crossorigin="">'
     )
     body = f"""<div class="page-header">
   <a class="back" href="/">&larr; All projects</a>
   <h1>{html.escape(slug)}</h1>
   <p class="meta">{html.escape(str(project_dir))}</p>
   <p class="site-count">{site_count} {site_noun}</p>
+  <div class="map-controls">
+    <label for="basemap">Map</label>
+    <select id="basemap" title="Base map">
+      <option value="street">Street</option>
+      <option value="topo">Topo</option>
+      <option value="satellite">Satellite</option>
+    </select>
+    <p class="map-hint">Tilt the map (right-click drag or compass) for 3D terrain.</p>
+  </div>
 </div>
 <div id="map"></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-        crossorigin=""></script>
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" crossorigin=""></script>
 <script>
 (function () {{
   const sites = {sites_json};
-  const street = L.tileLayer("https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png", {{
-    maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+
+  const TERRAIN_SOURCE = "terrain-dem";
+  const TERRAIN_HILLSHADE = "terrain-hillshade";
+  const BASEMAP_REFERENCE_SOURCE = "basemap-reference";
+  const BASEMAP_REFERENCE_LAYER = "basemap-reference";
+  const SITES_SOURCE = "sites";
+  const SITES_CIRCLE = "sites-circle";
+  const SITES_LABELS = "sites-labels";
+  const PITCH_TERRAIN_ON = 12;
+  const PITCH_TERRAIN_OFF = 6;
+
+  const BASEMAPS = {{
+    street: {{
+      tiles: ["https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png"],
+      maxzoom: 19,
+    }},
+    topo: {{
+      tiles: ["https://tile.opentopomap.org/{{z}}/{{x}}/{{y}}.png"],
+      maxzoom: 17,
+    }},
+    satellite: {{
+      tiles: [
+        "https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}",
+      ],
+      referenceTiles: [
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{{z}}/{{y}}/{{x}}",
+      ],
+      maxzoom: 19,
+    }},
+  }};
+
+  function basemapStyle(key) {{
+    const bm = BASEMAPS[key] || BASEMAPS.street;
+    return {{
+      version: 8,
+      glyphs: "https://demotiles.maplibre.org/font/{{fontstack}}/{{range}}.pbf",
+      sources: {{
+        basemap: {{
+          type: "raster",
+          tiles: bm.tiles,
+          tileSize: 256,
+          maxzoom: bm.maxzoom,
+        }},
+      }},
+      layers: [{{ id: "basemap", type: "raster", source: "basemap" }}],
+    }};
+  }}
+
+  function terrainDemSourceSpec() {{
+    return {{
+      type: "raster-dem",
+      tiles: [
+        "https://elevation-tiles-prod.s3.amazonaws.com/v2/terrarium/{{z}}/{{x}}/{{y}}.png",
+      ],
+      tileSize: 256,
+      maxzoom: 15,
+      encoding: "terrarium",
+    }};
+  }}
+
+  function sitesGeoJson() {{
+    return {{
+      type: "FeatureCollection",
+      features: sites.map((site) => ({{
+        type: "Feature",
+        geometry: {{ type: "Point", coordinates: [site.lon, site.lat] }},
+        properties: {{ name: site.name, slug: site.slug, type: site.type }},
+      }})),
+    }};
+  }}
+
+  const map = new maplibregl.Map({{
+    container: "map",
+    style: basemapStyle("street"),
+    center: [-98.35, 39.5],
+    zoom: 4,
+    maxPitch: 85,
+    pitch: 0,
+    attributionControl: {{ compact: true }},
   }});
-  const topo = L.tileLayer("https://{{s}}.tile.opentopomap.org/{{z}}/{{x}}/{{y}}.png", {{
-    maxZoom: 17,
-    attribution: 'Map: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> '
-      + '(<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
-  }});
-  const satellite = L.tileLayer(
-    "https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}",
-    {{
-      maxZoom: 19,
-      attribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a>',
+  map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+  let mapReady = false;
+  let terrainActive = false;
+
+  function ensureTerrainSource() {{
+    if (map.getSource(TERRAIN_SOURCE)) return;
+    map.addSource(TERRAIN_SOURCE, terrainDemSourceSpec());
+  }}
+
+  function ensureHillshadeLayer() {{
+    if (map.getLayer(TERRAIN_HILLSHADE)) return;
+    ensureTerrainSource();
+    map.addLayer(
+      {{
+        id: TERRAIN_HILLSHADE,
+        type: "hillshade",
+        source: TERRAIN_SOURCE,
+        paint: {{
+          "hillshade-exaggeration": 0.35,
+          "hillshade-shadow-color": "#0a0e14",
+          "hillshade-highlight-color": "#ffffff",
+          "hillshade-accent-color": "#64748b",
+        }},
+      }},
+      "basemap",
+    );
+  }}
+
+  function removeHillshadeLayer() {{
+    if (map.getLayer(TERRAIN_HILLSHADE)) map.removeLayer(TERRAIN_HILLSHADE);
+  }}
+
+  function removeTerrainSource() {{
+    removeHillshadeLayer();
+    if (map.getSource(TERRAIN_SOURCE)) map.removeSource(TERRAIN_SOURCE);
+  }}
+
+  function raiseSiteLayers() {{
+    for (const id of [SITES_CIRCLE, SITES_LABELS]) {{
+      if (map.getLayer(id)) {{
+        try {{
+          map.moveLayer(id);
+        }} catch (_) {{
+          /* layer may be mid-remove */
+        }}
+      }}
     }}
-  );
-  const map = L.map("map", {{ scrollWheelZoom: true, layers: [street] }});
-  L.control.layers({{ Street: street, Topo: topo, Satellite: satellite }}).addTo(map);
+  }}
 
-  const bounds = [];
-  for (const site of sites) {{
-    const marker = L.marker([site.lat, site.lon]).addTo(map);
-    marker.bindTooltip(site.name, {{
-      permanent: true,
-      direction: "top",
-      offset: [0, -28],
-      className: "site-label",
+  function showTerrainOverlays() {{
+    ensureTerrainSource();
+    ensureHillshadeLayer();
+    map.setTerrain({{ source: TERRAIN_SOURCE, exaggeration: 1.35 }});
+    if (map.getLayer("basemap")) {{
+      map.setPaintProperty("basemap", "raster-opacity", 0.9);
+    }}
+    raiseSiteLayers();
+  }}
+
+  function hideTerrainOverlays() {{
+    map.setTerrain(null);
+    removeTerrainSource();
+    if (map.getLayer("basemap")) {{
+      map.setPaintProperty("basemap", "raster-opacity", 1);
+    }}
+  }}
+
+  function syncTerrainFromPitch() {{
+    if (!mapReady) return;
+    const pitch = map.getPitch();
+    if (!terrainActive && pitch >= PITCH_TERRAIN_ON) {{
+      terrainActive = true;
+      showTerrainOverlays();
+    }} else if (terrainActive && pitch <= PITCH_TERRAIN_OFF) {{
+      terrainActive = false;
+      hideTerrainOverlays();
+    }}
+  }}
+
+  function ensureBasemapReference(bm) {{
+    if (!bm.referenceTiles) return;
+    if (!map.getSource(BASEMAP_REFERENCE_SOURCE)) {{
+      map.addSource(BASEMAP_REFERENCE_SOURCE, {{
+        type: "raster",
+        tiles: bm.referenceTiles,
+        tileSize: 256,
+        maxzoom: bm.maxzoom,
+      }});
+      map.addLayer(
+        {{
+          id: BASEMAP_REFERENCE_LAYER,
+          type: "raster",
+          source: BASEMAP_REFERENCE_SOURCE,
+        }},
+        map.getLayer(SITES_CIRCLE) ? SITES_CIRCLE : undefined,
+      );
+    }} else {{
+      map.getSource(BASEMAP_REFERENCE_SOURCE).setTiles(bm.referenceTiles);
+    }}
+    raiseSiteLayers();
+  }}
+
+  function removeBasemapReference() {{
+    if (map.getLayer(BASEMAP_REFERENCE_LAYER)) map.removeLayer(BASEMAP_REFERENCE_LAYER);
+    if (map.getSource(BASEMAP_REFERENCE_SOURCE)) map.removeSource(BASEMAP_REFERENCE_SOURCE);
+  }}
+
+  function addSiteLayers() {{
+    if (map.getSource(SITES_SOURCE)) {{
+      map.getSource(SITES_SOURCE).setData(sitesGeoJson());
+      return;
+    }}
+    map.addSource(SITES_SOURCE, {{ type: "geojson", data: sitesGeoJson() }});
+    map.addLayer({{
+      id: SITES_CIRCLE,
+      type: "circle",
+      source: SITES_SOURCE,
+      paint: {{
+        "circle-radius": 7,
+        "circle-color": "#4a6cf7",
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#fff",
+      }},
     }});
-    bounds.push([site.lat, site.lon]);
+    map.addLayer({{
+      id: SITES_LABELS,
+      type: "symbol",
+      source: SITES_SOURCE,
+      layout: {{
+        "text-field": ["get", "name"],
+        "text-size": 12,
+        "text-offset": [0, -1.4],
+        "text-anchor": "bottom",
+        "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+        "text-allow-overlap": true,
+      }},
+      paint: {{
+        "text-color": "#1a1a1a",
+        "text-halo-color": "#fff",
+        "text-halo-width": 2,
+      }},
+    }});
   }}
 
-  if (bounds.length === 1) {{
-    map.setView(bounds[0], 10);
-  }} else if (bounds.length > 1) {{
-    map.fitBounds(bounds, {{ padding: [48, 48] }});
-  }} else {{
-    map.setView([39.5, -98.35], 4);
+  function fitSites() {{
+    if (!sites.length) return;
+    if (sites.length === 1) {{
+      map.setCenter([sites[0].lon, sites[0].lat]);
+      map.setZoom(10);
+      return;
+    }}
+    const lons = sites.map((site) => site.lon);
+    const lats = sites.map((site) => site.lat);
+    map.fitBounds(
+      [
+        [Math.min(...lons), Math.min(...lats)],
+        [Math.max(...lons), Math.max(...lats)],
+      ],
+      {{ padding: 48, bearing: 0, pitch: 0, maxZoom: 15 }},
+    );
   }}
+
+  function setBasemap(key) {{
+    const bm = BASEMAPS[key];
+    if (!bm || !mapReady) return;
+    const src = map.getSource("basemap");
+    if (!src || typeof src.setTiles !== "function") return;
+    src.setTiles(bm.tiles);
+    map.setMaxZoom(bm.maxzoom);
+    if (bm.referenceTiles) ensureBasemapReference(bm);
+    else removeBasemapReference();
+    raiseSiteLayers();
+  }}
+
+  map.on("load", () => {{
+    mapReady = true;
+    addSiteLayers();
+    const basemapKey = document.getElementById("basemap").value;
+    if (BASEMAPS[basemapKey].referenceTiles) {{
+      ensureBasemapReference(BASEMAPS[basemapKey]);
+    }}
+    fitSites();
+    if (terrainActive) showTerrainOverlays();
+  }});
+
+  map.on("pitch", syncTerrainFromPitch);
+  document.getElementById("basemap").addEventListener("change", (ev) => {{
+    setBasemap(ev.target.value);
+  }});
 }})();
 </script>"""
     return _html_page(slug, body, wide=True, extra_head=extra_head)
