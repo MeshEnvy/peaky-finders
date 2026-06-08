@@ -200,7 +200,11 @@ def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -
           <span class="site-panel__label small text-muted text-uppercase">Linked sites</span>
           <ul class="site-panel__links small mb-0 ps-3" id="site-panel-create-links"></ul>
         </div>
-        <p class="site-panel__viewshed-hint small text-muted mb-2" id="site-panel-create-viewshed-hint"></p>
+        <div class="site-panel__viewshed form-check border-top pt-2 mt-2">
+          <input class="form-check-input" type="checkbox" id="site-panel-create-viewshed" checked>
+          <label class="form-check-label small" for="site-panel-create-viewshed">Show viewshed</label>
+          <span class="site-panel__viewshed-hint small text-muted ms-1" id="site-panel-create-viewshed-hint"></span>
+        </div>
         <div id="site-panel-create-error" class="alert alert-danger py-2 small mb-2" role="alert" hidden></div>
         <div class="site-panel__create-actions d-flex gap-2 mt-3">
           <button type="button" id="site-panel-create-save" class="btn btn-primary btn-sm">Save</button>

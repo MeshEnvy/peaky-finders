@@ -619,6 +619,7 @@ def test_project_page_includes_add_site_controls(tmp_path: Path) -> None:
         assert resp.status == 200
         assert 'id="add-site-mode"' in body
         assert 'id="site-panel-create"' in body
+        assert 'id="site-panel-create-viewshed"' in body
         assert 'id="site-panel-slug-preview"' in body
     finally:
         server.shutdown()

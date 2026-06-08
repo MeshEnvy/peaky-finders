@@ -179,6 +179,7 @@
   const sitePanelCreateCancel = document.getElementById("site-panel-create-cancel");
   const sitePanelViewshed = document.getElementById("site-panel-viewshed");
   const sitePanelViewshedHint = document.getElementById("site-panel-viewshed-hint");
+  const sitePanelCreateViewshed = document.getElementById("site-panel-create-viewshed");
   const addSiteModeBtn = document.getElementById("add-site-mode");
   const siteCountBadge = document.getElementById("site-count-badge");
 
@@ -313,6 +314,8 @@
     sitePanelCreateName.value = "";
     sitePanelCreateCoords.textContent = `${formatCoord(lat)}, ${formatCoord(lon)}`;
     syncCreateSlugPreview();
+    viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
+    syncCreateViewshedCheckbox();
     resetCreatePrefetchUI();
     removeDraftMarker();
     draftMarker = new maplibregl.Marker({ color: "#fbbf24" })
@@ -595,10 +598,11 @@
   let draftViewshedLoading = false;
   let placementPrefetchGen = 0;
 
-  function updateCreateViewshedHint() {
-    const el = document.getElementById("site-panel-create-viewshed-hint");
-    if (!el) return;
-    el.textContent = draftViewshedLoading ? "Computing viewshed…" : "";
+  function syncCreateViewshedCheckbox() {
+    if (!sitePanelCreateViewshed || !createMode) return;
+    sitePanelCreateViewshed.checked = isViewshedVisible(DRAFT_VIEWSHED_SLUG);
+    const hint = document.getElementById("site-panel-create-viewshed-hint");
+    if (hint) hint.textContent = draftViewshedLoading ? "Loading…" : "";
   }
 
   function removeDraftViewshed() {
@@ -629,23 +633,19 @@
   async function loadDraftViewshedAt(lat, lon) {
     removeDraftViewshed();
     draftViewshedLoading = true;
-    updateCreateViewshedHint();
+    syncCreateViewshedCheckbox();
     try {
       const resp = await fetch(viewshedPrefetchUrl(lat, lon));
       if (!resp.ok) return;
       const vs = await resp.json();
       if (vs && vs.url && vs.coordinates) {
         addViewshedLayer({ ...vs, slug: DRAFT_VIEWSHED_SLUG });
-        const layerId = viewshedLayerId(DRAFT_VIEWSHED_SLUG);
-        if (map.getLayer(layerId)) {
-          map.setLayoutProperty(layerId, "visibility", "visible");
-        }
       }
     } catch (_) {
       /* draft viewshed optional */
     } finally {
       draftViewshedLoading = false;
-      updateCreateViewshedHint();
+      syncCreateViewshedCheckbox();
     }
   }
 
@@ -663,6 +663,7 @@
       if (site) void loadViewshedForSite(site);
     }
     if (slug === selectedSlug) syncViewshedCheckbox();
+    if (slug === DRAFT_VIEWSHED_SLUG) syncCreateViewshedCheckbox();
   }
 
   function syncViewshedCheckbox() {
@@ -695,6 +696,7 @@
     }
     viewshedLoading.delete(vs.slug);
     if (vs.slug === selectedSlug) syncViewshedCheckbox();
+    if (vs.slug === DRAFT_VIEWSHED_SLUG) syncCreateViewshedCheckbox();
     raiseSiteLayers();
   }
 
@@ -987,6 +989,11 @@
   sitePanelViewshed.addEventListener("change", (ev) => {
     if (selectedSlug) setViewshedVisible(selectedSlug, ev.target.checked);
   });
+  if (sitePanelCreateViewshed) {
+    sitePanelCreateViewshed.addEventListener("change", (ev) => {
+      if (createMode) setViewshedVisible(DRAFT_VIEWSHED_SLUG, ev.target.checked);
+    });
+  }
   document.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape") return;
     if (createMode) {
