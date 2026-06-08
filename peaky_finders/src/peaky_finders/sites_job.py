@@ -1289,16 +1289,7 @@ class Preset(BaseModel):
     def _sites_non_empty_and_sees_valid(self) -> Preset:
         if not self.sites:
             raise ValueError("sites must contain at least one entry")
-        for slug, entry in self.sites.items():
-            seen_sees: set[str] = set()
-            for target in entry.sees:
-                if target not in self.sites:
-                    raise ValueError(f"sites.{slug}.sees references unknown site slug {target!r}")
-                if target == slug:
-                    raise ValueError(f"sites.{slug}.sees must not include the site itself")
-                if target in seen_sees:
-                    raise ValueError(f"duplicate slug in sites.{slug}.sees: {target!r}")
-                seen_sees.add(target)
+        _validate_site_sees_refs(self.sites)
         return self
 
 
@@ -1338,9 +1329,21 @@ def resolved_eligible_union_build_dir(bundle_cache_root: Path) -> Path:
     return (root.parent / "eligible_union").resolve()
 
 
-def parse_preset_dict(raw: Mapping[str, Any]) -> Preset:
-    """Coerce/validate a preset mapping (same rules as :func:`load_preset` without file I/O)."""
-    sites_raw = raw.get("sites")
+def _validate_site_sees_refs(sites: dict[str, SiteEntry]) -> None:
+    for slug, entry in sites.items():
+        seen_sees: set[str] = set()
+        for target in entry.sees:
+            if target not in sites:
+                raise ValueError(f"sites.{slug}.sees references unknown site slug {target!r}")
+            if target == slug:
+                raise ValueError(f"sites.{slug}.sees must not include the site itself")
+            if target in seen_sees:
+                raise ValueError(f"duplicate slug in sites.{slug}.sees: {target!r}")
+            seen_sees.add(target)
+
+
+def coerce_preset_sites(sites_raw: Any) -> dict[str, SiteEntry]:
+    """Parse and validate only the ``sites`` section of a preset mapping."""
     if isinstance(sites_raw, list):
         by_slug: dict[str, SiteEntry] = {}
         for ent in sites_raw:
@@ -1354,16 +1357,35 @@ def parse_preset_dict(raw: Mapping[str, Any]) -> Preset:
                     n += 1
                 slug = f"{slug}-{n}"
             by_slug[slug] = SiteEntry.model_validate(dict(ent))
-        raw = {**raw, "sites": by_slug}
+        sites = by_slug
     elif isinstance(sites_raw, Mapping):
-        raw = {
-            **raw,
-            "sites": {
-                str(slug): SiteEntry.model_validate(dict(site)) for slug, site in sites_raw.items()
-            },
+        sites = {
+            str(slug): SiteEntry.model_validate(dict(site)) for slug, site in sites_raw.items()
         }
+    else:
+        raise ValueError("sites must be a mapping or list")
 
+    if not sites:
+        raise ValueError("sites must contain at least one entry")
+    _validate_site_sees_refs(sites)
+    return sites
+
+
+def parse_preset_sites_dict(raw: Mapping[str, Any]) -> dict[str, SiteEntry]:
+    """Validate only ``sites`` (for UIs that do not need a full :class:`Preset`)."""
+    return coerce_preset_sites(raw.get("sites"))
+
+
+def parse_preset_dict(raw: Mapping[str, Any]) -> Preset:
+    """Coerce/validate a preset mapping (same rules as :func:`load_preset` without file I/O)."""
+    raw = {**raw, "sites": coerce_preset_sites(raw.get("sites"))}
     return Preset.model_validate(raw)
+
+
+def load_preset_sites(path: Path) -> dict[str, SiteEntry]:
+    """Load and validate only ``sites`` from a preset YAML file."""
+    raw = read_preset_document(path)
+    return parse_preset_sites_dict(raw)
 
 
 def load_preset(path: Path) -> Preset:

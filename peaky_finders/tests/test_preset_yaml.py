@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from peaky_finders.sites_job import (
     dump_preset_yaml_document,
     load_preset,
+    load_preset_sites,
     read_preset_yaml_tree,
     require_preset_yaml_path,
     resolved_coverage_dispatcher_max_workers,
@@ -54,3 +56,28 @@ def test_preset_yaml_roundtrip_preserves_comments(tmp_path: Path) -> None:
     dump_preset_yaml_document(yaml_rt, root, preset_path)
     rewritten = preset_path.read_text(encoding="utf-8")
     assert "# Minimal preset" in rewritten
+
+
+def test_load_preset_sites_ignores_invalid_bundle_goals(tmp_path: Path) -> None:
+    preset_path = tmp_path / "config.yaml"
+    preset_path.write_text(
+        """
+sites:
+  hub:
+    name: Hub
+    loc: [39.5, -119.5]
+    sees: []
+bundle:
+  site_suggestions:
+    strategy: mesh-backbone
+    mesh_backbone:
+      goals:
+        russel-bridge:
+          loc: russell-peak
+""".strip(),
+        encoding="utf-8",
+    )
+    sites = load_preset_sites(preset_path)
+    assert sites["hub"].name == "Hub"
+    with pytest.raises(ValidationError):
+        load_preset(preset_path)
