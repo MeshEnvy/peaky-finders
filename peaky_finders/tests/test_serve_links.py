@@ -16,6 +16,7 @@ from fixture_paths import SAMPLE_PROJECT_CONFIG
 from peaky_finders.serve_links import (
     canonical_site_pair,
     evaluate_site_pair_linked,
+    load_coords_site_links,
     load_project_site_links,
 )
 from peaky_finders.serve_cli import make_serve_handler
@@ -178,6 +179,28 @@ def test_api_project_link_pair_manual(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_load_coords_site_links_rf_batch(tmp_path: Path) -> None:
+    project_dir = tmp_path / "sample"
+    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    sites = load_preset_sites(project_dir / "config.yaml")
+    lat = float(next(iter(sites.values())).lat)
+    lon = float(next(iter(sites.values())).lon)
+
+    def _rf_batch(_session, pairs, *, rf_json: str) -> list[bool]:
+        return [True] * len(pairs)
+
+    with (
+        patch("peaky_finders.serve_links.splatter_session"),
+        patch("peaky_finders.serve_links.ensure_dem_for_points"),
+        patch("peaky_finders.serve_links.mutual_hop_batch", side_effect=_rf_batch) as mock_batch,
+    ):
+        records = load_coords_site_links(project_dir, lat, lon, sites)
+
+    assert mock_batch.called
+    assert all(row["linked"] for row in records)
+    assert all(not row["manual"] for row in records)
 
 
 def test_project_page_includes_site_links_toggle(tmp_path: Path) -> None:

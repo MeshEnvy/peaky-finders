@@ -19,6 +19,8 @@ from pydantic import ValidationError
 from peaky_finders.new_cli import discover_projects, scaffold_project, validate_project_slug
 from peaky_finders.serve_html import landing_html, project_error_html, project_html
 from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked, load_project_site_links
+from peaky_finders.serve_plss_mlrs import apply_plss_mlrs_from_loc_cache
+from peaky_finders.serve_site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
 from peaky_finders.serve_sites import append_planned_site_to_preset
 from peaky_finders.serve_viewshed import (
     ServeViewshedError,
@@ -48,6 +50,9 @@ _STATIC_MIME: dict[str, str] = {
 
 _PROJECT_PATH_RE = re.compile(r"^/p/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_SITES_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/?$")
+_API_PROJECT_SITES_PREFETCH_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/prefetch/?$"
+)
 _API_PROJECT_VIEWSHED_PREFETCH_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/prefetch/?$"
 )
@@ -190,6 +195,35 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                     self._send_bytes(payload, "application/json", status=422)
                     return
                 payload = json.dumps({"slug": slug, "sites": sites}).encode("utf-8")
+                self._send_bytes(payload, "application/json")
+                return
+
+            sites_prefetch_match = _API_PROJECT_SITES_PREFETCH_RE.match(path)
+            if sites_prefetch_match:
+                slug = sites_prefetch_match.group(1)
+                project_dir = projects_dir / slug
+                if not (project_dir / "config.yaml").is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    lat, lon = _parse_lat_lon_query(parsed.query)
+                except ValueError as e:
+                    payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                verbose = bool(getattr(self.server, "verbose", False))
+                try:
+                    payload_obj = load_site_placement_prefetch(
+                        project_dir,
+                        lat,
+                        lon,
+                        verbose=verbose,
+                    )
+                except ServeSitePrefetchError as e:
+                    payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=503)
+                    return
+                payload = json.dumps({"project": slug, **payload_obj}).encode("utf-8")
                 self._send_bytes(payload, "application/json")
                 return
 
@@ -470,6 +504,7 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                         lat=lat,
                         lon=lon,
                     )
+                    apply_plss_mlrs_from_loc_cache(preset_path, site_slug, lat, lon)
                     site_map = _load_project_sites(project_dir)
                     site_entry = site_map[site_slug]
                     site_row = _serialize_project_sites({site_slug: site_entry})[0]
