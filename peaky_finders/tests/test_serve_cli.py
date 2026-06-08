@@ -267,6 +267,9 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert "queryRenderedFeatures" in js_body
         assert "setViewshedVisible" in js_body
         assert "function renderPanel" in js_body
+        assert "localStorage" in js_body
+        assert "peaky.map.v1." in js_body
+        assert "scheduleSaveMapState" in js_body
     finally:
         server.shutdown()
         server.server_close()

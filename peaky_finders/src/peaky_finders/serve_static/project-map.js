@@ -17,6 +17,8 @@
   const PITCH_TERRAIN_ON = 12;
   const PITCH_TERRAIN_OFF = 6;
   const SITE_FIT_BUFFER_KM = 30;
+  const MAP_STATE_KEY = `peaky.map.v1.${projectSlug}`;
+  const MAP_STATE_SAVE_MS = 400;
 
   const BASEMAPS = {
     street: {
@@ -37,6 +39,44 @@
       maxzoom: 19,
     },
   };
+
+  function isValidSavedState(saved) {
+    if (!saved || !Array.isArray(saved.center) || saved.center.length !== 2) return false;
+    if (!BASEMAPS[saved.basemap]) return false;
+    if (typeof saved.zoom !== "number") return false;
+    return true;
+  }
+
+  function loadMapState() {
+    try {
+      const raw = localStorage.getItem(MAP_STATE_KEY);
+      if (!raw) return null;
+      const saved = JSON.parse(raw);
+      return isValidSavedState(saved) ? saved : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function persistMapState(state) {
+    try {
+      localStorage.setItem(MAP_STATE_KEY, JSON.stringify(state));
+    } catch (_) {
+      /* private mode or quota */
+    }
+  }
+
+  const savedMapState = loadMapState();
+
+  function syncToolbarFromSaved(saved) {
+    if (!saved) return;
+    const basemapEl = document.getElementById("basemap");
+    if (basemapEl && BASEMAPS[saved.basemap]) basemapEl.value = saved.basemap;
+    const linksEl = document.getElementById("show-links");
+    if (linksEl && typeof saved.showLinks === "boolean") linksEl.checked = saved.showLinks;
+  }
+
+  syncToolbarFromSaved(savedMapState);
 
   function basemapStyle(key) {
     const bm = BASEMAPS[key] || BASEMAPS.street;
@@ -87,11 +127,12 @@
 
   const map = new maplibregl.Map({
     container: "map",
-    style: basemapStyle("street"),
-    center: [-98.35, 39.5],
-    zoom: 4,
+    style: basemapStyle(savedMapState ? savedMapState.basemap : "street"),
+    center: savedMapState ? savedMapState.center : [-98.35, 39.5],
+    zoom: savedMapState ? savedMapState.zoom : 4,
     maxPitch: 85,
-    pitch: 0,
+    bearing: savedMapState ? savedMapState.bearing || 0 : 0,
+    pitch: savedMapState ? savedMapState.pitch || 0 : 0,
     attributionControl: { compact: true },
   });
   const navControl = new maplibregl.NavigationControl({ visualizePitch: true });
@@ -110,6 +151,8 @@
   }
 
   let mapReady = false;
+  let restoring = true;
+  let saveTimer = null;
   let terrainActive = false;
   let selectedSlug = null;
   let siteLinksPayload = null;
@@ -156,6 +199,28 @@
 
   function linksApiUrl() {
     return `/api/p/${projectSlug}/links`;
+  }
+
+  function captureMapState() {
+    const c = map.getCenter();
+    return {
+      v: 1,
+      center: [c.lng, c.lat],
+      zoom: map.getZoom(),
+      bearing: map.getBearing(),
+      pitch: map.getPitch(),
+      basemap: document.getElementById("basemap").value,
+      showLinks: document.getElementById("show-links").checked,
+    };
+  }
+
+  function scheduleSaveMapState() {
+    if (!mapReady || restoring) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      persistMapState(captureMapState());
+    }, MAP_STATE_SAVE_MS);
   }
 
   function setSiteLinksVisible(visible) {
@@ -563,19 +628,29 @@
     void loadSiteLinks();
     loadAllViewsheds();
     const basemapKey = document.getElementById("basemap").value;
-    if (BASEMAPS[basemapKey].referenceTiles) {
-      ensureBasemapReference(BASEMAPS[basemapKey]);
+    setBasemap(basemapKey);
+    if (savedMapState) {
+      setSiteLinksVisible(document.getElementById("show-links").checked);
+      syncTerrainFromPitch();
+    } else {
+      fitSites();
     }
-    fitSites();
-    if (terrainActive) showTerrainOverlays();
+    restoring = false;
   });
 
-  map.on("pitch", syncTerrainFromPitch);
+  map.on("pitch", () => {
+    syncTerrainFromPitch();
+    scheduleSaveMapState();
+  });
+  map.on("moveend", scheduleSaveMapState);
+  map.on("rotateend", scheduleSaveMapState);
   document.getElementById("basemap").addEventListener("change", (ev) => {
     setBasemap(ev.target.value);
+    scheduleSaveMapState();
   });
   document.getElementById("show-links").addEventListener("change", (ev) => {
     setSiteLinksVisible(ev.target.checked);
+    scheduleSaveMapState();
   });
   sitePanelClose.addEventListener("click", deselectSite);
   sitePanelViewshed.addEventListener("change", (ev) => {
