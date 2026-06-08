@@ -6,99 +6,87 @@ One **project** is a directory containing **`config.yaml`** (the preset), option
 
 ## Prerequisites
 
-- **Docker** — all CLI use goes through [`./peaky`](peaky); no local Python or GDAL install needed.
-- **Git submodules** — the Rust **splatter** extension lives in [`splatter/`](splatter/) and is built inside the image:
+- **Docker** — pull the published **`peaky-finders`** image. No local Python, GDAL, or repo clone required.
 
 ```bash
-git clone --recurse-submodules <repo-url>
-# or, after a plain clone:
-git submodule update --init
+docker pull peaky-finders
+mkdir -p ~/.peaky
 ```
 
-## Docker and Python
+Add a shell helper (mounts **`~/.peaky`** — projects, Skadi cache, and other state live there):
 
-You run **`./peaky`** on your machine. It builds (if needed) and runs the **`peaky:dev`** Docker image, which contains Python, GDAL, and the splatter viewshed extension. Your project directory is mounted into the container; the CLI reads **`./config.yaml`** from that directory.
+```bash
+peaky() {
+  local workdir="/.peaky"
+  case "$PWD" in
+    "$HOME/.peaky"|"$HOME/.peaky"/*) workdir="/.peaky${PWD#"$HOME/.peaky"}" ;;
+  esac
+  docker run --rm \
+    -v "$HOME/.peaky:/.peaky" \
+    -e PEAKY_HOME=/.peaky \
+    -w "$workdir" \
+    peaky-finders "$@"
+}
+```
+
+## How it runs
+
+The container mounts **`~/.peaky`** at **`/.peaky`**. Projects live under **`~/.peaky/projects/<slug>/`**. Skadi DEM tiles cache at **`~/.peaky/splat_cache`**.
+
+For build commands, **`cd` into a project** on the host first so the helper sets the container working directory correctly.
 
 ```mermaid
 flowchart LR
-  host["Your machine\n(project dir)"]
-  peakyScript["./peaky script"]
-  container["peaky:dev container\nPython + GDAL + splatter"]
-  config["config.yaml"]
-  data["data/"]
-  build["build/"]
-  cache["~/.peaky/splat_cache\n(Skadi DEM tiles)"]
+  host["~/.peaky on host"]
+  docker["docker run peaky-finders"]
+  container["/.peaky in container"]
+  projects["projects/"]
+  cache["splat_cache/"]
 
-  host --> peakyScript
-  peakyScript -->|"mounts $PWD → /project"| container
-  peakyScript -->|"persists DEM cache"| cache
-  config --> container
-  data --> container
-  container --> build
+  host --> docker
+  docker -->|"mount ~/.peaky → /.peaky"| container
+  container --> projects
+  container --> cache
 ```
-
-- **`./peaky`** mounts your **current directory** as `/project` and runs the `peaky` CLI inside the container.
-- The CLI **requires `./config.yaml`** in that directory — always `cd` into your project first.
-- Application code lives in [`peaky_finders/`](peaky_finders/); operators do not need to edit it.
-- Skadi DEM tiles are cached on the host at **`~/.peaky/splat_cache`** (override with **`PEAKY_CACHE_DIR`**).
-
-The first `./peaky` run builds the Docker image automatically. After Dockerfile changes, pass **`--build`** (e.g. `./peaky --build build`).
 
 ## Creating a new project
 
-From the **repo root** (no `config.yaml` required):
-
 ```bash
-./peaky new my-region
-# → projects/my-region/config.yaml + data/{aoi,include,exclude}/
-cd projects/my-region
-../../peaky build --verbose
-```
-
-Standalone directory (scaffold in cwd):
-
-```bash
-mkdir my-region && cd my-region
-../peaky new my-region --here
-../peaky build --verbose
+peaky new my-region
+cd ~/.peaky/projects/my-region
+peaky build --verbose
 ```
 
 Edit `config.yaml`; add GDB/KML files under `data/`. List GDB layers with `peaky inspect data/aoi/your.gdb`.
 
-Git ignores `projects/` artifacts but allows committing `projects/**/config.yaml` (see [`.gitignore`](.gitignore)).
-
-### Manual copy (alternative)
-
-```bash
-mkdir -p my-region/data/{aoi,include,exclude}
-cp peaky_finders/tests/fixtures/peaky_home/projects/sample/config.yaml my-region/config.yaml
-```
-
 ### Critical rule
 
-Always **`cd` into the project directory** before running `./peaky`. The CLI looks for **`./config.yaml`** in the current working directory; you cannot pass a preset path to `peaky build`.
+Always **`cd` into the project directory** before running `peaky build` (and other preset commands). The CLI reads **`./config.yaml`** from the current working directory; you cannot pass a preset path to `peaky build`.
 
-## Project layout
+## Data layout
 
 ```
-my-region/
-  config.yaml       # preset: RF, sites, bundle layers (required)
-  data/             # bundle inputs (paths referenced in config)
-    aoi/
-    include/
-    exclude/
-  build/            # generated (gitignored)
-    bundle/
-    viewsheds/
-    mesh/
-    my-region.kmz   # final output
+~/.peaky/
+  projects/
+    my-region/
+      config.yaml       # preset: RF, sites, bundle layers (required)
+      data/             # bundle inputs (paths referenced in config)
+        aoi/
+        include/
+        exclude/
+      build/            # generated
+        bundle/
+        viewsheds/
+        mesh/
+        my-region.kmz   # final output
+  splat_cache/          # Skadi DEM tiles (shared across projects)
 ```
 
 **`build/`** is incremental — reruns skip targets that are still fresh. Use **`--force`** to rebuild everything, or delete specific subtrees to force partial rebuilds.
 
 ## `config.yaml` essentials
 
-Copy and edit the sample fixture at [`peaky_finders/tests/fixtures/peaky_home/projects/sample/config.yaml`](peaky_finders/tests/fixtures/peaky_home/projects/sample/config.yaml). JSON presets are not supported.
+After `peaky new`, edit the scaffolded preset. A fuller reference lives in the repo at [`peaky_finders/tests/fixtures/peaky_home/projects/sample/config.yaml`](peaky_finders/tests/fixtures/peaky_home/projects/sample/config.yaml). JSON presets are not supported.
 
 | Section | Purpose |
 |---------|---------|
@@ -110,27 +98,38 @@ Copy and edit the sample fixture at [`peaky_finders/tests/fixtures/peaky_home/pr
 Discover layer names in a File Geodatabase:
 
 ```bash
-../peaky inspect data/aoi/my.gdb
+peaky inspect data/aoi/my.gdb
 ```
 
 ## Running builds
 
-Run these from your project directory. Adjust the path to `./peaky` if your clone layout differs (examples assume the repo root is one level up).
+From **`~/.peaky/projects/<slug>/`**:
 
 | Command | What it does |
 |---------|----------------|
-| `../peaky build` | Full incremental build → KMZ |
-| `../peaky build --verbose` | Log start/progress/end per target |
-| `../peaky build -j 4` | Run up to 4 targets in parallel within a wave |
-| `../peaky build --target bundle` | Bundle phase only |
-| `../peaky build --target viewshed/hub` | One site viewshed (`hub` = site slug) |
-| `../peaky build --dry-run` | Show what would run without executing |
-| `../peaky build --force` | Rebuild all targeted nodes (ignore staleness) |
-| `../peaky build --suggest` | Run site suggestion solver; append picks to preset |
-| `../peaky kmz` | Reassemble KMZ without rerunning coverage |
-| `../peaky bundle plss` | Populate PLSS/MLRS fields on sites |
+| `peaky build` | Full incremental build → KMZ |
+| `peaky build --verbose` | Log start/progress/end per target |
+| `peaky build -j 4` | Run up to 4 targets in parallel within a wave |
+| `peaky build --target bundle` | Bundle phase only |
+| `peaky build --target viewshed/hub` | One site viewshed (`hub` = site slug) |
+| `peaky build --dry-run` | Show what would run without executing |
+| `peaky build --force` | Rebuild all targeted nodes (ignore staleness) |
+| `peaky build --suggest` | Run site suggestion solver; append picks to preset |
+| `peaky kmz` | Reassemble KMZ without rerunning coverage |
+| `peaky bundle plss` | Populate PLSS/MLRS fields on sites |
 
-Advanced partial rebuilds are available via `peaky bundle`, `peaky mesh`, `peaky viewshed`, and `peaky stamp` — run `../peaky --help` for subcommands.
+Advanced partial rebuilds are available via `peaky bundle`, `peaky mesh`, `peaky viewshed`, and `peaky stamp` — run `peaky --help` for subcommands.
+
+## Web UI
+
+```bash
+docker run --rm -p 8080:8080 \
+  -v "$HOME/.peaky:/.peaky" \
+  -e PEAKY_HOME=/.peaky \
+  peaky-finders serve
+```
+
+Open `http://localhost:8080` — project list reads from `~/.peaky/projects/`.
 
 ## Outputs
 
@@ -139,31 +138,57 @@ Advanced partial rebuilds are available via `peaky bundle`, `peaky mesh`, `peaky
 
 ## Environment variables
 
-| Variable | Default | When to set |
-|----------|---------|-------------|
-| `PEAKY_CACHE_DIR` | `~/.peaky/splat_cache` | Relocate Skadi DEM tile cache |
-| `PEAKY_HOME` | repo root | Non-standard install layout |
+| Variable | Default (container) | When to set |
+|----------|---------------------|-------------|
+| `PEAKY_HOME` | `/.peaky` | Relocate the runtime home (mount host dir there) |
 | `PEAKY_PROJECTS` | `<PEAKY_HOME>/projects` | Custom projects root |
+| `SPLAT_CACHE` | `<PEAKY_HOME>/splat_cache` | Custom Skadi DEM cache path |
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| `config.yaml not found` | Wrong working directory — `cd` into your project |
+| `config.yaml not found` | `cd ~/.peaky/projects/<slug>` before build commands |
 | Missing or wrong GDB layers | Run `peaky inspect`, fix paths and layer names in `bundle.*` |
-| Slow first build | DEM tiles download into the cache; later runs reuse them |
+| Slow first build | DEM tiles download into `~/.peaky/splat_cache`; later runs reuse them |
 | Stale or broken build artifacts | Delete the relevant `build/` subtree, or run with `--force` |
-| Need to rebuild Docker image | `./peaky --build build` |
 
 ## For developers
 
-Python source is in [`peaky_finders/`](peaky_finders/). Run tests from the **repo root** with [`./peaky-test`](peaky-test) — do not run `poetry install` or `pytest` on the macOS host inside `peaky_finders/` (the bind-mounted `.venv` must stay Linux-only).
+This repo is for **contributors**. End users run the published Docker image above — they do not clone the repo.
 
-Production image:
+Clone with submodules (Rust **splatter** extension is built into the image):
 
 ```bash
-docker build --target latest -t peaky:latest .
-docker run --rm -v "$PWD:/project" peaky:latest build
+git clone --recurse-submodules <repo-url>
+# or, after a plain clone:
+git submodule update --init
 ```
 
-Mount your project directory at `/project`; the entrypoint requires `config.yaml` there.
+**[`./peaky`](peaky)** is a dev-only wrapper: it builds/runs the **`peaky:dev`** image with a live bind-mount of [`peaky_finders/`](peaky_finders/). Pass **`--build`** after Dockerfile changes.
+
+From the repo root:
+
+```bash
+./peaky new my-region          # → projects/my-region/config.yaml + data/
+cd projects/my-region
+../../peaky build --verbose
+```
+
+Run tests from the repo root with [`./peaky-test`](peaky-test) — do not run `poetry install` or `pytest` on the macOS host inside `peaky_finders/` (the bind-mounted `.venv` must stay Linux-only).
+
+Build the production image locally:
+
+```bash
+docker build --target latest -t peaky-finders .
+docker run --rm -v "$HOME/.peaky:/.peaky" -e PEAKY_HOME=/.peaky \
+  -w /.peaky/projects/my-region peaky-finders build
+```
+
+| Variable | Default | Role (dev) |
+|----------|---------|------------|
+| `PEAKY_CACHE_DIR` | `~/.peaky/splat_cache` | Host Skadi cache mount for `./peaky` / `./peaky-test` |
+| `PEAKY_DEV_IMAGE` | `peaky:dev` | Dev Docker image tag |
+| `PEAKY_HOME` | repo root | Runtime home in dev container |
+
+Git ignores `projects/` artifacts but allows committing `projects/**/config.yaml` (see [`.gitignore`](.gitignore)).
