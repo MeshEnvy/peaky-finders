@@ -14,7 +14,7 @@ import pytest
 from peaky_finders.new_cli import scaffold_project
 from peaky_finders.serve_cli import (
     _reload_detected,
-    _py_file_mtimes,
+    _reload_snapshots,
     build_serve_parser,
     make_serve_handler,
     resolve_serve_projects_dir,
@@ -52,7 +52,7 @@ def test_reload_detects_py_change(tmp_path: Path) -> None:
     src.mkdir()
     module = src / "app.py"
     module.write_text("x = 1\n", encoding="utf-8")
-    before = {src: _py_file_mtimes(src)}
+    before = _reload_snapshots([src])
     assert _reload_detected(before, [src]) is False
     module.write_text("x = 2\n", encoding="utf-8")
     future = time.time() + 2.0
@@ -118,6 +118,8 @@ def test_landing_lists_projects(tmp_path: Path) -> None:
         assert "Create empty template" in body
         assert 'href="/favicon.svg"' in body
         assert 'href="/site.webmanifest"' in body
+        assert 'data-bs-theme="dark"' in body
+        assert "bootstrap@5.3.3" in body
     finally:
         server.shutdown()
         server.server_close()
@@ -203,6 +205,24 @@ def test_post_invalid_slug_shows_error(tmp_path: Path) -> None:
         server.server_close()
 
 
+def test_serve_static_app_css(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/static/app.css")
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8")
+        assert resp.status == 200
+        assert resp.getheader("Content-Type") == "text/css"
+        assert ".map-shell" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_project_page_includes_site_map(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
@@ -221,11 +241,21 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert "Street" in body
         assert "Topo" in body
         assert "Satellite" in body
-        assert "clarity.maptiles.arcgis.com" in body
-        assert "terrain-dem" in body
-        assert "maxPitch: 85" in body
         assert '"name": "Hub"' in body
         assert "1 site" in body
+        assert "/static/project-map.js" in body
+        assert 'data-bs-theme="dark"' in body
+        assert "bootstrap@5.3.3" in body
+        assert "PEAKY_PROJECT" in body
+
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/static/project-map.js")
+        js_resp = conn.getresponse()
+        js_body = js_resp.read().decode("utf-8")
+        assert js_resp.status == 200
+        assert "clarity.maptiles.arcgis.com" in js_body
+        assert "terrain-dem" in js_body
+        assert "maxPitch: 85" in js_body
     finally:
         server.shutdown()
         server.server_close()
