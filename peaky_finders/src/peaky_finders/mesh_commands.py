@@ -69,11 +69,10 @@ def run_mesh_links(preset_path: Path) -> int:
 
     outp = resolved_mesh_site_links_kml(job_path_r)
     outp.parent.mkdir(parents=True, exist_ok=True)
-    sees_by_slug = {slug: entry.sees for slug, entry in job.sites.items()}
     if write_site_links_kml(
         coverage_gpkg_by_slug=assets.coverage_gpkg_by_slug,
         sites=assets.overlays,
-        sees_by_slug=sees_by_slug,
+        manual_links=job.links,
         out_kml=outp,
     ):
         print(f"mesh links: wrote {outp}", flush=True)

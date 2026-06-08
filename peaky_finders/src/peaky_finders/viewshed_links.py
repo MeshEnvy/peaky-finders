@@ -1,4 +1,4 @@
-"""Mutual site–site links from coverage footprints and/or preset ``sites.*.sees``."""
+"""Mutual site–site links from coverage footprints and/or preset ``links``."""
 
 from __future__ import annotations
 
@@ -35,23 +35,17 @@ def _canonical_pair(a: str, b: str) -> tuple[str, str]:
     return (a, b) if a <= b else (b, a)
 
 
-def mutual_sees_slug_pairs(sees_by_slug: Mapping[str, Sequence[str]]) -> list[tuple[str, str]]:
-    """Slug pairs where each site lists the other in ``sees``."""
+def manual_link_slug_pairs(manual_links: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Canonical slug pairs from preset ``links`` (already sorted per pair)."""
     out: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for slug_a, targets in sees_by_slug.items():
-        target_set = {str(t).strip() for t in targets if str(t).strip()}
-        for slug_b in target_set:
-            if slug_a == slug_b:
-                continue
-            if slug_a not in {str(t).strip() for t in sees_by_slug.get(slug_b, ())}:
-                continue
-            key = _canonical_pair(slug_a, slug_b)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(key)
-    return out
+    for a, b in manual_links:
+        key = _canonical_pair(str(a).strip(), str(b).strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return sorted(out)
 
 
 def mutual_footprint_link_pairs(sites: Sequence[_SiteLinkNode]) -> list[tuple[int, int]]:
@@ -76,13 +70,13 @@ def mutual_footprint_link_pairs(sites: Sequence[_SiteLinkNode]) -> list[tuple[in
 def mutual_site_link_slug_pairs(
     *,
     footprint_nodes: Sequence[_SiteLinkNode],
-    sees_by_slug: Mapping[str, Sequence[str]],
+    manual_links: Sequence[tuple[str, str]] = (),
 ) -> list[tuple[str, str]]:
-    """Union of mutual footprint coverage and mutual ``sees`` pairs (canonical slug order)."""
+    """Union of mutual footprint coverage and preset ``links`` pairs (canonical slug order)."""
     pairs: set[tuple[str, str]] = set()
     for i, j in mutual_footprint_link_pairs(footprint_nodes):
         pairs.add(_canonical_pair(footprint_nodes[i].slug, footprint_nodes[j].slug))
-    pairs.update(mutual_sees_slug_pairs(sees_by_slug))
+    pairs.update(manual_link_slug_pairs(manual_links))
     return sorted(pairs)
 
 
@@ -90,13 +84,12 @@ def write_site_links_kml(
     *,
     coverage_gpkg_by_slug: Mapping[str, Path],
     sites: Sequence[AggregateSiteOverlay],
-    sees_by_slug: Mapping[str, Sequence[str]] | None = None,
+    manual_links: Sequence[tuple[str, str]] | None = None,
     out_kml: Path,
 ) -> bool:
     """Write LineString KML for mutual site links; False if none.
 
-    A pair is linked when footprints mutually cover both pins **or** both sites list each
-    other under ``sites.<slug>.sees`` in the preset.
+    A pair is linked when footprints mutually cover both pins **or** it appears in preset ``links``.
     """
     overlay_by_slug = {s.slug: s for s in sites}
     footprint_nodes: list[_SiteLinkNode] = []
@@ -122,7 +115,7 @@ def write_site_links_kml(
 
     pair_slugs = mutual_site_link_slug_pairs(
         footprint_nodes=footprint_nodes,
-        sees_by_slug=sees_by_slug or {},
+        manual_links=manual_links or (),
     )
     if not pair_slugs:
         return False

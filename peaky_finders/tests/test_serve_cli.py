@@ -241,7 +241,7 @@ sites:
   hub:
     name: Hub
     loc: [39.5, -119.5]
-    sees: []
+links: []
 suggest:
   strategy: mesh-backbone
   mesh_backbone:

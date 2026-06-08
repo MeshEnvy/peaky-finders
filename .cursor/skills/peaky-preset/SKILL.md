@@ -25,7 +25,8 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 | `land` | GDB layer refs: `reference`, `aoi`, `include`, `exclude` |
 | `mesh` | Pairwise/depth analysis knobs |
 | `suggest` | Site planner for `build --suggest` |
-| `sites` | Site entries: `loc`, `sees`, optional `plss`/`mlrs` |
+| `sites` | Site entries: `loc`, optional `plss`/`mlrs` |
+| `links` | Manual mutual site pairs `[[a, b], …]` |
 
 Legacy `.json` presets are rejected.
 

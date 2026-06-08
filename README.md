@@ -93,7 +93,8 @@ After `peaky new`, edit the scaffolded preset. A fuller reference lives in the r
 | `simulation` | RF modem/environment presets, transmitter/receiver, `radius_km`, `provider` |
 | `display` | Colormap and dBm range for rasters |
 | `bundle` | `inputs_root`, `aoi` / `include` / `exclude` layer groups; optional mesh and site-suggestion settings |
-| `sites` | Slug → `{ name, loc: [lat, lon], sees: [...] }` mesh graph |
+| `sites` | Slug → `{ name, loc: [lat, lon], … }` |
+| `links` | Manual mutual pairs `[[site-a, site-b], …]` (unioned with viewshed-derived edges) |
 
 Discover layer names in a File Geodatabase:
 
