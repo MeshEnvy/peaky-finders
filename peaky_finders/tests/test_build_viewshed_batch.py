@@ -21,7 +21,7 @@ def test_flush_viewshed_coverage_batch_all_runnable(peaky_test_home) -> None:
 
     preset_path = SAMPLE_PROJECT_CONFIG.expanduser().resolve()
     preset = load_preset(preset_path)
-    assert preset.simulation.provider == CoverageProvider.LOS
+    assert preset.simulation.provider == CoverageProvider.SPLATTER
     plan = configure_preset_build(preset_path=preset_path)
     nodes = build_target_graph(plan, preset)
     coverage_ids = sorted(tid for tid in nodes if tid.endswith(":coverage"))

@@ -18,7 +18,7 @@ def resolved_splatter_batch_jobs(
     build_jobs: int | None = None,
 ) -> int:
     """Workers inside one ``run-batch`` invocation (``SPLATTER_BATCH_JOBS``)."""
-    cap = build_jobs if build_jobs is not None else preset.simulation.max_workers.los
+    cap = build_jobs if build_jobs is not None else preset.simulation.max_workers.splatter
     return max(1, min(cap, workspace_count))
 
 

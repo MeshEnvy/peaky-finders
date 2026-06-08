@@ -306,7 +306,7 @@ def write_preset_document(path: Path, payload: Mapping[str, Any]) -> None:
 class CoverageProvider(StrEnum):
     """Coverage engine selected by ``simulation.provider`` (splatter Fresnel/FSPL)."""
 
-    LOS = "los"
+    SPLATTER = "splatter"
 
 
 class SimulationMaxWorkers(BaseModel):
@@ -314,7 +314,7 @@ class SimulationMaxWorkers(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    los: int = Field(
+    splatter: int = Field(
         default=1,
         ge=1,
         description="Concurrent splatter jobs inside one ``run-batch`` Docker invocation (``SPLATTER_BATCH_JOBS``).",
@@ -326,7 +326,7 @@ class SimulationConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    provider: CoverageProvider = CoverageProvider.LOS
+    provider: CoverageProvider = CoverageProvider.SPLATTER
     situation_pct: Any = "95.0"
     time_pct: Any = "95.0"
     radius_km: Any = "50.0"
@@ -1364,8 +1364,8 @@ class Preset(BaseModel):
 
 
 def resolved_coverage_dispatcher_max_workers(job: Preset) -> int:
-    """Resolve ``simulation.max_workers.los`` for splatter batch fan-out."""
-    return job.simulation.max_workers.los
+    """Resolve ``simulation.max_workers.splatter`` for splatter batch fan-out."""
+    return job.simulation.max_workers.splatter
 
 
 def resolved_bundle_dir(*, preset_path: Path) -> Path:

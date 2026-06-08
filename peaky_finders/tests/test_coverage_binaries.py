@@ -18,7 +18,7 @@ def test_require_cwd_config_yaml_aborts_when_missing(tmp_path: Path, monkeypatch
 
 def test_require_cwd_config_yaml_returns_path(tmp_path: Path, monkeypatch) -> None:
     cfg = tmp_path / "config.yaml"
-    cfg.write_text("simulation:\n  provider: los\n", encoding="utf-8")
+    cfg.write_text("simulation:\n  provider: splatter\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     assert require_cwd_config_yaml() == cfg.resolve()
 

@@ -2,7 +2,7 @@
 # GDB paths under land.* resolve under ``<preset-directory>/<land.inputs_root>`` unless absolute.
 #
 simulation:
-  provider: los
+  provider: splatter
   situation_pct: 95.0
   time_pct: 95.0
   radius_km: 60.0

@@ -36,7 +36,7 @@ from peaky_finders.sites_job import (
 )
 
 _SUGGEST_SIMULATION = {
-    "provider": "los",
+    "provider": "splatter",
     "radius_km": 60.0,
     "modem_presets": {
         "meshcore-us": {

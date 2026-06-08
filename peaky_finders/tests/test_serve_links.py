@@ -56,7 +56,7 @@ def test_evaluate_site_pair_out_of_range_skips_rf(tmp_path: Path) -> None:
     (project_dir / "config.yaml").write_text(
         """
 simulation:
-  provider: los
+  provider: splatter
   radius_km: 1.0
   modem_presets:
     meshcore-us:
