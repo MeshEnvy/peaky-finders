@@ -182,7 +182,7 @@ def _project_html(slug: str, project_dir: Path, sites: dict[str, SiteEntry]) -> 
       + '(<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
   }});
   const satellite = L.tileLayer(
-    "https://server.arcgis.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}",
+    "https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}",
     {{
       maxZoom: 19,
       attribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a>',
@@ -302,11 +302,21 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
 
         def _send_html(self, body: bytes, *, status: int = 200) -> None:
-            self._send_bytes(body, "text/html; charset=utf-8", status=status)
+            self._send_bytes(body, "text/html; charset=utf-8", status=status, extra_headers={"Cache-Control": "no-store"})
 
-        def _send_bytes(self, body: bytes, content_type: str, status: int = 200) -> None:
+        def _send_bytes(
+            self,
+            body: bytes,
+            content_type: str,
+            status: int = 200,
+            *,
+            extra_headers: dict[str, str] | None = None,
+        ) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
+            if extra_headers:
+                for key, value in extra_headers.items():
+                    self.send_header(key, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
