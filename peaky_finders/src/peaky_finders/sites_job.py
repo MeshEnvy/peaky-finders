@@ -1393,6 +1393,17 @@ def load_preset(path: Path) -> Preset:
     return parse_preset_dict(raw)
 
 
+def load_preset_for_coverage(path: Path) -> Preset:
+    """Load preset for splatter/viewshed; ``bundle.site_suggestions`` does not affect RF."""
+    raw = read_preset_document(path)
+    bundle = raw.get("bundle")
+    if isinstance(bundle, Mapping):
+        bundle_copy = dict(bundle)
+        bundle_copy.pop("site_suggestions", None)
+        raw = {**raw, "bundle": bundle_copy}
+    return parse_preset_dict(raw)
+
+
 def viewshed_raster_png_arcname(site_slug: str) -> str:
     """Path inside KMZ for coverage raster (GroundOverlay href)."""
     base = _slugify_files_segment(site_slug)
