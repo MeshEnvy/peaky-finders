@@ -256,6 +256,10 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert "clarity.maptiles.arcgis.com" in js_body
         assert "terrain-dem" in js_body
         assert "maxPitch: 85" in js_body
+        assert "SITE_FIT_BUFFER_KM = 30" in js_body
+        assert "function resetHomeView()" in js_body
+        assert "stopImmediatePropagation" in js_body
+        assert "visualizePitch: true" in js_body
     finally:
         server.shutdown()
         server.server_close()
