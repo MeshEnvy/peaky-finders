@@ -18,7 +18,8 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: changing DAG targets or art
 | `-j N` | Parallel targets within one wave |
 | `--force` | Run every targeted node (ignore staleness) |
 | `--dry-run` | Print build/fresh flags only |
-| `--suggest` | Run site suggestion pass → append to preset YAML |
+| `--suggest` | Run site suggestion pass → append `type: suggested` sites toward preset **goals** |
+| `--replace-suggested` | With `--suggest`, drop existing `type: suggested` before re-planning |
 | `--verbose` | Start/progress/end per target |
 
 ## Pipeline
