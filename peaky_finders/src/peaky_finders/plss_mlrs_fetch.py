@@ -223,6 +223,13 @@ def _yaml_plss_mlrs(ent: dict[str, Any]) -> tuple[str | None, str | None]:
 
 def _apply_plss_mlrs_on_preset(preset_path: Path, slug: str, plss: str | None, mlrs: str | None) -> None:
     def mutator(_y: Any, root: dict[str, Any]) -> None:
+        goals_raw = root.get("goals")
+        if isinstance(goals_raw, dict):
+            ent = goals_raw.get(slug)
+            if isinstance(ent, dict):
+                ent["plss"] = plss
+                ent["mlrs"] = mlrs
+                return
         sites_raw = root.get("sites")
         if isinstance(sites_raw, dict):
             ent = sites_raw.get(slug)

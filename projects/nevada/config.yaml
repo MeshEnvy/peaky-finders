@@ -156,63 +156,69 @@ display:
 land:
   inputs_root: data
   reference:
-    - id: blm_nevada_districts
-      path: reference/BLM_Nevada_District_Office_Boundary.gdb
-      visible: false
-      style:
-        line: ff4488cc
-        fill: 664488cc
-        fill_polygons: true
-        line_width: 1.5
-      layers:
-        - admu_district_poly
-    - id: blm_nv_field_offices
-      path: reference/BLM_NV_Field_Office_Boundary_Polygons.gdb
-      visible: false
-      style:
-        line: ffcc8844
-        fill: 66cc8844
-        fill_polygons: true
-        line_width: 1.0
-      layers:
-        - admu_ofc_poly
+  - id: blm_nevada_districts
+    path: reference/BLM_Nevada_District_Office_Boundary.gdb
+    visible: false
+    style:
+      line: ff4488cc
+      fill: 664488cc
+      fill_polygons: true
+      line_width: 1.5
+    layers:
+    - admu_district_poly
+  - id: blm_nv_field_offices
+    path: reference/BLM_NV_Field_Office_Boundary_Polygons.gdb
+    visible: false
+    style:
+      line: ffcc8844
+      fill: 66cc8844
+      fill_polygons: true
+      line_width: 1.0
+    layers:
+    - admu_ofc_poly
   aoi:
-    - path: aoi/State_of_Nevada_Boundary_74510041082641794
-      layers:
-        - Nevada_State_Boundary
+  - path: aoi/State_of_Nevada_Boundary_74510041082641794
+    layers:
+    - Nevada_State_Boundary
   include:
-    - path: include/BLM_Nevada_Surface_Management_Agency.gdb
-      layers:
-        - name: Land_Status_Dis
-          include:
-            - name: ABBR
-              value: BLM
-            - name: ABBR
-              value: FS
-    - path: include/National_Wildlife_Refuge_System_Boundaries.gdb
-      layers:
-        - name: FWSBoundaries
+  - path: include/BLM_Nevada_Surface_Management_Agency.gdb
+    layers:
+    - name: Land_Status_Dis
+      include:
+      - name: ABBR
+        value: BLM
+      - name: ABBR
+        value: FS
+  - path: include/National_Wildlife_Refuge_System_Boundaries.gdb
+    layers:
+    - name: FWSBoundaries
   exclude:
-    - path: exclude/BLM_Natl_Areas_of_Critical_Environmental_Concern_-8889489521581605133
-      layers:
-        - name: acec_desig_poly
-    - path: exclude/BLM_Natl_Historic_Areas_of_Critical_of_Environmental_Concern_3039259636030657794
-      layers:
-        - name: acec_hist_poly
-    - path: exclude/BLM_Natl_Land_and_Water_Conservation_Fund_LWCF_Polygons_2503496445228609816
-      layers:
-        - name: BLM_Natl_Land_and_Water_Conservation_Fund__LWCF__Polygons
-    - path: exclude/BLM_Natl_NLCS_National_Monuments_National_Conservation_Areas_Polygons_3820554695161457218
-      layers:
-        - name: BLM_Natl_NLCS_National_Monuments_National_Conservation_Areas_Polygons
-    - path: exclude/BLM_Natl_NLCS_Wilderness_Areas_Polygons_-100690039319256330
-      layers:
-        - name: BLM_Natl_NLCS_Wilderness_Areas_Polygons
-    - path: exclude/BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons_-3786779803719444042
-      layers:
-        - name: BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons
-    - path: exclude/FRTCMapData_LandStatus_styled.kml
-    - path: exclude/USFS Wilderness Areas.gdb
+  - path: 
+      exclude/BLM_Natl_Areas_of_Critical_Environmental_Concern_-8889489521581605133
+    layers:
+    - name: acec_desig_poly
+  - path: 
+      exclude/BLM_Natl_Historic_Areas_of_Critical_of_Environmental_Concern_3039259636030657794
+    layers:
+    - name: acec_hist_poly
+  - path: 
+      exclude/BLM_Natl_Land_and_Water_Conservation_Fund_LWCF_Polygons_2503496445228609816
+    layers:
+    - name: BLM_Natl_Land_and_Water_Conservation_Fund__LWCF__Polygons
+  - path: 
+      exclude/BLM_Natl_NLCS_National_Monuments_National_Conservation_Areas_Polygons_3820554695161457218
+    layers:
+    - name: 
+        BLM_Natl_NLCS_National_Monuments_National_Conservation_Areas_Polygons
+  - path: exclude/BLM_Natl_NLCS_Wilderness_Areas_Polygons_-100690039319256330
+    layers:
+    - name: BLM_Natl_NLCS_Wilderness_Areas_Polygons
+  - path: 
+      exclude/BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons_-3786779803719444042
+    layers:
+    - name: BLM_Natl_NLCS_Wilderness_Study_Areas_Polygons
+  - path: exclude/FRTCMapData_LandStatus_styled.kml
+  - path: exclude/USFS Wilderness Areas.gdb
 mesh:
   pairwise: false
   depth: false
@@ -249,18 +255,27 @@ suggest:
     refine_top_n: 3
     refine_radius_m: 200.0
     refine_spacing_m: 50.0
-    goals:
-      russel-bridge:
-        loc: russell-peak
-      slpt-bridge:
-        loc: slpt-south-entrance
+    goal_order:
+    - russel-bridge
+    - slpt-bridge
+goals:
+  russel-bridge:
+    name: Russell Bridge
+    loc:
+    - 39.90951
+    - -119.3289
+  slpt-bridge:
+    name: SLPT Bridge
+    loc:
+    - 41.49575
+    - -119.07732
 sites:
   davidson-peak:
     type: installed
     name: Davidson Peak
     loc:
-      - 39.30831
-      - -119.66388
+    - 39.30831
+    - -119.66388
     elevation_m: 2372.0
     rationale: BLM surface management (national SMA); approved with explicit 
       user-documented permission.
@@ -271,8 +286,8 @@ sites:
     type: installed
     name: Lower Spanish Benchmark
     loc:
-      - 39.64484
-      - -119.7649
+    - 39.64484
+    - -119.7649
     elevation_m: 1789.0
     rationale: BLM surface management (national SMA); approved with explicit 
       user-documented permission.
@@ -283,8 +298,8 @@ sites:
     type: installed
     name: Ophir Hill
     loc:
-      - 39.31862
-      - -119.66943
+    - 39.31862
+    - -119.66943
     elevation_m: 2353.0
     rationale: BLM surface management (national SMA); approved with explicit 
       user-documented permission.
@@ -295,8 +310,8 @@ sites:
     type: installed
     name: Poito
     loc:
-      - 40.42619
-      - -119.35167
+    - 40.42619
+    - -119.35167
     elevation_m: 1713.0
     rationale: BLM surface management (national SMA); approved with explicit 
       user-documented permission.
@@ -307,8 +322,8 @@ sites:
     type: installed
     name: Russell Peak
     loc:
-      - 39.90951
-      - -119.3289
+    - 39.90951
+    - -119.3289
     elevation_m: 1420.0
     rationale: BLM surface management (national SMA); approved with explicit 
       user-documented permission.
@@ -319,8 +334,8 @@ sites:
     type: installed
     name: SLPT East
     loc:
-      - 41.53783
-      - -119.02876
+    - 41.53783
+    - -119.02876
     elevation_m: 1839.0
     rationale: Non-BLM site with explicit user-documented permission.
     plss: NV; Mount Diablo Meridian; T.42N R.26E; Sec. 20 — CadNSDI 
@@ -330,8 +345,8 @@ sites:
     type: installed
     name: SLPT North
     loc:
-      - 41.56303
-      - -119.04481
+    - 41.56303
+    - -119.04481
     elevation_m: 1830.0
     rationale: Non-BLM site with explicit user-documented permission.
     plss: NV; Mount Diablo Meridian; T.42N R.26E; Sec. 17 — CadNSDI 
@@ -341,8 +356,8 @@ sites:
     type: installed
     name: SLPT South
     loc:
-      - 41.49465
-      - -119.05593
+    - 41.49465
+    - -119.05593
     elevation_m: 1798.0
     rationale: Non-BLM site with explicit user-documented permission.
     plss: NV; Mount Diablo Meridian; T.41N R.26E; Sec. 06 — CadNSDI 
@@ -352,8 +367,8 @@ sites:
     type: installed
     name: SLPT South Entrance
     loc:
-      - 41.49575
-      - -119.07732
+    - 41.49575
+    - -119.07732
     elevation_m: 1817.0
     rationale: Non-BLM site with explicit user-documented permission.
     plss: NV; Mount Diablo Meridian; T.41N R.25E; Sec. 01 — CadNSDI 
@@ -363,12 +378,30 @@ sites:
     type: installed
     name: Flowery Peak
     loc:
-      - 39.31983
-      - -119.61584
+    - 39.31983
+    - -119.61584
     rationale: ''
     plss: NV; Mount Diablo Meridian; T.17N R.21E; Sec. 22 — CadNSDI 
       PLSSID=NV210170N0210E0 | FRSTDIVID=NV210170N0210E0SN220
     mlrs: NV210170N0210E0SN220
 
+  foo:
+    type: planned
+    name: foo
+    loc:
+    - 40.815257273638764
+    - -120.36348392304896
+  fubar:
+    type: planned
+    name: fubar
+    loc:
+    - 40.641163471335574
+    - -120.59868337827831
+  fizbar:
+    type: planned
+    name: fizbar
+    loc:
+    - 40.98439461239863
+    - -121.35726112016383
 links:
-  - [poito, russell-peak]
+- [poito, russell-peak]

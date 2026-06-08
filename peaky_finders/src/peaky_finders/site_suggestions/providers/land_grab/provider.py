@@ -35,8 +35,8 @@ class LandGrabStrategy:
             corridor_kml=False,
         )
 
-    def validate_config(self, cfg: SuggestConfig) -> None:
-        del cfg
+    def validate_config(self, cfg: SuggestConfig, preset: Preset) -> None:
+        del cfg, preset
 
     def max_suggested_nodes(self, cfg: SuggestConfig) -> int | None:
         del cfg

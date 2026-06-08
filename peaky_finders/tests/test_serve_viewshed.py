@@ -273,9 +273,11 @@ def test_load_preset_for_coverage_ignores_site_suggestions(tmp_path: Path) -> No
             "  exclude: []\n\nsuggest:\n"
             "  strategy: mesh-backbone\n"
             "  mesh_backbone:\n"
-            "    goals:\n"
-            "      russel-bridge:\n"
-            "        loc: russell-peak\n\nsites:",
+            "    goal_order: [russel-bridge]\n\n"
+            "goals:\n"
+            "  russel-bridge:\n"
+            "    name: Russell Bridge\n"
+            "    loc: russell-peak\n\nsites:",
         ),
         encoding="utf-8",
     )

@@ -24,7 +24,7 @@ description: >-
 ## Domain model (sites vs goals)
 
 - **Sites** (`sites:`) — repeaters with viewsheds. `installed` / `planned` are **fixed**; `suggested` (from `--suggest`) **may move** on re-suggest.
-- **Goals** (`suggest.mesh_backbone.goals`) — coverage **attractors** (desired map points); not repeaters, no viewshed until captured by a site.
+- **Goals** (top-level `goals:`) — coverage **attractors** (desired map points); not repeaters, no viewshed until captured (footprint + RF hop).
 
 Rule: `sites-and-goals`. Detail: MEMORY § Domain model, skill `peaky-preset`.
 

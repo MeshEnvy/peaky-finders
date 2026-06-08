@@ -1212,7 +1212,7 @@ def plan_greedy_site_suggestions(
     cfg = resolved_suggest_config(preset.suggest)
     provider = resolve_site_suggestion_strategy(cfg)
     hooks = provider.planner_hooks(cfg)
-    provider.validate_config(cfg)
+    provider.validate_config(cfg, preset)
     existing_suggested = count_suggested_sites(preset)
     max_goals = provider.resolve_step_budget(cfg, suggest_cli_n)
 

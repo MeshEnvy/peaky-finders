@@ -18,6 +18,11 @@ from pydantic import ValidationError
 
 from peaky_finders.new_cli import discover_projects, scaffold_project, validate_project_slug
 from peaky_finders.serve_html import landing_html, project_error_html, project_html
+from peaky_finders.serve_goal_links import (
+    evaluate_goal_site_prefetch_links,
+    load_project_goal_links,
+)
+from peaky_finders.serve_goals import append_goal_to_preset
 from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked, load_project_site_links
 from peaky_finders.serve_plss_mlrs import apply_plss_mlrs_from_loc_cache
 from peaky_finders.serve_site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
@@ -29,7 +34,7 @@ from peaky_finders.serve_viewshed import (
     ensure_site_viewshed_overlay,
     ensure_site_viewshed_png,
 )
-from peaky_finders.sites_job import SiteEntry, load_preset_sites
+from peaky_finders.sites_job import GoalEntry, SiteEntry, load_preset_goals, load_preset_sites
 
 SERVE_STATIC_DIR = Path(__file__).resolve().parent / "serve_static"
 
@@ -50,6 +55,10 @@ _STATIC_MIME: dict[str, str] = {
 
 _PROJECT_PATH_RE = re.compile(r"^/p/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_SITES_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/?$")
+_API_PROJECT_GOALS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/goals/?$")
+_API_PROJECT_GOALS_PREFETCH_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/goals/prefetch/?$"
+)
 _API_PROJECT_SITES_PREFETCH_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/prefetch/?$"
 )
@@ -67,6 +76,7 @@ _API_PROJECT_LINK_PAIR_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/links/([a-zA-Z][a-zA-Z0-9_-]*)/([a-zA-Z][a-zA-Z0-9_-]*)/?$"
 )
 _API_PROJECT_LINKS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/links/?$")
+_API_PROJECT_GOAL_LINKS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/goal-links/?$")
 
 
 def resolve_serve_peaky_home() -> Path:
@@ -140,6 +150,30 @@ def _parse_lat_lon_query(query: str) -> tuple[float, float]:
     return lat, lon
 
 
+def _load_project_goals(project_dir: Path) -> dict[str, GoalEntry]:
+    return load_preset_goals(project_dir / "config.yaml")
+
+
+def _serialize_project_goals(goals: dict[str, GoalEntry]) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    for goal_slug, entry in sorted(goals.items()):
+        row: dict[str, object] = {
+            "slug": goal_slug,
+            "name": entry.name,
+            "lat": entry.lat,
+            "lon": entry.lon,
+            "kind": "goal",
+        }
+        if entry.elevation_m is not None:
+            row["elevation_m"] = entry.elevation_m
+        for key in ("description", "plss", "mlrs", "rationale"):
+            val = getattr(entry, key)
+            if val and str(val).strip():
+                row[key] = str(val).strip()
+        out.append(row)
+    return out
+
+
 def _serialize_project_sites(sites: dict[str, SiteEntry]) -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
     for site_slug, entry in sorted(sites.items()):
@@ -195,6 +229,77 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                     self._send_bytes(payload, "application/json", status=422)
                     return
                 payload = json.dumps({"slug": slug, "sites": sites}).encode("utf-8")
+                self._send_bytes(payload, "application/json")
+                return
+
+            goals_match = _API_PROJECT_GOALS_RE.match(path)
+            if goals_match:
+                slug = goals_match.group(1)
+                project_dir = projects_dir / slug
+                if not (project_dir / "config.yaml").is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    goals = _serialize_project_goals(_load_project_goals(project_dir))
+                except (ValueError, ValidationError) as e:
+                    payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                payload = json.dumps({"slug": slug, "goals": goals}).encode("utf-8")
+                self._send_bytes(payload, "application/json")
+                return
+
+            goals_prefetch_match = _API_PROJECT_GOALS_PREFETCH_RE.match(path)
+            if goals_prefetch_match:
+                slug = goals_prefetch_match.group(1)
+                project_dir = projects_dir / slug
+                if not (project_dir / "config.yaml").is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    lat, lon = _parse_lat_lon_query(parsed.query)
+                    site_map = _load_project_sites(project_dir)
+                except (ValueError, ValidationError) as e:
+                    payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                verbose = bool(getattr(self.server, "verbose", False))
+                try:
+                    links = evaluate_goal_site_prefetch_links(
+                        project_dir,
+                        lat=lat,
+                        lon=lon,
+                        sites=site_map,
+                        verbose=verbose,
+                    )
+                except ServeLinksError as e:
+                    payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=503)
+                    return
+                features = []
+                for row in links:
+                    site_slug = str(row["site"])
+                    site = site_map[site_slug]
+                    features.append(
+                        {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "LineString",
+                                "coordinates": [
+                                    [lon, lat],
+                                    [float(site.lon), float(site.lat)],
+                                ],
+                            },
+                            "properties": {"goal": "_draft", "site": site_slug, "captured": False},
+                        }
+                    )
+                payload = json.dumps(
+                    {
+                        "project": slug,
+                        "links": links,
+                        "links_geojson": {"type": "FeatureCollection", "features": features},
+                    }
+                ).encode("utf-8")
                 self._send_bytes(payload, "application/json")
                 return
 
@@ -280,6 +385,36 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                 try:
                     payload_obj = load_project_site_links(
                         project_dir,
+                        site_map,
+                        verbose=verbose,
+                    )
+                except ServeLinksError as e:
+                    payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=503)
+                    return
+                payload = json.dumps({"project": slug, **payload_obj}).encode("utf-8")
+                self._send_bytes(payload, "application/json")
+                return
+
+            goal_links_match = _API_PROJECT_GOAL_LINKS_RE.match(path)
+            if goal_links_match:
+                slug = goal_links_match.group(1)
+                project_dir = projects_dir / slug
+                if not (project_dir / "config.yaml").is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    site_map = _load_project_sites(project_dir)
+                    goal_map = _load_project_goals(project_dir)
+                except (ValueError, ValidationError) as e:
+                    payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                verbose = bool(getattr(self.server, "verbose", False))
+                try:
+                    payload_obj = load_project_goal_links(
+                        project_dir,
+                        goal_map,
                         site_map,
                         verbose=verbose,
                     )
@@ -429,11 +564,17 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
                     return
                 try:
                     sites = _load_project_sites(project_dir)
+                    goals = _load_project_goals(project_dir)
                 except (ValueError, ValidationError) as e:
                     self._send_html(project_error_html(slug, project_dir, str(e)), status=422)
                     return
                 self._send_html(
-                    project_html(slug, project_dir, _serialize_project_sites(sites))
+                    project_html(
+                        slug,
+                        project_dir,
+                        _serialize_project_sites(sites),
+                        _serialize_project_goals(goals),
+                    )
                 )
                 return
 
@@ -464,6 +605,64 @@ def make_serve_handler(projects_dir: Path) -> type[BaseHTTPRequestHandler]:
             path = parsed.path
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length)
+
+            goals_match = _API_PROJECT_GOALS_RE.match(path)
+            if goals_match:
+                project_slug = goals_match.group(1)
+                project_dir = projects_dir / project_slug
+                preset_path = project_dir / "config.yaml"
+                if not preset_path.is_file():
+                    self.send_error(404)
+                    return
+                try:
+                    raw = _parse_json_body(body)
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": f"invalid JSON: {e}"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                if not isinstance(raw, dict):
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": "body must be a JSON object"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                name = str(raw.get("name", ""))
+                try:
+                    lat = float(raw["lat"])
+                    lon = float(raw["lon"])
+                except (KeyError, TypeError, ValueError) as e:
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": f"lat and lon required: {e}"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                try:
+                    goal_slug = append_goal_to_preset(
+                        preset_path,
+                        name=name,
+                        lat=lat,
+                        lon=lon,
+                    )
+                    apply_plss_mlrs_from_loc_cache(preset_path, goal_slug, lat, lon)
+                    goal_map = _load_project_goals(project_dir)
+                    goal_entry = goal_map[goal_slug]
+                    goal_row = _serialize_project_goals({goal_slug: goal_entry})[0]
+                except (ValueError, ValidationError) as e:
+                    payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                except OSError as e:
+                    payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=500)
+                    return
+                payload = json.dumps(
+                    {"slug": project_slug, "goal": goal_row},
+                    sort_keys=True,
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=201)
+                return
 
             sites_match = _API_PROJECT_SITES_RE.match(path)
             if sites_match:

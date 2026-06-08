@@ -561,28 +561,48 @@ def test_post_project_site_rejects_invalid_coords(tmp_path: Path) -> None:
         server.server_close()
 
 
-def test_post_project_site_when_suggest_goals_use_site_slug_loc(tmp_path: Path) -> None:
+def test_post_project_site_with_top_level_goals(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     project_dir = projects_dir / "nevada-like"
     project_dir.mkdir(parents=True)
     (project_dir / "config.yaml").write_text(
         """
+simulation:
+  modem_presets:
+    m:
+      frequency_mhz: 910.525
+      bandwidth_khz: 62.5
+      spreading_factor: 7
+      coding_rate: 5
+      implementation_margin_db: 3.0
+      power_dbm: 22.0
+      sensitivity_dbm: -121.0
+  environment_presets:
+    e:
+      climate: desert
+      polarization: vertical
+      clutter_height_m: 1.0
+  modem: m
+  environment: e
+  transmitter: {height_m: 2.0, gain_dbi: 2.0, loss_db: 0.0}
+  receiver: {height_m: 2.0, gain_dbi: 2.0, loss_db: 0.0}
+display:
+  colormap: rainbow
+  min_dbm: -130.0
+  max_dbm: -80.0
 sites:
   hub:
     name: Hub
     loc: [39.5, -119.5]
-  russell-peak:
-    name: Russell Peak
+goals:
+  bridge:
+    name: Bridge
     loc: [39.9, -119.3]
 links: []
 suggest:
   strategy: mesh-backbone
   mesh_backbone:
-    goals:
-      russel-bridge:
-        loc: russell-peak
-      slpt-bridge:
-        loc: slpt-south-entrance
+    goal_order: [bridge]
 """.strip(),
         encoding="utf-8",
     )
@@ -607,7 +627,7 @@ suggest:
         server.server_close()
 
 
-def test_project_page_includes_add_site_controls(tmp_path: Path) -> None:
+def test_project_page_includes_add_controls(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
     scaffold_project("mesh-demo", parent=projects_dir)
@@ -619,10 +639,13 @@ def test_project_page_includes_add_site_controls(tmp_path: Path) -> None:
         resp = conn.getresponse()
         body = resp.read().decode("utf-8")
         assert resp.status == 200
-        assert 'id="add-site-mode"' in body
+        assert 'id="add-mode-btn"' in body
+        assert 'data-add-kind="site"' in body
+        assert 'data-add-kind="goal"' in body
         assert 'id="site-panel-create"' in body
         assert 'id="site-panel-create-viewshed"' in body
         assert 'id="site-panel-slug-preview"' in body
+        assert 'id="goal-count-badge"' in body
     finally:
         server.shutdown()
         server.server_close()

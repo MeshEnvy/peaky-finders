@@ -58,7 +58,7 @@ def test_preset_yaml_roundtrip_preserves_comments(tmp_path: Path) -> None:
     assert "# Minimal preset" in rewritten
 
 
-def test_load_preset_sites_ignores_invalid_bundle_goals(tmp_path: Path) -> None:
+def test_load_preset_rejects_invalid_goal_loc(tmp_path: Path) -> None:
     preset_path = tmp_path / "config.yaml"
     preset_path.write_text(
         """
@@ -67,12 +67,14 @@ sites:
     name: Hub
     loc: [39.5, -119.5]
 links: []
+goals:
+  russel-bridge:
+    name: Russell Bridge
+    loc: russell-peak
 suggest:
   strategy: mesh-backbone
   mesh_backbone:
-    goals:
-      russel-bridge:
-        loc: russell-peak
+    goal_order: [russel-bridge]
 """.strip(),
         encoding="utf-8",
     )

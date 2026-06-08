@@ -24,7 +24,8 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 | `display` | Viewshed raster + `display.kml` / `display.kmz` presentation |
 | `land` | GDB layer refs: `reference`, `aoi`, `include`, `exclude` |
 | `mesh` | Pairwise/depth analysis knobs |
-| `suggest` | Site planner for `build --suggest`; `mesh_backbone.goals` = coverage attractors |
+| `suggest` | Site planner for `build --suggest`; `mesh_backbone.goal_order` sequences `goals:` |
+| `goals` | Coverage attractors — `name`, `loc: [lat, lon]`; slugs must not collide with `sites:` |
 | `sites` | Repeaters with viewsheds — see **Sites vs goals** below |
 | `links` | Manual mutual site pairs `[[a, b], …]` |
 
@@ -32,7 +33,7 @@ Legacy `.json` presets are rejected.
 
 ## Sites vs goals
 
-**Sites** (`sites:`) are **repeaters** — each has a splatter viewshed. **Goals** (`suggest.mesh_backbone.goals`) are **coverage attractors** — map points where coverage is desired; no viewshed until a site captures them.
+**Sites** (`sites:`) are **repeaters** — each has a splatter viewshed. **Goals** (top-level `goals:`) are **coverage attractors** — map points where coverage is desired; no viewshed until a site captures them (footprint + RF hop).
 
 ### Site types (`SiteType`)
 
@@ -46,10 +47,11 @@ Suggest **never relocates** `installed` or `planned` sites. Only `type: suggeste
 
 ### Goals
 
-- User-defined `loc: [lat, lon]` under `suggest.mesh_backbone.goals` (slug keys).
-- Planner attractors for mesh-backbone / land-grab strategies.
+- User-defined under top-level `goals:` — slug keys, `name`, `loc: [lat, lon]`.
+- Solver sequencing via `suggest.mesh_backbone.goal_order` (references goal slugs).
+- Slug namespace validated disjoint from `sites:` at preset load.
 - Ephemeral `bridge:*` goals appear when healing disconnected mesh components.
-- A goal is “captured” when an existing site’s viewshed covers the point (or hop-connectivity rules for bridge goals).
+- A goal is **captured** when a repeater footprint covers the point **and** mutual RF hop is viable.
 
 ## Path helpers
 

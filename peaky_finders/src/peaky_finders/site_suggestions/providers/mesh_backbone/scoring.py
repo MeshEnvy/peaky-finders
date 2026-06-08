@@ -21,7 +21,7 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     captured_goal_keys,
     mutual_hop_neighbors,
 )
-from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_config
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_preset
 from peaky_finders.site_suggestions.mesh_connectivity import (
     main_footprint_slugs,
     mesh_healing_needed,
@@ -108,15 +108,16 @@ def composite_coverage_geometry(ctx: SiteSuggestionContext, *, verbose: bool = F
 
 
 def uncaptured_goals(ctx: SiteSuggestionContext) -> dict[str, GoalPoint]:
-    """Configured goals not yet captured by an existing site footprint."""
-    mb = ctx.cfg.mesh_backbone
-    goals = goals_from_config(mb)
+    """Configured goals not yet captured by an existing site."""
+    goals = goals_from_preset(ctx.preset.goals)
     if not goals:
         return {}
 
     sites = all_backbone_sites(ctx)
     footprints = mesh_completion.footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
-    missing = set(goals.keys()) - captured_goal_keys(mb, sites, footprints)
+    missing = set(goals.keys()) - captured_goal_keys(
+        ctx.preset.goals, sites, footprints, ctx.preset, verbose=ctx.verbose
+    )
     return {key: goals[key] for key in sorted(missing)}
 
 

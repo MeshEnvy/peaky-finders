@@ -397,19 +397,42 @@ class SiteType(StrEnum):
     SUGGESTED = "suggested"
 
 
-class SiteEntry(BaseModel):
+def _coerce_map_point_loc(v: Any) -> tuple[float, float]:
+    if not isinstance(v, (list, tuple)) or len(v) != 2:
+        raise ValueError("loc must be a length-2 array [lat, lon]")
+    return (float(v[0]), float(v[1]))
+
+
+class MapPointEntry(BaseModel):
+    """Shared map-point fields for repeaters (``SiteEntry``) and coverage goals (``GoalEntry``)."""
+
     model_config = ConfigDict(extra="ignore")
 
-    type: SiteType = SiteType.INSTALLED
     name: str
     loc: tuple[float, float]
 
     @field_validator("loc", mode="before")
     @classmethod
     def _coerce_loc(cls, v: Any) -> tuple[float, float]:
-        if not isinstance(v, (list, tuple)) or len(v) != 2:
-            raise ValueError("loc must be a length-2 array [lat, lon]")
-        return (float(v[0]), float(v[1]))
+        return _coerce_map_point_loc(v)
+
+    @property
+    def lat(self) -> float:
+        return float(self.loc[0])
+
+    @property
+    def lon(self) -> float:
+        return float(self.loc[1])
+
+    elevation_m: float | None = None
+    description: str | None = None
+    plss: str | None = None
+    mlrs: str | None = None
+    rationale: str | None = None
+
+
+class SiteEntry(MapPointEntry):
+    type: SiteType = SiteType.INSTALLED
 
     @field_validator("type", mode="before")
     @classmethod
@@ -428,19 +451,9 @@ class SiteEntry(BaseModel):
                 f"type must be one of: installed, planned, suggested (got {v!r})"
             ) from e
 
-    @property
-    def lat(self) -> float:
-        return float(self.loc[0])
 
-    @property
-    def lon(self) -> float:
-        return float(self.loc[1])
-
-    elevation_m: float | None = None
-    description: str | None = None
-    plss: str | None = None
-    mlrs: str | None = None
-    rationale: str | None = None
+class GoalEntry(MapPointEntry):
+    """Coverage attractor — map point where repeater coverage is desired (no viewshed)."""
 
 
 def _coerce_link_pair(item: Any, *, index: int) -> tuple[str, str]:
@@ -752,29 +765,6 @@ class MeshBackboneRouting(StrEnum):
     CORRIDOR = "corridor"
 
 
-class MeshBackboneGoalEntry(BaseModel):
-    """Named geographic target for mesh-grow site suggestions."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    loc: tuple[float, float] = Field(description="``[lat, lon]`` goal point (viewshed capture target).")
-
-    @field_validator("loc", mode="before")
-    @classmethod
-    def _coerce_loc(cls, v: Any) -> tuple[float, float]:
-        if not isinstance(v, (list, tuple)) or len(v) != 2:
-            raise ValueError("loc must be a length-2 array [lat, lon]")
-        return (float(v[0]), float(v[1]))
-
-    @property
-    def lat(self) -> float:
-        return float(self.loc[0])
-
-    @property
-    def lon(self) -> float:
-        return float(self.loc[1])
-
-
 class MeshBackboneStrategyConfig(BaseModel):
     """Grow the seed mesh outward until configured goals are captured and hop-connected."""
 
@@ -886,10 +876,6 @@ class MeshBackboneStrategyConfig(BaseModel):
         ge=1,
         le=512,
         description="Optional cap on backbone site count (installed + suggested); not the CLI ``--suggest`` goal budget.",
-    )
-    goals: dict[str, MeshBackboneGoalEntry] = Field(
-        default_factory=dict,
-        description="Named geographic targets (``loc: [lat, lon]``) to grow the mesh toward.",
     )
 
 
@@ -1319,8 +1305,25 @@ def resolved_kmz_document_layers(preset: Preset):
     return KmzDocumentLayerVisibility(**flat)
 
 
+def _validate_goal_slugs(
+    sites: dict[str, SiteEntry],
+    goals: dict[str, GoalEntry],
+    suggest: SuggestConfig | None,
+) -> None:
+    overlap = set(sites.keys()) & set(goals.keys())
+    if overlap:
+        slug = sorted(overlap)[0]
+        raise ValueError(f"goal slug {slug!r} collides with a site slug")
+    if suggest is None:
+        return
+    mb = suggest.mesh_backbone
+    for key in mb.goal_order:
+        if key not in goals:
+            raise ValueError(f"suggest.mesh_backbone.goal_order references unknown goal {key!r}")
+
+
 class Preset(BaseModel):
-    """One YAML preset: simulation RF, land masks, mesh/suggest knobs, sites, and manual links."""
+    """One YAML preset: simulation RF, land masks, mesh/suggest knobs, sites, goals, and manual links."""
 
     simulation: SimulationConfig
     display: DisplayConfig
@@ -1328,6 +1331,10 @@ class Preset(BaseModel):
     mesh: MeshConfig | None = None
     suggest: SuggestConfig | None = None
     sites: dict[str, SiteEntry]
+    goals: dict[str, GoalEntry] = Field(
+        default_factory=dict,
+        description="Coverage attractors (no viewshed) — planner targets under ``suggest.mesh_backbone``.",
+    )
     links: list[tuple[str, str]] = Field(
         default_factory=list,
         description=(
@@ -1352,6 +1359,7 @@ class Preset(BaseModel):
         if not self.sites:
             raise ValueError("sites must contain at least one entry")
         _validate_preset_links(self.sites, self.links)
+        _validate_goal_slugs(self.sites, self.goals, self.suggest)
         return self
 
 
@@ -1429,10 +1437,26 @@ def parse_preset_sites_dict(raw: Mapping[str, Any]) -> dict[str, SiteEntry]:
     return coerce_preset_sites(raw.get("sites"))
 
 
+def coerce_preset_goals(goals_raw: Any) -> dict[str, GoalEntry]:
+    """Parse and validate the ``goals`` section of a preset mapping."""
+    if goals_raw is None:
+        return {}
+    if not isinstance(goals_raw, Mapping):
+        raise ValueError("goals must be a mapping")
+    return {
+        str(slug): GoalEntry.model_validate(dict(goal))
+        for slug, goal in goals_raw.items()
+    }
+
+
 def parse_preset_dict(raw: Mapping[str, Any]) -> Preset:
     """Coerce/validate a preset mapping (same rules as :func:`load_preset` without file I/O)."""
     _reject_legacy_site_sees(raw)
-    raw = {**raw, "sites": coerce_preset_sites(raw.get("sites"))}
+    raw = {
+        **raw,
+        "sites": coerce_preset_sites(raw.get("sites")),
+        "goals": coerce_preset_goals(raw.get("goals")),
+    }
     return Preset.model_validate(raw)
 
 
@@ -1442,16 +1466,26 @@ def load_preset_sites(path: Path) -> dict[str, SiteEntry]:
     return parse_preset_sites_dict(raw)
 
 
+def parse_preset_goals_dict(raw: Mapping[str, Any]) -> dict[str, GoalEntry]:
+    """Validate only ``goals`` (for UIs that do not need a full :class:`Preset`)."""
+    return coerce_preset_goals(raw.get("goals"))
+
+
+def load_preset_goals(path: Path) -> dict[str, GoalEntry]:
+    """Load and validate only ``goals`` from a preset YAML file."""
+    raw = read_preset_document(path)
+    return parse_preset_goals_dict(raw)
+
+
 def load_preset(path: Path) -> Preset:
     raw = read_preset_document(path)
     return parse_preset_dict(raw)
 
 
 def load_preset_for_coverage(path: Path) -> Preset:
-    """Load preset for splatter/viewshed; ``suggest`` does not affect RF."""
+    """Load preset for splatter/viewshed; ``suggest`` and ``goals`` do not affect RF."""
     raw = read_preset_document(path)
-    if "suggest" in raw:
-        raw = {k: v for k, v in raw.items() if k != "suggest"}
+    raw = {k: v for k, v in raw.items() if k not in ("suggest", "goals")}
     return parse_preset_dict(raw)
 
 

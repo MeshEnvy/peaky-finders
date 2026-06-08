@@ -94,10 +94,17 @@ def project_error_html(slug: str, project_dir: Path, message: str) -> bytes:
     return html_page(slug, body, wide=True)
 
 
-def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -> bytes:
+def project_html(
+    slug: str,
+    project_dir: Path,
+    sites: list[dict[str, object]],
+    goals: list[dict[str, object]] | None = None,
+) -> bytes:
     site_count = len(sites)
+    goal_count = len(goals or [])
     site_noun = "site" if site_count == 1 else "sites"
-    peaky_config = json.dumps({"slug": slug, "sites": sites})
+    goal_noun = "goal" if goal_count == 1 else "goals"
+    peaky_config = json.dumps({"slug": slug, "sites": sites, "goals": goals or []})
     body = f"""<header class="project-toolbar border-bottom">
   <div class="container-fluid py-2 px-3">
     <div class="d-flex flex-wrap align-items-center gap-2 gap-md-3">
@@ -105,9 +112,16 @@ def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -
       <div class="d-flex align-items-center gap-2 me-auto">
         <h1 class="h5 mb-0">{html.escape(slug)}</h1>
         <span id="site-count-badge" class="badge text-bg-secondary">{site_count} {site_noun}</span>
+        <span id="goal-count-badge" class="badge text-bg-secondary">{goal_count} {goal_noun}</span>
       </div>
       <div class="d-flex flex-wrap align-items-center gap-2 gap-md-3">
-        <button type="button" id="add-site-mode" class="btn btn-sm btn-outline-primary">Add site</button>
+        <div class="btn-group">
+          <button type="button" id="add-mode-btn" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">+ Add</button>
+          <ul class="dropdown-menu dropdown-menu-dark">
+            <li><button type="button" class="dropdown-item" data-add-kind="site">Site (repeater)</button></li>
+            <li><button type="button" class="dropdown-item" data-add-kind="goal">Goal (coverage target)</button></li>
+          </ul>
+        </div>
         <div class="d-flex align-items-center gap-2">
           <label for="basemap" class="form-label mb-0 small text-muted">Map</label>
           <select id="basemap" class="form-select form-select-sm" style="width: auto;" title="Base map">
@@ -119,6 +133,10 @@ def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -
         <div class="form-check mb-0">
           <input id="show-links" class="form-check-input" type="checkbox" checked>
           <label class="form-check-label small" for="show-links">Site links</label>
+        </div>
+        <div class="form-check mb-0">
+          <input id="show-goal-links" class="form-check-input" type="checkbox" checked>
+          <label class="form-check-label small" for="show-goal-links">Goal links</label>
         </div>
         <div class="d-flex align-items-center gap-2">
           <label for="viewshed-opacity" class="form-label mb-0 small text-muted">Viewshed</label>
@@ -169,7 +187,11 @@ def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -
           <span class="site-panel__label small text-muted text-uppercase">Linked sites</span>
           <ul class="site-panel__links small mb-0 ps-3" id="site-panel-links"></ul>
         </div>
-        <div class="site-panel__viewshed form-check border-top pt-2 mt-2">
+        <div class="site-panel__section mb-2" id="site-panel-goal-links-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">Linked repeaters</span>
+          <ul class="site-panel__links small mb-0 ps-3" id="site-panel-goal-links"></ul>
+        </div>
+        <div class="site-panel__viewshed form-check border-top pt-2 mt-2" id="site-panel-viewshed-section">
           <input class="form-check-input" type="checkbox" id="site-panel-viewshed" checked>
           <label class="form-check-label small" for="site-panel-viewshed">Show viewshed</label>
           <span class="site-panel__viewshed-hint small text-muted ms-1" id="site-panel-viewshed-hint"></span>
@@ -177,10 +199,10 @@ def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -
       </div>
       <div id="site-panel-create" hidden>
         <div class="site-panel__header d-flex align-items-start justify-content-between gap-2 mb-3">
-          <h2 class="site-panel__title h6 mb-0">New site</h2>
+          <h2 class="site-panel__title h6 mb-0" id="site-panel-create-title">New site</h2>
           <button type="button" class="btn-close btn-close-sm" id="site-panel-create-close" title="Close" aria-label="Close"></button>
         </div>
-        <span class="site-panel__badge badge site-panel__badge--planned mb-3">planned</span>
+        <span class="site-panel__badge badge site-panel__badge--planned mb-3" id="site-panel-create-badge">planned</span>
         <div class="site-panel__section mb-2">
           <label class="site-panel__label small text-muted text-uppercase" for="site-panel-create-name">Name</label>
           <input id="site-panel-create-name" type="text" class="form-control form-control-sm" required>
@@ -202,10 +224,10 @@ def project_html(slug: str, project_dir: Path, sites: list[dict[str, object]]) -
           <p class="site-panel__value small mb-0" id="site-panel-create-mlrs"></p>
         </div>
         <div class="site-panel__section mb-2" id="site-panel-create-links-section" hidden>
-          <span class="site-panel__label small text-muted text-uppercase">Linked sites</span>
+          <span class="site-panel__label small text-muted text-uppercase" id="site-panel-create-links-label">Linked sites</span>
           <ul class="site-panel__links small mb-0 ps-3" id="site-panel-create-links"></ul>
         </div>
-        <div class="site-panel__viewshed form-check border-top pt-2 mt-2">
+        <div class="site-panel__viewshed form-check border-top pt-2 mt-2" id="site-panel-create-viewshed-section">
           <input class="form-check-input" type="checkbox" id="site-panel-create-viewshed" checked>
           <label class="form-check-label small" for="site-panel-create-viewshed">Show viewshed</label>
           <span class="site-panel__viewshed-hint small text-muted ms-1" id="site-panel-create-viewshed-hint"></span>

@@ -72,6 +72,13 @@ body.wide #map {
   color: #34d399;
 }
 
+.site-panel__badge--goal {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+}
+
+.map-shell.add-placement-mode #map,
+.map-shell.add-placement-mode .maplibregl-canvas,
 .map-shell.add-site-mode #map,
 .map-shell.add-site-mode .maplibregl-canvas {
   cursor: crosshair;

@@ -2,6 +2,7 @@
   const config = window.PEAKY_PROJECT || {};
   const projectSlug = config.slug;
   let sites = config.sites || [];
+  let goals = config.goals || [];
 
   const TERRAIN_SOURCE = "terrain-dem";
   const TERRAIN_HILLSHADE = "terrain-hillshade";
@@ -11,9 +12,15 @@
   const SITES_CIRCLE = "sites-circle";
   const SITES_LABELS = "sites-labels";
   const SITES_SELECTED = "sites-selected";
+  const GOALS_SOURCE = "goals";
+  const GOALS_CIRCLE = "goals-circle";
+  const GOALS_LABELS = "goals-labels";
+  const GOALS_SELECTED = "goals-selected";
   const LINKS_SOURCE = "site-links";
   const LINKS_LAYER = "site-links-line";
   const LINKS_LABELS_LAYER = "site-links-label";
+  const GOAL_LINKS_SOURCE = "goal-links";
+  const GOAL_LINKS_LAYER = "goal-links-line";
   const DRAFT_LINKS_SOURCE = "draft-site-links";
   const DRAFT_LINKS_LAYER = "draft-site-links-line";
   const DRAFT_LINKS_LABELS_LAYER = "draft-site-links-label";
@@ -80,6 +87,8 @@
     if (basemapEl && BASEMAPS[saved.basemap]) basemapEl.value = saved.basemap;
     const linksEl = document.getElementById("show-links");
     if (linksEl && typeof saved.showLinks === "boolean") linksEl.checked = saved.showLinks;
+    const goalLinksEl = document.getElementById("show-goal-links");
+    if (goalLinksEl && typeof saved.showGoalLinks === "boolean") goalLinksEl.checked = saved.showGoalLinks;
     const opacityEl = document.getElementById("viewshed-opacity");
     if (opacityEl && typeof saved.viewshedOpacity === "number") {
       opacityEl.value = Math.round(saved.viewshedOpacity * 100);
@@ -124,6 +133,17 @@
     return { latDelta, lonDelta };
   }
 
+  function goalsGeoJson() {
+    return {
+      type: "FeatureCollection",
+      features: goals.map((goal) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [goal.lon, goal.lat] },
+        properties: { name: goal.name, slug: goal.slug, kind: "goal" },
+      })),
+    };
+  }
+
   function sitesGeoJson() {
     return {
       type: "FeatureCollection",
@@ -165,15 +185,18 @@
   let saveTimer = null;
   let terrainActive = false;
   let selectedSlug = null;
-  let addSiteMode = false;
+  let selectedGoalSlug = null;
+  let addPlacementMode = null;
   let createMode = false;
   let pendingCreateLat = null;
   let pendingCreateLon = null;
   let draftMarker = null;
   let siteLinksPayload = null;
+  let goalLinksPayload = null;
   const viewshedVisible = new Map();
   const viewshedLoading = new Set();
   const siteBySlug = new Map(sites.map((s) => [s.slug, s]));
+  const goalBySlug = new Map(goals.map((g) => [g.slug, g]));
   const mapShell = document.querySelector(".map-shell");
   const sitePanel = document.getElementById("site-panel");
   const sitePanelView = document.getElementById("site-panel-view");
@@ -189,8 +212,14 @@
   const sitePanelViewshed = document.getElementById("site-panel-viewshed");
   const sitePanelViewshedHint = document.getElementById("site-panel-viewshed-hint");
   const sitePanelCreateViewshed = document.getElementById("site-panel-create-viewshed");
-  const addSiteModeBtn = document.getElementById("add-site-mode");
+  const sitePanelCreateViewshedSection = document.getElementById("site-panel-create-viewshed-section");
+  const sitePanelCreateTitle = document.getElementById("site-panel-create-title");
+  const sitePanelCreateBadge = document.getElementById("site-panel-create-badge");
+  const sitePanelCreateLinksLabel = document.getElementById("site-panel-create-links-label");
+  const sitePanelViewshedSection = document.getElementById("site-panel-viewshed-section");
+  const addModeBtn = document.getElementById("add-mode-btn");
   const siteCountBadge = document.getElementById("site-count-badge");
+  const goalCountBadge = document.getElementById("goal-count-badge");
 
   function ensureTerrainSource() {
     if (map.getSource(TERRAIN_SOURCE)) return;
@@ -229,6 +258,14 @@
     return `/api/p/${projectSlug}/links`;
   }
 
+  function goalLinksApiUrl() {
+    return `/api/p/${projectSlug}/goal-links`;
+  }
+
+  function goalsApiUrl() {
+    return `/api/p/${projectSlug}/goals`;
+  }
+
   function sitesApiUrl() {
     return `/api/p/${projectSlug}/sites`;
   }
@@ -245,9 +282,10 @@
 
   function previewSlugForName(name) {
     const base = slugifyName(name);
-    if (!siteBySlug.has(base)) return base;
+    const taken = new Set([...siteBySlug.keys(), ...goalBySlug.keys()]);
+    if (!taken.has(base)) return base;
     let n = 2;
-    while (siteBySlug.has(`${base}-${n}`)) n += 1;
+    while (taken.has(`${base}-${n}`)) n += 1;
     return `${base}-${n}`;
   }
 
@@ -260,9 +298,12 @@
   function showPanelCreate() {
     createMode = true;
     selectedSlug = null;
+    selectedGoalSlug = null;
     updateSelectedLayer();
+    updateGoalSelectedLayer();
     sitePanelView.hidden = true;
     sitePanelCreate.hidden = false;
+    syncCreatePanelForKind();
   }
 
   function setCreateError(message) {
@@ -284,24 +325,32 @@
 
   function syncMapCursor() {
     if (!mapReady) return;
-    map.getCanvas().style.cursor = addSiteMode ? "crosshair" : "";
+    map.getCanvas().style.cursor = addPlacementMode ? "crosshair" : "";
   }
 
-  function setAddSiteMode(enabled) {
-    addSiteMode = enabled;
-    if (addSiteModeBtn) {
-      addSiteModeBtn.classList.toggle("active", enabled);
-      addSiteModeBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
+  function setAddPlacementMode(kind) {
+    addPlacementMode = kind;
+    if (addModeBtn) {
+      addModeBtn.classList.toggle("active", !!kind);
     }
-    if (mapShell) mapShell.classList.toggle("add-site-mode", enabled);
+    if (mapShell) {
+      mapShell.classList.toggle("add-placement-mode", !!kind);
+      mapShell.classList.toggle("add-site-mode", !!kind);
+    }
     syncMapCursor();
-    if (!enabled) cancelCreate();
+    if (!kind) cancelCreate();
   }
 
   function updateSiteCountBadge() {
     if (!siteCountBadge) return;
     const n = sites.length;
     siteCountBadge.textContent = `${n} ${n === 1 ? "site" : "sites"}`;
+  }
+
+  function updateGoalCountBadge() {
+    if (!goalCountBadge) return;
+    const n = goals.length;
+    goalCountBadge.textContent = `${n} ${n === 1 ? "goal" : "goals"}`;
   }
 
   function registerSite(site) {
@@ -311,9 +360,33 @@
     updateSiteCountBadge();
   }
 
+  function registerGoal(goal) {
+    goals.push(goal);
+    goalBySlug.set(goal.slug, goal);
+    addGoalLayers();
+    updateGoalCountBadge();
+  }
+
   function syncCreateSlugPreview() {
     const name = sitePanelCreateName.value;
     sitePanelSlugPreview.textContent = previewSlugForName(name);
+  }
+
+  function syncCreatePanelForKind() {
+    const isGoal = addPlacementMode === "goal";
+    if (sitePanelCreateTitle) {
+      sitePanelCreateTitle.textContent = isGoal ? "New goal" : "New site";
+    }
+    if (sitePanelCreateBadge) {
+      sitePanelCreateBadge.textContent = isGoal ? "goal" : "planned";
+      sitePanelCreateBadge.className = `site-panel__badge badge site-panel__badge--${isGoal ? "goal" : "planned"} mb-3`;
+    }
+    if (sitePanelCreateLinksLabel) {
+      sitePanelCreateLinksLabel.textContent = isGoal ? "Linked repeaters" : "Linked sites";
+    }
+    if (sitePanelCreateViewshedSection) {
+      sitePanelCreateViewshedSection.hidden = isGoal;
+    }
   }
 
   function openCreatePanel(lat, lon) {
@@ -323,17 +396,24 @@
     sitePanelCreateName.value = "";
     sitePanelCreateCoords.textContent = `${formatCoord(lat)}, ${formatCoord(lon)}`;
     syncCreateSlugPreview();
-    viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
-    syncCreateViewshedCheckbox();
+    syncCreatePanelForKind();
     resetCreatePrefetchUI();
     removeDraftMarker();
-    draftMarker = new maplibregl.Marker({ color: "#fbbf24" })
+    const markerColor = addPlacementMode === "goal" ? "#f59e0b" : "#fbbf24";
+    draftMarker = new maplibregl.Marker({ color: markerColor })
       .setLngLat([lon, lat])
       .addTo(map);
     sitePanel.hidden = false;
     showPanelCreate();
-    void loadDraftViewshedAt(lat, lon);
-    void loadPlacementPrefetchAt(lat, lon);
+    if (addPlacementMode === "site") {
+      viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
+      syncCreateViewshedCheckbox();
+      void loadDraftViewshedAt(lat, lon);
+      void loadPlacementPrefetchAt(lat, lon);
+    } else {
+      removeDraftViewshed();
+      void loadGoalPlacementPrefetchAt(lat, lon);
+    }
     sitePanelCreateName.focus();
   }
 
@@ -392,7 +472,7 @@
     };
   }
 
-  function addDraftLinksLayer(geojson) {
+  function addDraftLinksLayer(geojson, { goal = false } = {}) {
     if (!mapReady || !geojson || !geojson.features || !geojson.features.length) {
       removeDraftLinksLayer();
       return;
@@ -400,6 +480,13 @@
     const labeled = linksGeoJsonWithLabels(geojson);
     if (map.getSource(DRAFT_LINKS_SOURCE)) {
       map.getSource(DRAFT_LINKS_SOURCE).setData(labeled);
+      if (map.getLayer(DRAFT_LINKS_LAYER)) {
+        map.setPaintProperty(
+          DRAFT_LINKS_LAYER,
+          "line-color",
+          goal ? "#f59e0b" : ["case", ["get", "manual"], "#0d9488", "#4a6cf7"],
+        );
+      }
       raiseSiteLayers();
       return;
     }
@@ -410,7 +497,7 @@
         type: "line",
         source: DRAFT_LINKS_SOURCE,
         paint: {
-          "line-color": ["case", ["get", "manual"], "#0d9488", "#4a6cf7"],
+          "line-color": goal ? "#f59e0b" : ["case", ["get", "manual"], "#0d9488", "#4a6cf7"],
           "line-width": 2.5,
           "line-opacity": 0.85,
         },
@@ -431,7 +518,7 @@
     return `${Number(distanceKm).toFixed(1)} km`;
   }
 
-  function renderCreatePrefetch(payload) {
+  function renderCreatePrefetch(payload, { goal = false } = {}) {
     const plss = payload.plss || "";
     setSectionVisible("site-panel-create-plss-section", !!plss);
     document.getElementById("site-panel-create-plss").textContent = plss || "—";
@@ -439,12 +526,12 @@
     setSectionVisible("site-panel-create-mlrs-section", !!mlrs);
     document.getElementById("site-panel-create-mlrs").textContent = mlrs || "—";
     const links = Array.isArray(payload.links) ? payload.links : [];
-    const linked = links.filter((row) => row.linked);
+    const linked = links.filter((row) => row.linked !== false);
     setSectionVisible("site-panel-create-links-section", linked.length > 0);
     const linksEl = document.getElementById("site-panel-create-links");
     linksEl.innerHTML = "";
     for (const row of linked) {
-      const slug = row.slug;
+      const slug = goal ? row.site : row.slug;
       const site = siteBySlug.get(slug);
       const label = site ? site.name : slug;
       const dist = formatLinkDistanceKm(row.distance_km);
@@ -452,7 +539,7 @@
       li.textContent = dist ? `${label} — ${dist}` : label;
       linksEl.appendChild(li);
     }
-    if (payload.links_geojson) addDraftLinksLayer(payload.links_geojson);
+    if (payload.links_geojson) addDraftLinksLayer(payload.links_geojson, { goal });
     else removeDraftLinksLayer();
   }
 
@@ -469,6 +556,10 @@
       sitePanel.hidden = false;
       showPanelView();
       renderPanel(siteBySlug.get(selectedSlug));
+    } else if (selectedGoalSlug) {
+      sitePanel.hidden = false;
+      showPanelView();
+      renderGoalPanel(goalBySlug.get(selectedGoalSlug));
     } else {
       sitePanel.hidden = true;
       sitePanelView.hidden = false;
@@ -476,7 +567,7 @@
     }
   }
 
-  async function saveNewSite() {
+  async function saveNewPlacement() {
     const name = sitePanelCreateName.value.trim();
     if (!name) {
       setCreateError("Name is required.");
@@ -486,10 +577,11 @@
       setCreateError("Pick a location on the map first.");
       return;
     }
+    const isGoal = addPlacementMode === "goal";
     setCreateError("");
     sitePanelCreateSave.disabled = true;
     try {
-      const resp = await fetch(sitesApiUrl(), {
+      const resp = await fetch(isGoal ? goalsApiUrl() : sitesApiUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -503,6 +595,22 @@
         setCreateError(payload.error || `Save failed (${resp.status})`);
         return;
       }
+      if (isGoal) {
+        const goal = payload.goal;
+        if (!goal || !goal.slug) {
+          setCreateError("Unexpected server response.");
+          return;
+        }
+        removeDraftMarker();
+        pendingCreateLat = null;
+        pendingCreateLon = null;
+        createMode = false;
+        setAddPlacementMode(null);
+        registerGoal(goal);
+        void loadGoalLinks();
+        selectGoal(goal.slug);
+        return;
+      }
       const site = payload.site;
       if (!site || !site.slug) {
         setCreateError("Unexpected server response.");
@@ -513,7 +621,7 @@
       pendingCreateLat = null;
       pendingCreateLon = null;
       createMode = false;
-      setAddSiteMode(false);
+      setAddPlacementMode(null);
       registerSite(site);
       viewshedVisible.set(site.slug, true);
       void loadViewshedForSite(site);
@@ -536,6 +644,7 @@
       pitch: map.getPitch(),
       basemap: document.getElementById("basemap").value,
       showLinks: document.getElementById("show-links").checked,
+      showGoalLinks: document.getElementById("show-goal-links").checked,
       viewshedOpacity,
     };
   }
@@ -547,6 +656,62 @@
       saveTimer = null;
       persistMapState(captureMapState());
     }, MAP_STATE_SAVE_MS);
+  }
+
+  function setGoalLinksVisible(visible) {
+    if (!mapReady) return;
+    const vis = visible ? "visible" : "none";
+    if (map.getLayer(GOAL_LINKS_LAYER)) map.setLayoutProperty(GOAL_LINKS_LAYER, "visibility", vis);
+  }
+
+  function addGoalLinksLayer(geojson) {
+    if (!geojson || !geojson.features || !geojson.features.length) return;
+    const linkVisibility = document.getElementById("show-goal-links").checked ? "visible" : "none";
+    if (map.getSource(GOAL_LINKS_SOURCE)) {
+      map.getSource(GOAL_LINKS_SOURCE).setData(geojson);
+      setGoalLinksVisible(document.getElementById("show-goal-links").checked);
+      raiseSiteLayers();
+      return;
+    }
+    map.addSource(GOAL_LINKS_SOURCE, { type: "geojson", data: geojson });
+    map.addLayer(
+      {
+        id: GOAL_LINKS_LAYER,
+        type: "line",
+        source: GOAL_LINKS_SOURCE,
+        paint: {
+          "line-color": [
+            "case",
+            ["get", "captured"],
+            "#d97706",
+            "#f59e0b",
+          ],
+          "line-width": 2.5,
+          "line-opacity": 0.85,
+        },
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+          visibility: linkVisibility,
+        },
+      },
+      SITES_CIRCLE,
+    );
+    raiseSiteLayers();
+  }
+
+  async function loadGoalLinks() {
+    try {
+      const resp = await fetch(goalLinksApiUrl());
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      goalLinksPayload = payload;
+      if (payload && payload.geojson) addGoalLinksLayer(payload.geojson);
+      if (selectedGoalSlug) renderGoalPanel(goalBySlug.get(selectedGoalSlug));
+      if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));
+    } catch (_) {
+      /* goal links optional */
+    }
   }
 
   function setSiteLinksVisible(visible) {
@@ -606,8 +771,12 @@
     for (const id of [
       DRAFT_LINKS_LAYER,
       DRAFT_LINKS_LABELS_LAYER,
+      GOAL_LINKS_LAYER,
       LINKS_LAYER,
       LINKS_LABELS_LAYER,
+      GOALS_CIRCLE,
+      GOALS_LABELS,
+      GOALS_SELECTED,
       SITES_CIRCLE,
       SITES_LABELS,
       SITES_SELECTED,
@@ -714,6 +883,31 @@
       lon: String(lon),
     });
     return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
+  }
+
+  function goalsPrefetchUrl(lat, lon) {
+    const params = new URLSearchParams({
+      lat: String(lat),
+      lon: String(lon),
+    });
+    return `/api/p/${projectSlug}/goals/prefetch?${params}`;
+  }
+
+  async function loadGoalPlacementPrefetchAt(lat, lon) {
+    const gen = ++placementPrefetchGen;
+    resetCreatePrefetchUI();
+    try {
+      const resp = await fetch(goalsPrefetchUrl(lat, lon));
+      if (gen !== placementPrefetchGen) return;
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      if (gen !== placementPrefetchGen) return;
+      if (payload && (payload.links || payload.links_geojson)) {
+        renderCreatePrefetch(payload, { goal: true });
+      }
+    } catch (_) {
+      /* goal placement prefetch optional */
+    }
   }
 
   function sitesPrefetchUrl(lat, lon) {
@@ -857,6 +1051,62 @@
     }
   }
 
+  function addGoalLayers() {
+    if (map.getSource(GOALS_SOURCE)) {
+      map.getSource(GOALS_SOURCE).setData(goalsGeoJson());
+      updateGoalSelectedLayer();
+      return;
+    }
+    map.addSource(GOALS_SOURCE, { type: "geojson", data: goalsGeoJson() });
+    map.addLayer({
+      id: GOALS_CIRCLE,
+      type: "circle",
+      source: GOALS_SOURCE,
+      paint: {
+        "circle-radius": 7,
+        "circle-color": "#f59e0b",
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#fff",
+      },
+    });
+    map.addLayer({
+      id: GOALS_LABELS,
+      type: "symbol",
+      source: GOALS_SOURCE,
+      layout: {
+        "text-field": ["get", "name"],
+        "text-size": 12,
+        "text-offset": [0, -1.4],
+        "text-anchor": "bottom",
+        "text-font": ["Noto Sans Bold"],
+        "text-allow-overlap": true,
+      },
+      paint: {
+        "text-color": "#fde68a",
+        "text-halo-color": "#1a1a1a",
+        "text-halo-width": 2,
+      },
+    });
+    map.addLayer({
+      id: GOALS_SELECTED,
+      type: "circle",
+      source: GOALS_SOURCE,
+      filter: ["==", ["get", "slug"], ""],
+      paint: {
+        "circle-radius": 11,
+        "circle-color": "#f59e0b",
+        "circle-stroke-width": 3,
+        "circle-stroke-color": "#fbbf24",
+        "circle-opacity": 0.35,
+      },
+    });
+  }
+
+  function updateGoalSelectedLayer() {
+    if (!map.getLayer(GOALS_SELECTED)) return;
+    map.setFilter(GOALS_SELECTED, ["==", ["get", "slug"], selectedGoalSlug || ""]);
+  }
+
   function addSiteLayers() {
     if (map.getSource(SITES_SOURCE)) {
       map.getSource(SITES_SOURCE).setData(sitesGeoJson());
@@ -933,8 +1183,83 @@
     return peers.sort();
   }
 
+  function linkedPeersForSite(slug) {
+    if (!siteLinksPayload || !Array.isArray(siteLinksPayload.links)) return [];
+    const peers = [];
+    for (const row of siteLinksPayload.links) {
+      if (!row.linked) continue;
+      if (row.a === slug) peers.push(row.b);
+      else if (row.b === slug) peers.push(row.a);
+    }
+    return peers.sort();
+  }
+
+  function linkedRepeatersForGoal(slug) {
+    if (!goalLinksPayload || !Array.isArray(goalLinksPayload.links)) return [];
+    const peers = [];
+    for (const row of goalLinksPayload.links) {
+      if (!row.linked) continue;
+      if (row.goal === slug) peers.push(row.site);
+    }
+    return peers.sort();
+  }
+
+  function linkedGoalsForSite(slug) {
+    if (!goalLinksPayload || !Array.isArray(goalLinksPayload.links)) return [];
+    const peers = [];
+    for (const row of goalLinksPayload.links) {
+      if (!row.linked) continue;
+      if (row.site === slug) peers.push(row.goal);
+    }
+    return peers.sort();
+  }
+
+  function renderGoalPanel(goal) {
+    if (!goal) return;
+    document.getElementById("site-panel-name").textContent = goal.name;
+    const badge = document.getElementById("site-panel-type");
+    badge.textContent = "goal";
+    badge.className = "site-panel__badge badge site-panel__badge--goal mb-3";
+    document.getElementById("site-panel-coords").textContent =
+      `${formatCoord(goal.lat)}, ${formatCoord(goal.lon)}`;
+    const elevEl = document.getElementById("site-panel-elevation");
+    if (goal.elevation_m != null) {
+      elevEl.textContent = `${goal.elevation_m} m`;
+      elevEl.classList.remove("text-muted");
+    } else {
+      elevEl.textContent = "—";
+      elevEl.classList.add("text-muted");
+    }
+    const plss = goal.plss || "";
+    setSectionVisible("site-panel-plss-section", !!plss);
+    document.getElementById("site-panel-plss").textContent = plss;
+    const mlrs = goal.mlrs || "";
+    setSectionVisible("site-panel-mlrs-section", !!mlrs);
+    document.getElementById("site-panel-mlrs").textContent = mlrs;
+    const desc = goal.description || "";
+    setSectionVisible("site-panel-desc-section", !!desc);
+    document.getElementById("site-panel-desc").textContent = desc;
+    const rationale = goal.rationale || "";
+    setSectionVisible("site-panel-rationale-section", !!rationale);
+    document.getElementById("site-panel-rationale").textContent = rationale;
+    setSectionVisible("site-panel-links-section", false);
+    const repeaters = linkedRepeatersForGoal(goal.slug);
+    setSectionVisible("site-panel-goal-links-section", repeaters.length > 0);
+    const goalLinksEl = document.getElementById("site-panel-goal-links");
+    goalLinksEl.innerHTML = "";
+    for (const peer of repeaters) {
+      const site = siteBySlug.get(peer);
+      const li = document.createElement("li");
+      li.textContent = site ? site.name : peer;
+      goalLinksEl.appendChild(li);
+    }
+    if (sitePanelViewshedSection) sitePanelViewshedSection.hidden = true;
+  }
+
   function renderPanel(site) {
     if (!site) return;
+    if (sitePanelViewshedSection) sitePanelViewshedSection.hidden = false;
+    setSectionVisible("site-panel-goal-links-section", false);
     document.getElementById("site-panel-name").textContent = site.name;
     const badge = document.getElementById("site-panel-type");
     badge.textContent = site.type;
@@ -970,18 +1295,45 @@
       li.textContent = peer;
       linksEl.appendChild(li);
     }
+    const goalPeers = linkedGoalsForSite(site.slug);
+    setSectionVisible("site-panel-goal-links-section", goalPeers.length > 0);
+    const goalLinksEl = document.getElementById("site-panel-goal-links");
+    goalLinksEl.innerHTML = "";
+    for (const peer of goalPeers) {
+      const goal = goalBySlug.get(peer);
+      const li = document.createElement("li");
+      li.textContent = goal ? goal.name : peer;
+      goalLinksEl.appendChild(li);
+    }
     syncViewshedCheckbox();
+  }
+
+  function selectGoal(slug) {
+    const goal = goalBySlug.get(slug);
+    if (!goal) return;
+    if (createMode) cancelCreate();
+    selectedSlug = null;
+    selectedGoalSlug = slug;
+    sitePanel.hidden = false;
+    showPanelView();
+    renderGoalPanel(goal);
+    updateSelectedLayer();
+    updateGoalSelectedLayer();
+    raiseSiteLayers();
   }
 
   function selectSite(slug) {
     const site = siteBySlug.get(slug);
     if (!site) return;
     if (createMode) cancelCreate();
+    selectedGoalSlug = null;
     selectedSlug = slug;
     sitePanel.hidden = false;
     showPanelView();
     renderPanel(site);
+    renderPanel(site);
     updateSelectedLayer();
+    updateGoalSelectedLayer();
     raiseSiteLayers();
   }
 
@@ -991,18 +1343,21 @@
       return;
     }
     selectedSlug = null;
+    selectedGoalSlug = null;
     sitePanel.hidden = true;
     updateSelectedLayer();
+    updateGoalSelectedLayer();
   }
 
-  function wireSiteInteractions() {
+  function wireMapInteractions() {
     const siteLayerIds = [SITES_CIRCLE, SITES_LABELS];
+    const goalLayerIds = [GOALS_CIRCLE, GOALS_LABELS];
     map.on("mousemove", () => {
-      if (addSiteMode) map.getCanvas().style.cursor = "crosshair";
+      if (addPlacementMode) map.getCanvas().style.cursor = "crosshair";
     });
-    for (const layerId of siteLayerIds) {
+    for (const layerId of [...siteLayerIds, ...goalLayerIds]) {
       map.on("mouseenter", layerId, () => {
-        if (addSiteMode) {
+        if (addPlacementMode) {
           map.getCanvas().style.cursor = "crosshair";
           return;
         }
@@ -1013,17 +1368,27 @@
       });
     }
     map.on("click", (ev) => {
+      const goalFeats = map.queryRenderedFeatures(ev.point, { layers: goalLayerIds });
+      if (goalFeats.length) {
+        const slug = goalFeats[0].properties && goalFeats[0].properties.slug;
+        if (slug) {
+          ev.preventDefault();
+          if (addPlacementMode) setAddPlacementMode(null);
+          selectGoal(slug);
+        }
+        return;
+      }
       const feats = map.queryRenderedFeatures(ev.point, { layers: siteLayerIds });
       if (feats.length) {
         const slug = feats[0].properties && feats[0].properties.slug;
         if (slug) {
           ev.preventDefault();
-          if (addSiteMode) setAddSiteMode(false);
+          if (addPlacementMode) setAddPlacementMode(null);
           selectSite(slug);
         }
         return;
       }
-      if (addSiteMode) {
+      if (addPlacementMode) {
         openCreatePanel(ev.lngLat.lat, ev.lngLat.lng);
         return;
       }
@@ -1032,9 +1397,10 @@
   }
 
   function fitSites() {
-    if (!sites.length) return;
-    const lons = sites.map((site) => site.lon);
-    const lats = sites.map((site) => site.lat);
+    const points = [...sites, ...goals];
+    if (!points.length) return;
+    const lons = points.map((p) => p.lon);
+    const lats = points.map((p) => p.lat);
     const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
     const { latDelta, lonDelta } = kmToDegreeDeltas(centerLat, SITE_FIT_BUFFER_KM);
     map.fitBounds(
@@ -1069,13 +1435,17 @@
   map.on("load", () => {
     mapReady = true;
     addSiteLayers();
-    wireSiteInteractions();
+    addGoalLayers();
+    wireMapInteractions();
     void loadSiteLinks();
+    void loadGoalLinks();
     loadAllViewsheds();
+    updateGoalCountBadge();
     const basemapKey = document.getElementById("basemap").value;
     setBasemap(basemapKey);
     if (savedMapState) {
       setSiteLinksVisible(document.getElementById("show-links").checked);
+      setGoalLinksVisible(document.getElementById("show-goal-links").checked);
       syncTerrainFromPitch();
     } else {
       fitSites();
@@ -1101,22 +1471,29 @@
     setViewshedOpacity(Number(ev.target.value) / 100);
     scheduleSaveMapState();
   });
+  document.getElementById("show-goal-links").addEventListener("change", (ev) => {
+    setGoalLinksVisible(ev.target.checked);
+    scheduleSaveMapState();
+  });
   sitePanelClose.addEventListener("click", deselectSite);
   sitePanelCreateClose.addEventListener("click", cancelCreate);
   sitePanelCreateCancel.addEventListener("click", cancelCreate);
   sitePanelCreateSave.addEventListener("click", () => {
-    void saveNewSite();
+    void saveNewPlacement();
   });
   sitePanelCreateName.addEventListener("input", syncCreateSlugPreview);
   sitePanelCreateName.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
-      void saveNewSite();
+      void saveNewPlacement();
     }
   });
-  if (addSiteModeBtn) {
-    addSiteModeBtn.addEventListener("click", () => {
-      setAddSiteMode(!addSiteMode);
+  for (const btn of document.querySelectorAll("[data-add-kind]")) {
+    btn.addEventListener("click", () => {
+      const kind = btn.getAttribute("data-add-kind");
+      if (kind === "site" || kind === "goal") {
+        setAddPlacementMode(addPlacementMode === kind ? null : kind);
+      }
     });
   }
   sitePanelViewshed.addEventListener("change", (ev) => {
