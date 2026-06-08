@@ -22,7 +22,7 @@ cd projects/nevada
 
 `./peaky` mounts `$PWD` as `/project`, bind-mounts `peaky_finders/`, runs `peaky` inside `peaky:dev`.
 
-`./peaky serve` also mounts the repo at `/app`, sets `PEAKY_HOME=/app` and `PEAKY_PROJECTS=/app/projects`, and passes `--reload` (disable with `--no-reload`).
+`./peaky serve` also mounts the repo at `/app`, sets `PEAKY_HOME=/app` and `PEAKY_PROJECTS=/app/projects`, and passes `--reload` (disable with `--no-reload`). Serve is the on-demand web shell over the same pipeline as CLI — see skill `peaky-serve`.
 
 Build image: `./peaky --build` or set `PEAKY_DEV_IMAGE`.
 

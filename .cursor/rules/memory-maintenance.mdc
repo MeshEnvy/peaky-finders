@@ -9,7 +9,7 @@ alwaysApply: true
 
 ## Read (start of task)
 
-Before planning or coding on presets, build DAG, CLI, bundle, mesh, viewsheds, splatter, HTTP fetch, or dev workflow:
+Before planning or coding on presets, build DAG, CLI, serve/web UI, bundle, mesh, viewsheds, splatter, HTTP fetch, or dev workflow:
 
 1. **Read MEMORY.md** — prefer it over chat history or assumptions about older repo shapes.
 2. If MEMORY and code disagree, **trust the code** but **fix MEMORY in the same change set**.
@@ -24,6 +24,7 @@ Update MEMORY.md in the **same commit/PR** when you change anything in the table
 | Build DAG | New targets, executor nodes, staleness keys |
 | Artifact layout | Paths under `<preset>/build/`, `resolved_*` helpers |
 | CLI surface | `peaky_cli` subcommands, flags, defaults |
+| Web UI (`serve`) | Routes, on-demand APIs, progressive features over shared pipeline |
 | External HTTP | New backends, pool defaults |
 | Dev contract | `./peaky`, `./peaky-test`, Docker, env vars |
 | splatter / RF | Coverage outputs, viewshed pipeline |

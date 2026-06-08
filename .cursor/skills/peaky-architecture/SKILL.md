@@ -2,8 +2,9 @@
 name: peaky-architecture
 description: >-
   Peaky Finders v4 greenfield architecture: read MEMORY.md first, CLI-first
-  preset projects, splatter RF, build DAG. Use when onboarding, refactoring,
-  breaking changes, or cross-cutting work — prefer simplification over backcompat.
+  preset projects, progressive web UI (`peaky serve`), splatter RF, build DAG.
+  Use when onboarding, refactoring, breaking changes, or cross-cutting work —
+  prefer simplification over backcompat.
 ---
 
 # Peaky architecture
@@ -14,7 +15,7 @@ description: >-
 
 | Piece | Choice |
 |-------|--------|
-| Interface | CLI (`peaky`) from project dir with `config.yaml` |
+| Interface | CLI (`peaky`) from project dir with `config.yaml`; **`peaky serve`** progressive web UI (on-demand, same pipeline) |
 | RF engine | `splatter` submodule (PyO3, Fresnel/FSPL) |
 | Config | One preset YAML per project (`projects/<slug>/config.yaml`) |
 | Build | Incremental DAG — bundle → viewsheds → mesh → KMZ |
@@ -30,11 +31,14 @@ cd projects/nevada
 
 Granular subcommands (`bundle`, `mesh`, `viewshed`, `kmz`, `stamp`, `inspect`) debug single targets without running the full graph.
 
+**Web UI** — `peaky serve` is a thin HTTP/MapLibre shell: one unit of work per request (e.g. one site's viewshed), reusing the same helpers and `<preset>/build/` artifacts as CLI/build. See skill `peaky-serve` and rule `serve-web-ui`.
+
 ## Key modules
 
 | Area | Modules |
 |------|---------|
 | CLI | `peaky_cli.py`, `build_cli.py`, `bundle_commands.py`, `mesh_commands.py` |
+| Serve | `serve_cli.py`, `serve_viewshed.py` — on-demand HTTP over shared pipeline |
 | Preset | `sites_job.py` — `Preset`, paths, YAML I/O |
 | Build DAG | `build_graph.py`, `build_executor.py`, `build_configure.py` |
 | Bundle | `bundle_clips.py`, `bundle_build.py` |
