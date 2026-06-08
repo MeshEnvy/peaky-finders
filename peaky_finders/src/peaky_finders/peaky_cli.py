@@ -12,6 +12,7 @@ from peaky_finders.cli import build_granular_viewshed_argument_parser, run_splat
 from peaky_finders.inspect_cli import build_inspect_parser, run_inspect
 from peaky_finders.mesh_commands import run_mesh_entry
 from peaky_finders.new_cli import build_new_parser, run_new
+from peaky_finders.serve_cli import build_serve_parser, run_serve
 from peaky_finders.stamp_cli import build_stamp_parser, run_stamp
 
 
@@ -32,6 +33,13 @@ def main() -> None:
         help="Scaffold a new project (config.yaml + data/ layout)",
     )
     p_new.set_defaults(_handler=run_new)
+
+    p_serve = sub.add_parser(
+        "serve",
+        parents=[build_serve_parser()],
+        help="Run local web UI (stub empty page)",
+    )
+    p_serve.set_defaults(_handler=run_serve)
 
     build_p = build_build_parser()
     pb = sub.add_parser("build", parents=[build_p], help="Run incremental preset build graph")

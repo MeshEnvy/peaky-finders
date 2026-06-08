@@ -45,6 +45,24 @@ if [ -t 0 ] && [ -t 1 ]; then
   DOCKER_FLAGS+=(-it)
 fi
 
+SERVE_PORT="${PEAKY_SERVE_PORT:-8080}"
+if [ ${#filtered[@]} -gt 0 ] && [ "${filtered[0]}" = "serve" ]; then
+  i=1
+  while [ $i -lt ${#filtered[@]} ]; do
+    arg="${filtered[$i]}"
+    if [ "$arg" = "--port" ] && [ $((i + 1)) -lt ${#filtered[@]} ]; then
+      SERVE_PORT="${filtered[$((i + 1))]}"
+      break
+    fi
+    if [[ "$arg" == --port=* ]]; then
+      SERVE_PORT="${arg#--port=}"
+      break
+    fi
+    i=$((i + 1))
+  done
+  DOCKER_FLAGS+=(-p "${SERVE_PORT}:${SERVE_PORT}")
+fi
+
 run_cmd=(docker run "${DOCKER_FLAGS[@]}" \
   -e POETRY_VIRTUALENVS_CREATE=false \
   -v "$PWD:/project" \

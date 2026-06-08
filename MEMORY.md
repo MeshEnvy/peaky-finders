@@ -26,7 +26,7 @@ When two designs compete, pick the **simpler present** and break callers — doc
 |------|-------|
 | Repo | Greenfield — aggressive breaking changes OK |
 | Domain | LoRa mesh site planning — splatter RF coverage, terrain mesh, eligible land |
-| Interface | **CLI** from project dir (`config.yaml` in cwd) |
+| Interface | **CLI** from project dir (`config.yaml` in cwd); **`peaky serve`** web stub (branch `web2`) |
 | RF engine | `splatter` submodule (PyO3 Fresnel/FSPL) |
 | Build | Incremental preset DAG (`peaky build`) |
 | Dev/test | Docker — `./peaky`, `./peaky-test` |
@@ -54,8 +54,9 @@ cd projects/nevada
 | `kmz` | Aggregate KMZ assembly |
 | `stamp` | Prerequisite stamp files for staleness edges |
 | `inspect` | GDB layer/attribute listing |
+| `serve` | Local web UI stub (`--host`, `--port`; no `config.yaml` required) |
 
-Entry: `peaky_finders.peaky_cli:main`.
+Entry: `peaky_finders.peaky_cli:main`. **`serve`**: stdlib `HTTPServer`, Docker publishes `PEAKY_SERVE_PORT` (default 8080).
 
 ## Build DAG
 
@@ -143,7 +144,7 @@ All outbound fetches throttled via `http_pool.py`:
 
 ## Active threads
 
-_(none — fill when starting new cross-cutting work)_
+- **`web2` branch** — `peaky serve` web UI stub; empty page for now
 
 ## Invariants
 
