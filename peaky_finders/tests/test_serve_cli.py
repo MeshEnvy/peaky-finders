@@ -81,11 +81,20 @@ def test_reload_ignores_mtime_only_change(tmp_path: Path) -> None:
 
 def test_serve_child_argv_uses_no_reload() -> None:
     argv = _serve_child_argv("127.0.0.1", 9090, verbose=True)
+    assert argv[1:3] == ["-m", "peaky_finders.serve_cli"]
     assert "--no-reload" in argv
     assert "--reload" not in argv
+    assert "peaky_cli" not in argv
     assert argv[argv.index("--host") + 1] == "127.0.0.1"
     assert argv[argv.index("--port") + 1] == "9090"
     assert "--verbose" in argv
+
+
+def test_probe_connect_host_maps_wildcard() -> None:
+    from peaky_finders.serve_cli import _probe_connect_host, _serve_public_url
+
+    assert _probe_connect_host("0.0.0.0") == "127.0.0.1"
+    assert _serve_public_url("0.0.0.0", 8080) == "http://127.0.0.1:8080/"
 
 
 def test_is_serve_reload_child(monkeypatch: pytest.MonkeyPatch) -> None:

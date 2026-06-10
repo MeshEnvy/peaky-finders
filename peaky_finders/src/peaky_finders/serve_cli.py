@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -41,6 +43,10 @@ from peaky_finders.sites_job import GoalEntry, SiteEntry, load_preset_goals, loa
 SERVE_STATIC_DIR = Path(__file__).resolve().parent / "serve_static"
 SERVE_RELOAD_CHILD_ENV = "PEAKY_SERVE_RELOAD_CHILD"
 SERVE_RELOAD_POLL_S = 0.5
+SERVE_RELOAD_GRACE_S = 2.0
+SERVE_READY_TIMEOUT_S = 60.0
+SERVE_PORT_RELEASE_TIMEOUT_S = 10.0
+SERVE_READY_POLL_S = 0.1
 
 _SERVE_STATIC_FILES: dict[str, tuple[str, str]] = {
     "/favicon.ico": ("favicon.ico", "image/x-icon"),
@@ -901,12 +907,82 @@ def _reload_changed(before: dict[str, str], roots: list[Path]) -> bool:
     return _reload_fingerprints(roots) != before
 
 
+def _probe_connect_host(host: str) -> str:
+    """Host to use when probing a bind address from the same machine."""
+    if host in ("0.0.0.0", "", "::"):
+        return "127.0.0.1"
+    if host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    return host
+
+
+def _serve_public_url(host: str, port: int) -> str:
+    """Browser-friendly URL for logs (``0.0.0.0`` → ``localhost``)."""
+    connect_host = _probe_connect_host(host)
+    if ":" in connect_host and not connect_host.startswith("["):
+        connect_host = f"[{connect_host}]"
+    return f"http://{connect_host}:{port}/"
+
+
+def _format_serve_bind_error(host: str, port: int, err: OSError) -> str:
+    lines = [f"serve: cannot bind {host}:{port}: {err}"]
+    in_use = err.errno in {errno.EADDRINUSE, getattr(errno, "EADDRNOTAVAIL", -1)}
+    if sys.platform == "darwin" and err.errno == 48:
+        in_use = True
+    if err.errno == 98:
+        in_use = True
+    if in_use:
+        lines.extend(
+            (
+                f"serve: port {port} is already in use — another `peaky serve`, "
+                "local process, or Docker container may still be running.",
+                f"serve: check with: lsof -i :{port}   or   docker ps --filter publish={port}",
+            )
+        )
+    return "\n".join(lines)
+
+
+def _wait_for_serve_port(
+    host: str,
+    port: int,
+    *,
+    timeout_s: float = SERVE_READY_TIMEOUT_S,
+    poll_s: float = SERVE_READY_POLL_S,
+) -> bool:
+    probe_host = _probe_connect_host(host)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((probe_host, port), timeout=0.25):
+                return True
+        except OSError:
+            time.sleep(poll_s)
+    return False
+
+
+def _wait_for_port_release(
+    host: str,
+    port: int,
+    *,
+    timeout_s: float = SERVE_PORT_RELEASE_TIMEOUT_S,
+    poll_s: float = SERVE_READY_POLL_S,
+) -> bool:
+    probe_host = _probe_connect_host(host)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((probe_host, port), timeout=0.25):
+                time.sleep(poll_s)
+        except OSError:
+            return True
+    return False
+
+
 def _serve_child_argv(host: str, port: int, *, verbose: bool) -> list[str]:
     argv = [
         sys.executable,
         "-m",
-        "peaky_finders.peaky_cli",
-        "serve",
+        "peaky_finders.serve_cli",
         "--no-reload",
         "--host",
         host,
@@ -937,7 +1013,11 @@ def _run_serve_once(
     projects_dir: Path,
 ) -> HTTPServer:
     handler = make_serve_handler(projects_dir)
-    server = HTTPServer((host, port), handler)
+    try:
+        server = HTTPServer((host, port), handler)
+    except OSError as err:
+        print(_format_serve_bind_error(host, port, err), flush=True)
+        raise
     server.allow_reuse_address = True
     server.verbose = verbose  # type: ignore[attr-defined]
     return server
@@ -965,15 +1045,38 @@ def _supervise_serve_reload(
 
     try:
         while True:
-            proc = subprocess.Popen(child_argv, env=child_env)
             fingerprints = _reload_fingerprints(roots)
-            print(f"serve: running http://{host}:{port}/", flush=True)
+            proc = subprocess.Popen(child_argv, env=child_env)
+
+            if not _wait_for_serve_port(host, port):
+                code = proc.poll()
+                if code is not None:
+                    print(
+                        f"serve: child exited ({code}) before port {port} was ready",
+                        flush=True,
+                    )
+                    return int(code or 1)
+                print(f"serve: timed out waiting for port {port} to accept connections", flush=True)
+                _terminate_serve_child(proc)
+                return 1
+
+            print(f"serve: running {_serve_public_url(host, port)}", flush=True)
+            ready_at = time.monotonic()
 
             while proc.poll() is None:
                 time.sleep(poll_s)
+                if time.monotonic() - ready_at < SERVE_RELOAD_GRACE_S:
+                    continue
                 if _reload_changed(fingerprints, roots):
                     print("serve: source changed, restarting", flush=True)
                     _terminate_serve_child(proc)
+                    if not _wait_for_port_release(host, port):
+                        print(
+                            f"serve: port {port} still in use after stopping child — "
+                            "waiting before restart",
+                            flush=True,
+                        )
+                        _wait_for_port_release(host, port, timeout_s=SERVE_PORT_RELEASE_TIMEOUT_S * 2)
                     break
             else:
                 return int(proc.returncode or 0)
@@ -991,7 +1094,11 @@ def _run_serve_blocking(
     verbose: bool,
     projects_dir: Path,
 ) -> int:
-    server = _run_serve_once(host, port, verbose=verbose, projects_dir=projects_dir)
+    try:
+        server = _run_serve_once(host, port, verbose=verbose, projects_dir=projects_dir)
+    except OSError:
+        return 1
+    print(f"serve: ready {_serve_public_url(host, port)}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -1018,5 +1125,14 @@ def run_serve(args: argparse.Namespace) -> int:
     if reload_enabled and not _is_serve_reload_child():
         return _supervise_serve_reload(host, port, verbose=verbose)
 
-    print(f"serve: starting http://{host}:{port}/", flush=True)
     return _run_serve_blocking(host, port, verbose=verbose, projects_dir=projects_dir)
+
+
+def serve_main(argv: list[str] | None = None) -> int:
+    """Entry for ``python -m peaky_finders.serve_cli`` (reload child)."""
+    args = build_serve_parser().parse_args(argv)
+    return run_serve(args)
+
+
+if __name__ == "__main__":
+    sys.exit(serve_main())
