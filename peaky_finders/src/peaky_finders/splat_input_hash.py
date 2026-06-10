@@ -2,7 +2,7 @@
 
 Stable digest of propagation parameters for workspace grouping (``viewshed_workspace_digest``)
 and viewshed metadata. Schema ``v`` bumps when normalization or coverage semantics change.
-Version **6**: mandatory ``modem`` block; LoRa cutoff + RSS reliability margin hashed.
+Version **7**: ``raster_dimension`` replaces legacy ``high_resolution``; LoRa cutoff + RSS margin hashed.
 
 Hashing is implemented in the splatter PyO3 extension (single source of truth).
 Skadi tiles use global ``SPLAT_CACHE`` (default ``/.peaky/splat_cache`` in the container).
@@ -22,15 +22,15 @@ except ImportError:  # pragma: no cover - dev without extension built
     _rust_input_sha256 = None
 
 # Bump when SPLAT invocation, normalization, or output semantics change.
-SPLAT_CACHE_SCHEMA_VERSION = 6
+SPLAT_CACHE_SCHEMA_VERSION = 7
 
 
 def normalize_splat_request(request: SplatCoverageRequest) -> SplatCoverageRequest:
-    """Normalize request fields that affect splatter output (radius cap, terrain resolution)."""
+    """Normalize request fields that affect splatter output (radius cap, raster bounds)."""
     r = request.model_copy()
-    r.high_resolution = True
     if r.radius > 100000:
         r.radius = 100000
+    r.raster_dimension = min(4096, max(128, int(r.raster_dimension)))
     r.fresnel_clearance_fraction = min(1.0, max(0.0, float(r.fresnel_clearance_fraction)))
     return r
 

@@ -61,7 +61,12 @@ class SplatCoverageRequest(BaseModel):
     colormap: str = "rainbow"
     min_dbm: float = -130.0
     max_dbm: float = -30.0
-    high_resolution: bool = True
+    raster_dimension: int = Field(
+        default=500,
+        ge=128,
+        le=4096,
+        description="Square splatter output raster size (pixels). Ground step ≈ radius_m / raster_dimension.",
+    )
     modem: LoRaModemParams | None = Field(
         default=None,
         description="Populated preset: required for splatter decode cutoff.",

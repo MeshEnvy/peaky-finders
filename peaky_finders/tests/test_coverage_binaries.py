@@ -36,7 +36,7 @@ def test_splatter_extension_exposes_session_and_batch_api() -> None:
     assert hasattr(Session, "run_batch")
     assert hasattr(Session, "link_mutual_viable")
     assert hasattr(Session, "link_mutual_batch")
-    assert splatter.SPLAT_CACHE_SCHEMA_VERSION == 6
+    assert splatter.SPLAT_CACHE_SCHEMA_VERSION == 7
 
 
 def test_splatter_input_sha256_matches_python_golden() -> None:
@@ -45,7 +45,7 @@ def test_splatter_input_sha256_matches_python_golden() -> None:
     from peaky_finders.models import SplatCoverageRequest
     from peaky_finders.splat_input_hash import splat_input_sha256
 
-    golden = "c08c8569a1ab414a053679c7fb0ed9c8726c943449f514472e3ac4f71e27011d"
+    golden = "cb6f3b7668a317b53d8c08ef264908b2240da832cb4eef0be54fa6216713a1e0"
     repo = Path(__file__).resolve().parents[1]
     fixture = repo / "tests" / "fixtures" / "splat_request_hash_fixture.json"
     req = SplatCoverageRequest.model_validate_json(fixture.read_text(encoding="utf-8"))

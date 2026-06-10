@@ -2,6 +2,7 @@
 simulation:
   provider: splatter
   radius_km: 50.0
+  raster_dimension: 417
   modem_presets:
     meshcore-us:
       frequency_mhz: 910.525

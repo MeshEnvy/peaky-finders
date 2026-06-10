@@ -20,7 +20,7 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 
 | Section | Purpose |
 |---------|---------|
-| `simulation` | RF modem/env presets, splatter params, `max_workers` |
+| `simulation` | RF modem/env presets, `radius_km` (≤100), `raster_dimension` (128–4096 px square), `max_workers` |
 | `display` | Viewshed raster + `display.kml` / `display.kmz` presentation |
 | `land` | GDB layer refs: `reference`, `aoi`, `include`, `exclude` |
 | `mesh` | Pairwise/depth analysis knobs |

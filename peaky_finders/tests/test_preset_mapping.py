@@ -135,6 +135,19 @@ def test_preset_to_request_uses_simulation_presets() -> None:
     assert req.modem.sensitivity_dbm == -121.0
     assert req.radio_climate == "desert"
     assert req.clutter_height == 1.0
+    assert req.radius == 60_000.0
+    assert req.raster_dimension == 500
+
+
+def test_preset_to_request_maps_raster_dimension() -> None:
+    preset = _minimal_preset(simulation=_minimal_simulation(raster_dimension=2048))
+    req = preset_to_request(preset, 39.0, -119.0)
+    assert req.raster_dimension == 2048
+
+
+def test_radius_km_over_100_rejected() -> None:
+    with pytest.raises(ValueError, match="radius_km must be <= 100"):
+        _minimal_simulation(radius_km=100.1)
 
 
 def test_coverage_pessimism_db_folds_into_emitted_modem_margin() -> None:

@@ -118,7 +118,7 @@ One YAML per project — `projects/<slug>/config.yaml` (legacy `.json` unsupport
 
 | Section | Contents |
 |---------|----------|
-| `simulation` | `provider: splatter` (Fresnel/FSPL engine), RF/modem/env presets, `max_workers.splatter` batch fan-out |
+| `simulation` | `provider: splatter`, RF/modem/env presets, `radius_km` (≤100), `raster_dimension` (128–4096 px square), `max_workers.splatter` batch fan-out |
 | `display` | Viewshed raster (`colormap`, `transparency`, dBm range) + `kml` styles + `kmz` layer toggles |
 | `land` | GDB inputs: `inputs_root`, `reference`, `aoi`, `include`, `exclude` |
 | `mesh` | Pairwise/depth build knobs, raster size, worker counts |

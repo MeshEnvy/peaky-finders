@@ -205,8 +205,6 @@ def preset_to_request(
     preset: Preset,
     lat: float,
     lon: float,
-    *,
-    high_resolution: bool = True,
 ) -> SplatCoverageRequest:
     sim = _sim(preset)
     tx = sim.transmitter
@@ -266,6 +264,6 @@ def preset_to_request(
         colormap=str(disp.colormap),
         min_dbm=_f(disp.min_dbm),
         max_dbm=_f(disp.max_dbm),
-        high_resolution=high_resolution,
+        raster_dimension=int(sim.raster_dimension),
         modem=lm,
     )

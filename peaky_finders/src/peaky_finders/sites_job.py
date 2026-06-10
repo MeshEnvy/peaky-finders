@@ -330,6 +330,15 @@ class SimulationConfig(BaseModel):
     situation_pct: Any = "95.0"
     time_pct: Any = "95.0"
     radius_km: Any = "50.0"
+    raster_dimension: int = Field(
+        default=500,
+        ge=128,
+        le=4096,
+        description=(
+            "Square splatter viewshed raster size (pixels). With radius_km, ground step ≈ "
+            "(radius_km × 1000) / raster_dimension."
+        ),
+    )
     fresnel_clearance_fraction: float = Field(
         default=0.6,
         ge=0.0,
@@ -380,6 +389,13 @@ class SimulationConfig(BaseModel):
     def _normalize_provider(cls, v: Any) -> Any:
         if isinstance(v, str):
             return v.strip().lower()
+        return v
+
+    @field_validator("radius_km", mode="after")
+    @classmethod
+    def _cap_radius_km(cls, v: Any) -> Any:
+        if float(v) > 100.0:
+            raise ValueError("simulation.radius_km must be <= 100")
         return v
 
 

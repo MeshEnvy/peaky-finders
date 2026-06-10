@@ -90,7 +90,7 @@ After `peaky new`, edit the scaffolded preset. A fuller reference lives in the r
 
 | Section | Purpose |
 |---------|---------|
-| `simulation` | RF modem/environment presets, transmitter/receiver, `radius_km`, `provider` |
+| `simulation` | RF modem/environment presets, transmitter/receiver, `radius_km` (≤100), `raster_dimension` (128–4096), `provider` |
 | `display` | Colormap and dBm range for rasters |
 | `bundle` | `inputs_root`, `aoi` / `include` / `exclude` layer groups; optional mesh and site-suggestion settings |
 | `sites` | Slug → `{ name, loc: [lat, lon], … }` |
