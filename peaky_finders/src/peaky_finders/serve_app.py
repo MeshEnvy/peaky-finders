@@ -32,7 +32,8 @@ from peaky_finders.serve_viewshed import (
     ensure_site_viewshed_overlay,
     ensure_site_viewshed_png,
 )
-from peaky_finders.sites_job import GoalEntry, SiteEntry, load_preset_goals, load_preset_sites
+from peaky_finders.serve_viewshed_sim import ViewshedSimOverrides, parse_viewshed_sim_overrides
+from peaky_finders.sites_job import GoalEntry, Preset, SiteEntry, load_preset, load_preset_goals, load_preset_sites
 
 SERVE_STATIC_DIR = Path(__file__).resolve().parent / "serve_static"
 
@@ -126,6 +127,25 @@ def _parse_lat_lon_query(query: str) -> tuple[float, float]:
     except (IndexError, TypeError, ValueError) as e:
         raise ValueError(f"lat and lon query params required: {e}") from e
     return lat, lon
+
+
+def _parse_viewshed_sim_query(query: str) -> ViewshedSimOverrides:
+    try:
+        return parse_viewshed_sim_overrides(query)
+    except ValueError as e:
+        raise ValueError(str(e)) from e
+
+
+def _serialize_serve_simulation(preset: Preset) -> dict[str, object]:
+    sim = preset.simulation
+    return {
+        "radius_km": float(sim.radius_km),
+        "raster_dimension": int(sim.raster_dimension),
+        "radius_km_min": 1,
+        "radius_km_max": 100,
+        "raster_dimension_min": 128,
+        "raster_dimension_max": 4096,
+    }
 
 
 def _load_project_goals(project_dir: Path) -> dict[str, GoalEntry]:
@@ -475,12 +495,20 @@ class ServeDispatcher:
                 return
             try:
                 lat, lon = _parse_lat_lon_query(parsed_url.query)
-            except ValueError:
-                self.send_error(422)
+                sim_overrides = _parse_viewshed_sim_query(parsed_url.query)
+            except ValueError as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
                 return
             verbose = bool(self.verbose)
             try:
-                png_path = ensure_coords_viewshed_png(project_dir, lat, lon, verbose=verbose)
+                png_path = ensure_coords_viewshed_png(
+                    project_dir,
+                    lat,
+                    lon,
+                    sim_overrides=sim_overrides,
+                    verbose=verbose,
+                )
                 body = png_path.read_bytes()
             except ServeViewshedError:
                 self.send_error(503)
@@ -500,6 +528,7 @@ class ServeDispatcher:
                 return
             try:
                 lat, lon = _parse_lat_lon_query(parsed_url.query)
+                sim_overrides = _parse_viewshed_sim_query(parsed_url.query)
             except ValueError as e:
                 payload = json.dumps(
                     {"slug": slug, "error": str(e)}
@@ -513,6 +542,7 @@ class ServeDispatcher:
                     project_dir,
                     lat,
                     lon,
+                    sim_overrides=sim_overrides,
                     verbose=verbose,
                 )
             except ServeViewshedError as e:
@@ -542,6 +572,14 @@ class ServeDispatcher:
             if site_slug not in site_map:
                 self.send_error(404)
                 return
+            try:
+                sim_overrides = _parse_viewshed_sim_query(parsed_url.query)
+            except ValueError as e:
+                payload = json.dumps(
+                    {"slug": slug, "site": site_slug, "error": str(e)}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
             verbose = bool(self.verbose)
             try:
                 overlay = ensure_site_viewshed_overlay(
@@ -549,6 +587,7 @@ class ServeDispatcher:
                     project_dir,
                     site_slug,
                     site_map[site_slug],
+                    sim_overrides=sim_overrides,
                     verbose=verbose,
                 )
             except ServeViewshedError as e:
@@ -577,12 +616,21 @@ class ServeDispatcher:
             if site_slug not in site_map:
                 self.send_error(404)
                 return
+            try:
+                sim_overrides = _parse_viewshed_sim_query(parsed_url.query)
+            except ValueError as e:
+                payload = json.dumps(
+                    {"slug": slug, "site": site_slug, "error": str(e)}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
             verbose = bool(self.verbose)
             try:
                 png_path = ensure_site_viewshed_png(
                     project_dir,
                     site_slug,
                     site_map[site_slug],
+                    sim_overrides=sim_overrides,
                     verbose=verbose,
                 )
                 body = png_path.read_bytes()
@@ -603,8 +651,9 @@ class ServeDispatcher:
                 self.send_error(404)
                 return
             try:
-                sites = _load_project_sites(project_dir)
-                goals = _load_project_goals(project_dir)
+                preset = load_preset(project_dir / "config.yaml")
+                sites = preset.sites
+                goals = preset.goals
             except (ValueError, ValidationError) as e:
                 self._send_html(project_error_html(slug, project_dir, str(e)), status=422)
                 return
@@ -614,6 +663,7 @@ class ServeDispatcher:
                     project_dir,
                     _serialize_project_sites(sites),
                     _serialize_project_goals(goals),
+                    simulation=_serialize_serve_simulation(preset),
                 )
             )
             return

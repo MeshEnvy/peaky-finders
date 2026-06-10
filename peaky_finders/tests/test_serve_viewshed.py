@@ -62,7 +62,7 @@ def test_ensure_site_viewshed_png_uses_cache(tmp_path: Path, monkeypatch: pytest
 
     monkeypatch.setattr(
         "peaky_finders.serve_viewshed.resolve_site_viewshed_workdir",
-        lambda _project_dir, _preset, _site: fixed,
+        lambda *_args, **_kwargs: fixed,
     )
     monkeypatch.setattr(
         "peaky_finders.serve_viewshed.viewshed_request_digest_matches",
@@ -94,7 +94,7 @@ def test_ensure_site_viewshed_png_generates_when_missing(
 
     monkeypatch.setattr(
         "peaky_finders.serve_viewshed.resolve_site_viewshed_workdir",
-        lambda _project_dir, _preset, _site: fixed,
+        lambda *_args, **_kwargs: fixed,
     )
     monkeypatch.setattr(
         "peaky_finders.serve_viewshed.viewshed_request_digest_matches",
@@ -143,8 +143,15 @@ def test_serve_viewshed_png_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     png_bytes = b"\x89PNG\r\n\x1a\nfake"
 
-    def _fake_ensure(project_dir: Path, site_slug: str, site, *, verbose: bool = False) -> Path:
-        del project_dir, site_slug, site, verbose
+    def _fake_ensure(
+        project_dir: Path,
+        site_slug: str,
+        site,
+        *,
+        sim_overrides=None,
+        verbose: bool = False,
+    ) -> Path:
+        del project_dir, site_slug, site, sim_overrides, verbose
         out = tmp_path / "cached.png"
         out.write_bytes(png_bytes)
         return out
@@ -176,9 +183,10 @@ def test_serve_viewshed_meta_endpoint(tmp_path: Path, monkeypatch: pytest.Monkey
         site_slug: str,
         site,
         *,
+        sim_overrides=None,
         verbose: bool = False,
     ) -> dict[str, object]:
-        del project_dir, site, verbose
+        del project_dir, site, sim_overrides, verbose
         return {
             "slug": site_slug,
             "url": viewshed_png_api_path(project_slug, site_slug),
@@ -227,6 +235,12 @@ def test_project_page_loads_viewsheds_on_demand(tmp_path: Path) -> None:
         assert "loadViewshedForSite" in js_body
         assert "viewshedMetaUrl" in js_body
         assert "setViewshedVisible" in js_body
+        assert "viewshed-sim-modal" in body
+        assert "viewshed-sim-open" in body
+        assert '"simulation"' in body
+        assert "applyViewshedSimSettings" in js_body
+        assert "updatePinOverlays" in js_body
+        assert "pin-load-overlays" in body
     finally:
         server.shutdown()
         server.server_close()
@@ -246,7 +260,7 @@ def test_ensure_site_viewshed_overlay_requires_bounds(
 
     monkeypatch.setattr(
         "peaky_finders.serve_viewshed.resolve_site_viewshed_workdir",
-        lambda _project_dir, _preset, _site: fixed,
+        lambda *_args, **_kwargs: fixed,
     )
     monkeypatch.setattr(
         "peaky_finders.serve_viewshed.ensure_site_viewshed_png",
@@ -306,9 +320,10 @@ def test_viewshed_prefetch_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         lat: float,
         lon: float,
         *,
+        sim_overrides=None,
         verbose: bool = False,
     ) -> dict[str, object]:
-        del project_dir, verbose
+        del project_dir, sim_overrides, verbose
         calls.append((lat, lon))
         return {
             "slug": "_draft",
@@ -346,8 +361,15 @@ def test_viewshed_prefetch_png_endpoint(tmp_path: Path, monkeypatch: pytest.Monk
 
     png_bytes = b"\x89PNG\r\n\x1a\ndraft"
 
-    def _fake_png(project_dir: Path, lat: float, lon: float, *, verbose: bool = False) -> Path:
-        del project_dir, lat, lon, verbose
+    def _fake_png(
+        project_dir: Path,
+        lat: float,
+        lon: float,
+        *,
+        sim_overrides=None,
+        verbose: bool = False,
+    ) -> Path:
+        del project_dir, lat, lon, sim_overrides, verbose
         out = tmp_path / "draft.png"
         out.write_bytes(png_bytes)
         return out

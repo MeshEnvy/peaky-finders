@@ -26,6 +26,11 @@
   const DRAFT_LINKS_LABELS_LAYER = "draft-site-links-label";
   const VIEWSHED_OPACITY_DEFAULT = 0.75;
   const DRAFT_VIEWSHED_SLUG = "_draft";
+  const simDefaults = config.simulation || {};
+  const VIEWSHED_RADIUS_KM_MIN = Number(simDefaults.radius_km_min) || 1;
+  const VIEWSHED_RADIUS_KM_MAX = Number(simDefaults.radius_km_max) || 100;
+  const VIEWSHED_RASTER_MIN = Number(simDefaults.raster_dimension_min) || 128;
+  const VIEWSHED_RASTER_MAX = Number(simDefaults.raster_dimension_max) || 4096;
   const PITCH_TERRAIN_ON = 12;
   const PITCH_TERRAIN_OFF = 6;
   const SITE_FIT_BUFFER_KM = 30;
@@ -80,6 +85,19 @@
 
   const savedMapState = loadMapState();
   let viewshedOpacity = savedMapState?.viewshedOpacity ?? VIEWSHED_OPACITY_DEFAULT;
+  const defaultRadiusKm = Number(simDefaults.radius_km) || 60;
+  const defaultRasterDimension = Number(simDefaults.raster_dimension) || 500;
+  let viewshedRadiusKm = savedMapState?.viewshedRadiusKm ?? defaultRadiusKm;
+  let viewshedRasterDimension =
+    savedMapState?.viewshedRasterDimension ?? defaultRasterDimension;
+  viewshedRadiusKm = Math.max(
+    VIEWSHED_RADIUS_KM_MIN,
+    Math.min(VIEWSHED_RADIUS_KM_MAX, viewshedRadiusKm),
+  );
+  viewshedRasterDimension = Math.max(
+    VIEWSHED_RASTER_MIN,
+    Math.min(VIEWSHED_RASTER_MAX, Math.round(viewshedRasterDimension)),
+  );
 
   function syncToolbarFromSaved(saved) {
     if (!saved) return;
@@ -95,7 +113,72 @@
     }
   }
 
+  let draftRadiusKm = viewshedRadiusKm;
+  let draftRasterDimension = viewshedRasterDimension;
+
+  function clampRadiusKm(km) {
+    return Math.max(VIEWSHED_RADIUS_KM_MIN, Math.min(VIEWSHED_RADIUS_KM_MAX, Number(km)));
+  }
+
+  function clampRasterDimension(px) {
+    return Math.max(
+      VIEWSHED_RASTER_MIN,
+      Math.min(VIEWSHED_RASTER_MAX, Math.round(Number(px))),
+    );
+  }
+
+  function syncViewshedSimSummary() {
+    const summary = document.getElementById("viewshed-sim-summary");
+    if (summary) {
+      summary.textContent = `${Math.round(viewshedRadiusKm)} km · ${viewshedRasterDimension} px`;
+    }
+  }
+
+  function syncViewshedSimModalFields() {
+    const radiusEl = document.getElementById("viewshed-sim-radius-km");
+    const radiusVal = document.getElementById("viewshed-sim-radius-km-value");
+    if (radiusEl) radiusEl.value = String(Math.round(draftRadiusKm));
+    if (radiusVal) radiusVal.textContent = String(Math.round(draftRadiusKm));
+    const rasterEl = document.getElementById("viewshed-sim-raster-dimension");
+    const rasterVal = document.getElementById("viewshed-sim-raster-dimension-value");
+    if (rasterEl) rasterEl.value = String(draftRasterDimension);
+    if (rasterVal) rasterVal.textContent = String(draftRasterDimension);
+  }
+
+  function readViewshedSimModalDraft() {
+    const radiusEl = document.getElementById("viewshed-sim-radius-km");
+    const rasterEl = document.getElementById("viewshed-sim-raster-dimension");
+    if (radiusEl) draftRadiusKm = clampRadiusKm(radiusEl.value);
+    if (rasterEl) draftRasterDimension = clampRasterDimension(rasterEl.value);
+    syncViewshedSimModalFields();
+  }
+
+  function resetViewshedSimModalDraft() {
+    draftRadiusKm = viewshedRadiusKm;
+    draftRasterDimension = viewshedRasterDimension;
+    syncViewshedSimModalFields();
+  }
+
+  function applyViewshedSimSettings() {
+    readViewshedSimModalDraft();
+    const nextRadius = clampRadiusKm(draftRadiusKm);
+    const nextRaster = clampRasterDimension(draftRasterDimension);
+    const changed =
+      nextRadius !== viewshedRadiusKm || nextRaster !== viewshedRasterDimension;
+    viewshedRadiusKm = nextRadius;
+    viewshedRasterDimension = nextRaster;
+    syncViewshedSimSummary();
+    scheduleSaveMapState();
+    const modalEl = document.getElementById("viewshed-sim-modal");
+    if (modalEl && window.bootstrap) {
+      const inst = window.bootstrap.Modal.getInstance(modalEl);
+      if (inst) inst.hide();
+    }
+    if (changed) reloadViewshedsForSimChange();
+  }
+
   syncToolbarFromSaved(savedMapState);
+  syncViewshedSimSummary();
 
   function basemapStyle(key) {
     const bm = BASEMAPS[key] || BASEMAPS.street;
@@ -200,6 +283,10 @@
     }
   }
   const viewshedLoading = new Set();
+  const pinLoadOverlays = document.getElementById("pin-load-overlays");
+  const pinSpinners = new Map();
+  let draftPlacementLat = null;
+  let draftPlacementLon = null;
   const siteBySlug = new Map(sites.map((s) => [s.slug, s]));
   const goalBySlug = new Map(goals.map((g) => [g.slug, g]));
   const mapShell = document.querySelector(".map-shell");
@@ -488,6 +575,7 @@
     if (map.getLayer(layerId)) map.removeLayer(layerId);
     if (map.getSource(sourceId)) map.removeSource(sourceId);
     viewshedLoading.delete(slug);
+    updatePinOverlays();
   }
 
   function siteDeleteUrl(slug) {
@@ -1000,6 +1088,8 @@
       showLinks: document.getElementById("show-links").checked,
       showGoalLinks: document.getElementById("show-goal-links").checked,
       viewshedOpacity,
+      viewshedRadiusKm,
+      viewshedRasterDimension,
       hiddenSites: [...siteHidden],
       hiddenGoals: [...goalHidden],
       viewshedVisible: Object.fromEntries(viewshedVisible),
@@ -1243,16 +1333,84 @@
     applyViewshedOpacityToAllLayers();
   }
 
+  function viewshedSimQueryParams() {
+    const params = new URLSearchParams();
+    params.set("radius_km", String(viewshedRadiusKm));
+    params.set("raster_dimension", String(viewshedRasterDimension));
+    return params;
+  }
+
   function viewshedMetaUrl(siteSlug) {
-    return `/api/p/${projectSlug}/viewsheds/${siteSlug}`;
+    const params = viewshedSimQueryParams();
+    return `/api/p/${projectSlug}/viewsheds/${siteSlug}?${params}`;
   }
 
   function viewshedPrefetchUrl(lat, lon) {
-    const params = new URLSearchParams({
-      lat: String(lat),
-      lon: String(lon),
-    });
+    const params = viewshedSimQueryParams();
+    params.set("lat", String(lat));
+    params.set("lon", String(lon));
     return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
+  }
+
+  function updatePinOverlays() {
+    if (!pinLoadOverlays || !mapReady) return;
+    const active = new Set();
+    for (const site of sites) {
+      if (!viewshedLoading.has(site.slug) || siteHidden.has(site.slug)) continue;
+      active.add(site.slug);
+      let el = pinSpinners.get(site.slug);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "pin-load-spinner";
+        el.setAttribute("data-slug", site.slug);
+        pinLoadOverlays.appendChild(el);
+        pinSpinners.set(site.slug, el);
+      }
+      const pt = map.project([site.lon, site.lat]);
+      el.style.left = `${pt.x}px`;
+      el.style.top = `${pt.y}px`;
+      el.hidden = false;
+    }
+    if (
+      viewshedLoading.has(DRAFT_VIEWSHED_SLUG) &&
+      draftPlacementLat != null &&
+      draftPlacementLon != null
+    ) {
+      active.add(DRAFT_VIEWSHED_SLUG);
+      let el = pinSpinners.get(DRAFT_VIEWSHED_SLUG);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "pin-load-spinner";
+        el.setAttribute("data-slug", DRAFT_VIEWSHED_SLUG);
+        pinLoadOverlays.appendChild(el);
+        pinSpinners.set(DRAFT_VIEWSHED_SLUG, el);
+      }
+      const pt = map.project([draftPlacementLon, draftPlacementLat]);
+      el.style.left = `${pt.x}px`;
+      el.style.top = `${pt.y}px`;
+      el.hidden = false;
+    }
+    for (const [slug, el] of pinSpinners) {
+      if (!active.has(slug)) el.hidden = true;
+    }
+  }
+
+  function reloadViewshedsForSimChange() {
+    for (const site of sites) {
+      removeViewshedLayer(site.slug);
+      if (!siteHidden.has(site.slug) && isViewshedVisible(site.slug)) {
+        void loadViewshedForSite(site);
+      }
+    }
+    if (
+      createMode &&
+      draftPlacementLat != null &&
+      draftPlacementLon != null &&
+      isViewshedVisible(DRAFT_VIEWSHED_SLUG)
+    ) {
+      removeDraftViewshed();
+      void loadDraftViewshedAt(draftPlacementLat, draftPlacementLon);
+    }
   }
 
   function goalsPrefetchUrl(lat, lon) {
@@ -1304,6 +1462,9 @@
     if (map.getLayer(layerId)) map.removeLayer(layerId);
     if (map.getSource(sourceId)) map.removeSource(sourceId);
     viewshedLoading.delete(DRAFT_VIEWSHED_SLUG);
+    draftPlacementLat = null;
+    draftPlacementLon = null;
+    updatePinOverlays();
   }
 
   async function loadPlacementPrefetchAt(lat, lon) {
@@ -1325,7 +1486,11 @@
 
   async function loadDraftViewshedAt(lat, lon) {
     removeDraftViewshed();
+    draftPlacementLat = lat;
+    draftPlacementLon = lon;
     draftViewshedLoading = true;
+    viewshedLoading.add(DRAFT_VIEWSHED_SLUG);
+    updatePinOverlays();
     syncCreateViewshedCheckbox();
     try {
       const resp = await fetch(viewshedPrefetchUrl(lat, lon));
@@ -1338,6 +1503,8 @@
       /* draft viewshed optional */
     } finally {
       draftViewshedLoading = false;
+      viewshedLoading.delete(DRAFT_VIEWSHED_SLUG);
+      updatePinOverlays();
       syncCreateViewshedCheckbox();
     }
   }
@@ -1363,6 +1530,7 @@
     if (!selectedSlug) return;
     sitePanelViewshed.checked = isViewshedVisible(selectedSlug);
     sitePanelViewshedHint.textContent = viewshedLoading.has(selectedSlug) ? "Loading…" : "";
+    updatePinOverlays();
   }
 
   function addViewshedLayer(vs) {
@@ -1390,18 +1558,22 @@
       map.setLayoutProperty(layerId, "visibility", "visible");
     }
     viewshedLoading.delete(vs.slug);
+    updatePinOverlays();
     if (vs.slug === selectedSlug) syncViewshedCheckbox();
     if (vs.slug === DRAFT_VIEWSHED_SLUG) syncCreateViewshedCheckbox();
     raiseSiteLayers();
   }
 
   async function loadViewshedForSite(site) {
+    removeViewshedLayer(site.slug);
     viewshedLoading.add(site.slug);
+    updatePinOverlays();
     if (site.slug === selectedSlug) syncViewshedCheckbox();
     try {
       const resp = await fetch(viewshedMetaUrl(site.slug));
       if (!resp.ok) {
         viewshedLoading.delete(site.slug);
+        updatePinOverlays();
         if (site.slug === selectedSlug) syncViewshedCheckbox();
         return;
       }
@@ -1409,10 +1581,12 @@
       if (vs && vs.url && vs.coordinates) addViewshedLayer(vs);
       else {
         viewshedLoading.delete(site.slug);
+        updatePinOverlays();
         if (site.slug === selectedSlug) syncViewshedCheckbox();
       }
     } catch (_) {
       viewshedLoading.delete(site.slug);
+      updatePinOverlays();
       if (site.slug === selectedSlug) syncViewshedCheckbox();
     }
   }
@@ -1844,6 +2018,8 @@
   });
   map.on("moveend", scheduleSaveMapState);
   map.on("rotateend", scheduleSaveMapState);
+  map.on("move", updatePinOverlays);
+  map.on("resize", updatePinOverlays);
   document.getElementById("basemap").addEventListener("change", (ev) => {
     setBasemap(ev.target.value);
     scheduleSaveMapState();
@@ -1856,6 +2032,26 @@
     setViewshedOpacity(Number(ev.target.value) / 100);
     scheduleSaveMapState();
   });
+  const viewshedSimModal = document.getElementById("viewshed-sim-modal");
+  if (viewshedSimModal) {
+    viewshedSimModal.addEventListener("show.bs.modal", resetViewshedSimModalDraft);
+  }
+  const viewshedSimRadiusInput = document.getElementById("viewshed-sim-radius-km");
+  if (viewshedSimRadiusInput) {
+    viewshedSimRadiusInput.min = String(VIEWSHED_RADIUS_KM_MIN);
+    viewshedSimRadiusInput.max = String(VIEWSHED_RADIUS_KM_MAX);
+    viewshedSimRadiusInput.addEventListener("input", readViewshedSimModalDraft);
+  }
+  const viewshedSimRasterInput = document.getElementById("viewshed-sim-raster-dimension");
+  if (viewshedSimRasterInput) {
+    viewshedSimRasterInput.min = String(VIEWSHED_RASTER_MIN);
+    viewshedSimRasterInput.max = String(VIEWSHED_RASTER_MAX);
+    viewshedSimRasterInput.addEventListener("input", readViewshedSimModalDraft);
+  }
+  const viewshedSimApply = document.getElementById("viewshed-sim-apply");
+  if (viewshedSimApply) {
+    viewshedSimApply.addEventListener("click", applyViewshedSimSettings);
+  }
   document.getElementById("show-goal-links").addEventListener("change", (ev) => {
     setGoalLinksVisible(ev.target.checked);
     scheduleSaveMapState();

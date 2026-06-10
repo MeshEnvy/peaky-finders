@@ -99,12 +99,21 @@ def project_html(
     project_dir: Path,
     sites: list[dict[str, object]],
     goals: list[dict[str, object]] | None = None,
+    *,
+    simulation: dict[str, object] | None = None,
 ) -> bytes:
     site_count = len(sites)
     goal_count = len(goals or [])
     site_noun = "site" if site_count == 1 else "sites"
     goal_noun = "goal" if goal_count == 1 else "goals"
-    peaky_config = json.dumps({"slug": slug, "sites": sites, "goals": goals or []})
+    peaky_config = json.dumps(
+        {
+            "slug": slug,
+            "sites": sites,
+            "goals": goals or [],
+            "simulation": simulation or {},
+        }
+    )
     body = f"""<header class="project-toolbar border-bottom">
   <div class="container-fluid py-2 px-3">
     <div class="d-flex flex-wrap align-items-center gap-2 gap-md-3">
@@ -132,8 +141,12 @@ def project_html(
           <input id="show-goal-links" class="form-check-input" type="checkbox" checked>
           <label class="form-check-label small" for="show-goal-links">Goal links</label>
         </div>
+        <button type="button" id="viewshed-sim-open" class="btn btn-sm btn-outline-secondary"
+          data-bs-toggle="modal" data-bs-target="#viewshed-sim-modal" title="Viewshed radius and resolution">
+          <span id="viewshed-sim-summary" class="font-monospace">60 km · 500 px</span>
+        </button>
         <div class="d-flex align-items-center gap-2">
-          <label for="viewshed-opacity" class="form-label mb-0 small text-muted">Viewshed</label>
+          <label for="viewshed-opacity" class="form-label mb-0 small text-muted">Opacity</label>
           <input id="viewshed-opacity" type="range" class="form-range" min="0" max="100" value="75"
             style="width: 5.5rem;" title="Viewshed opacity">
         </div>
@@ -171,6 +184,7 @@ def project_html(
     </div>
   </aside>
   <div id="map"></div>
+  <div id="pin-load-overlays" class="pin-load-overlays" aria-hidden="true"></div>
   <aside id="site-panel" class="site-panel card shadow" hidden>
     <div class="card-body">
       <div id="site-panel-view">
@@ -260,6 +274,37 @@ def project_html(
       </div>
     </div>
   </aside>
+</div>
+<div class="modal fade" id="viewshed-sim-modal" tabindex="-1" aria-labelledby="viewshed-sim-modal-label" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="viewshed-sim-modal-label">Viewshed grid</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-3">Tune coverage radius and raster size. Visible viewsheds reload when you apply.</p>
+        <div class="mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <label for="viewshed-sim-radius-km" class="form-label small mb-0">Radius (km)</label>
+            <span id="viewshed-sim-radius-km-value" class="small font-monospace text-muted">60</span>
+          </div>
+          <input id="viewshed-sim-radius-km" type="range" class="form-range" min="1" max="100" value="60">
+        </div>
+        <div>
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <label for="viewshed-sim-raster-dimension" class="form-label small mb-0">Resolution (px)</label>
+            <span id="viewshed-sim-raster-dimension-value" class="small font-monospace text-muted">500</span>
+          </div>
+          <input id="viewshed-sim-raster-dimension" type="range" class="form-range" min="128" max="4096" value="500">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="viewshed-sim-apply" class="btn btn-primary btn-sm">Apply</button>
+      </div>
+    </div>
+  </div>
 </div>
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" crossorigin=""></script>
 <script>window.PEAKY_PROJECT = {peaky_config};</script>

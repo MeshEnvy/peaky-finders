@@ -93,7 +93,7 @@ Progressive, on-demand shell over the **same** preset + splatter + build artifac
 | HTTP layer | — | Waitress WSGI: `serve_app.py` routes + `serve_cli.py` runner; logic in `serve_*.py` |
 | Site links | Build mesh `links` KML + footprint mutual coverage | On-demand splatter `link_mutual_*` via `serve_links.py` |
 
-Map UI prefs (camera, basemap, link toggles, hidden sites/goals, viewshed visibility) persist in browser `localStorage` per slug — not in `config.yaml`. Agent rule: `.cursor/rules/serve-web-ui.mdc`; skill: `peaky-serve`.
+Map UI prefs (camera, basemap, link toggles, hidden sites/goals, viewshed visibility, ephemeral `viewshedRadiusKm` / `viewshedRasterDimension`) persist in browser `localStorage` per slug — not in `config.yaml`. Toolbar **viewshed grid** button opens a Bootstrap modal (radius km + raster px sliders); **Apply** commits and passes `radius_km` + `raster_dimension` query params to viewshed APIs (preset YAML unchanged); per-site pin spinners while viewsheds reload. Agent rule: `.cursor/rules/serve-web-ui.mdc`; skill: `peaky-serve`.
 
 ## Build DAG
 

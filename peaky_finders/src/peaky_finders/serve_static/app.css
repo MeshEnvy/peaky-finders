@@ -33,6 +33,32 @@ body.wide #map {
   height: 100%;
 }
 
+.pin-load-overlays {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  overflow: hidden;
+}
+
+.pin-load-spinner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #4a6cf7;
+  border-radius: 50%;
+  animation: pin-load-spin 0.7s linear infinite;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+@keyframes pin-load-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .maplibre-ctrl-attrib {
   font-size: 0.7rem;
 }

@@ -205,8 +205,13 @@ def preset_to_request(
     preset: Preset,
     lat: float,
     lon: float,
+    *,
+    radius_km: float | None = None,
+    raster_dimension: int | None = None,
 ) -> SplatCoverageRequest:
     sim = _sim(preset)
+    eff_radius_km = _f(sim.radius_km) if radius_km is None else float(radius_km)
+    eff_raster_dimension = int(sim.raster_dimension) if raster_dimension is None else int(raster_dimension)
     tx = sim.transmitter
     rx = sim.receiver
     env = resolved_environment(preset)
@@ -254,7 +259,7 @@ def preset_to_request(
         ground_dielectric=_f(env["ground_dielectric_v_m"]),
         ground_conductivity=_f(env["ground_conductivity_s_m"]),
         atmosphere_bending=_f(env["atmosphere_bending_n"]),
-        radius=_f(sim.radius_km) * 1000.0,
+        radius=eff_radius_km * 1000.0,
         system_loss=system_loss,
         radio_climate=cast(RadioClimate, climate),
         polarization=pol,
@@ -264,6 +269,6 @@ def preset_to_request(
         colormap=str(disp.colormap),
         min_dbm=_f(disp.min_dbm),
         max_dbm=_f(disp.max_dbm),
-        raster_dimension=int(sim.raster_dimension),
+        raster_dimension=eff_raster_dimension,
         modem=lm,
     )

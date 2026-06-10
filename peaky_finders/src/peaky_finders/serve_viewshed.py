@@ -20,6 +20,7 @@ from peaky_finders.sites_job import (
 )
 from peaky_finders.splat_pipeline import ensure_splat_raster_png, run_viewshed_coverage
 from peaky_finders.splat_polygonize import SPLAT_OUTPUT_PPM_BASENAME
+from peaky_finders.serve_viewshed_sim import ViewshedSimOverrides, viewshed_sim_query_string
 from peaky_finders.viewshed_workspace import resolved_viewshed_workdir, viewshed_workspace_digest
 
 _workdir_locks: dict[str, threading.Lock] = {}
@@ -33,9 +34,16 @@ class ServeViewshedError(Exception):
 DRAFT_VIEWSHED_SLUG = "_draft"
 
 
-def viewshed_png_api_path(project_slug: str, site_slug: str) -> str:
+def viewshed_png_api_path(
+    project_slug: str,
+    site_slug: str,
+    *,
+    sim_overrides: ViewshedSimOverrides | None = None,
+) -> str:
     """URL path for a site's ``splat.png`` raster."""
-    return f"/api/p/{project_slug}/viewsheds/{site_slug}/splat.png"
+    base = f"/api/p/{project_slug}/viewsheds/{site_slug}/splat.png"
+    qs = viewshed_sim_query_string(sim_overrides)
+    return f"{base}?{qs}" if qs else base
 
 
 def viewshed_meta_api_path(project_slug: str, site_slug: str) -> str:
@@ -43,12 +51,19 @@ def viewshed_meta_api_path(project_slug: str, site_slug: str) -> str:
     return f"/api/p/{project_slug}/viewsheds/{site_slug}"
 
 
-def viewshed_prefetch_png_api_path(project_slug: str, lat: float, lon: float) -> str:
+def viewshed_prefetch_png_api_path(
+    project_slug: str,
+    lat: float,
+    lon: float,
+    *,
+    sim_overrides: ViewshedSimOverrides | None = None,
+) -> str:
     """URL path for a draft-site ``splat.png`` at ``lat``/``lon``."""
-    return (
-        f"/api/p/{project_slug}/viewsheds/prefetch/splat.png"
-        f"?lat={lat}&lon={lon}"
-    )
+    params = f"lat={lat}&lon={lon}"
+    sim_qs = viewshed_sim_query_string(sim_overrides)
+    if sim_qs:
+        params = f"{params}&{sim_qs}"
+    return f"/api/p/{project_slug}/viewsheds/prefetch/splat.png?{params}"
 
 
 def image_coordinates_from_bbox(bbox: dict[str, float]) -> list[list[float]]:
@@ -114,11 +129,18 @@ def ensure_coords_viewshed_png(
     lat: float,
     lon: float,
     *,
+    sim_overrides: ViewshedSimOverrides | None = None,
     verbose: bool = False,
 ) -> Path:
     """Warm viewshed workspace cache for a coordinate (no preset site entry required)."""
     site = _preview_site_at(lat, lon)
-    return ensure_site_viewshed_png(project_dir, DRAFT_VIEWSHED_SLUG, site, verbose=verbose)
+    return ensure_site_viewshed_png(
+        project_dir,
+        DRAFT_VIEWSHED_SLUG,
+        site,
+        sim_overrides=sim_overrides,
+        verbose=verbose,
+    )
 
 
 def ensure_coords_viewshed_overlay(
@@ -127,33 +149,64 @@ def ensure_coords_viewshed_overlay(
     lat: float,
     lon: float,
     *,
+    sim_overrides: ViewshedSimOverrides | None = None,
     verbose: bool = False,
 ) -> dict[str, object]:
     """Ensure PNG exists for coordinates and return MapLibre overlay metadata."""
     site = _preview_site_at(lat, lon)
     preset = _load_viewshed_preset(project_dir)
-    workdir = resolve_site_viewshed_workdir(project_dir, preset, site)
-    ensure_site_viewshed_png(project_dir, DRAFT_VIEWSHED_SLUG, site, verbose=verbose)
+    workdir = resolve_site_viewshed_workdir(project_dir, preset, site, sim_overrides=sim_overrides)
+    ensure_site_viewshed_png(
+        project_dir,
+        DRAFT_VIEWSHED_SLUG,
+        site,
+        sim_overrides=sim_overrides,
+        verbose=verbose,
+    )
     bounds = load_viewshed_bounds(workdir)
     if bounds is None:
         raise ServeViewshedError("missing GroundOverlay bounds for draft viewshed")
     return {
         "slug": DRAFT_VIEWSHED_SLUG,
-        "url": viewshed_prefetch_png_api_path(project_slug, lat, lon),
+        "url": viewshed_prefetch_png_api_path(
+            project_slug, lat, lon, sim_overrides=sim_overrides
+        ),
         "coordinates": image_coordinates_from_bbox(bounds),
         "lat": lat,
         "lon": lon,
     }
 
 
-def resolve_site_viewshed_workdir(project_dir: Path, preset: Preset, site: SiteEntry) -> Path:
+def resolve_site_viewshed_workdir(
+    project_dir: Path,
+    preset: Preset,
+    site: SiteEntry,
+    *,
+    sim_overrides: ViewshedSimOverrides | None = None,
+) -> Path:
     """Filesystem workspace for one site's propagation fingerprint."""
     bundle_root = resolved_bundle_dir(preset_path=project_dir / "config.yaml")
     viewshed_root = resolved_viewshed_dir(bundle_root)
     digest = viewshed_workspace_digest(
-        request=preset_to_request(preset, float(site.lat), float(site.lon))
+        request=_viewshed_request(preset, site, sim_overrides=sim_overrides)
     )
     return resolved_viewshed_workdir(digest=digest, viewshed_root=viewshed_root)
+
+
+def _viewshed_request(
+    preset: Preset,
+    site: SiteEntry,
+    *,
+    sim_overrides: ViewshedSimOverrides | None = None,
+):
+    ov = sim_overrides or ViewshedSimOverrides()
+    return preset_to_request(
+        preset,
+        float(site.lat),
+        float(site.lon),
+        radius_km=ov.radius_km,
+        raster_dimension=ov.raster_dimension,
+    )
 
 
 def ensure_site_viewshed_png(
@@ -161,6 +214,7 @@ def ensure_site_viewshed_png(
     site_slug: str,
     site: SiteEntry,
     *,
+    sim_overrides: ViewshedSimOverrides | None = None,
     verbose: bool = False,
 ) -> Path:
     """Return ``splat.png``, running splatter coverage + raster when not cached."""
@@ -168,8 +222,8 @@ def ensure_site_viewshed_png(
     if preset.land is None:
         raise ServeViewshedError("preset land.* required for RF coverage")
 
-    workdir = resolve_site_viewshed_workdir(project_dir, preset, site)
-    req = preset_to_request(preset, float(site.lat), float(site.lon))
+    workdir = resolve_site_viewshed_workdir(project_dir, preset, site, sim_overrides=sim_overrides)
+    req = _viewshed_request(preset, site, sim_overrides=sim_overrides)
     digest = viewshed_workspace_digest(request=req)
     site_label = site.name.strip() or site_slug
 
@@ -225,17 +279,24 @@ def ensure_site_viewshed_overlay(
     site_slug: str,
     site: SiteEntry,
     *,
+    sim_overrides: ViewshedSimOverrides | None = None,
     verbose: bool = False,
 ) -> dict[str, object]:
     """Ensure PNG exists and return MapLibre overlay metadata."""
     preset = _load_viewshed_preset(project_dir)
-    workdir = resolve_site_viewshed_workdir(project_dir, preset, site)
-    ensure_site_viewshed_png(project_dir, site_slug, site, verbose=verbose)
+    workdir = resolve_site_viewshed_workdir(project_dir, preset, site, sim_overrides=sim_overrides)
+    ensure_site_viewshed_png(
+        project_dir,
+        site_slug,
+        site,
+        sim_overrides=sim_overrides,
+        verbose=verbose,
+    )
     bounds = load_viewshed_bounds(workdir)
     if bounds is None:
         raise ServeViewshedError(f"missing GroundOverlay bounds for site {site_slug!r}")
     return {
         "slug": site_slug,
-        "url": viewshed_png_api_path(project_slug, site_slug),
+        "url": viewshed_png_api_path(project_slug, site_slug, sim_overrides=sim_overrides),
         "coordinates": image_coordinates_from_bbox(bounds),
     }
