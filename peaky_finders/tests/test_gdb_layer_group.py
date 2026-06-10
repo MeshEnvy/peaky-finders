@@ -87,15 +87,17 @@ def test_flatten_gdb_layer_jobs_expands_path_only_kml(tmp_path: Path) -> None:
     assert jobs[0][2] == gdb_layer_group_specs(g, tmp_path)[0].name
 
 
-def test_bundle_config_accepts_path_only_exclude() -> None:
+def test_bundle_config_accepts_path_only_negative() -> None:
     cfg = LandConfig.model_validate(
         {
-            "aoi": [{"path": "aoi/test.gdb", "layers": ["boundary"]}],
-            "include": [{"path": "include/test.gdb", "layers": ["inc"]}],
-            "exclude": [{"path": "exclude/land.kml"}],
+            "layers": {
+                "aoi_layer": {"role": "aoi", "path": "aoi/test.gdb", "layers": ["boundary"]},
+                "inc_layer": {"role": "positive", "path": "include/test.gdb", "layers": ["inc"]},
+                "exc_layer": {"role": "negative", "path": "exclude/land.kml"},
+            }
         }
     )
-    assert cfg.exclude[0].layers == []
+    assert cfg.groups_for("exclude")[0].layers == []
     text = canonical_land_land_use_config_text(cfg)
     assert '"layers": "*"' in text
     assert "exclude/land.kml" in text
@@ -104,4 +106,4 @@ def test_bundle_config_accepts_path_only_exclude() -> None:
 def test_sample_preset_loads_with_explicit_layers() -> None:
     preset = load_preset(SAMPLE_PROJECT_CONFIG)
     assert preset.land is not None
-    assert preset.land.exclude == []
+    assert preset.land.groups_for("exclude") == []

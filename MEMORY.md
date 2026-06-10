@@ -120,7 +120,7 @@ One YAML per project — `projects/<slug>/config.yaml` (legacy `.json` unsupport
 |---------|----------|
 | `simulation` | `provider: splatter`, RF/modem/env presets, `radius_km` (≤100), `raster_dimension` (128–4096 px square), `max_workers.splatter` batch fan-out |
 | `display` | Viewshed raster (`colormap`, `transparency`, dBm range) + `kml` styles + `kmz` layer toggles |
-| `land` | GDB inputs: `inputs_root`, `reference`, `aoi`, `include`, `exclude` |
+| `land` | Slug-keyed `layers:` with roles `aoi` / `positive` / `negative` / `reference`; vector paths under `<preset-dir>/data/` |
 | `mesh` | Pairwise/depth build knobs, raster size, worker counts |
 | `suggest` | Site planner (`land-grab` / `mesh-backbone`); `mesh_backbone.goal_order` sequences top-level `goals:` |
 | `goals` | Coverage attractors — `name`, `loc: [lat, lon]`; slug namespace disjoint from `sites:` |
@@ -129,7 +129,7 @@ One YAML per project — `projects/<slug>/config.yaml` (legacy `.json` unsupport
 
 CLI `peaky bundle` unchanged; artifact dir remains `<preset>/build/bundle/`. Build stamps: `land_*`, `display_kml`, `display_kmz`, `mesh` (replaces `bundle_*` stamp names).
 
-Model: `Preset` in `sites_job.py`. Writes: `update_preset_yaml_tree` (ruamel round-trip, file lock).
+Model: `Preset` in `sites_job.py`. Writes: `update_preset_yaml_tree` (ruamel round-trip, file lock). **`land` is optional**: missing or unconfigured (`layers` without both `aoi` and `positive`) skips bundle/eligible/suggest land phases; sites, goals, viewsheds, and RF link checks still work.
 
 ## Repo layout
 

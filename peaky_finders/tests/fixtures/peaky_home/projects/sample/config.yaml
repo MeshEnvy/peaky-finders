@@ -33,16 +33,17 @@ display:
   max_dbm: -80.0
 
 land:
-  inputs_root: data
-  aoi:
-    - path: aoi/test.gdb
+  layers:
+    test_boundary:
+      role: aoi
+      path: aoi/test.gdb
       layers:
         - name: boundary
-  include:
-    - path: include/test.gdb
+    test_include:
+      role: positive
+      path: include/test.gdb
       layers:
         - name: inc_layer
-  exclude: []
 
 sites:
   hub:

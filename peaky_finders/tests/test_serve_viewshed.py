@@ -97,6 +97,42 @@ def test_draft_overlay_if_ready_uses_prefetch_png_url(
     assert "_draft/splat.png" not in str(overlay["url"])
 
 
+def test_ensure_site_viewshed_png_without_land(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    project_dir = projects_dir / "demo"
+    scaffold_project("demo", parent=projects_dir)
+    cfg_path = project_dir / "config.yaml"
+    text = cfg_path.read_text(encoding="utf-8")
+    start = text.index("land:")
+    end = text.index("sites:")
+    cfg_path.write_text(text[:start] + text[end:], encoding="utf-8")
+
+    fixed = project_dir / "build" / "viewsheds" / "abc123"
+    fixed.mkdir(parents=True)
+    png_bytes = b"\x89PNG\r\n\x1a\n"
+    (fixed / "splat.png").write_bytes(png_bytes)
+
+    monkeypatch.setattr(
+        "peaky_finders.serve_viewshed.resolve_site_viewshed_workdir",
+        lambda *_args, **_kwargs: fixed,
+    )
+    monkeypatch.setattr(
+        "peaky_finders.serve_viewshed.viewshed_request_digest_matches",
+        lambda _workdir, expected_workspace_digest: True,
+    )
+    monkeypatch.setattr(
+        "peaky_finders.serve_viewshed.run_viewshed_coverage",
+        lambda **_kwargs: 0,
+    )
+
+    from peaky_finders.sites_job import load_preset_sites
+
+    sites = load_preset_sites(cfg_path)
+    png = ensure_site_viewshed_png(project_dir, "hub", sites["hub"])
+    assert png.read_bytes() == png_bytes
+
+
 def test_ensure_site_viewshed_png_uses_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
@@ -336,8 +372,8 @@ def test_load_preset_for_coverage_ignores_site_suggestions(tmp_path: Path) -> No
     raw = config_path.read_text(encoding="utf-8")
     config_path.write_text(
         raw.replace(
-            "  exclude: []\n\nsites:",
-            "  exclude: []\n\nsuggest:\n"
+            "\nsites:",
+            "\nsuggest:\n"
             "  strategy: mesh-backbone\n"
             "  mesh_backbone:\n"
             "    goal_order: [russel-bridge]\n\n"
@@ -345,6 +381,7 @@ def test_load_preset_for_coverage_ignores_site_suggestions(tmp_path: Path) -> No
             "  russel-bridge:\n"
             "    name: Russell Bridge\n"
             "    loc: russell-peak\n\nsites:",
+            1,
         ),
         encoding="utf-8",
     )

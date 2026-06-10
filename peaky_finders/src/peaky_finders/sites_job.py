@@ -11,13 +11,15 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ruamel.yaml import YAML
 
 _PRESET_EXTENSIONS = frozenset({".yaml", ".yml"})
+PRESET_LAND_DATA_DIRNAME = "data"
+LandClipRole = Literal["aoi", "include", "exclude"]
 
 
 def require_preset_yaml_path(path: Path) -> None:
@@ -175,21 +177,16 @@ def resolved_mesh_site_links_kml(preset_path: Path) -> Path:
 def resolved_preset_land_data_dir(
     *,
     preset_path: Path,
-    preset: Preset,
+    preset: Preset | None = None,
     cli_override: Path | None = None,
 ) -> Path:
-    """GDB ``land.*`` path root: CLI override, else ``<preset-dir>/<land.inputs_root>``, else ``<PEAKY_HOME>/data``."""
+    """GDB ``land.layers`` path root: CLI override, else ``<preset-dir>/data``."""
+    _ = preset
     if cli_override is not None:
         return Path(cli_override).expanduser().resolve()
-    land = preset.land
-    if land is not None and land.inputs_root is not None:
-        raw = str(land.inputs_root).strip()
-        if raw:
-            root = Path(raw)
-            if root.is_absolute():
-                return root.resolve()
-            return (Path(preset_path).expanduser().resolve().parent / root).resolve()
-    return (peaky_home() / "data").resolve()
+    return (
+        Path(preset_path).expanduser().resolve().parent / PRESET_LAND_DATA_DIRNAME
+    ).resolve()
 
 
 def resolved_preset_bundle_data_dir(
@@ -645,26 +642,6 @@ def _gdb_layer_group_payload(g: GdbLayerGroup) -> dict[str, Any]:
     return {"layers": [s.canonical_dict() for s in sorted_specs], "path": g.path}
 
 
-def canonical_land_aoi_config_text(pre: LandConfig) -> str:
-    """Deterministic text for AOI cache keys (sorted groups, sorted layers within each group)."""
-    sorted_groups = sorted(pre.aoi, key=_gdb_layer_group_sort_key)
-    payload = {"aoi": [_gdb_layer_group_payload(g) for g in sorted_groups]}
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
-
-
-def canonical_land_land_use_config_text(pre: LandConfig) -> str:
-    """Deterministic text block for hashing include/exclude only (not AOI)."""
-    def groups_payload(groups: list[GdbLayerGroup]) -> list[dict[str, Any]]:
-        sorted_groups = sorted(groups, key=_gdb_layer_group_sort_key)
-        return [_gdb_layer_group_payload(g) for g in sorted_groups]
-
-    payload = {
-        "exclude": groups_payload(pre.exclude),
-        "include": groups_payload(pre.include),
-    }
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
-
-
 _KML_COLOR_RE = re.compile(r"^[0-9a-fA-F]{8}$")
 
 
@@ -687,21 +664,32 @@ class BundleKmlLayerStyle(BaseModel):
         return s.lower()
 
 
-class BundleReferenceLayerEntry(BaseModel):
-    """One optional context / reference GDB source: path, filters, per-entry KMZ visibility and style."""
+class LandLayerRole(StrEnum):
+    """Preset ``land.layers`` entry role."""
+
+    AOI = "aoi"
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+    REFERENCE = "reference"
+
+
+_LAYER_ROLE_FOR_CLIP: dict[LandLayerRole, LandClipRole] = {
+    LandLayerRole.AOI: "aoi",
+    LandLayerRole.POSITIVE: "include",
+    LandLayerRole.NEGATIVE: "exclude",
+}
+
+
+class LandLayerEntry(BaseModel):
+    """One ``land.layers`` vector source: role, path, optional layer filters, reference display knobs."""
 
     model_config = ConfigDict(extra="ignore")
 
-    id: str = Field(min_length=1, description="Stable id for cache filenames and Places folder label")
+    role: LandLayerRole
     path: str
-    visible: bool = Field(default=False, description="Initial NetworkLink visibility in aggregate doc.kml")
+    layers: list[GdbLayerSpec] = Field(default_factory=list)
+    visible: bool = Field(default=False, description="Reference only: initial KMZ NetworkLink visibility")
     style: BundleKmlLayerStyle | None = None
-    layers: list[GdbLayerSpec] = Field(min_length=1)
-
-    @field_validator("id", mode="before")
-    @classmethod
-    def _strip_id(cls, v: Any) -> str:
-        return str(v).strip()
 
     @field_validator("path", mode="before")
     @classmethod
@@ -714,7 +702,133 @@ class BundleReferenceLayerEntry(BaseModel):
     @field_validator("layers", mode="before")
     @classmethod
     def _coerce_layers(cls, v: Any) -> list[Any]:
-        return _coerce_gdb_layers_list(v)
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError("layers must be a list")
+        if not v:
+            return []
+        out: list[Any] = []
+        for item in v:
+            if isinstance(item, str):
+                s = item.strip()
+                if s:
+                    out.append({"name": s})
+            elif isinstance(item, GdbLayerSpec):
+                out.append(item.model_dump(mode="python"))
+            elif isinstance(item, dict):
+                out.append(item)
+            else:
+                raise ValueError('each layer must be a string name or an object with "name"')
+        if not out:
+            raise ValueError("layers must contain at least one layer when specified")
+        return out
+
+    @model_validator(mode="after")
+    def _reference_requires_layers(self) -> LandLayerEntry:
+        if self.role == LandLayerRole.REFERENCE and not self.layers:
+            raise ValueError("land.layers reference entries require non-empty layers")
+        return self
+
+    def as_gdb_layer_group(self) -> GdbLayerGroup:
+        return GdbLayerGroup(path=self.path, layers=self.layers)
+
+
+class LandConfig(BaseModel):
+    """Slug-keyed land mask inputs for ``peaky build`` bundle stages."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    layers: dict[str, LandLayerEntry] = Field(default_factory=dict)
+
+    def is_configured(self) -> bool:
+        roles = {entry.role for entry in self.layers.values()}
+        return LandLayerRole.AOI in roles and LandLayerRole.POSITIVE in roles
+
+    def groups_for(self, clip_role: LandClipRole) -> list[GdbLayerGroup]:
+        want = next(role for role, mapped in _LAYER_ROLE_FOR_CLIP.items() if mapped == clip_role)
+        return [
+            self.layers[slug].as_gdb_layer_group()
+            for slug in sorted(self.layers.keys())
+            if self.layers[slug].role == want
+        ]
+
+    def reference_entries(self) -> list[tuple[str, LandLayerEntry]]:
+        return [
+            (slug, self.layers[slug])
+            for slug in sorted(self.layers.keys())
+            if self.layers[slug].role == LandLayerRole.REFERENCE
+        ]
+
+
+def _land_layer_entry_payload(slug: str, entry: LandLayerEntry) -> dict[str, Any]:
+    layers_sorted = sorted(entry.layers, key=lambda s: s.name)
+    d: dict[str, Any] = {
+        "layers": [s.canonical_dict() for s in layers_sorted] if layers_sorted else "*",
+        "path": entry.path,
+        "role": entry.role.value,
+    }
+    if entry.role == LandLayerRole.REFERENCE:
+        d["visible"] = entry.visible
+        if entry.style is not None:
+            d["style"] = entry.style.model_dump(mode="json")
+    return {"id": slug, **d}
+
+
+def canonical_land_layers_config_text(pre: LandConfig) -> str:
+    """Deterministic JSON for all ``land.layers`` entries (sorted by slug)."""
+    payload = {
+        "layers": [
+            _land_layer_entry_payload(slug, pre.layers[slug])
+            for slug in sorted(pre.layers.keys())
+        ]
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def canonical_land_aoi_config_text(pre: LandConfig) -> str:
+    """Deterministic text for AOI cache keys."""
+    sorted_groups = sorted(pre.groups_for("aoi"), key=_gdb_layer_group_sort_key)
+    payload = {"aoi": [_gdb_layer_group_payload(g) for g in sorted_groups]}
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def canonical_land_land_use_config_text(pre: LandConfig) -> str:
+    """Deterministic text block for hashing positive/negative layers (not AOI)."""
+
+    def groups_payload(groups: list[GdbLayerGroup]) -> list[dict[str, Any]]:
+        sorted_groups = sorted(groups, key=_gdb_layer_group_sort_key)
+        return [_gdb_layer_group_payload(g) for g in sorted_groups]
+
+    payload = {
+        "exclude": groups_payload(pre.groups_for("exclude")),
+        "include": groups_payload(pre.groups_for("include")),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def _reference_entry_payload(slug: str, entry: LandLayerEntry) -> dict[str, Any]:
+    layers_sorted = sorted(entry.layers, key=lambda s: s.name)
+    d: dict[str, Any] = {
+        "id": slug,
+        "layers": [s.canonical_dict() for s in layers_sorted],
+        "path": entry.path,
+        "visible": entry.visible,
+    }
+    if entry.style is not None:
+        d["style"] = entry.style.model_dump(mode="json")
+    return d
+
+
+def canonical_land_reference_config_text(pre: LandConfig) -> str:
+    """Deterministic JSON for reference ``land.layers`` cache keys."""
+    payload = {
+        "reference": sorted(
+            (_reference_entry_payload(slug, entry) for slug, entry in pre.reference_entries()),
+            key=lambda x: x["id"],
+        )
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
 
 
 class BundleMeshDepthBandStyles(BaseModel):
@@ -1114,27 +1228,6 @@ class DisplayConfig(BaseModel):
     )
 
 
-class LandConfig(BaseModel):
-    """GDB-driven AOI polygon plus land-use include / exclude for ``peaky build`` bundle stages."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    inputs_root: str | None = Field(
-        default=None,
-        description=(
-            "Directory for land GDB paths; relative to the preset file unless absolute. "
-            "Default: ``<PEAKY_HOME>/data``."
-        ),
-    )
-    reference: list[BundleReferenceLayerEntry] = Field(
-        default_factory=list,
-        description="Optional AOI-clipped context layers (e.g. admin boundaries) for KMZ only; not used in eligibility.",
-    )
-    aoi: list[GdbLayerGroup] = Field(default_factory=list)
-    include: list[GdbLayerGroup] = Field(default_factory=list)
-    exclude: list[GdbLayerGroup] = Field(default_factory=list)
-
-
 def resolved_suggest_config(suggest: SuggestConfig | None) -> SuggestConfig:
     """``suggest`` section or defaults."""
     if suggest is None:
@@ -1151,27 +1244,6 @@ def resolved_mesh_config(mesh: MeshConfig | None) -> MeshConfig:
 
 def resolved_display_kml(preset: Preset) -> BundleKmlOverlayStyles | None:
     return preset.display.kml
-
-
-def _reference_entry_payload(e: BundleReferenceLayerEntry) -> dict[str, Any]:
-    layers_sorted = sorted(e.layers, key=lambda s: s.name)
-    d: dict[str, Any] = {
-        "id": e.id,
-        "layers": [s.canonical_dict() for s in layers_sorted],
-        "path": e.path,
-        "visible": e.visible,
-    }
-    if e.style is not None:
-        d["style"] = e.style.model_dump(mode="json")
-    return d
-
-
-def canonical_land_reference_config_text(pre: LandConfig) -> str:
-    """Deterministic JSON for ``land.reference`` cache keys."""
-    payload = {
-        "reference": sorted((_reference_entry_payload(e) for e in pre.reference), key=lambda x: x["id"])
-    }
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
 
 
 DEFAULT_VIEWSHED_COVERAGE_KML_STYLE = BundleKmlLayerStyle(

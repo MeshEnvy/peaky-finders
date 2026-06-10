@@ -110,8 +110,6 @@ def load_project_goal_links(
 ) -> dict[str, object]:
     """Evaluate goal↔repeater pairs and return linked pairs plus GeoJSON line features."""
     preset = _load_links_preset(project_dir)
-    if preset.land is None:
-        raise ServeLinksError("preset land.* required for RF link checks")
 
     slug_list_goals = sorted(goals.keys())
     slug_list_sites = sorted(sites.keys())
@@ -203,8 +201,6 @@ def evaluate_goal_site_prefetch_links(
 ) -> list[dict[str, object]]:
     """RF-viable repeater links for a draft goal placement."""
     preset = _load_links_preset(project_dir)
-    if preset.land is None:
-        raise ServeLinksError("preset land.* required for RF link checks")
 
     rf_json = rf_json_for_preset(preset)
     max_hop_m = max_hop_range_m(preset)

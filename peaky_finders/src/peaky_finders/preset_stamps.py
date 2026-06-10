@@ -69,9 +69,7 @@ def _topology_stamp_body(preset: Preset) -> str:
     land = preset.land
     layer_jobs = 0
     if land is not None:
-        layer_jobs = sum(len(g.layers) or 1 for g in land.aoi)
-        layer_jobs += sum(len(g.layers) or 1 for g in land.include)
-        layer_jobs += sum(len(g.layers) or 1 for g in land.exclude)
+        layer_jobs = sum(len(ent.layers) or 1 for ent in land.layers.values() if ent.role.value != "reference")
     return json.dumps({"site_slugs": slugs, "land_layer_jobs": layer_jobs}, sort_keys=True)
 
 
@@ -133,7 +131,7 @@ def compute_stamp_hex(section: str, preset: Preset, *, preset_path: Path, data_d
 def list_stamp_sections(preset: Preset) -> list[str]:
     sections = ["simulation", "display", "display_kml", "display_kmz", "mesh", "topology", "links"]
     sections.extend(sorted(f"site__{slug}" for slug in preset.sites.keys()))
-    if preset.land is not None:
+    if preset.land is not None and preset.land.is_configured():
         require_land_config(preset)
         sections.extend(
             [

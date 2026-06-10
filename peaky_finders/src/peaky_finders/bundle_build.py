@@ -32,7 +32,7 @@ from peaky_finders.geometry_preview_png import write_wgs84_geodataframe_preview_
 from peaky_finders.sites_job import (
     BundleKmlOverlayStyles,
     LandConfig,
-    BundleReferenceLayerEntry,
+    LandLayerEntry,
     GdbLayerGroup,
     GdbLayerSpec,
     Preset,
@@ -62,17 +62,13 @@ def resolve_land_use_gdb_path(data_dir: Path, path_str: str) -> Path:
 
 def require_land_config(preset: Preset) -> LandConfig:
     if preset.land is None:
-        raise ValueError('Preset needs a top-level "land" object with aoi, include, and exclude.')
+        raise ValueError('Preset needs a top-level "land" object with configured layers.')
     pre = preset.land
-    if not pre.aoi:
+    if not pre.is_configured():
         raise ValueError(
-            'Preset needs non-empty "land.aoi" (GDB path + polygon layers defining the AOI).'
-        )
-    if not pre.include:
-        raise ValueError(
-            'Preset needs non-empty "land.include". Layer names:'
+            'Preset needs at least one land.layers entry with role "aoi" and one with role "positive".'
             "\n  peaky inspect <path_to.gdb>"
-            "\nthen edit the preset land.include / land.exclude arrays."
+            "\nthen edit land.layers in the preset YAML."
         )
     return pre
 
@@ -80,7 +76,7 @@ def require_land_config(preset: Preset) -> LandConfig:
 def _unique_sorted_aoi_gdb_roots(pre: LandConfig, data_dir: Path) -> list[Path]:
     seen: set[str] = set()
     roots: list[Path] = []
-    for g in pre.aoi:
+    for g in pre.groups_for("aoi"):
         r = resolve_land_use_gdb_path(data_dir, g.path)
         key = str(r.resolve())
         if key not in seen:
@@ -92,7 +88,7 @@ def _unique_sorted_aoi_gdb_roots(pre: LandConfig, data_dir: Path) -> list[Path]:
 def _unique_sorted_gdb_roots(pre: LandConfig, data_dir: Path) -> list[Path]:
     seen: set[str] = set()
     roots: list[Path] = []
-    for g in pre.include + pre.exclude:
+    for g in pre.groups_for("include") + pre.groups_for("exclude"):
         r = resolve_land_use_gdb_path(data_dir, g.path)
         key = str(r.resolve())
         if key not in seen:
@@ -104,7 +100,7 @@ def _unique_sorted_gdb_roots(pre: LandConfig, data_dir: Path) -> list[Path]:
 def _unique_sorted_include_gdb_roots(pre: LandConfig, data_dir: Path) -> list[Path]:
     seen: set[str] = set()
     roots: list[Path] = []
-    for g in pre.include:
+    for g in pre.groups_for("include"):
         r = resolve_land_use_gdb_path(data_dir, g.path)
         key = str(r.resolve())
         if key not in seen:
@@ -116,7 +112,7 @@ def _unique_sorted_include_gdb_roots(pre: LandConfig, data_dir: Path) -> list[Pa
 def _unique_sorted_exclude_gdb_roots(pre: LandConfig, data_dir: Path) -> list[Path]:
     seen: set[str] = set()
     roots: list[Path] = []
-    for g in pre.exclude:
+    for g in pre.groups_for("exclude"):
         r = resolve_land_use_gdb_path(data_dir, g.path)
         key = str(r.resolve())
         if key not in seen:
@@ -181,11 +177,11 @@ def bundle_land_use_inputs_digest(pre: LandConfig, data_dir: Path) -> str:
 
 
 def _unique_sorted_reference_gdb_roots(pre: LandConfig, data_dir: Path) -> list[Path]:
-    if not pre.reference:
+    if not pre.reference_entries():
         return []
     seen: set[str] = set()
     roots: list[Path] = []
-    for ent in pre.reference:
+    for _slug, ent in pre.reference_entries():
         r = resolve_land_use_gdb_path(data_dir, ent.path)
         key = str(r.resolve())
         if key not in seen:
@@ -197,7 +193,7 @@ def _unique_sorted_reference_gdb_roots(pre: LandConfig, data_dir: Path) -> list[
 def bundle_reference_inputs_fingerprint_body(pre: LandConfig, data_dir: Path) -> str:
     """Canonical reference preset + GDB file-tree mtimes (independent of land-use cache digest)."""
     data_dir = Path(data_dir).expanduser().resolve()
-    if not pre.reference:
+    if not pre.reference_entries():
         return (
             "format=bundle_reference_inputs/v1\nconfig\n"
             + json.dumps({"reference": []}, sort_keys=True)
@@ -296,7 +292,7 @@ def _file_tree_mtime_size_fingerprint(root: Path) -> str:
 def load_composite_aoi_polygon(pre: LandConfig, data_dir: Path) -> BaseGeometry:
     """Union all ``bundle.aoi`` polygon layers to one geometry in EPSG:4326."""
     pieces: list[BaseGeometry] = []
-    jobs = _flatten_gdb_layer_jobs(pre.aoi, data_dir)
+    jobs = _flatten_gdb_layer_jobs(pre.groups_for("aoi"), data_dir)
     for preset_path, resolved, layer_name, where in jobs:
         if not resolved.exists():
             raise FileNotFoundError(f"AOI GDB not found: {resolved} (preset path {preset_path!r})")
@@ -1231,7 +1227,7 @@ def reference_entry_kml_stem(entry_id: str) -> str:
 
 
 def _overlay_for_reference_entry(
-    entry: BundleReferenceLayerEntry,
+    entry: LandLayerEntry,
     kml: BundleKmlOverlayStyles | None,
 ) -> BundleKmlOverlayStyles | None:
     if kml is not None:

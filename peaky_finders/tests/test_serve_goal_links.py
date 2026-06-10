@@ -56,10 +56,13 @@ def _write_land_preset(preset_path: Path) -> None:
             },
             "display": {"colormap": "plasma", "min_dbm": -130.0, "max_dbm": -80.0},
             "land": {
-                "inputs_root": "data",
-                "aoi": [{"path": "aoi/missing.gdb", "layers": [{"name": "boundary"}]}],
-                "include": [],
-                "exclude": [],
+                "layers": {
+                    "aoi_layer": {
+                        "role": "aoi",
+                        "path": "aoi/missing.gdb",
+                        "layers": [{"name": "boundary"}],
+                    }
+                }
             },
             "sites": {"hub": {"name": "Hub", "loc": [39.5, -119.5]}},
             "goals": {"valley": {"name": "Valley", "loc": [39.6, -119.4]}},

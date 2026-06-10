@@ -22,7 +22,7 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 |---------|---------|
 | `simulation` | RF modem/env presets, `radius_km` (≤100), `raster_dimension` (128–4096 px square), `max_workers` |
 | `display` | Viewshed raster + `display.kml` / `display.kmz` presentation |
-| `land` | GDB layer refs: `reference`, `aoi`, `include`, `exclude` |
+| `land` | Slug-keyed `layers:` — roles `aoi`, `positive`, `negative`, `reference`; paths under `<preset-dir>/data/` |
 | `mesh` | Pairwise/depth analysis knobs |
 | `suggest` | Site planner for `build --suggest`; `mesh_backbone.goal_order` sequences `goals:` |
 | `goals` | Coverage attractors — `name`, `loc: [lat, lon]`; slugs must not collide with `sites:` |

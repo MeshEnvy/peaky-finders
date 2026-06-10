@@ -40,7 +40,7 @@ land.* GDB paths (preset) → clip layers → composites → eligible GPKG
   → resolve.json sidecars → viewshed/mesh inputs
 ```
 
-GDB paths resolve under `<preset-dir>/<land.inputs_root>` unless absolute.
+GDB paths resolve under `<preset-dir>/data/` unless absolute.
 
 ## Skadi DEM
 

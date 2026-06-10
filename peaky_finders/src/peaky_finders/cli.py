@@ -100,7 +100,7 @@ def _bundle_land_use_layers_for_kmz(
 ]:
     """``(nets, zpairs, refs, exclude links, include links, eligible_slice links)``.
 
-    ``reference_links`` entries are ``(folder_label, kml_path_in_kmz, visible)`` from ``preset.land.reference``.
+    ``reference_links`` entries are ``(folder_label, kml_path_in_kmz, visible)`` from ``land.layers`` reference roles.
     Per-role layer links pair ``NetworkLink`` label with KMZ arcname (``*/layers/*.kml`` trees).
     """
     from peaky_finders.bundle_clips import (
@@ -141,12 +141,12 @@ def _bundle_land_use_layers_for_kmz(
     b = preset.land if preset is not None else None
     if b is not None:
         resolve_ref = read_bundle_resolve(bundle_dir).get("reference")
-        for ent in b.reference:
-            arc = f"reference/{ent.id}.kml"
+        for slug, ent in b.reference_entries():
+            arc = f"reference/{slug}.kml"
             kml_disk: Path | None = None
-            if isinstance(resolve_ref, dict) and ent.id in resolve_ref:
+            if isinstance(resolve_ref, dict) and slug in resolve_ref:
                 try:
-                    kml_disk = reference_kml_from_bundle_dir(bundle_dir, ent.id)
+                    kml_disk = reference_kml_from_bundle_dir(bundle_dir, slug)
                     ref_dir_empty = (
                         kml_disk.parent / REFERENCE_EMPTY_MARKER
                     ).is_file()
@@ -155,7 +155,7 @@ def _bundle_land_use_layers_for_kmz(
                 except KeyError:
                     kml_disk = None
             if kml_disk is not None and kml_disk.is_file():
-                ref_links.append((ent.id, arc, ent.visible))
+                ref_links.append((slug, arc, ent.visible))
                 zpairs.append((kml_disk, arc))
 
     if preset is not None and data_dir is not None:
@@ -336,14 +336,6 @@ def run_splat(args: argparse.Namespace) -> int:
         _ = preset_to_request(job, _probe.lat, _probe.lon)
     except ValueError as e:
         print(f"Invalid preset or RF parameters: {e}", file=sys.stderr)
-        return 2
-
-    if job.land is None:
-        print(
-            "coverage requires preset land.* (AOI / land-use); "
-            "workspaces live under <preset-dir>/build/viewsheds/<propagation-digest>/.",
-            file=sys.stderr,
-        )
         return 2
 
     cov_verbose = bool(getattr(args, "verbose", False))

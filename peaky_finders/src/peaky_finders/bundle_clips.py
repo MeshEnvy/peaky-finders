@@ -35,8 +35,8 @@ from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.sites_job import (
     LandConfig,
+    LandLayerEntry,
     BundleKmlOverlayStyles,
-    BundleReferenceLayerEntry,
     GdbLayerGroup,
     Preset,
     _gdb_layer_group_payload,
@@ -200,13 +200,13 @@ def composite_aoi_fingerprint_body(clip_shas: list[str]) -> str:
 
 
 def _include_config_json(pre: LandConfig) -> str:
-    sorted_groups = sorted(pre.include, key=_gdb_layer_group_sort_key)
+    sorted_groups = sorted(pre.groups_for("include"), key=_gdb_layer_group_sort_key)
     payload = {"include": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def _exclude_config_json(pre: LandConfig) -> str:
-    sorted_groups = sorted(pre.exclude, key=_gdb_layer_group_sort_key)
+    sorted_groups = sorted(pre.groups_for("exclude"), key=_gdb_layer_group_sort_key)
     payload = {"exclude": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
@@ -285,7 +285,7 @@ def plan_clip_build_result(
     gdb_fp = _file_tree_mtime_size_fingerprint
 
     aoi_clip_shas: list[str] = []
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.aoi, data_dir):
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.groups_for("aoi"), data_dir):
         body = clip_layer_fingerprint_body(
             role="aoi",
             preset_path=preset_path,
@@ -392,9 +392,9 @@ def plan_clip_layer_jobs(
 
     layers: list[PlannedClipLayer] = []
     for role, groups in (
-        ("aoi", plc.aoi),
-        ("include", plc.include),
-        ("exclude", plc.exclude),
+        ("aoi", plc.groups_for("aoi")),
+        ("include", plc.groups_for("include")),
+        ("exclude", plc.groups_for("exclude")),
     ):
         for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(groups, data_dir):
             if not resolved.exists():
@@ -443,7 +443,13 @@ def _sorted_layer_job_gpkgs_for_clip_shas(
     from peaky_finders.bundle_build import _clip_stem, _file_tree_mtime_size_fingerprint, _flatten_gdb_layer_jobs
 
     gdb_fp = _file_tree_mtime_size_fingerprint
-    groups = plc.aoi if role == "aoi" else plc.include if role == "include" else plc.exclude
+    groups = (
+        plc.groups_for("aoi")
+        if role == "aoi"
+        else plc.groups_for("include")
+        if role == "include"
+        else plc.groups_for("exclude")
+    )
     want = frozenset(clip_shas)
     by_sha: dict[str, Path] = {}
     for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(groups, data_dir):
@@ -506,7 +512,8 @@ def write_bundle_resolve(
 
 
 def reference_entry_fingerprint_body(
-    ent: BundleReferenceLayerEntry,
+    slug: str,
+    ent: LandLayerEntry,
     data_dir: Path,
     *,
     aoi_mask_sha: str,
@@ -515,7 +522,7 @@ def reference_entry_fingerprint_body(
     from peaky_finders.bundle_build import resolve_land_use_gdb_path
 
     resolved = resolve_land_use_gdb_path(data_dir, ent.path)
-    entry_json = json.dumps(_reference_entry_payload(ent), ensure_ascii=False, sort_keys=True)
+    entry_json = json.dumps(_reference_entry_payload(slug, ent), ensure_ascii=False, sort_keys=True)
     return (
         f"format={REFERENCE_ENTRY_FORMAT}\n"
         f"aoi_mask={aoi_mask_sha}\n"
@@ -549,20 +556,20 @@ def plan_reference_entries(
         resolve_land_use_gdb_path,
     )
 
-    if not plc.reference:
+    if not plc.reference_entries():
         return {}
     data_dir = Path(data_dir).expanduser().resolve()
     mask_sha = aoi_mask_sha_from_body(aoi_inputs_fingerprint_body(plc, data_dir))
     gdb_fp = _file_tree_mtime_size_fingerprint
     out: dict[str, str] = {}
-    for ent in plc.reference:
+    for slug, ent in plc.reference_entries():
         resolved = resolve_land_use_gdb_path(data_dir, ent.path)
         if resolved.exists():
             body = reference_entry_fingerprint_body(
-                ent, data_dir, aoi_mask_sha=mask_sha, gdb_tree=gdb_fp(resolved)
+                slug, ent, data_dir, aoi_mask_sha=mask_sha, gdb_tree=gdb_fp(resolved)
             )
         else:
-            entry_json = json.dumps(_reference_entry_payload(ent), ensure_ascii=False, sort_keys=True)
+            entry_json = json.dumps(_reference_entry_payload(slug, ent), ensure_ascii=False, sort_keys=True)
             body = (
                 f"format={REFERENCE_ENTRY_FORMAT}\n"
                 f"aoi_mask={mask_sha}\n"
@@ -571,7 +578,7 @@ def plan_reference_entries(
                 "gdb_tree\n"
                 "<missing-reference-gdb>\n"
             )
-        out[ent.id] = reference_entry_sha(body)
+        out[slug] = reference_entry_sha(body)
     return out
 
 
@@ -672,7 +679,7 @@ def list_exclude_layer_kmz_entries(
     mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
     gdb_fp = _file_tree_mtime_size_fingerprint
 
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.exclude, data_dir):
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.groups_for("exclude"), data_dir):
         body = clip_layer_fingerprint_body(
             role="exclude",
             preset_path=preset_path,
@@ -738,7 +745,7 @@ def list_include_layer_kmz_entries(
     mask_body = aoi_inputs_fingerprint_body(plc, data_dir)
     gdb_fp = _file_tree_mtime_size_fingerprint
 
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir):
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.groups_for("include"), data_dir):
         body = clip_layer_fingerprint_body(
             role="include",
             preset_path=preset_path,
@@ -817,7 +824,7 @@ def sync_eligible_include_layer_slices(
     wanted_stems: set[str] = set()
     layers_root.mkdir(parents=True, exist_ok=True)
 
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir_res):
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.groups_for("include"), data_dir_res):
         body = clip_layer_fingerprint_body(
             role="include",
             preset_path=preset_path,
@@ -917,7 +924,7 @@ def list_eligible_layer_kmz_entries(
     if not manifest_shas:
         return []
 
-    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, data_dir):
+    for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.groups_for("include"), data_dir):
         body = clip_layer_fingerprint_body(
             role="include",
             preset_path=preset_path,
@@ -1106,7 +1113,13 @@ def _clip_shas_for_composite(
     from peaky_finders.bundle_build import _clip_stem, _file_tree_mtime_size_fingerprint, _flatten_gdb_layer_jobs
 
     gdb_fp = _file_tree_mtime_size_fingerprint
-    groups = plc.aoi if role == "aoi" else plc.include if role == "include" else plc.exclude
+    groups = (
+        plc.groups_for("aoi")
+        if role == "aoi"
+        else plc.groups_for("include")
+        if role == "include"
+        else plc.groups_for("exclude")
+    )
     shas: list[str] = []
     for preset_path, resolved, layer_name, where in _flatten_gdb_layer_jobs(groups, data_dir):
         if not resolved.exists():
@@ -1464,14 +1477,15 @@ def build_reference_entry(
         _write_geodataframe_gpkg_and_kml,
     )
 
-    if not plc.reference:
-        raise ValueError("preset has no bundle.reference entries")
+    if not plc.reference_entries():
+        raise ValueError("preset has no land.layers reference entries")
 
     want = entry_id.strip()
-    ent = next((e for e in plc.reference if e.id == want), None)
-    if ent is None:
-        known = [e.id for e in plc.reference]
+    ent_pair = next(((slug, ent) for slug, ent in plc.reference_entries() if slug == want), None)
+    if ent_pair is None:
+        known = [slug for slug, _ent in plc.reference_entries()]
         raise KeyError(f"unknown reference id {want!r} (configured: {', '.join(repr(k) for k in known)})")
+    ref_slug, ent = ent_pair
 
     clips_root = Path(clips_root).expanduser().resolve()
     data_dir = Path(data_dir).expanduser().resolve()
@@ -1482,9 +1496,9 @@ def build_reference_entry(
         raise FileNotFoundError(f"AOI composite missing: {aoi_gpkg}")
     aoi_poly = make_valid(gpd.read_file(aoi_gpkg, layer="aoi").geometry.iloc[0])
 
-    ref_dir = reference_entry_dir(clips_root, ent.id)
+    ref_dir = reference_entry_dir(clips_root, ref_slug)
     ws_ref = ref_dir / REFERENCE_WORKSPACE_JSON_NAME
-    out_gpkg = reference_gpkg_path(clips_root, ent.id)
+    out_gpkg = reference_gpkg_path(clips_root, ref_slug)
     empty_marker = ref_dir / REFERENCE_EMPTY_MARKER
 
     with _clips_cache_exclusive_lock(clips_root):
@@ -1502,7 +1516,7 @@ def build_reference_entry(
             if not resolved.exists():
                 raise FileNotFoundError(f"Reference GDB not found: {resolved} (preset path {preset_path!r})")
             if progress_log:
-                progress_log(f"reference [{ent.id}] [{jidx}/{n_j}] read+clip {preset_path}::{layer_name} …")
+                progress_log(f"reference [{ref_slug}] [{jidx}/{n_j}] read+clip {preset_path}::{layer_name} …")
             _gdf, clipped = _read_and_clip_gdb_layer_to_aoi(
                 preset_path, resolved, layer_name, aoi_poly, kind="reference", where=where
             )
@@ -1511,15 +1525,15 @@ def build_reference_entry(
                 pieces_ll.append(clipped_ll)
             if verbose_log:
                 verbose_log(
-                    f"reference {ent.id} {preset_path}::{layer_name}: "
+                    f"reference {ref_slug} {preset_path}::{layer_name}: "
                     f"{len(_gdf):,} native → {len(clipped_ll):,} clipped"
                 )
 
         if not pieces_ll:
             if verbose_log:
-                verbose_log(f"reference [{ent.id}]: empty after clip → {ref_dir}/.empty")
+                verbose_log(f"reference [{ref_slug}]: empty after clip → {ref_dir}/.empty")
             empty_marker.write_text("1\n", encoding="utf-8")
-            _write_manifest(ws_ref, fmt=REFERENCE_WORKSPACE_FMT, payload={"reference_sha": entry_sha, "id": ent.id})
+            _write_manifest(ws_ref, fmt=REFERENCE_WORKSPACE_FMT, payload={"reference_sha": entry_sha, "id": ref_slug})
             return entry_sha
 
         merged = gpd.GeoDataFrame(pd.concat(pieces_ll, ignore_index=True), crs="EPSG:4326")
@@ -1530,11 +1544,11 @@ def build_reference_entry(
             merged,
             out_gpkg,
             gpkg_layer=REFERENCE_GPKG_LAYER,
-            layer_label=ent.id,
+            layer_label=ref_slug,
             kml_overlay=overlay,
         )
         if verbose_log:
-            verbose_log(f"reference [{ent.id}]: wrote {out_gpkg}")
-        _write_manifest(ws_ref, fmt=REFERENCE_WORKSPACE_FMT, payload={"reference_sha": entry_sha, "id": ent.id})
+            verbose_log(f"reference [{ref_slug}]: wrote {out_gpkg}")
+        _write_manifest(ws_ref, fmt=REFERENCE_WORKSPACE_FMT, payload={"reference_sha": entry_sha, "id": ref_slug})
     return entry_sha
 

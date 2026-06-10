@@ -29,7 +29,7 @@ def _sample_preset_with_mesh_coverage(tmp_path: Path, *, pairwise: bool, depth: 
         f"  pairwise: {'true' if pairwise else 'false'}\n"
         f"  depth: {'true' if depth else 'false'}\n"
     )
-    patched = text.replace("  exclude: []\n\nsites:", f"  exclude: []\n\n{block}\nsites:")
+    patched = text.replace("\nsites:", f"\n{block}sites:", 1)
     config_path.write_text(patched, encoding="utf-8")
     return config_path
 

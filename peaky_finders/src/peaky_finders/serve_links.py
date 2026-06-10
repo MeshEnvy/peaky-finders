@@ -118,8 +118,6 @@ def evaluate_site_pair_linked(
         raise ServeLinksError(f"unknown site slug(s): {slug_a!r}, {slug_b!r}")
 
     preset = _load_links_preset(project_dir)
-    if preset.land is None:
-        raise ServeLinksError("preset land.* required for RF link checks")
 
     if (a_slug, b_slug) in _manual_link_pairs(preset):
         return _link_record(slug_a=a_slug, slug_b=b_slug, linked=True, manual=True)
@@ -161,8 +159,6 @@ def load_project_site_links(
 ) -> dict[str, object]:
     """Evaluate all site pairs and return linked pairs plus GeoJSON line features."""
     preset = _load_links_preset(project_dir)
-    if preset.land is None:
-        raise ServeLinksError("preset land.* required for RF link checks")
 
     manual_pairs = _manual_link_pairs(preset)
     slug_list = sorted(sites.keys())
@@ -256,8 +252,6 @@ def load_coords_site_links(
         raise ServeLinksError(f"lon out of bounds: {lon}")
 
     preset = _load_links_preset(project_dir)
-    if preset.land is None:
-        raise ServeLinksError("preset land.* required for RF link checks")
 
     exclude = str(exclude_site_slug).strip() if exclude_site_slug else ""
     rf_pairs: list[tuple[str, float, float]] = []

@@ -193,7 +193,7 @@ def configure_preset_build(
     bundle_dir = bundles_root
     bundle_resolve = bundle_resolve_path(bundles_root)
     dem_tiles: tuple[Path, ...] = ()
-    has_land = preset.land is not None
+    has_land = preset.land is not None and preset.land.is_configured()
     eligible_slice_kml_paths: tuple[Path, ...] = ()
 
     if has_land:
@@ -241,7 +241,7 @@ def configure_preset_build(
 
         ew_layers_root = clips_root / "eligible" / ELIGIBLE_SLICE_LAYERS_SUBDIR
         slice_paths_list: list[Path] = []
-        for preset_path_r, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.include, bb_data_dir):
+        for preset_path_r, resolved, layer_name, where in _flatten_gdb_layer_jobs(plc.groups_for("include"), bb_data_dir):
             stem = _clip_stem(preset_path_r, layer_name, where)
             slice_paths_list.append(ew_layers_root / f"{stem}.kml")
         eligible_slice_kml_paths = tuple(slice_paths_list)

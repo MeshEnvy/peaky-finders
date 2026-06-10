@@ -18,9 +18,10 @@ from peaky_finders.sites_job import SiteType, load_preset, write_preset_document
 
 
 _MINIMAL_LAND = {
-    "aoi": [{"path": "aoi/test.gdb", "layers": [{"name": "boundary"}]}],
-    "include": [{"path": "include/test.gdb", "layers": [{"name": "inc_layer"}]}],
-    "exclude": [],
+    "layers": {
+        "aoi_layer": {"role": "aoi", "path": "aoi/test.gdb", "layers": [{"name": "boundary"}]},
+        "inc_layer": {"role": "positive", "path": "include/test.gdb", "layers": [{"name": "inc_layer"}]},
+    }
 }
 
 _SUGGEST_SIMULATION = {

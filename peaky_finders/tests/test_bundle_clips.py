@@ -17,26 +17,24 @@ from peaky_finders.bundle_clips import (
     reference_entry_sha,
     resolved_clips_cache_root,
 )
-from peaky_finders.sites_job import BundleReferenceLayerEntry
-from peaky_finders.sites_job import LandConfig, load_preset
+from peaky_finders.sites_job import GdbLayerSpec, LandConfig, LandLayerEntry, LandLayerRole, load_preset
 
 
 def _minimal_bundle_config() -> LandConfig:
     return LandConfig.model_validate(
         {
-            "aoi": [
-                {
+            "layers": {
+                "aoi_layer": {
+                    "role": "aoi",
                     "path": "aoi/test.gdb",
                     "layers": [{"name": "boundary"}],
-                }
-            ],
-            "include": [
-                {
+                },
+                "inc_layer": {
+                    "role": "positive",
                     "path": "include/test.gdb",
                     "layers": [{"name": "inc_layer"}],
-                }
-            ],
-            "exclude": [],
+                },
+            }
         }
     )
 
@@ -94,12 +92,13 @@ def test_clip_layer_sha_changes_with_mask() -> None:
 
 
 def test_reference_entry_sha_stable() -> None:
-    ent = BundleReferenceLayerEntry(
-        id="districts",
+    ent = LandLayerEntry(
+        role=LandLayerRole.REFERENCE,
         path="reference/foo.gdb",
-        layers=["layer_a"],
+        layers=[GdbLayerSpec(name="layer_a")],
     )
     body = reference_entry_fingerprint_body(
+        "districts",
         ent,
         Path("/data"),
         aoi_mask_sha="abc123",

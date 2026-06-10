@@ -34,13 +34,12 @@ display:
   max_dbm: -80.0
 
 land:
-  inputs_root: data
-  aoi:
-    - path: aoi/region.gdb
+  layers:
+    region_boundary:
+      role: aoi
+      path: aoi/region.gdb
       layers:
         - name: boundary
-  include: []
-  exclude: []
 
 sites:
   hub:

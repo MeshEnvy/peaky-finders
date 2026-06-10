@@ -74,7 +74,7 @@ def run_bundle_clip(role: str, layer: str, preset_path: Path) -> int:
     kml_overlay = preset.display.kml
     gdb_fp = _file_tree_mtime_size_fingerprint
 
-    grp = plc.aoi if rr == "aoi" else plc.include if rr == "include" else plc.exclude
+    grp = plc.groups_for(rr)
     matched = [(pp, resolved, ln, w) for pp, resolved, ln, w in _flatten_gdb_layer_jobs(grp, data_dir) if ln == layer]
     if not matched:
         print(f"bundle clip: no {rr} GDB layer named {layer!r}", file=sys.stderr)
@@ -179,8 +179,8 @@ def run_bundle_eligible(preset_path: Path, *, verbose: bool = False) -> int:
 
 def run_bundle_reference(entry_id: str, preset_path: Path) -> int:
     _preset_path, preset, plc, data_dir, _cache_root, clips_root, _mask_body = _bundle_context(preset_path)
-    if not plc.reference:
-        print("bundle reference: preset has no bundle.reference entries", file=sys.stderr)
+    if not plc.reference_entries():
+        print("bundle reference: preset has no land.layers reference entries", file=sys.stderr)
         return 2
 
     clip_meta = plan_clip_build_result(plc=plc, data_dir=data_dir, clips_root=clips_root)

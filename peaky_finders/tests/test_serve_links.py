@@ -80,13 +80,6 @@ display:
   colormap: plasma
   min_dbm: -130.0
   max_dbm: -80.0
-land:
-  inputs_root: data
-  aoi:
-    - path: aoi/test.gdb
-      layers: [{name: boundary}]
-  include: []
-  exclude: []
 sites:
   a:
     name: A
@@ -109,6 +102,26 @@ links: []
 
 def _rf_batch_none(session, pairs, *, rf_json: str) -> list[bool]:
     return [False] * len(pairs)
+
+
+def test_load_project_site_links_without_land(tmp_path: Path) -> None:
+    project_dir = tmp_path / "sample"
+    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    cfg_path = project_dir / "config.yaml"
+    text = cfg_path.read_text(encoding="utf-8")
+    start = text.index("land:")
+    end = text.index("sites:")
+    cfg_path.write_text(text[:start] + text[end:], encoding="utf-8")
+    sites = load_preset_sites(cfg_path)
+
+    with (
+        patch("peaky_finders.serve_links.splatter_session"),
+        patch("peaky_finders.serve_links.ensure_dem_for_points"),
+        patch("peaky_finders.serve_links.mutual_hop_batch", side_effect=_rf_batch_none),
+    ):
+        payload = load_project_site_links(project_dir, sites)
+
+    assert len(payload["links"]) == 3
 
 
 def test_load_project_site_links_manual_only(tmp_path: Path) -> None:

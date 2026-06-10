@@ -287,8 +287,6 @@ def ensure_site_viewshed_png(
 ) -> Path:
     """Return ``splat.png``, running splatter coverage + raster when not cached."""
     preset = _load_viewshed_preset(project_dir)
-    if preset.land is None:
-        raise ServeViewshedError("preset land.* required for RF coverage")
 
     workdir = resolve_site_viewshed_workdir(project_dir, preset, site, sim_overrides=sim_overrides)
     req = _viewshed_request(preset, site, sim_overrides=sim_overrides)
@@ -373,8 +371,6 @@ def site_viewshed_overlay_if_ready(
         preset = _load_viewshed_preset(project_dir)
     except ServeViewshedError:
         return None
-    if preset.land is None:
-        return None
 
     workdir = resolve_site_viewshed_workdir(project_dir, preset, site, sim_overrides=sim_overrides)
     digest = viewshed_workspace_digest(
@@ -409,8 +405,6 @@ def read_site_viewshed_png_if_ready(
     try:
         preset = _load_viewshed_preset(project_dir)
     except ServeViewshedError:
-        return None
-    if preset.land is None:
         return None
 
     workdir = resolve_site_viewshed_workdir(project_dir, preset, site, sim_overrides=sim_overrides)
