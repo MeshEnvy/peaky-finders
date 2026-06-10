@@ -17,27 +17,27 @@ import pytest
 from fixture_paths import SAMPLE_PROJECT_CONFIG
 from peaky_finders.new_cli import scaffold_project
 from peaky_finders.plss_mlrs_fetch import loc_stamp, write_plss_mlrs_loc_cache
+from peaky_finders.serve_app import _serialize_project_sites, make_serve_wsgi_app
 from peaky_finders.serve_cli import (
     SERVE_RELOAD_CHILD_ENV,
     _is_serve_reload_child,
     _reload_changed,
     _reload_fingerprints,
-    _serialize_project_sites,
     _serve_child_argv,
     build_serve_parser,
-    make_serve_handler,
     resolve_serve_projects_dir,
+    resolve_serve_request_log,
     run_serve,
 )
 from peaky_finders.sites_job import SiteEntry, SiteType, resolved_preset_build_dir
 
 
 def _start_server(projects_dir: Path):
-    from http.server import HTTPServer
+    from wsgiref.simple_server import make_server
 
-    handler = make_serve_handler(projects_dir)
-    server = HTTPServer(("127.0.0.1", 0), handler)
-    host, port = server.server_address
+    app = make_serve_wsgi_app(projects_dir, verbose=False, request_log=False)
+    server = make_server("127.0.0.1", 0, app)
+    host, port = server.server_address[:2]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, host, port, thread
@@ -50,6 +50,13 @@ def test_build_serve_parser_defaults() -> None:
     assert args.verbose is False
     assert args.reload is False
     assert args.no_reload is False
+    assert args.request_log is False
+    assert args.no_request_log is False
+
+
+def test_build_serve_parser_request_log_flags() -> None:
+    assert build_serve_parser().parse_args(["--request-log"]).request_log is True
+    assert build_serve_parser().parse_args(["--no-request-log"]).no_request_log is True
 
 
 def test_build_serve_parser_reload_flags() -> None:
@@ -84,10 +91,26 @@ def test_serve_child_argv_uses_no_reload() -> None:
     assert argv[1:3] == ["-m", "peaky_finders.serve_cli"]
     assert "--no-reload" in argv
     assert "--reload" not in argv
+    assert "--no-request-log" not in argv
     assert "peaky_cli" not in argv
     assert argv[argv.index("--host") + 1] == "127.0.0.1"
     assert argv[argv.index("--port") + 1] == "9090"
     assert "--verbose" in argv
+
+    quiet = _serve_child_argv("127.0.0.1", 9090, verbose=False, no_request_log=True)
+    assert "--no-request-log" in quiet
+
+
+def test_resolve_serve_request_log_reload_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SERVE_RELOAD_CHILD_ENV, "1")
+    args = build_serve_parser().parse_args([])
+    assert resolve_serve_request_log(args) is True
+
+
+def test_resolve_serve_request_log_no_request_log_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SERVE_RELOAD_CHILD_ENV, "1")
+    args = build_serve_parser().parse_args(["--no-request-log"])
+    assert resolve_serve_request_log(args) is False
 
 
 def test_probe_connect_host_maps_wildcard() -> None:
@@ -682,9 +705,10 @@ def test_project_page_includes_add_controls(tmp_path: Path) -> None:
         resp = conn.getresponse()
         body = resp.read().decode("utf-8")
         assert resp.status == 200
-        assert 'id="add-mode-btn"' in body
-        assert 'data-add-kind="site"' in body
-        assert 'data-add-kind="goal"' in body
+        assert 'id="entity-panel"' in body
+        assert 'id="entity-panel-toggle"' in body
+        assert 'id="entity-panel-add-site"' in body
+        assert 'id="entity-panel-add-goal"' in body
         assert 'id="site-panel-create"' in body
         assert 'id="site-panel-create-viewshed"' in body
         assert 'id="site-panel-slug-preview"' in body
@@ -781,17 +805,10 @@ goals:
 
 
 def test_run_serve_exits_on_keyboard_interrupt(monkeypatch) -> None:
-    class _FakeServer:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
+    def _interrupt(*_args, **_kwargs) -> None:
+        raise KeyboardInterrupt
 
-        def serve_forever(self) -> None:
-            raise KeyboardInterrupt
-
-        def server_close(self) -> None:
-            pass
-
-    monkeypatch.setattr("peaky_finders.serve_cli.HTTPServer", _FakeServer)
+    monkeypatch.setattr("peaky_finders.serve_cli.waitress_serve", _interrupt)
     monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
     args = build_serve_parser().parse_args(["--port", "9090"])
     assert run_serve(args) == 0

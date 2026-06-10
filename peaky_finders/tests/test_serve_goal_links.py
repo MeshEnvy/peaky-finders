@@ -8,17 +8,17 @@ from http.client import HTTPConnection
 from pathlib import Path
 from unittest.mock import patch
 
-from peaky_finders.serve_cli import make_serve_handler
+from peaky_finders.serve_app import make_serve_wsgi_app
 from peaky_finders.serve_goal_links import load_project_goal_links
 from peaky_finders.sites_job import load_preset_goals, load_preset_sites, write_preset_document
 
 
 def _start_server(projects_dir: Path):
-    from http.server import HTTPServer
+    from wsgiref.simple_server import make_server
 
-    handler = make_serve_handler(projects_dir)
-    server = HTTPServer(("127.0.0.1", 0), handler)
-    host, port = server.server_address
+    app = make_serve_wsgi_app(projects_dir, verbose=False, request_log=False)
+    server = make_server("127.0.0.1", 0, app)
+    host, port = server.server_address[:2]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, host, port, thread

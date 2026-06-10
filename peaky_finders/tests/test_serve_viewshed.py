@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 import threading
 from http.client import HTTPConnection
-from http.server import HTTPServer
 from pathlib import Path
 
 import pytest
 
 from peaky_finders.new_cli import scaffold_project
-from peaky_finders.serve_cli import make_serve_handler
+from peaky_finders.serve_app import make_serve_wsgi_app
 from peaky_finders.serve_viewshed import (
     ServeViewshedError,
     ensure_site_viewshed_overlay,
@@ -23,9 +22,11 @@ from peaky_finders.serve_viewshed import (
 
 
 def _start_server(projects_dir: Path):
-    handler = make_serve_handler(projects_dir)
-    server = HTTPServer(("127.0.0.1", 0), handler)
-    host, port = server.server_address
+    from wsgiref.simple_server import make_server
+
+    app = make_serve_wsgi_app(projects_dir, verbose=False, request_log=False)
+    server = make_server("127.0.0.1", 0, app)
+    host, port = server.server_address[:2]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, host, port, thread
@@ -148,7 +149,7 @@ def test_serve_viewshed_png_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyP
         out.write_bytes(png_bytes)
         return out
 
-    monkeypatch.setattr("peaky_finders.serve_cli.ensure_site_viewshed_png", _fake_ensure)
+    monkeypatch.setattr("peaky_finders.serve_app.ensure_site_viewshed_png", _fake_ensure)
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
@@ -184,7 +185,7 @@ def test_serve_viewshed_meta_endpoint(tmp_path: Path, monkeypatch: pytest.Monkey
             "coordinates": [[-115.9, 39.1], [-115.7, 39.1], [-115.7, 39.0], [-115.9, 39.0]],
         }
 
-    monkeypatch.setattr("peaky_finders.serve_cli.ensure_site_viewshed_overlay", _fake_overlay)
+    monkeypatch.setattr("peaky_finders.serve_app.ensure_site_viewshed_overlay", _fake_overlay)
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
@@ -317,7 +318,7 @@ def test_viewshed_prefetch_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             "lon": lon,
         }
 
-    monkeypatch.setattr("peaky_finders.serve_cli.ensure_coords_viewshed_overlay", _fake_overlay)
+    monkeypatch.setattr("peaky_finders.serve_app.ensure_coords_viewshed_overlay", _fake_overlay)
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
@@ -351,7 +352,7 @@ def test_viewshed_prefetch_png_endpoint(tmp_path: Path, monkeypatch: pytest.Monk
         out.write_bytes(png_bytes)
         return out
 
-    monkeypatch.setattr("peaky_finders.serve_cli.ensure_coords_viewshed_png", _fake_png)
+    monkeypatch.setattr("peaky_finders.serve_app.ensure_coords_viewshed_png", _fake_png)
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
