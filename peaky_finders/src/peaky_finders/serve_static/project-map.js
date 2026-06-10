@@ -87,9 +87,8 @@
   let viewshedOpacity = savedMapState?.viewshedOpacity ?? VIEWSHED_OPACITY_DEFAULT;
   const defaultRadiusKm = Number(simDefaults.radius_km) || 60;
   const defaultRasterDimension = Number(simDefaults.raster_dimension) || 500;
-  let viewshedRadiusKm = savedMapState?.viewshedRadiusKm ?? defaultRadiusKm;
-  let viewshedRasterDimension =
-    savedMapState?.viewshedRasterDimension ?? defaultRasterDimension;
+  let viewshedRadiusKm = defaultRadiusKm;
+  let viewshedRasterDimension = defaultRasterDimension;
   viewshedRadiusKm = Math.max(
     VIEWSHED_RADIUS_KM_MIN,
     Math.min(VIEWSHED_RADIUS_KM_MAX, viewshedRadiusKm),
@@ -159,22 +158,55 @@
     syncViewshedSimModalFields();
   }
 
-  function applyViewshedSimSettings() {
+  function setViewshedSimError(message) {
+    const el = document.getElementById("viewshed-sim-error");
+    if (!el) return;
+    if (message) {
+      el.textContent = message;
+      el.hidden = false;
+    } else {
+      el.textContent = "";
+      el.hidden = true;
+    }
+  }
+
+  async function applyViewshedSimSettings() {
     readViewshedSimModalDraft();
     const nextRadius = clampRadiusKm(draftRadiusKm);
     const nextRaster = clampRasterDimension(draftRasterDimension);
     const changed =
       nextRadius !== viewshedRadiusKm || nextRaster !== viewshedRasterDimension;
-    viewshedRadiusKm = nextRadius;
-    viewshedRasterDimension = nextRaster;
-    syncViewshedSimSummary();
-    scheduleSaveMapState();
-    const modalEl = document.getElementById("viewshed-sim-modal");
-    if (modalEl && window.bootstrap) {
-      const inst = window.bootstrap.Modal.getInstance(modalEl);
-      if (inst) inst.hide();
+    const applyBtn = document.getElementById("viewshed-sim-apply");
+    setViewshedSimError("");
+    if (applyBtn) applyBtn.disabled = true;
+    try {
+      const resp = await fetch(simulationApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          radius_km: nextRadius,
+          raster_dimension: nextRaster,
+        }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setViewshedSimError(payload.error || `Save failed (${resp.status})`);
+        return;
+      }
+      viewshedRadiusKm = nextRadius;
+      viewshedRasterDimension = nextRaster;
+      syncViewshedSimSummary();
+      const modalEl = document.getElementById("viewshed-sim-modal");
+      if (modalEl && window.bootstrap) {
+        const inst = window.bootstrap.Modal.getInstance(modalEl);
+        if (inst) inst.hide();
+      }
+      if (changed) reloadViewshedsForSimChange();
+    } catch (_) {
+      setViewshedSimError("Could not reach server.");
+    } finally {
+      if (applyBtn) applyBtn.disabled = false;
     }
-    if (changed) reloadViewshedsForSimChange();
   }
 
   syncToolbarFromSaved(savedMapState);
@@ -371,6 +403,10 @@
 
   function sitesApiUrl() {
     return `/api/p/${projectSlug}/sites`;
+  }
+
+  function simulationApiUrl() {
+    return `/api/p/${projectSlug}/simulation`;
   }
 
   function slugifyName(name) {
@@ -1088,8 +1124,6 @@
       showLinks: document.getElementById("show-links").checked,
       showGoalLinks: document.getElementById("show-goal-links").checked,
       viewshedOpacity,
-      viewshedRadiusKm,
-      viewshedRasterDimension,
       hiddenSites: [...siteHidden],
       hiddenGoals: [...goalHidden],
       viewshedVisible: Object.fromEntries(viewshedVisible),
@@ -2132,7 +2166,10 @@
   });
   const viewshedSimModal = document.getElementById("viewshed-sim-modal");
   if (viewshedSimModal) {
-    viewshedSimModal.addEventListener("show.bs.modal", resetViewshedSimModalDraft);
+    viewshedSimModal.addEventListener("show.bs.modal", () => {
+      setViewshedSimError("");
+      resetViewshedSimModalDraft();
+    });
   }
   const viewshedSimRadiusInput = document.getElementById("viewshed-sim-radius-km");
   if (viewshedSimRadiusInput) {
@@ -2148,7 +2185,9 @@
   }
   const viewshedSimApply = document.getElementById("viewshed-sim-apply");
   if (viewshedSimApply) {
-    viewshedSimApply.addEventListener("click", applyViewshedSimSettings);
+    viewshedSimApply.addEventListener("click", () => {
+      void applyViewshedSimSettings();
+    });
   }
   document.getElementById("show-goal-links").addEventListener("change", (ev) => {
     setGoalLinksVisible(ev.target.checked);

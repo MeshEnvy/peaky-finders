@@ -24,6 +24,7 @@ from peaky_finders.serve_html import landing_html, project_error_html, project_h
 from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked, load_project_site_links
 from peaky_finders.serve_plss_mlrs import apply_plss_mlrs_from_loc_cache
 from peaky_finders.serve_site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
+from peaky_finders.serve_simulation import update_viewshed_sim_to_preset
 from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset
 from peaky_finders.serve_events import get_serve_event_hub
 from peaky_finders.serve_viewshed import (
@@ -91,6 +92,7 @@ _API_PROJECT_LINK_PAIR_RE = re.compile(
 )
 _API_PROJECT_LINKS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/links/?$")
 _API_PROJECT_GOAL_LINKS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/goal-links/?$")
+_API_PROJECT_SIMULATION_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/simulation/?$")
 
 
 def _parse_json_body(body: bytes) -> object:
@@ -795,6 +797,57 @@ class ServeDispatcher:
             status = 200 if result.get("status") == "ready" else 202
             payload = json.dumps(result).encode("utf-8")
             self._send_bytes(payload, "application/json", status=status)
+            return
+
+        simulation_match = _API_PROJECT_SIMULATION_RE.match(path)
+        if simulation_match:
+            project_slug = simulation_match.group(1)
+            preset_path = self.projects_dir / project_slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = _parse_json_body(body)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": f"invalid JSON: {e}"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if not isinstance(raw, dict):
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "body must be a JSON object"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            try:
+                radius_km = float(raw["radius_km"])
+                raster_dimension = int(float(raw["raster_dimension"]))
+            except (KeyError, TypeError, ValueError) as e:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": f"radius_km and raster_dimension required: {e}"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            try:
+                simulation = update_viewshed_sim_to_preset(
+                    preset_path,
+                    radius_km=radius_km,
+                    raster_dimension=raster_dimension,
+                )
+            except ValueError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {"slug": project_slug, "simulation": simulation},
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
             return
 
         goals_match = _API_PROJECT_GOALS_RE.match(path)

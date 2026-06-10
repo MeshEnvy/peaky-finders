@@ -283,7 +283,8 @@ def project_html(
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <p class="small text-muted mb-3">Tune coverage radius and raster size. Visible viewsheds reload when you apply.</p>
+        <p class="small text-muted mb-3">Tune coverage radius and raster size. Apply saves to <code>config.yaml</code> and reloads visible viewsheds.</p>
+        <div id="viewshed-sim-error" class="alert alert-danger py-2 small mb-3" role="alert" hidden></div>
         <div class="mb-3">
           <div class="d-flex justify-content-between align-items-center mb-1">
             <label for="viewshed-sim-radius-km" class="form-label small mb-0">Radius (km)</label>
