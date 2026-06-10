@@ -1,9 +1,9 @@
 ---
 name: peaky-dev
 description: >-
-  Peaky Docker dev workflow: ./peaky CLI runner, ./peaky-test pytest in
-  peaky:dev image, bind mounts, SPLAT_CACHE. Use when running locally,
-  verifying changes, or debugging Docker/test environment issues.
+  Peaky Docker dev workflow: ./peaky (test, serve, build, …) in peaky:dev image,
+  bind mounts, SPLAT_CACHE. Use when running locally, verifying changes, or
+  debugging Docker/test environment issues.
 ---
 
 # Peaky dev
@@ -20,7 +20,9 @@ cd projects/nevada
 ../../peaky build --verbose -j 4
 ```
 
-`./peaky` mounts `$PWD` as `/project`, bind-mounts `peaky_finders/`, runs `peaky` inside `peaky:dev`.
+`./peaky` mounts `$PWD` as `/project`, bind-mounts `peaky_finders/`, runs the Python CLI inside `peaky:dev`.
+
+`./peaky serve` also mounts the repo at `/app`, sets `PEAKY_HOME=/app` and `PEAKY_PROJECTS=/app/projects`, and passes `--reload` (disable with `--no-reload`). Serve is the on-demand web shell over the same pipeline as CLI — see skill `peaky-serve`.
 
 Build image: `./peaky --build` or set `PEAKY_DEV_IMAGE`.
 
@@ -29,10 +31,10 @@ Build image: `./peaky --build` or set `PEAKY_DEV_IMAGE`.
 **Always** from repo root:
 
 ```bash
-./peaky-test                          # full suite
-./peaky-test tests/test_http_pool.py  # targeted
-./peaky-test -k mesh                  # filter
-./peaky-test --build                  # rebuild image
+./peaky test                          # full suite
+./peaky test tests/test_http_pool.py  # targeted
+./peaky test -k mesh                  # filter
+./peaky test --build                  # rebuild image
 ```
 
 Never `poetry run pytest` on the macOS host — bind-mounted `.venv` must stay Linux-only.
@@ -44,7 +46,7 @@ Never `poetry run pytest` on the macOS host — bind-mounted `.venv` must stay L
 | `$PWD` (project dir) | `/project` (cwd for CLI) |
 | `peaky_finders/` | `/app/peaky_finders` |
 | `PEAKY_CACHE_DIR` (default `~/.peaky/splat_cache`) | `/.peaky/splat_cache` |
-| Test fixtures projects | `/app/projects` (peaky-test only) |
+| Test fixtures projects | `/app/projects` (`./peaky test` only) |
 
 ## Env vars
 

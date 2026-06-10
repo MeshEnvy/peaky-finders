@@ -10,13 +10,13 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
     mesh_connectivity_complete,
     uncaptured_goal_keys,
 )
-from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_config
+from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint, goals_from_preset
 from peaky_finders.site_suggestions.mesh_connectivity import (
     healing_goals,
     mesh_connectivity_complete,
     uncaptured_healing_goals,
 )
-from peaky_finders.sites_job import BundleSiteSuggestionsConfig, SiteSuggestionStrategy
+from peaky_finders.sites_job import SiteSuggestionStrategy
 
 LAND_GRAB_COVERAGE_GOAL_KEY = "__land_grab_coverage__"
 
@@ -39,17 +39,19 @@ def goal_point_for_key(ctx: SiteSuggestionContext, key: str) -> GoalPoint | None
     bridge = healing_goals(ctx).get(key)
     if bridge is not None:
         return bridge
-    return goals_from_config(ctx.cfg.mesh_backbone).get(key)
+    return goals_from_preset(ctx.preset.goals).get(key)
 
 
 def is_goal_captured(ctx: SiteSuggestionContext, goal_key: str) -> bool:
-    """True when satisfied (bridge: satellite in main hop mesh; preset: footprint covers goal)."""
+    """True when satisfied (bridge: satellite in main hop mesh; preset: footprint + RF capture)."""
     if is_bridge_goal_key(goal_key):
         return goal_key not in uncaptured_healing_goals(ctx)
-    mb = ctx.cfg.mesh_backbone
+    goals = ctx.preset.goals
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
-    return goal_key in captured_goal_keys(mb, sites, footprints)
+    return goal_key in captured_goal_keys(
+        goals, sites, footprints, ctx.preset, verbose=ctx.verbose
+    )
 
 
 def uncaptured_effective_goal_keys(ctx: SiteSuggestionContext) -> set[str]:
@@ -57,17 +59,19 @@ def uncaptured_effective_goal_keys(ctx: SiteSuggestionContext) -> set[str]:
     missing: set[str] = set()
     if not mesh_connectivity_complete(ctx):
         missing |= set(uncaptured_healing_goals(ctx).keys())
-    mb = ctx.cfg.mesh_backbone
+    goals = ctx.preset.goals
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
-    missing |= uncaptured_goal_keys(mb, sites, footprints)
+    missing |= uncaptured_goal_keys(
+        goals, sites, footprints, ctx.preset, verbose=ctx.verbose
+    )
     return missing
 
 
 def tracked_goal_keys(ctx: SiteSuggestionContext) -> set[str]:
     """Goal keys the active strategy may satisfy during a suggest pass."""
     if ctx.cfg.strategy == SiteSuggestionStrategy.MESH_BACKBONE:
-        keys = set(ctx.cfg.mesh_backbone.goals.keys())
+        keys = set(ctx.preset.goals.keys())
         if not mesh_connectivity_complete(ctx):
             keys |= set(healing_goals(ctx).keys())
         return keys
@@ -116,9 +120,12 @@ def ordered_uncaptured_goal_keys(ctx: SiteSuggestionContext) -> list[str]:
         return sorted(missing)
 
     mb = ctx.cfg.mesh_backbone
+    goals = ctx.preset.goals
     sites = all_backbone_sites(ctx)
     footprints = footprints_for_backbone_sites(ctx.plan, ctx.session_footprints)
-    missing = uncaptured_goal_keys(mb, sites, footprints) - blocked
+    missing = uncaptured_goal_keys(
+        goals, sites, footprints, ctx.preset, verbose=ctx.verbose
+    ) - blocked
     if not missing:
         return []
 

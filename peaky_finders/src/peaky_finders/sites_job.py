@@ -172,24 +172,38 @@ def resolved_mesh_site_links_kml(preset_path: Path) -> Path:
     return resolved_preset_build_dir(path) / "mesh" / "links" / "site_to_site.kml"
 
 
-def resolved_preset_bundle_data_dir(
+def resolved_preset_land_data_dir(
     *,
     preset_path: Path,
     preset: Preset,
     cli_override: Path | None = None,
 ) -> Path:
-    """GDB ``bundle.*`` path root: CLI override, else ``<preset-dir>/<bundle.inputs_root>``, else ``<PEAKY_HOME>/data``."""
+    """GDB ``land.*`` path root: CLI override, else ``<preset-dir>/<land.inputs_root>``, else ``<PEAKY_HOME>/data``."""
     if cli_override is not None:
         return Path(cli_override).expanduser().resolve()
-    bundle = preset.bundle
-    if bundle is not None and bundle.inputs_root is not None:
-        raw = str(bundle.inputs_root).strip()
+    land = preset.land
+    if land is not None and land.inputs_root is not None:
+        raw = str(land.inputs_root).strip()
         if raw:
             root = Path(raw)
             if root.is_absolute():
                 return root.resolve()
             return (Path(preset_path).expanduser().resolve().parent / root).resolve()
     return (peaky_home() / "data").resolve()
+
+
+def resolved_preset_bundle_data_dir(
+    *,
+    preset_path: Path,
+    preset: Preset,
+    cli_override: Path | None = None,
+) -> Path:
+    """Alias for :func:`resolved_preset_land_data_dir` (artifact dir name unchanged)."""
+    return resolved_preset_land_data_dir(
+        preset_path=preset_path,
+        preset=preset,
+        cli_override=cli_override,
+    )
 
 
 def _preset_yaml_typ_rt() -> YAML:
@@ -292,7 +306,7 @@ def write_preset_document(path: Path, payload: Mapping[str, Any]) -> None:
 class CoverageProvider(StrEnum):
     """Coverage engine selected by ``simulation.provider`` (splatter Fresnel/FSPL)."""
 
-    LOS = "los"
+    SPLATTER = "splatter"
 
 
 class SimulationMaxWorkers(BaseModel):
@@ -300,7 +314,7 @@ class SimulationMaxWorkers(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    los: int = Field(
+    splatter: int = Field(
         default=1,
         ge=1,
         description="Concurrent splatter jobs inside one ``run-batch`` Docker invocation (``SPLATTER_BATCH_JOBS``).",
@@ -312,7 +326,7 @@ class SimulationConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    provider: CoverageProvider = CoverageProvider.LOS
+    provider: CoverageProvider = CoverageProvider.SPLATTER
     situation_pct: Any = "95.0"
     time_pct: Any = "95.0"
     radius_km: Any = "50.0"
@@ -383,19 +397,42 @@ class SiteType(StrEnum):
     SUGGESTED = "suggested"
 
 
-class SiteEntry(BaseModel):
+def _coerce_map_point_loc(v: Any) -> tuple[float, float]:
+    if not isinstance(v, (list, tuple)) or len(v) != 2:
+        raise ValueError("loc must be a length-2 array [lat, lon]")
+    return (float(v[0]), float(v[1]))
+
+
+class MapPointEntry(BaseModel):
+    """Shared map-point fields for repeaters (``SiteEntry``) and coverage goals (``GoalEntry``)."""
+
     model_config = ConfigDict(extra="ignore")
 
-    type: SiteType = SiteType.INSTALLED
     name: str
     loc: tuple[float, float]
 
     @field_validator("loc", mode="before")
     @classmethod
     def _coerce_loc(cls, v: Any) -> tuple[float, float]:
-        if not isinstance(v, (list, tuple)) or len(v) != 2:
-            raise ValueError("loc must be a length-2 array [lat, lon]")
-        return (float(v[0]), float(v[1]))
+        return _coerce_map_point_loc(v)
+
+    @property
+    def lat(self) -> float:
+        return float(self.loc[0])
+
+    @property
+    def lon(self) -> float:
+        return float(self.loc[1])
+
+    elevation_m: float | None = None
+    description: str | None = None
+    plss: str | None = None
+    mlrs: str | None = None
+    rationale: str | None = None
+
+
+class SiteEntry(MapPointEntry):
+    type: SiteType = SiteType.INSTALLED
 
     @field_validator("type", mode="before")
     @classmethod
@@ -414,41 +451,44 @@ class SiteEntry(BaseModel):
                 f"type must be one of: installed, planned, suggested (got {v!r})"
             ) from e
 
-    @property
-    def lat(self) -> float:
-        return float(self.loc[0])
 
-    @property
-    def lon(self) -> float:
-        return float(self.loc[1])
+class GoalEntry(MapPointEntry):
+    """Coverage attractor — map point where repeater coverage is desired (no viewshed)."""
 
-    elevation_m: float | None = None
-    description: str | None = None
-    plss: str | None = None
-    mlrs: str | None = None
-    rationale: str | None = None
-    sees: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Other site slugs this location can reach in the field. A mesh edge is drawn when "
-            "both sites list each other (same layer as mutual viewshed links)."
-        ),
-    )
 
-    @field_validator("sees", mode="before")
-    @classmethod
-    def _coerce_sees(cls, v: Any) -> list[str]:
-        if v is None:
-            return []
-        if not isinstance(v, (list, tuple)):
-            raise ValueError("sees must be a list of site slugs")
-        out: list[str] = []
-        for item in v:
-            slug = str(item).strip()
-            if not slug:
-                raise ValueError("sees entries must be non-empty site slugs")
-            out.append(slug)
-        return out
+def _coerce_link_pair(item: Any, *, index: int) -> tuple[str, str]:
+    if not isinstance(item, (list, tuple)) or len(item) != 2:
+        raise ValueError(f"links[{index}] must be a two-element list [site-a, site-b]")
+    a = str(item[0]).strip()
+    b = str(item[1]).strip()
+    if not a or not b:
+        raise ValueError(f"links[{index}] slugs must be non-empty")
+    return tuple(sorted((a, b)))
+
+
+def _reject_legacy_site_sees(raw: Mapping[str, Any]) -> None:
+    sites = raw.get("sites")
+    if not isinstance(sites, Mapping):
+        return
+    for slug, site in sites.items():
+        if isinstance(site, Mapping) and "sees" in site:
+            raise ValueError(
+                f"sites.{slug}.sees is removed; use top-level links: [[site-a, site-b], ...]"
+            )
+
+
+def _validate_preset_links(sites: dict[str, SiteEntry], links: list[tuple[str, str]]) -> None:
+    seen: set[tuple[str, str]] = set()
+    for a, b in links:
+        if a == b:
+            raise ValueError(f"links pair [{a!r}, {b!r}] must not link a site to itself")
+        if a not in sites:
+            raise ValueError(f"links references unknown site slug {a!r}")
+        if b not in sites:
+            raise ValueError(f"links references unknown site slug {b!r}")
+        if (a, b) in seen:
+            raise ValueError(f"duplicate links pair [{a!r}, {b!r}]")
+        seen.add((a, b))
 
 
 class GdbAttributeRule(BaseModel):
@@ -590,14 +630,14 @@ def _gdb_layer_group_payload(g: GdbLayerGroup) -> dict[str, Any]:
     return {"layers": [s.canonical_dict() for s in sorted_specs], "path": g.path}
 
 
-def canonical_bundle_aoi_config_text(pre: BundleConfig) -> str:
+def canonical_land_aoi_config_text(pre: LandConfig) -> str:
     """Deterministic text for AOI cache keys (sorted groups, sorted layers within each group)."""
     sorted_groups = sorted(pre.aoi, key=_gdb_layer_group_sort_key)
     payload = {"aoi": [_gdb_layer_group_payload(g) for g in sorted_groups]}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
 
 
-def canonical_bundle_land_use_config_text(pre: BundleConfig) -> str:
+def canonical_land_land_use_config_text(pre: LandConfig) -> str:
     """Deterministic text block for hashing include/exclude only (not AOI)."""
     def groups_payload(groups: list[GdbLayerGroup]) -> list[dict[str, Any]]:
         sorted_groups = sorted(groups, key=_gdb_layer_group_sort_key)
@@ -725,29 +765,6 @@ class MeshBackboneRouting(StrEnum):
     CORRIDOR = "corridor"
 
 
-class MeshBackboneGoalEntry(BaseModel):
-    """Named geographic target for mesh-grow site suggestions."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    loc: tuple[float, float] = Field(description="``[lat, lon]`` goal point (viewshed capture target).")
-
-    @field_validator("loc", mode="before")
-    @classmethod
-    def _coerce_loc(cls, v: Any) -> tuple[float, float]:
-        if not isinstance(v, (list, tuple)) or len(v) != 2:
-            raise ValueError("loc must be a length-2 array [lat, lon]")
-        return (float(v[0]), float(v[1]))
-
-    @property
-    def lat(self) -> float:
-        return float(self.loc[0])
-
-    @property
-    def lon(self) -> float:
-        return float(self.loc[1])
-
-
 class MeshBackboneStrategyConfig(BaseModel):
     """Grow the seed mesh outward until configured goals are captured and hop-connected."""
 
@@ -860,10 +877,6 @@ class MeshBackboneStrategyConfig(BaseModel):
         le=512,
         description="Optional cap on backbone site count (installed + suggested); not the CLI ``--suggest`` goal budget.",
     )
-    goals: dict[str, MeshBackboneGoalEntry] = Field(
-        default_factory=dict,
-        description="Named geographic targets (``loc: [lat, lon]``) to grow the mesh toward.",
-    )
 
 
 class LandGrabStrategyConfig(BaseModel):
@@ -926,7 +939,7 @@ class LandGrabStrategyConfig(BaseModel):
     )
 
 
-class BundleSiteSuggestionsConfig(BaseModel):
+class SuggestConfig(BaseModel):
     """Site suggestion planner (``peaky build --suggest``)."""
 
     model_config = ConfigDict(extra="ignore")
@@ -961,8 +974,8 @@ class BundleSiteSuggestionsConfig(BaseModel):
     )
 
 
-class BundleMeshCoverageConfig(BaseModel):
-    """Knobs for raster footprint-depth layers inside the aggregate KMZ."""
+class MeshConfig(BaseModel):
+    """Knobs for mesh pairwise / depth analysis and aggregate KMZ footprint layers."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -1022,7 +1035,7 @@ class BundleMeshKmzLayers(BaseModel):
 
 
 class BundleKmlOverlayStyles(BaseModel):
-    """Per-role KML debug styles under ``bundle.kml_overlay``. ``default`` is required when this block is present."""
+    """Per-role KML polygon/line styles under ``display.kml``. ``default`` is required when this block is present."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -1034,7 +1047,7 @@ class BundleKmlOverlayStyles(BaseModel):
     summits: BundleKmlLayerStyle | None = None
     reference: BundleKmlLayerStyle | None = Field(
         default=None,
-        description="Fallback style for bundle.reference sidecar KML when an entry omits ``style``.",
+        description="Fallback style for land.reference sidecar KML when an entry omits ``style``.",
     )
     viewshed_coverage: BundleKmlLayerStyle | None = Field(
         default=None,
@@ -1061,13 +1074,32 @@ class BundleKmzLayers(BaseModel):
     mesh: BundleMeshKmzLayers = Field(default_factory=BundleMeshKmzLayers)
 
 
-class BundleKmzConfig(BaseModel):
+class DisplayKmzConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     layers: BundleKmzLayers = Field(default_factory=BundleKmzLayers)
 
 
-class BundleConfig(BaseModel):
+class DisplayConfig(BaseModel):
+    """Viewshed raster styling plus optional KMZ presentation (``display.kml``, ``display.kmz``)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    colormap: str = "plasma"
+    transparency: float = 50.0
+    min_dbm: float = -130.0
+    max_dbm: float = -80.0
+    kml: BundleKmlOverlayStyles | None = Field(
+        default=None,
+        description="KML sidecar polygon/line styles for aggregate KMZ and clip caches.",
+    )
+    kmz: DisplayKmzConfig | None = Field(
+        default=None,
+        description="Aggregate ``doc.kml`` initial layer visibility (Google Earth checkboxes).",
+    )
+
+
+class LandConfig(BaseModel):
     """GDB-driven AOI polygon plus land-use include / exclude for ``peaky build`` bundle stages."""
 
     model_config = ConfigDict(extra="ignore")
@@ -1075,8 +1107,8 @@ class BundleConfig(BaseModel):
     inputs_root: str | None = Field(
         default=None,
         description=(
-            "Directory for bundle GDB paths; relative to the preset file unless absolute. "
-            "Default: repo ``data/``."
+            "Directory for land GDB paths; relative to the preset file unless absolute. "
+            "Default: ``<PEAKY_HOME>/data``."
         ),
     )
     reference: list[BundleReferenceLayerEntry] = Field(
@@ -1086,29 +1118,24 @@ class BundleConfig(BaseModel):
     aoi: list[GdbLayerGroup] = Field(default_factory=list)
     include: list[GdbLayerGroup] = Field(default_factory=list)
     exclude: list[GdbLayerGroup] = Field(default_factory=list)
-    kml_overlay: BundleKmlOverlayStyles | None = Field(
-        default=None,
-        description="Optional KML sidecar styles (filled polygons in Google Earth). Omit to skip style injection.",
-    )
-    kmz: BundleKmzConfig | None = Field(
-        default=None,
-        description="Optional aggregate KMZ doc.kml initial layer visibility (Google Earth checkboxes).",
-    )
-    mesh_coverage: BundleMeshCoverageConfig | None = Field(
-        default=None,
-        description="Optional footprint depth raster grid size for aggregate KMZ mesh layers.",
-    )
-    site_suggestions: BundleSiteSuggestionsConfig | None = Field(
-        default=None,
-        description="Greedy site planner knobs for ``peaky build --suggest``.",
-    )
 
 
-def resolved_site_suggestions_config(bundle: BundleConfig | None) -> BundleSiteSuggestionsConfig:
-    """``bundle.site_suggestions`` or defaults."""
-    if bundle is None or bundle.site_suggestions is None:
-        return BundleSiteSuggestionsConfig()
-    return bundle.site_suggestions
+def resolved_suggest_config(suggest: SuggestConfig | None) -> SuggestConfig:
+    """``suggest`` section or defaults."""
+    if suggest is None:
+        return SuggestConfig()
+    return suggest
+
+
+def resolved_mesh_config(mesh: MeshConfig | None) -> MeshConfig:
+    """``mesh`` section or defaults."""
+    if mesh is None:
+        return MeshConfig()
+    return mesh
+
+
+def resolved_display_kml(preset: Preset) -> BundleKmlOverlayStyles | None:
+    return preset.display.kml
 
 
 def _reference_entry_payload(e: BundleReferenceLayerEntry) -> dict[str, Any]:
@@ -1124,8 +1151,8 @@ def _reference_entry_payload(e: BundleReferenceLayerEntry) -> dict[str, Any]:
     return d
 
 
-def canonical_bundle_reference_config_text(pre: BundleConfig) -> str:
-    """Deterministic JSON for ``bundle.reference`` cache keys."""
+def canonical_land_reference_config_text(pre: LandConfig) -> str:
+    """Deterministic JSON for ``land.reference`` cache keys."""
     payload = {
         "reference": sorted((_reference_entry_payload(e) for e in pre.reference), key=lambda x: x["id"])
     }
@@ -1195,42 +1222,42 @@ _DEFAULT_MESH_DEPTH_BY_BAND: dict[str, BundleKmlLayerStyle] = {
 
 
 def resolved_viewshed_coverage_kml_style(kml_overlay: BundleKmlOverlayStyles | None) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.viewshed_coverage``, else semi-transparent green fill and no outline."""
+    """Preset ``display.kml.viewshed_coverage``, else semi-transparent green fill and no outline."""
     if kml_overlay is None or kml_overlay.viewshed_coverage is None:
         return DEFAULT_VIEWSHED_COVERAGE_KML_STYLE
     return kml_overlay.viewshed_coverage
 
 
-def resolved_mesh_pairwise_enabled(mesh_coverage: BundleMeshCoverageConfig | None) -> bool:
-    """Preset ``bundle.mesh_coverage.pairwise``; default enabled."""
-    if mesh_coverage is None:
+def resolved_mesh_pairwise_enabled(mesh: MeshConfig | None) -> bool:
+    """Preset ``mesh.pairwise``; default enabled."""
+    if mesh is None:
         return True
-    return mesh_coverage.pairwise
+    return mesh.pairwise
 
 
-def resolved_mesh_depth_enabled(mesh_coverage: BundleMeshCoverageConfig | None) -> bool:
-    """Preset ``bundle.mesh_coverage.depth``; default enabled."""
-    if mesh_coverage is None:
+def resolved_mesh_depth_enabled(mesh: MeshConfig | None) -> bool:
+    """Preset ``mesh.depth``; default enabled."""
+    if mesh is None:
         return True
-    return mesh_coverage.depth
+    return mesh.depth
 
 
 def resolved_mesh_pairwise_kml_style(kml_overlay: BundleKmlOverlayStyles | None) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.mesh.pairwise``, else semi-transparent red fill."""
+    """Preset ``display.kml.mesh.pairwise``, else semi-transparent red fill."""
     if kml_overlay is None or kml_overlay.mesh is None or kml_overlay.mesh.pairwise is None:
         return DEFAULT_MESH_PAIRWISE_KML_STYLE
     return kml_overlay.mesh.pairwise
 
 
 def resolved_mesh_pairwise_eligible_kml_style(kml_overlay: BundleKmlOverlayStyles | None) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.mesh.pairwise_eligible``, else semi-transparent yellow fill."""
+    """Preset ``display.kml.mesh.pairwise_eligible``, else semi-transparent yellow fill."""
     if kml_overlay is None or kml_overlay.mesh is None or kml_overlay.mesh.pairwise_eligible is None:
         return DEFAULT_MESH_PAIRWISE_ELIGIBLE_KML_STYLE
     return kml_overlay.mesh.pairwise_eligible
 
 
 def resolved_mesh_pairwise_peak_pin_kml_style(kml_overlay: BundleKmlOverlayStyles | None) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.mesh.pairwise_peak_pin``, else red-tinted pushpin."""
+    """Preset ``display.kml.mesh.pairwise_peak_pin``, else red-tinted pushpin."""
     if kml_overlay is None or kml_overlay.mesh is None or kml_overlay.mesh.pairwise_peak_pin is None:
         return DEFAULT_MESH_PAIRWISE_PEAK_PIN_STYLE
     return kml_overlay.mesh.pairwise_peak_pin
@@ -1239,7 +1266,7 @@ def resolved_mesh_pairwise_peak_pin_kml_style(kml_overlay: BundleKmlOverlayStyle
 def resolved_mesh_pairwise_eligible_peak_pin_kml_style(
     kml_overlay: BundleKmlOverlayStyles | None,
 ) -> BundleKmlLayerStyle:
-    """Preset ``bundle.kml_overlay.mesh.pairwise_eligible_peak_pin``, else yellow-tinted pushpin."""
+    """Preset ``display.kml.mesh.pairwise_eligible_peak_pin``, else yellow-tinted pushpin."""
     if kml_overlay is None or kml_overlay.mesh is None or kml_overlay.mesh.pairwise_eligible_peak_pin is None:
         return DEFAULT_MESH_PAIRWISE_ELIGIBLE_PEAK_PIN_STYLE
     return kml_overlay.mesh.pairwise_eligible_peak_pin
@@ -1264,47 +1291,81 @@ def resolved_mesh_depth_band_kml_style(
     return override if override is not None else base
 
 
-def resolved_kmz_document_layers(bundle: BundleConfig | None):
-    """Build :class:`peaky_finders.kml_bundle.KmzDocumentLayerVisibility` from ``bundle.kmz.layers``."""
+def resolved_kmz_document_layers(preset: Preset):
+    """Build :class:`peaky_finders.kml_bundle.KmzDocumentLayerVisibility` from ``display.kmz.layers``."""
     from peaky_finders.kml_bundle import KmzDocumentLayerVisibility
 
-    if bundle is None or bundle.kmz is None:
+    kmz = preset.display.kmz
+    if kmz is None:
         return KmzDocumentLayerVisibility()
-    flat = bundle.kmz.layers.model_dump()
+    flat = kmz.layers.model_dump()
     mesh = flat.pop("mesh", None) or {}
     for k, v in mesh.items():
         flat[f"mesh_{k}"] = v
     return KmzDocumentLayerVisibility(**flat)
 
 
+def _validate_goal_slugs(
+    sites: dict[str, SiteEntry],
+    goals: dict[str, GoalEntry],
+    suggest: SuggestConfig | None,
+) -> None:
+    overlap = set(sites.keys()) & set(goals.keys())
+    if overlap:
+        slug = sorted(overlap)[0]
+        raise ValueError(f"goal slug {slug!r} collides with a site slug")
+    if suggest is None:
+        return
+    mb = suggest.mesh_backbone
+    for key in mb.goal_order:
+        if key not in goals:
+            raise ValueError(f"suggest.mesh_backbone.goal_order references unknown goal {key!r}")
+
+
 class Preset(BaseModel):
-    """One JSON file per preset: simulation RF + ``sites``."""
+    """One YAML preset: simulation RF, land masks, mesh/suggest knobs, sites, goals, and manual links."""
 
     simulation: SimulationConfig
-    display: dict[str, Any]
+    display: DisplayConfig
+    land: LandConfig | None = None
+    mesh: MeshConfig | None = None
+    suggest: SuggestConfig | None = None
     sites: dict[str, SiteEntry]
-    bundle: BundleConfig | None = None
+    goals: dict[str, GoalEntry] = Field(
+        default_factory=dict,
+        description="Coverage attractors (no viewshed) — planner targets under ``suggest.mesh_backbone``.",
+    )
+    links: list[tuple[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "Manual mutual site pairs (field-verified). Each entry is [site-a, site-b]; "
+            "unioned with mutual viewshed footprint overlap for mesh edge KML."
+        ),
+    )
+
+    @field_validator("links", mode="before")
+    @classmethod
+    def _coerce_links(cls, v: Any) -> list[tuple[str, str]]:
+        if v is None:
+            return []
+        if isinstance(v, Mapping):
+            raise ValueError("links must be a list of [site-a, site-b] pairs, not a mapping")
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("links must be a list of [site-a, site-b] pairs")
+        return [_coerce_link_pair(item, index=i) for i, item in enumerate(v)]
 
     @model_validator(mode="after")
-    def _sites_non_empty_and_sees_valid(self) -> Preset:
+    def _sites_non_empty_and_links_valid(self) -> Preset:
         if not self.sites:
             raise ValueError("sites must contain at least one entry")
-        for slug, entry in self.sites.items():
-            seen_sees: set[str] = set()
-            for target in entry.sees:
-                if target not in self.sites:
-                    raise ValueError(f"sites.{slug}.sees references unknown site slug {target!r}")
-                if target == slug:
-                    raise ValueError(f"sites.{slug}.sees must not include the site itself")
-                if target in seen_sees:
-                    raise ValueError(f"duplicate slug in sites.{slug}.sees: {target!r}")
-                seen_sees.add(target)
+        _validate_preset_links(self.sites, self.links)
+        _validate_goal_slugs(self.sites, self.goals, self.suggest)
         return self
 
 
 def resolved_coverage_dispatcher_max_workers(job: Preset) -> int:
-    """Resolve ``simulation.max_workers.los`` for splatter batch fan-out."""
-    return job.simulation.max_workers.los
+    """Resolve ``simulation.max_workers.splatter`` for splatter batch fan-out."""
+    return job.simulation.max_workers.splatter
 
 
 def resolved_bundle_dir(*, preset_path: Path) -> Path:
@@ -1338,9 +1399,8 @@ def resolved_eligible_union_build_dir(bundle_cache_root: Path) -> Path:
     return (root.parent / "eligible_union").resolve()
 
 
-def parse_preset_dict(raw: Mapping[str, Any]) -> Preset:
-    """Coerce/validate a preset mapping (same rules as :func:`load_preset` without file I/O)."""
-    sites_raw = raw.get("sites")
+def coerce_preset_sites(sites_raw: Any) -> dict[str, SiteEntry]:
+    """Parse and validate only the ``sites`` section of a preset mapping."""
     if isinstance(sites_raw, list):
         by_slug: dict[str, SiteEntry] = {}
         for ent in sites_raw:
@@ -1354,20 +1414,78 @@ def parse_preset_dict(raw: Mapping[str, Any]) -> Preset:
                     n += 1
                 slug = f"{slug}-{n}"
             by_slug[slug] = SiteEntry.model_validate(dict(ent))
-        raw = {**raw, "sites": by_slug}
+        sites = by_slug
     elif isinstance(sites_raw, Mapping):
-        raw = {
-            **raw,
-            "sites": {
-                str(slug): SiteEntry.model_validate(dict(site)) for slug, site in sites_raw.items()
-            },
+        for slug, site in sites_raw.items():
+            if isinstance(site, Mapping) and "sees" in site:
+                raise ValueError(
+                    f"sites.{slug}.sees is removed; use top-level links: [[site-a, site-b], ...]"
+                )
+        sites = {
+            str(slug): SiteEntry.model_validate(dict(site)) for slug, site in sites_raw.items()
         }
+    else:
+        raise ValueError("sites must be a mapping or list")
 
+    if not sites:
+        raise ValueError("sites must contain at least one entry")
+    return sites
+
+
+def parse_preset_sites_dict(raw: Mapping[str, Any]) -> dict[str, SiteEntry]:
+    """Validate only ``sites`` (for UIs that do not need a full :class:`Preset`)."""
+    return coerce_preset_sites(raw.get("sites"))
+
+
+def coerce_preset_goals(goals_raw: Any) -> dict[str, GoalEntry]:
+    """Parse and validate the ``goals`` section of a preset mapping."""
+    if goals_raw is None:
+        return {}
+    if not isinstance(goals_raw, Mapping):
+        raise ValueError("goals must be a mapping")
+    return {
+        str(slug): GoalEntry.model_validate(dict(goal))
+        for slug, goal in goals_raw.items()
+    }
+
+
+def parse_preset_dict(raw: Mapping[str, Any]) -> Preset:
+    """Coerce/validate a preset mapping (same rules as :func:`load_preset` without file I/O)."""
+    _reject_legacy_site_sees(raw)
+    raw = {
+        **raw,
+        "sites": coerce_preset_sites(raw.get("sites")),
+        "goals": coerce_preset_goals(raw.get("goals")),
+    }
     return Preset.model_validate(raw)
+
+
+def load_preset_sites(path: Path) -> dict[str, SiteEntry]:
+    """Load and validate only ``sites`` from a preset YAML file."""
+    raw = read_preset_document(path)
+    return parse_preset_sites_dict(raw)
+
+
+def parse_preset_goals_dict(raw: Mapping[str, Any]) -> dict[str, GoalEntry]:
+    """Validate only ``goals`` (for UIs that do not need a full :class:`Preset`)."""
+    return coerce_preset_goals(raw.get("goals"))
+
+
+def load_preset_goals(path: Path) -> dict[str, GoalEntry]:
+    """Load and validate only ``goals`` from a preset YAML file."""
+    raw = read_preset_document(path)
+    return parse_preset_goals_dict(raw)
 
 
 def load_preset(path: Path) -> Preset:
     raw = read_preset_document(path)
+    return parse_preset_dict(raw)
+
+
+def load_preset_for_coverage(path: Path) -> Preset:
+    """Load preset for splatter/viewshed; ``suggest`` and ``goals`` do not affect RF."""
+    raw = read_preset_document(path)
+    raw = {k: v for k, v in raw.items() if k not in ("suggest", "goals")}
     return parse_preset_dict(raw)
 
 
@@ -1384,7 +1502,7 @@ def viewshed_polygon_coverage_kml_arcname(site_slug: str) -> str:
 
 
 def mesh_edges_site_to_site_kml_arcname() -> str:
-    """Path inside KMZ for mutual site link LineStrings (viewshed and/or ``sites.*.sees``)."""
+    """Path inside KMZ for mutual site link LineStrings (viewshed and/or preset ``links``)."""
     return "sites/mesh/edges/site_to_site.kml"
 
 

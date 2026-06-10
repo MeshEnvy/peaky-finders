@@ -51,7 +51,7 @@ def run_ephemeral_viewshed_footprint(
     if rc != 0:
         raise RuntimeError(f"Ephemeral viewshed coverage failed with exit code {rc}")
 
-    kml_ov = preset.bundle.kml_overlay if preset.bundle else None
+    kml_ov = preset.display.kml if preset.land else None
     style = resolved_viewshed_coverage_kml_style(kml_ov)
     if not write_coverage_footprints(data_dir=wd, polygon_style=style):
         return None

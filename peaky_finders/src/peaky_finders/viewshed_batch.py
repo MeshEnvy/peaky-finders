@@ -18,7 +18,7 @@ def resolved_splatter_batch_jobs(
     build_jobs: int | None = None,
 ) -> int:
     """Workers inside one ``run-batch`` invocation (``SPLATTER_BATCH_JOBS``)."""
-    cap = build_jobs if build_jobs is not None else preset.simulation.max_workers.los
+    cap = build_jobs if build_jobs is not None else preset.simulation.max_workers.splatter
     return max(1, min(cap, workspace_count))
 
 
@@ -74,7 +74,7 @@ def run_viewshed_batch(
             requests_json=requests_json,
         )
         if rc == 0:
-            kml_ov = preset.bundle.kml_overlay if preset.bundle else None
+            kml_ov = preset.display.kml if preset.land else None
             style = resolved_viewshed_coverage_kml_style(kml_ov)
             vectorize_coverage_footprints_parallel(
                 workdirs=[ws.workdir for ws in workspaces],

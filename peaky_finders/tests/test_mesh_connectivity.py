@@ -24,8 +24,8 @@ from peaky_finders.site_suggestions.mesh_connectivity import (
 )
 from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import grow_goals, main_footprint_slugs
 from peaky_finders.sites_job import (
-    BundleSiteSuggestionsConfig,
-    MeshBackboneGoalEntry,
+    GoalEntry,
+    SuggestConfig,
     MeshBackboneStrategyConfig,
     SiteEntry,
     SiteSuggestionStrategy,
@@ -95,7 +95,7 @@ def test_bridge_uncaptured_until_satellite_in_main_hop_component() -> None:
         aoi_ll=box(-120.0, 35.0, -114.0, 42.0),
         target_ll=box(-120.0, 35.0, -114.0, 42.0),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -124,9 +124,7 @@ def test_bridge_uncaptured_until_satellite_in_main_hop_component() -> None:
 
 
 def test_mesh_healing_needed_when_disconnected_even_if_goals_captured() -> None:
-    cfg = MeshBackboneStrategyConfig(
-        goals={"g0": MeshBackboneGoalEntry(loc=(39.0, -115.95))},
-    )
+    goals = {"g0": GoalEntry(name="G0", loc=(39.0, -115.95))}
     sites = [
         BackboneSite(slug="seed", lat=39.0, lon=-115.98),
         BackboneSite(slug="relay", lat=39.0, lon=-115.92),
@@ -143,7 +141,8 @@ def test_mesh_healing_needed_when_disconnected_even_if_goals_captured() -> None:
         {
             "sites": {
                 "seed": SiteEntry(type=SiteType.INSTALLED, name="Seed", loc=(39.0, -115.98)),
-            }
+            },
+            "goals": goals,
         },
     )()
     ctx = SiteSuggestionContext(
@@ -154,7 +153,7 @@ def test_mesh_healing_needed_when_disconnected_even_if_goals_captured() -> None:
         aoi_ll=box(-116.5, 38.5, -114.5, 39.5),
         target_ll=box(-116.5, 38.5, -114.5, 39.5),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -165,6 +164,9 @@ def test_mesh_healing_needed_when_disconnected_even_if_goals_captured() -> None:
     with patch(
         "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
+    ), patch(
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion._rf_viable_goal_site_pairs",
+        return_value={("g0", "relay")},
     ):
         assert mesh_grow_goals_complete(ctx)
         assert not mesh_connectivity_complete(ctx)
@@ -189,7 +191,7 @@ def test_minimum_component_gap_uses_pins_not_overlapping_footprints() -> None:
         aoi_ll=box(-117.0, 38.5, -114.0, 39.5),
         target_ll=box(-117.0, 38.5, -114.0, 39.5),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -225,7 +227,8 @@ def test_healing_context_yields_bridge_goals_on_satellite_pins() -> None:
             "sites": {
                 "main": SiteEntry(type=SiteType.INSTALLED, name="Main", loc=(41.5, -119.0)),
                 "sat": SiteEntry(type=SiteType.INSTALLED, name="Sat", loc=(36.2, -115.3)),
-            }
+            },
+            "goals": {"g0": GoalEntry(name="G0", loc=(39.0, -115.5))},
         },
     )()
     ctx = SiteSuggestionContext(
@@ -236,12 +239,7 @@ def test_healing_context_yields_bridge_goals_on_satellite_pins() -> None:
         aoi_ll=box(-120.0, 35.0, -114.0, 42.0),
         target_ll=box(-120.0, 35.0, -114.0, 42.0),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(
-            strategy=SiteSuggestionStrategy.MESH_BACKBONE,
-            mesh_backbone=MeshBackboneStrategyConfig(
-                goals={"g0": MeshBackboneGoalEntry(loc=(39.0, -115.5))},
-            ),
-        ),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -290,7 +288,7 @@ def test_healing_goals_one_bridge_goal_per_satellite_component() -> None:
         aoi_ll=box(-120.0, 35.0, -114.0, 42.0),
         target_ll=box(-120.0, 35.0, -114.0, 42.0),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -306,9 +304,6 @@ def test_healing_goals_one_bridge_goal_per_satellite_component() -> None:
 
 def test_mesh_connectivity_incomplete_when_two_anchor_islands() -> None:
     """All-installed islands must not read as unified (each anchor reaches itself)."""
-    cfg = MeshBackboneStrategyConfig(
-        goals={"g0": MeshBackboneGoalEntry(loc=(39.0, -115.5))},
-    )
     sites = [
         BackboneSite(slug="slpt", lat=41.5, lon=-119.0),
         BackboneSite(slug="vegas", lat=36.2, lon=-115.3),
@@ -324,7 +319,8 @@ def test_mesh_connectivity_incomplete_when_two_anchor_islands() -> None:
             "sites": {
                 "slpt": SiteEntry(type=SiteType.INSTALLED, name="SLPT", loc=(41.5, -119.0)),
                 "vegas": SiteEntry(type=SiteType.INSTALLED, name="Vegas", loc=(36.2, -115.3)),
-            }
+            },
+            "goals": {"g0": GoalEntry(name="G0", loc=(39.0, -115.5))},
         },
     )()
     ctx = SiteSuggestionContext(
@@ -335,7 +331,7 @@ def test_mesh_connectivity_incomplete_when_two_anchor_islands() -> None:
         aoi_ll=box(-120.0, 35.0, -114.0, 42.0),
         target_ll=box(-120.0, 35.0, -114.0, 42.0),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,

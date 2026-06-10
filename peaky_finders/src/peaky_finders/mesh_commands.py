@@ -11,7 +11,7 @@ from peaky_finders.bundle_build import (
     bundle_eligible_land_use_gpkg,
     bundle_kml_overlay_inputs_digest,
     bundle_land_use_inputs_digest,
-    require_bundle_config,
+    require_land_config,
 )
 from peaky_finders.bundle_clips import bundle_resolve_path, eligible_gpkg_from_bundle_dir, read_bundle_resolve
 from peaky_finders.link_overlap import read_eligible_land_use_union, write_pairwise_link_overlap_kml_pairs
@@ -69,11 +69,10 @@ def run_mesh_links(preset_path: Path) -> int:
 
     outp = resolved_mesh_site_links_kml(job_path_r)
     outp.parent.mkdir(parents=True, exist_ok=True)
-    sees_by_slug = {slug: entry.sees for slug, entry in job.sites.items()}
     if write_site_links_kml(
         coverage_gpkg_by_slug=assets.coverage_gpkg_by_slug,
         sites=assets.overlays,
-        sees_by_slug=sees_by_slug,
+        manual_links=job.links,
         out_kml=outp,
     ):
         print(f"mesh links: wrote {outp}", flush=True)
@@ -94,12 +93,12 @@ def _mesh_roots(bundle_cache_root: Path) -> tuple[Path, Path, Path]:
 def run_mesh_pairwise(slug_a: str, slug_b: str, preset_path: Path) -> int:
     preset_path = Path(preset_path).expanduser().resolve()
     job = load_preset(preset_path)
-    if job.bundle is None:
-        print("mesh pairwise: preset needs bundle.*", file=sys.stderr)
+    if job.land is None:
+        print("mesh pairwise: preset needs land.*", file=sys.stderr)
         return 2
-    mesh_cov = job.bundle.mesh_coverage if job.bundle else None
+    mesh_cov = job.mesh if job.land else None
     if not resolved_mesh_pairwise_enabled(mesh_cov):
-        print("mesh pairwise: disabled (bundle.mesh_coverage.pairwise: false)", flush=True)
+        print("mesh pairwise: disabled (mesh.pairwise: false)", flush=True)
         return 0
     slug_a_, slug_b_ = slug_a.strip(), slug_b.strip()
     if slug_a_ not in job.sites or slug_b_ not in job.sites:
@@ -110,11 +109,11 @@ def run_mesh_pairwise(slug_a: str, slug_b: str, preset_path: Path) -> int:
     bundle_dir = bundle_directory_for_preset(preset_path=job_path_r, data_dir=bb_dd, cache_root=bundle_cache_root)
     assert bundle_dir is not None
 
-    plc = require_bundle_config(job)
-    pairwise_overlay = bundle_kml_overlay_inputs_digest(plc)
+    plc = require_land_config(job)
+    pairwise_overlay = bundle_kml_overlay_inputs_digest(job.display.kml)
     pairwise_land = bundle_land_use_inputs_digest(plc, bb_dd)
 
-    kml_ov = job.bundle.kml_overlay if job.bundle else None
+    kml_ov = job.display.kml if job.land else None
     pairwise_style = resolved_mesh_pairwise_kml_style(kml_ov)
     elig_style = resolved_mesh_pairwise_eligible_kml_style(kml_ov)
     peak_plain = resolved_mesh_pairwise_peak_pin_kml_style(kml_ov)
@@ -150,7 +149,7 @@ def run_mesh_pairwise(slug_a: str, slug_b: str, preset_path: Path) -> int:
     geo_root, _md, eu_root = _mesh_roots(bundle_cache_root)
     tile_host = ensure_skadi_mirror_dir()
 
-    mesh_cov = job.bundle.mesh_coverage if job.bundle else None
+    mesh_cov = job.mesh if job.land else None
     emit_dem_peak = True if mesh_cov is None else mesh_cov.pairwise_dem_peak_pin
 
     eu = read_eligible_land_use_union(
@@ -191,20 +190,20 @@ def run_mesh_pairwise(slug_a: str, slug_b: str, preset_path: Path) -> int:
 def run_mesh_depth(preset_path: Path) -> int:
     preset_path = Path(preset_path).expanduser().resolve()
     job = load_preset(preset_path)
-    if job.bundle is None:
-        print("mesh depth: preset needs bundle.*", file=sys.stderr)
+    if job.land is None:
+        print("mesh depth: preset needs land.*", file=sys.stderr)
         return 2
-    mesh_cov = job.bundle.mesh_coverage if job.bundle else None
+    mesh_cov = job.mesh if job.land else None
     if not resolved_mesh_depth_enabled(mesh_cov):
-        print("mesh depth: disabled (bundle.mesh_coverage.depth: false)", flush=True)
+        print("mesh depth: disabled (mesh.depth: false)", flush=True)
         return 0
 
     job_path_r, bundle_cache_root, bb_dd = standard_bundle_roots(preset_path, job)
     bundle_dir = bundle_directory_for_preset(preset_path=job_path_r, data_dir=bb_dd, cache_root=bundle_cache_root)
     assert bundle_dir is not None
 
-    plc = require_bundle_config(job)
-    pairwise_overlay = bundle_kml_overlay_inputs_digest(plc)
+    plc = require_land_config(job)
+    pairwise_overlay = bundle_kml_overlay_inputs_digest(job.display.kml)
     pairwise_land = bundle_land_use_inputs_digest(plc, bb_dd)
 
     assets = collect_site_workspace_assets(
@@ -229,7 +228,7 @@ def run_mesh_depth(preset_path: Path) -> int:
         pass
 
     _geo_root, mesh_depth_geom_root, eu_root = _mesh_roots(bundle_cache_root)
-    mesh_cov = job.bundle.mesh_coverage if job.bundle else None
+    mesh_cov = job.mesh if job.land else None
     depth_workers = mesh_cov.mesh_depth_workers if mesh_cov is not None else 8
     max_raster = mesh_cov.max_raster_dimension if mesh_cov is not None else 4096
 
@@ -240,7 +239,7 @@ def run_mesh_depth(preset_path: Path) -> int:
     )
     emit_eligible = eu is not None and not eu.is_empty
 
-    kml_ov = job.bundle.kml_overlay if job.bundle else None
+    kml_ov = job.display.kml if job.land else None
 
     with tempfile.TemporaryDirectory() as td:
         overlap_dir = Path(td)
@@ -264,8 +263,8 @@ def run_mesh_depth(preset_path: Path) -> int:
 def run_mesh_eligible_union(preset_path: Path) -> int:
     preset_path = Path(preset_path).expanduser().resolve()
     job = load_preset(preset_path)
-    if job.bundle is None:
-        print("mesh eligible-union: preset needs bundle.*", file=sys.stderr)
+    if job.land is None:
+        print("mesh eligible-union: preset needs land.*", file=sys.stderr)
         return 2
 
     job_path_r, bundle_cache_root, bb_dd = standard_bundle_roots(preset_path, job)

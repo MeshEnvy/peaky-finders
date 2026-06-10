@@ -30,7 +30,7 @@ from peaky_finders.site_suggestions.providers.protocol import (
 )
 from peaky_finders.site_suggestions.mesh_connectivity import healing_context, mesh_connectivity_phase
 from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
-from peaky_finders.sites_job import BundleSiteSuggestionsConfig, MeshBackboneRouting, Preset
+from peaky_finders.sites_job import SuggestConfig, MeshBackboneRouting, Preset
 
 
 class MeshBackboneStrategy:
@@ -38,7 +38,7 @@ class MeshBackboneStrategy:
     def name(self) -> str:
         return "mesh-backbone"
 
-    def planner_hooks(self, cfg: BundleSiteSuggestionsConfig) -> StrategyPlannerHooks:
+    def planner_hooks(self, cfg: SuggestConfig) -> StrategyPlannerHooks:
         corridor = cfg.mesh_backbone.routing == MeshBackboneRouting.CORRIDOR
         return StrategyPlannerHooks(
             trial_mode=CandidateTrialMode.CORRIDOR_GROW if corridor else CandidateTrialMode.MESH_GROW,
@@ -46,11 +46,12 @@ class MeshBackboneStrategy:
             corridor_kml=corridor,
         )
 
-    def validate_config(self, cfg: BundleSiteSuggestionsConfig) -> None:
-        if not cfg.mesh_backbone.goals:
-            raise ValueError("mesh-backbone strategy requires mesh_backbone.goals")
+    def validate_config(self, cfg: SuggestConfig, preset: Preset) -> None:
+        del cfg
+        if not preset.goals:
+            raise ValueError("mesh-backbone strategy requires top-level goals:")
 
-    def max_suggested_nodes(self, cfg: BundleSiteSuggestionsConfig) -> int | None:
+    def max_suggested_nodes(self, cfg: SuggestConfig) -> int | None:
         cap = cfg.mesh_backbone.max_nodes
         return int(cap) if cap is not None else None
 
@@ -66,7 +67,7 @@ class MeshBackboneStrategy:
         self,
         *,
         verbose: bool,
-        cfg: BundleSiteSuggestionsConfig,
+        cfg: SuggestConfig,
         goal: int,
         grid: CoverageDepthGrid,
         seed_paths: list[Path],
@@ -89,7 +90,7 @@ class MeshBackboneStrategy:
         suggest_log(verbose, f"  planner_raster_dimension: {cfg.planner_raster_dimension}")
         suggest_log(verbose, f"  max_candidates_per_round: {mb.max_candidates_per_round}")
         suggest_log(verbose, f"  frontier_sample_spacing_m: {mb.frontier_sample_spacing_m}")
-        suggest_log(verbose, f"  configured goals: {len(mb.goals)}")
+        suggest_log(verbose, f"  configured goals: {len(preset.goals)}")
         if mb.max_nodes is not None:
             suggest_log(verbose, f"  max_nodes: {mb.max_nodes}")
         suggest_log(verbose, f"  routing: {mb.routing.value}")
@@ -128,11 +129,11 @@ class MeshBackboneStrategy:
         )
         suggest_log(verbose, f"  seed footprints loaded: {len(seed_paths)}")
 
-    def goal_depth(self, cfg: BundleSiteSuggestionsConfig) -> int:
+    def goal_depth(self, cfg: SuggestConfig) -> int:
         del cfg
         return 1
 
-    def refine_settings(self, cfg: BundleSiteSuggestionsConfig) -> StrategyRefineSettings:
+    def refine_settings(self, cfg: SuggestConfig) -> StrategyRefineSettings:
         mb = cfg.mesh_backbone
         return StrategyRefineSettings(
             refine_enabled=bool(mb.refine_enabled),
@@ -145,13 +146,13 @@ class MeshBackboneStrategy:
             refine_peaks_per_seed=int(mb.refine_peaks_per_seed),
         )
 
-    def resolve_step_budget(self, cfg: BundleSiteSuggestionsConfig, cli_n: int) -> int | None:
+    def resolve_step_budget(self, cfg: SuggestConfig, cli_n: int) -> int | None:
         del cfg
         if int(cli_n) == SOLVE_UNTIL_COMPLETE:
             return None
         return max(1, int(cli_n))
 
-    def _uses_corridor_routing(self, cfg: BundleSiteSuggestionsConfig) -> bool:
+    def _uses_corridor_routing(self, cfg: SuggestConfig) -> bool:
         return cfg.mesh_backbone.routing == MeshBackboneRouting.CORRIDOR
 
     def planning_complete(self, ctx: SiteSuggestionContext) -> bool:

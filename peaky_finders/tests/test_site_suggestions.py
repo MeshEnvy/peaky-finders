@@ -17,6 +17,12 @@ from peaky_finders.site_suggestions.preset_io import append_suggested_sites_to_p
 from peaky_finders.sites_job import SiteType, load_preset, write_preset_document
 
 
+_MINIMAL_LAND = {
+    "aoi": [{"path": "aoi/test.gdb", "layers": [{"name": "boundary"}]}],
+    "include": [{"path": "include/test.gdb", "layers": [{"name": "inc_layer"}]}],
+    "exclude": [],
+}
+
 _SUGGEST_SIMULATION = {
     "modem_presets": {
         "meshcore-us": {
@@ -154,7 +160,7 @@ def test_eligible_peak_candidates_use_masked_dem(
     from peaky_finders import pairwise_dem_peak as dem_peak
     from peaky_finders.site_suggestions.providers.land_grab.candidates import _eligible_peak_candidates
     from peaky_finders.site_suggestions.candidates import _grid_samples_around_point
-    from peaky_finders.sites_job import BundleSiteSuggestionsConfig, LandGrabStrategyConfig
+    from peaky_finders.sites_job import SuggestConfig, LandGrabStrategyConfig
     from rasterio.transform import from_bounds
 
     aoi = box(-115.0, 39.0, -114.0, 40.0)
@@ -186,7 +192,7 @@ def test_eligible_peak_candidates_use_masked_dem(
         dem_mirror_root=mirror,
         suggest_root=tmp_path / "suggest",
         eligible_sha="test-eligible",
-        cfg=BundleSiteSuggestionsConfig(
+        cfg=SuggestConfig(
             land_grab=LandGrabStrategyConfig(
                 max_clusters_per_round=4,
                 max_candidates_per_round=4,
@@ -367,8 +373,8 @@ def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
         {
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
-            "bundle": {
-                "site_suggestions": {
+            "land": _MINIMAL_LAND,
+            "suggest": {
                     "strategy": "land-grab",
                     "planner_raster_dimension": 256,
                     "land_grab": {
@@ -380,7 +386,6 @@ def test_greedy_planner_picks_best_mock_footprint(tmp_path: Path) -> None:
                         "cluster_sample_radius_m": 300.0,
                         "refine_enabled": False,
                     },
-                }
             },
             "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.03]}},
         },
@@ -451,15 +456,14 @@ def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
         {
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
-            "bundle": {
-                "site_suggestions": {
+            "land": _MINIMAL_LAND,
+            "suggest": {
                     "strategy": "land-grab",
                     "planner_raster_dimension": 256,
                     "land_grab": {
                         "max_candidates_per_round": 2,
                         "refine_enabled": False,
                     },
-                }
             },
             "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.03]}},
         },
@@ -513,9 +517,9 @@ def test_greedy_planner_verbose_logs_trials(capsys, tmp_path: Path) -> None:
 
 
 def test_site_suggestions_default_strategy() -> None:
-    from peaky_finders.sites_job import BundleSiteSuggestionsConfig, SiteSuggestionStrategy
+    from peaky_finders.sites_job import SuggestConfig, SiteSuggestionStrategy
 
-    cfg = BundleSiteSuggestionsConfig()
+    cfg = SuggestConfig()
     assert cfg.strategy == SiteSuggestionStrategy.LAND_GRAB
     assert cfg.land_grab.coverage_goal_depth == 1
 
@@ -524,14 +528,14 @@ def test_resolve_land_grab_strategy() -> None:
     from peaky_finders.site_suggestions.solver import SOLVE_UNTIL_COMPLETE
     from peaky_finders.site_suggestions.providers.land_grab import LandGrabStrategy
     from peaky_finders.site_suggestions.providers.registry import resolve_site_suggestion_strategy
-    from peaky_finders.sites_job import BundleSiteSuggestionsConfig
+    from peaky_finders.sites_job import SuggestConfig
 
-    provider = resolve_site_suggestion_strategy(BundleSiteSuggestionsConfig())
+    provider = resolve_site_suggestion_strategy(SuggestConfig())
     assert isinstance(provider, LandGrabStrategy)
     assert provider.name == "land-grab"
-    assert provider.goal_depth(BundleSiteSuggestionsConfig()) == 1
-    assert provider.resolve_step_budget(BundleSiteSuggestionsConfig(), 3) == 3  # goal budget
-    assert provider.resolve_step_budget(BundleSiteSuggestionsConfig(), SOLVE_UNTIL_COMPLETE) is None
+    assert provider.goal_depth(SuggestConfig()) == 1
+    assert provider.resolve_step_budget(SuggestConfig(), 3) == 3  # goal budget
+    assert provider.resolve_step_budget(SuggestConfig(), SOLVE_UNTIL_COMPLETE) is None
 
 
 def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> None:
@@ -553,19 +557,19 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
         {
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
-            "bundle": {
-                "site_suggestions": {
+            "land": _MINIMAL_LAND,
+            "goals": {
+                "goal-b": {"name": "Goal B", "loc": [39.02, -114.99]},
+            },
+            "suggest": {
                     "strategy": "mesh-backbone",
                     "planner_raster_dimension": 256,
                     "mesh_backbone": {
                         "max_candidates_per_round": 8,
                         "frontier_sample_spacing_m": 1500.0,
                         "refine_enabled": False,
-                        "goals": {
-                            "goal-b": {"loc": [39.02, -114.99]},
-                        },
+                        "goal_order": ["goal-b"],
                     },
-                }
             },
             "sites": {
                 "seed": {"name": "Seed", "loc": [39.02, -115.04]},
@@ -640,16 +644,18 @@ def test_suggest_cli_n_stops_after_goal_budget(monkeypatch, tmp_path: Path) -> N
         {
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
-            "bundle": {
-                "site_suggestions": {
+            "land": _MINIMAL_LAND,
+            "goals": {
+                "goal-b": {"name": "Goal B", "loc": [39.02, -114.99]},
+            },
+            "suggest": {
                     "strategy": "mesh-backbone",
                     "planner_raster_dimension": 256,
                     "mesh_backbone": {
                         "max_candidates_per_round": 4,
                         "refine_enabled": False,
-                        "goals": {"goal-b": {"loc": [39.02, -114.99]}},
+                        "goal_order": ["goal-b"],
                     },
-                }
             },
             "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.04]}},
         },
@@ -778,16 +784,18 @@ def test_suggest_cli_n_adds_new_sites_when_prior_suggested_exist(monkeypatch, tm
         {
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
-            "bundle": {
-                "site_suggestions": {
+            "land": _MINIMAL_LAND,
+            "goals": {
+                "goal-b": {"name": "Goal B", "loc": [39.02, -114.99]},
+            },
+            "suggest": {
                     "strategy": "mesh-backbone",
                     "planner_raster_dimension": 256,
                     "mesh_backbone": {
                         "max_candidates_per_round": 4,
                         "refine_enabled": False,
-                        "goals": {"goal-b": {"loc": [39.02, -114.99]}},
+                        "goal_order": ["goal-b"],
                     },
-                }
             },
             "sites": {
                 "seed": {"name": "Seed", "loc": [39.02, -115.04]},
@@ -900,16 +908,18 @@ def test_on_pick_writes_each_site_to_preset(monkeypatch, tmp_path: Path) -> None
         {
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
-            "bundle": {
-                "site_suggestions": {
+            "land": _MINIMAL_LAND,
+            "goals": {
+                "goal-b": {"name": "Goal B", "loc": [39.02, -114.99]},
+            },
+            "suggest": {
                     "strategy": "mesh-backbone",
                     "planner_raster_dimension": 256,
                     "mesh_backbone": {
                         "max_candidates_per_round": 4,
                         "refine_enabled": False,
-                        "goals": {"goal-b": {"loc": [39.02, -114.99]}},
+                        "goal_order": ["goal-b"],
                     },
-                }
             },
             "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.04]}},
         },

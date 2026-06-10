@@ -1,43 +1,41 @@
 #!/usr/bin/env bash
-# Dev-only: build/run peaky:dev with live peaky_finders mount.
+# Dev-only: build/run peaky:dev (test, serve, build, …) with live peaky_finders mount.
 set -euo pipefail
 
-SCRIPT="$0"
-while [ -L "$SCRIPT" ]; do
-  DIR="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
-  SCRIPT="$(readlink "$SCRIPT")"
-  [[ "$SCRIPT" != /* ]] && SCRIPT="$DIR/$SCRIPT"
+_script="$0"
+while [ -L "$_script" ]; do
+  _dir="$(cd -P "$(dirname "$_script")" && pwd)"
+  _script="$(readlink "$_script")"
+  [[ "$_script" != /* ]] && _script="$_dir/$_script"
 done
-ROOT="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
-IMAGE="${PEAKY_DEV_IMAGE:-peaky:dev}"
-FORCE_BUILD=0
+ROOT="$(cd -P "$(dirname "$_script")" && pwd)"
 
+IMAGE="${PEAKY_DEV_IMAGE:-peaky:dev}"
+CACHE_DIR="${PEAKY_CACHE_DIR:-$HOME/.peaky/splat_cache}"
+mkdir -p "$CACHE_DIR"
+
+filtered=()
 for arg in "$@"; do
-  if [ "$arg" = "--build" ]; then
-    FORCE_BUILD=1
+  if [ "$arg" != "--build" ]; then
+    filtered+=("$arg")
   fi
 done
 
-if [ "$FORCE_BUILD" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+wants_build=0
+for arg in "$@"; do
+  if [ "$arg" = "--build" ]; then
+    wants_build=1
+    break
+  fi
+done
+if [ "$wants_build" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "peaky: building ${IMAGE}..." >&2
-  PLATFORM="${PEAKY_DOCKER_PLATFORM:-}"
-  if [ -n "$PLATFORM" ]; then
-    docker build --platform "$PLATFORM" --target dev -t "$IMAGE" "$ROOT"
+  platform="${PEAKY_DOCKER_PLATFORM:-}"
+  if [ -n "$platform" ]; then
+    docker build --platform "$platform" --target dev -t "$IMAGE" "$ROOT"
   else
     docker build --target dev -t "$IMAGE" "$ROOT"
   fi
-fi
-
-CACHE_DIR="${PEAKY_CACHE_DIR:-$HOME/.peaky/splat_cache}"
-mkdir -p "$CACHE_DIR" "$ROOT/projects"
-
-filtered=()
-if [ $# -gt 0 ]; then
-  for arg in "$@"; do
-    if [ "$arg" != "--build" ]; then
-      filtered+=("$arg")
-    fi
-  done
 fi
 
 DOCKER_FLAGS=(--rm)
@@ -45,17 +43,61 @@ if [ -t 0 ] && [ -t 1 ]; then
   DOCKER_FLAGS+=(-it)
 fi
 
-run_cmd=(docker run "${DOCKER_FLAGS[@]}" \
-  -e POETRY_VIRTUALENVS_CREATE=false \
-  -v "$PWD:/project" \
-  -v "$ROOT/peaky_finders:/app/peaky_finders" \
-  -v "$ROOT/projects:/app/projects" \
-  -v "$CACHE_DIR:/.peaky/splat_cache" \
-  -w /project \
-  --entrypoint bash \
-  "$IMAGE" \
-  -lc 'cd /app/peaky_finders && poetry install --no-interaction && cd /project && exec poetry --directory /app/peaky_finders run peaky "$@"' \
-  _)
+mode=cli
+if [ ${#filtered[@]} -gt 0 ] && [ "${filtered[0]}" = "test" ]; then
+  mode=test
+  filtered=("${filtered[@]:1}")
+elif [ ${#filtered[@]} -gt 0 ] && [ "${filtered[0]}" = "serve" ]; then
+  SERVE_PORT="${PEAKY_SERVE_PORT:-8080}"
+  serve_no_reload=0
+  serve_has_reload=0
+  i=1
+  while [ $i -lt ${#filtered[@]} ]; do
+    arg="${filtered[$i]}"
+    case "$arg" in
+      --no-reload) serve_no_reload=1 ;;
+      --reload) serve_has_reload=1 ;;
+      --port)
+        if [ $((i + 1)) -lt ${#filtered[@]} ]; then
+          SERVE_PORT="${filtered[$((i + 1))]}"
+        fi
+        ;;
+      --port=*) SERVE_PORT="${arg#--port=}" ;;
+    esac
+    i=$((i + 1))
+  done
+  if [ "$serve_no_reload" -eq 0 ] && [ "$serve_has_reload" -eq 0 ]; then
+    filtered=(serve --reload "${filtered[@]:1}")
+  fi
+  DOCKER_FLAGS+=(-p "${SERVE_PORT}:${SERVE_PORT}")
+  DOCKER_FLAGS+=(-v "$ROOT:/app" -e "PEAKY_HOME=/app" -e "PEAKY_PROJECTS=/app/projects")
+fi
+
+if [ "$mode" = test ]; then
+  run_cmd=(docker run "${DOCKER_FLAGS[@]}" \
+    -e POETRY_VIRTUALENVS_CREATE=false \
+    -v "$ROOT/peaky_finders:/app/peaky_finders" \
+    -v "$ROOT/peaky_finders/tests/fixtures/peaky_home/projects:/app/projects" \
+    -v "$CACHE_DIR:/.peaky/splat_cache" \
+    -w /app/peaky_finders \
+    --entrypoint bash \
+    "$IMAGE" \
+    -lc 'cd /app/peaky_finders && poetry install --no-interaction && exec poetry run pytest -ra --durations=20 "$@"' \
+    _)
+else
+  mkdir -p "$ROOT/projects"
+  run_cmd=(docker run "${DOCKER_FLAGS[@]}" \
+    -e POETRY_VIRTUALENVS_CREATE=false \
+    -v "$PWD:/project" \
+    -v "$ROOT/peaky_finders:/app/peaky_finders" \
+    -v "$ROOT/projects:/app/projects" \
+    -v "$CACHE_DIR:/.peaky/splat_cache" \
+    -w /project \
+    --entrypoint bash \
+    "$IMAGE" \
+    -lc 'cd /app/peaky_finders && poetry install --no-interaction && cd /project && exec poetry --directory /app/peaky_finders run peaky "$@"' \
+    _)
+fi
 
 if [ ${#filtered[@]} -gt 0 ]; then
   exec "${run_cmd[@]}" "${filtered[@]}"

@@ -13,7 +13,7 @@ from peaky_finders.bundle_build import (
     _clip_stem,
     _flatten_gdb_layer_jobs,
     bundle_paths,
-    require_bundle_config,
+    require_land_config,
 )
 from peaky_finders.bundle_clips import (
     MANIFEST_BASENAME,
@@ -136,7 +136,7 @@ class BuildConfigurePlan:
     eligible_union_complete: Path | None
     mesh_links_kml: Path | None
     eligible_slice_kml_paths: tuple[Path, ...]
-    has_bundle: bool
+    has_land: bool
     emit_mesh: bool
     stamp_sections: tuple[str, ...]
 
@@ -193,11 +193,11 @@ def configure_preset_build(
     bundle_dir = bundles_root
     bundle_resolve = bundle_resolve_path(bundles_root)
     dem_tiles: tuple[Path, ...] = ()
-    has_bundle = preset.bundle is not None
+    has_land = preset.land is not None
     eligible_slice_kml_paths: tuple[Path, ...] = ()
 
-    if has_bundle:
-        plc = require_bundle_config(preset)
+    if has_land:
+        plc = require_land_config(preset)
         bb_data_dir = resolved_preset_bundle_data_dir(
             preset_path=resolved_preset,
             preset=preset,
@@ -293,8 +293,8 @@ def configure_preset_build(
         )
 
     site_slugs = tuple(preset.sites.keys())
-    emit_mesh = len(site_slugs) >= 2 and has_bundle
-    mesh_cov = preset.bundle.mesh_coverage if preset.bundle is not None else None
+    emit_mesh = len(site_slugs) >= 2 and has_land
+    mesh_cov = preset.mesh if preset.land is not None else None
     pairwise_enabled = resolved_mesh_pairwise_enabled(mesh_cov)
     depth_enabled = resolved_mesh_depth_enabled(mesh_cov)
     mesh_pairs: tuple[PlannedMeshPair, ...] = ()
@@ -317,8 +317,8 @@ def configure_preset_build(
             )
 
         max_raster = 4096
-        if preset.bundle is not None and preset.bundle.mesh_coverage is not None:
-            max_raster = preset.bundle.mesh_coverage.max_raster_dimension
+        if preset.land is not None and preset.mesh is not None:
+            max_raster = preset.mesh.max_raster_dimension
         if depth_enabled:
             depth_rel = mesh_depth_network_rel_dir(max_raster_dimension=max_raster)
             mesh_depth_complete = (
@@ -326,7 +326,7 @@ def configure_preset_build(
                 / MESH_DEPTH_COMPLETE
             )
 
-        if has_bundle and clip_layers and (pairwise_enabled or depth_enabled):
+        if has_land and clip_layers and (pairwise_enabled or depth_enabled):
             eligible_union_complete = (
                 resolved_eligible_union_data_dir(eligible_union_root) / ELIGIBLE_UNION_COMPLETE
             )
@@ -364,7 +364,7 @@ def configure_preset_build(
         eligible_union_complete=eligible_union_complete,
         mesh_links_kml=mesh_links_kml,
         eligible_slice_kml_paths=eligible_slice_kml_paths,
-        has_bundle=has_bundle,
+        has_land=has_land,
         emit_mesh=emit_mesh,
         stamp_sections=stamp_sections,
     )

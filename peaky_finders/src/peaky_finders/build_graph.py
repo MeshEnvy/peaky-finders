@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from peaky_finders.build_configure import BuildConfigurePlan, PlannedClipLayer, PlannedViewshedWorkspace
-from peaky_finders.build_stamp_inputs import bundle_stamp_section_for_clip_role, stamp_input_paths
+from peaky_finders.build_stamp_inputs import land_stamp_section_for_clip_role, stamp_input_paths
 from peaky_finders.plss_mlrs_fetch import plss_bundle_key_path
 from peaky_finders.preset_stamps import stamp_path
 from peaky_finders.sites_job import Preset
@@ -66,12 +66,12 @@ def dem_bulk_stamp_path(plan: BuildConfigurePlan) -> Path:
 
 
 def _dem_edges(plan: BuildConfigurePlan) -> tuple[str, ...]:
-    return ("dem:bulk",) if plan.has_bundle else tuple()
+    return ("dem:bulk",) if plan.has_land else tuple()
 
 
 def _viewshed_deps(plan: BuildConfigurePlan, ws: PlannedViewshedWorkspace) -> tuple[str, ...]:
     parts = {"stamp:simulation", "stamp:display", *[f"stamp:site__{slug}" for slug in ws.site_slugs]}
-    if plan.has_bundle:
+    if plan.has_land:
         parts.add("bundle:resolve")
         parts.update(_dem_edges(plan))
     return tuple(sorted(parts))
@@ -82,7 +82,7 @@ def viewshed_mtime_prereqs(plan: BuildConfigurePlan, ws: PlannedViewshedWorkspac
     parts = [stamp_path(preset_f, "simulation"), stamp_path(preset_f, "display")]
     for slug in ws.site_slugs:
         parts.append(stamp_path(preset_f, f"site__{slug}"))
-    if plan.has_bundle:
+    if plan.has_land:
         parts.append(dem_bulk_stamp_path(plan))
     return tuple(sorted(set(parts), key=str))
 
@@ -90,7 +90,7 @@ def viewshed_mtime_prereqs(plan: BuildConfigurePlan, ws: PlannedViewshedWorkspac
 def pairwise_mtime_prereqs(plan: BuildConfigurePlan, slug_a: str, slug_b: str) -> tuple[Path, ...]:
     preset_f = Path(plan.preset_path).expanduser().resolve()
     parts: list[Path] = []
-    for sec in ("bundle_kml_overlay", "bundle_mesh_coverage"):
+    for sec in ("display_kml", "mesh"):
         parts.append(stamp_path(preset_f, sec).resolve())
     parts.append(dem_bulk_stamp_path(plan))
     for slug in (slug_a, slug_b):
@@ -118,9 +118,9 @@ def mesh_links_mtime_prereqs(plan: BuildConfigurePlan, preset: Preset) -> tuple[
 
     preset_f = Path(plan.preset_path).expanduser().resolve()
     parts = list(footprints_all(plan, preset))
-    for sec in ("topology", "sites_sees", "bundle_kml_overlay", "bundle_mesh_coverage"):
+    for sec in ("topology", "links", "display_kml", "mesh"):
         parts.append(stamp_path(preset_f, sec).resolve())
-    if plan.has_bundle:
+    if plan.has_land:
         parts.append(dem_bulk_stamp_path(plan))
     return tuple(sorted(set(parts), key=str))
 
@@ -133,7 +133,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
     def put(t: PeakyGraphTarget) -> None:
         nodes[t.id] = t
 
-    gdb_stamp_secs = frozenset(("bundle_aoi", "bundle_include", "bundle_exclude", "bundle_land_use"))
+    gdb_stamp_secs = frozenset(("land_aoi", "land_include", "land_exclude", "land_use"))
 
     for sec in plan.stamp_sections:
         gdb_extra = stamp_input_paths(plan, sec) if sec in gdb_stamp_secs else ()
@@ -158,7 +158,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
 
     mesh_pair_vars: list[str] = []
 
-    if plan.has_bundle:
+    if plan.has_land:
         dem_stamp = dem_bulk_stamp_path(plan)
         put(
             PeakyGraphTarget(
@@ -171,7 +171,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
 
         for i, lyr in enumerate(plan.clip_layers):
             cid = clip_target_id(lyr, i)
-            st = bundle_stamp_section_for_clip_role(str(lyr.role))
+            st = land_stamp_section_for_clip_role(str(lyr.role))
             deps_list = [f"stamp:{st}"]
             if lyr.role != "aoi":
                 deps_list.append("composite:aoi")
@@ -189,7 +189,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
         put(
             PeakyGraphTarget(
                 id="composite:aoi",
-                depends_on=tuple(sorted(aoi_ids + ["stamp:bundle_aoi"])),
+                depends_on=tuple(sorted(aoi_ids + ["stamp:land_aoi"])),
                 outputs=(_composite_gpkg(plan, "aoi").resolve(),),
                 mtime_prereqs=tuple(),
             )
@@ -199,7 +199,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
         put(
             PeakyGraphTarget(
                 id="composite:include",
-                depends_on=tuple(sorted(inc_ids + ["composite:aoi", "stamp:bundle_include"])),
+                depends_on=tuple(sorted(inc_ids + ["composite:aoi", "stamp:land_include"])),
                 outputs=(_composite_gpkg(plan, "include").resolve(),),
                 mtime_prereqs=tuple(),
             )
@@ -209,7 +209,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
         put(
             PeakyGraphTarget(
                 id="composite:exclude",
-                depends_on=tuple(sorted(["composite:include", *exc_ids, "stamp:bundle_exclude"])),
+                depends_on=tuple(sorted(["composite:include", *exc_ids, "stamp:land_exclude"])),
                 outputs=(_composite_gpkg(plan, "exclude").resolve(),),
                 mtime_prereqs=tuple(),
             )
@@ -233,7 +233,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
             put(
                 PeakyGraphTarget(
                     id=rid,
-                    depends_on=("composite:aoi", "stamp:bundle_reference"),
+                    depends_on=("composite:aoi", "stamp:land_reference"),
                     outputs=(ref.gpkg.resolve(),),
                     mtime_prereqs=tuple(),
                 )
@@ -306,9 +306,9 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
                                     f"viewshed:{site_workspace_digest(plan, pair.slug_a)}:raster",
                                     f"viewshed:{site_workspace_digest(plan, pair.slug_b)}:raster",
                                     "bundle:resolve",
-                                    "stamp:bundle_kml_overlay",
-                                    "stamp:bundle_mesh_coverage",
-                                    *(_dem_edges(plan) if plan.has_bundle else ()),
+                                    "stamp:display_kml",
+                                    "stamp:mesh",
+                                    *(_dem_edges(plan) if plan.has_land else ()),
                                 }
                             )
                         ),
@@ -332,20 +332,20 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
             depth_deps: set[str] = {
                 f"viewshed:{site_workspace_digest(plan, slug)}:footprint" for slug in site_slugs
             }
-            if plan.has_bundle:
+            if plan.has_land:
                 depth_deps.update(
                     {
                         "bundle:resolve",
-                        "stamp:bundle_kml_overlay",
-                        "stamp:bundle_mesh_coverage",
+                        "stamp:display_kml",
+                        "stamp:mesh",
                         *_dem_edges(plan),
                     }
                 )
             if plan.eligible_union_complete is not None:
                 depth_deps.add("mesh:eligible_union")
             depth_mq: set[Path] = set()
-            if plan.has_bundle:
-                for sec in ("bundle_kml_overlay", "bundle_mesh_coverage"):
+            if plan.has_land:
+                for sec in ("display_kml", "mesh"):
                     depth_mq.add(stamp_path(preset_f, sec).resolve())
             mesh_depth_var_present = True
             put(
@@ -362,7 +362,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
                 sorted(
                     {
                         "stamp:topology",
-                        "stamp:sites_sees",
+                        "stamp:links",
                         *[f"viewshed:{site_workspace_digest(plan, slug)}:footprint" for slug in site_slugs],
                     }
                 )
@@ -377,7 +377,7 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
             )
 
     kmz_deps: list[str] = []
-    if plan.has_bundle:
+    if plan.has_land:
         kmz_deps.append("bundle:resolve")
 
     kmz_mtime: list[Path] = [preset_f.resolve()]
@@ -402,9 +402,9 @@ def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, Pe
         kmz_deps.append("mesh:links")
         kmz_mtime.append(plan.mesh_links_kml.resolve())
 
-    if plan.has_bundle and "bundle_kmz" in plan.stamp_sections:
-        kmz_deps.append("stamp:bundle_kmz")
-        kmz_mtime.append(stamp_path(preset_f, "bundle_kmz").resolve())
+    if plan.has_land and "display_kmz" in plan.stamp_sections:
+        kmz_deps.append("stamp:display_kmz")
+        kmz_mtime.append(stamp_path(preset_f, "display_kmz").resolve())
 
     put(
         PeakyGraphTarget(
@@ -473,7 +473,7 @@ def subgraph_roots_for(
     if s in ("all", "kmz"):
         return ("kmz:out",)
     if s == "bundle":
-        if not plan.has_bundle:
+        if not plan.has_land:
             return tuple()
         return ("bundle:resolve",)
     if s == "viewsheds":

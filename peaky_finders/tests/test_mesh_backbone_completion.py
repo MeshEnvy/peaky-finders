@@ -17,11 +17,51 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
 )
 from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint
 from peaky_finders.sites_job import (
-    BundleSiteSuggestionsConfig,
-    MeshBackboneGoalEntry,
-    MeshBackboneStrategyConfig,
+    GoalEntry,
+    Preset,
+    SimulationConfig,
+    SuggestConfig,
+    SiteEntry,
     SiteSuggestionStrategy,
+    SiteType,
+    DisplayConfig,
 )
+
+
+def _minimal_preset(*, goals: dict[str, GoalEntry] | None = None) -> Preset:
+    return Preset(
+        simulation=SimulationConfig.model_validate(
+            {
+                "modem_presets": {
+                    "meshcore-us": {
+                        "frequency_mhz": 910.525,
+                        "bandwidth_khz": 62.5,
+                        "spreading_factor": 7,
+                        "coding_rate": 5,
+                        "implementation_margin_db": 3.0,
+                        "power_dbm": 22.0,
+                        "sensitivity_dbm": -121.0,
+                    }
+                },
+                "environment_presets": {
+                    "test-desert": {
+                        "climate": "desert",
+                        "polarization": "vertical",
+                        "clutter_height_m": 1.0,
+                    }
+                },
+                "modem": "meshcore-us",
+                "environment": "test-desert",
+                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
+                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
+            }
+        ),
+        display=DisplayConfig(colormap="rainbow", min_dbm=-130.0, max_dbm=-80.0),
+        sites={
+            "seed": SiteEntry(type=SiteType.INSTALLED, name="Seed", loc=(39.0, -115.8)),
+        },
+        goals=goals or {},
+    )
 
 
 def test_mutual_hop_neighbors() -> None:
@@ -45,19 +85,38 @@ def test_mutual_hop_neighbors() -> None:
     assert "s1" in hops
 
 
-def test_sites_capturing_goal() -> None:
+def test_sites_capturing_goal_requires_footprint_and_rf() -> None:
     goal = GoalPoint(key="g0", lat=39.0, lon=-115.8)
     sites = [BackboneSite(slug="near", lat=39.0, lon=-115.75)]
     footprints = {"near": box(-115.9, 38.9, -115.4, 39.1)}
-    assert sites_capturing_goal(goal, sites, footprints) == {"near"}
+    preset = _minimal_preset(
+        goals={"g0": GoalEntry(name="G0", loc=(39.0, -115.8))},
+    )
+    assert (
+        sites_capturing_goal(
+            goal,
+            sites,
+            footprints,
+            preset=preset,
+            rf_pairs={("g0", "near")},
+        )
+        == {"near"}
+    )
+    assert (
+        sites_capturing_goal(
+            goal,
+            sites,
+            footprints,
+            preset=preset,
+            rf_pairs=set(),
+        )
+        == set()
+    )
 
 
 def test_mesh_grow_planning_complete_when_goals_captured_and_connected() -> None:
-    cfg = MeshBackboneStrategyConfig(
-        goals={
-            "g0": MeshBackboneGoalEntry(loc=(39.0, -115.85)),
-        }
-    )
+    goals = {"g0": GoalEntry(name="G0", loc=(39.0, -115.85))}
+    preset = _minimal_preset(goals=goals)
     sites = [
         BackboneSite(slug="seed", lat=39.0, lon=-115.8),
         BackboneSite(slug="relay", lat=39.0, lon=-115.65),
@@ -67,14 +126,14 @@ def test_mesh_grow_planning_complete_when_goals_captured_and_connected() -> None
         "relay": box(-115.85, 38.9, -115.15, 39.1),
     }
     ctx = SiteSuggestionContext(
-        preset=type("P", (), {"sites": {"seed": type("E", (), {"lat": 39.0, "lon": -115.8})()}})(),
+        preset=preset,
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),
         grid=type("G", (), {"depth_at_point": lambda *a, **k: 1})(),
         eligible_ll=box(-116.5, 38.5, -114.5, 39.5),
         aoi_ll=box(-116.5, 38.5, -114.5, 39.5),
         target_ll=box(-116.5, 38.5, -114.5, 39.5),
         suggest_root=Path("/tmp/suggest"),
-        cfg=BundleSiteSuggestionsConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE, mesh_backbone=cfg),
+        cfg=SuggestConfig(strategy=SiteSuggestionStrategy.MESH_BACKBONE),
         dem_mirror_root=Path("/tmp/dem"),
         eligible_sha="x",
         jobs=1,
@@ -82,11 +141,18 @@ def test_mesh_grow_planning_complete_when_goals_captured_and_connected() -> None
         session_sites=[sites[1]],
         session_footprints={"relay": footprints["relay"]},
     )
-    assert captured_goal_keys(cfg, sites, footprints) == {"g0"}
+    with patch(
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion._rf_viable_goal_site_pairs",
+        return_value={("g0", "relay")},
+    ):
+        assert captured_goal_keys(goals, sites, footprints, preset) == {"g0"}
     adj = hop_adjacency(sites, footprints)
     assert "relay" in adj["seed"]
     with patch(
         "peaky_finders.site_suggestions.providers.mesh_backbone.completion.footprints_for_backbone_sites",
         return_value=footprints,
+    ), patch(
+        "peaky_finders.site_suggestions.providers.mesh_backbone.completion._rf_viable_goal_site_pairs",
+        return_value={("g0", "relay")},
     ):
         assert mesh_grow_planning_complete(ctx)

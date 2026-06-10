@@ -36,17 +36,17 @@ DAG nodes in `build_graph.py` mirror these; keep granular commands consistent wi
 ## Data flow
 
 ```
-bundle.* GDB paths (preset) → clip layers → composites → eligible GPKG
+land.* GDB paths (preset) → clip layers → composites → eligible GPKG
   → resolve.json sidecars → viewshed/mesh inputs
 ```
 
-GDB paths resolve under `<preset-dir>/<bundle.inputs_root>` unless absolute.
+GDB paths resolve under `<preset-dir>/<land.inputs_root>` unless absolute.
 
 ## Skadi DEM
 
 - Global mirror: `SPLAT_CACHE` or `<peaky_home>/splat_cache`
 - Fetches via `SKADI_HTTP_POOL`; parallel prefetch with worker caps
-- `./peaky` / `./peaky-test` mount host cache at `/.peaky/splat_cache`
+- `./peaky` mounts host cache at `/.peaky/splat_cache`
 
 ## HTTP
 
