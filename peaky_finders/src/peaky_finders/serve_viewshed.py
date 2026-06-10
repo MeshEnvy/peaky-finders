@@ -116,6 +116,24 @@ def viewshed_prefetch_png_api_path(
     return f"/api/p/{project_slug}/viewsheds/prefetch/splat.png?{params}"
 
 
+def _viewshed_overlay_png_url(
+    project_slug: str,
+    site_slug: str,
+    site: SiteEntry,
+    *,
+    sim_overrides: ViewshedSimOverrides | None = None,
+) -> str:
+    """MapLibre raster URL for a site or coordinate draft viewshed."""
+    if site_slug == DRAFT_VIEWSHED_SLUG:
+        return viewshed_prefetch_png_api_path(
+            project_slug,
+            float(site.lat),
+            float(site.lon),
+            sim_overrides=sim_overrides,
+        )
+    return viewshed_png_api_path(project_slug, site_slug, sim_overrides=sim_overrides)
+
+
 def image_coordinates_from_bbox(bbox: dict[str, float]) -> list[list[float]]:
     """MapLibre image corners: top-left, top-right, bottom-right, bottom-left as ``[lon, lat]``."""
     north, south, east, west, rotation = bbox_rotation_normalized(bbox)
@@ -218,8 +236,8 @@ def ensure_coords_viewshed_overlay(
         raise ServeViewshedError("missing GroundOverlay bounds for draft viewshed")
     return {
         "slug": DRAFT_VIEWSHED_SLUG,
-        "url": viewshed_prefetch_png_api_path(
-            project_slug, lat, lon, sim_overrides=sim_overrides
+        "url": _viewshed_overlay_png_url(
+            project_slug, DRAFT_VIEWSHED_SLUG, site, sim_overrides=sim_overrides
         ),
         "coordinates": image_coordinates_from_bbox(bounds),
         "lat": lat,
@@ -373,7 +391,9 @@ def site_viewshed_overlay_if_ready(
         return None
     return {
         "slug": site_slug,
-        "url": viewshed_png_api_path(project_slug, site_slug, sim_overrides=sim_overrides),
+        "url": _viewshed_overlay_png_url(
+            project_slug, site_slug, site, sim_overrides=sim_overrides
+        ),
         "coordinates": image_coordinates_from_bbox(bounds),
     }
 
@@ -429,6 +449,8 @@ def ensure_site_viewshed_overlay(
         raise ServeViewshedError(f"missing GroundOverlay bounds for site {site_slug!r}")
     return {
         "slug": site_slug,
-        "url": viewshed_png_api_path(project_slug, site_slug, sim_overrides=sim_overrides),
+        "url": _viewshed_overlay_png_url(
+            project_slug, site_slug, site, sim_overrides=sim_overrides
+        ),
         "coordinates": image_coordinates_from_bbox(bounds),
     }

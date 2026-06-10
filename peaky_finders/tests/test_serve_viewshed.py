@@ -13,13 +13,16 @@ import pytest
 from peaky_finders.new_cli import scaffold_project
 from peaky_finders.serve_app import make_serve_wsgi_app
 from peaky_finders.serve_viewshed import (
+    DRAFT_VIEWSHED_SLUG,
     ServeViewshedError,
     _coverage_slot,
+    _preview_site_at,
     _reset_coverage_semaphore_for_tests,
     ensure_site_viewshed_overlay,
     ensure_site_viewshed_png,
     image_coordinates_from_bbox,
     resolve_serve_coverage_max_concurrent,
+    site_viewshed_overlay_if_ready,
     viewshed_meta_api_path,
     viewshed_png_api_path,
 )
@@ -50,6 +53,48 @@ def test_image_coordinates_from_bbox_unrotated() -> None:
     assert coords[1] == [pytest.approx(-115.7), pytest.approx(39.1)]
     assert coords[2] == [pytest.approx(-115.7), pytest.approx(39.0)]
     assert coords[3] == [pytest.approx(-115.9), pytest.approx(39.0)]
+
+
+def test_draft_overlay_if_ready_uses_prefetch_png_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    project_dir = projects_dir / "demo"
+    scaffold_project("demo", parent=projects_dir)
+
+    fixed = project_dir / "build" / "viewsheds" / "draft"
+    fixed.mkdir(parents=True)
+    (fixed / "splat.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (fixed / "request.json").write_text('{"lat": 39.6}', encoding="utf-8")
+    (fixed / "output.kml").write_text(
+        "<kml><GroundOverlay><LatLonBox>"
+        "<north>39.7</north><south>39.5</south>"
+        "<east>-119.3</east><west>-119.5</west>"
+        "</LatLonBox></GroundOverlay></kml>",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "peaky_finders.serve_viewshed.resolve_site_viewshed_workdir",
+        lambda *_args, **_kwargs: fixed,
+    )
+    monkeypatch.setattr(
+        "peaky_finders.serve_viewshed.viewshed_request_digest_matches",
+        lambda _workdir, expected_workspace_digest: True,
+    )
+
+    site = _preview_site_at(39.6, -119.4)
+    overlay = site_viewshed_overlay_if_ready(
+        "demo",
+        project_dir,
+        DRAFT_VIEWSHED_SLUG,
+        site,
+    )
+    assert overlay is not None
+    assert overlay["slug"] == DRAFT_VIEWSHED_SLUG
+    assert overlay["url"] == "/api/p/demo/viewsheds/prefetch/splat.png?lat=39.6&lon=-119.4"
+    assert "_draft/splat.png" not in str(overlay["url"])
 
 
 def test_ensure_site_viewshed_png_uses_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
