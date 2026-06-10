@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from http.client import HTTPConnection
 from pathlib import Path
 
@@ -13,9 +14,12 @@ from peaky_finders.new_cli import scaffold_project
 from peaky_finders.serve_app import make_serve_wsgi_app
 from peaky_finders.serve_viewshed import (
     ServeViewshedError,
+    _coverage_slot,
+    _reset_coverage_semaphore_for_tests,
     ensure_site_viewshed_overlay,
     ensure_site_viewshed_png,
     image_coordinates_from_bbox,
+    resolve_serve_coverage_max_concurrent,
     viewshed_meta_api_path,
     viewshed_png_api_path,
 )
@@ -232,7 +236,8 @@ def test_project_page_loads_viewsheds_on_demand(tmp_path: Path) -> None:
         js_body = js_resp.read().decode("utf-8")
         assert js_resp.status == 200
         assert "loadAllViewsheds" in js_body
-        assert "loadViewshedForSite" in js_body
+        assert "scheduleViewshedLoad" in js_body
+        assert "VIEWSHED_LOAD_MAX_CONCURRENT" in js_body
         assert "viewshedMetaUrl" in js_body
         assert "setViewshedVisible" in js_body
         assert "viewshed-sim-modal" in body
@@ -388,3 +393,39 @@ def test_viewshed_prefetch_png_endpoint(tmp_path: Path, monkeypatch: pytest.Monk
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_resolve_serve_coverage_max_concurrent_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PEAKY_SERVE_COVERAGE_CONCURRENT", raising=False)
+    assert resolve_serve_coverage_max_concurrent() == 1
+
+
+def test_resolve_serve_coverage_max_concurrent_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PEAKY_SERVE_COVERAGE_CONCURRENT", "3")
+    _reset_coverage_semaphore_for_tests()
+    assert resolve_serve_coverage_max_concurrent() == 3
+
+
+def test_coverage_slot_serializes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PEAKY_SERVE_COVERAGE_CONCURRENT", "1")
+    _reset_coverage_semaphore_for_tests()
+    active = 0
+    max_active = 0
+    mx = threading.Lock()
+
+    def worker() -> None:
+        nonlocal active, max_active
+        with _coverage_slot(verbose=False, site_slug="site"):
+            with mx:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with mx:
+                active -= 1
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2.0)
+    assert max_active == 1

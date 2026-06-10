@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -25,6 +28,53 @@ from peaky_finders.viewshed_workspace import resolved_viewshed_workdir, viewshed
 
 _workdir_locks: dict[str, threading.Lock] = {}
 _workdir_locks_guard = threading.Lock()
+
+DEFAULT_SERVE_COVERAGE_MAX_CONCURRENT = 1
+
+_coverage_sem: threading.BoundedSemaphore | None = None
+_coverage_sem_guard = threading.Lock()
+_coverage_sem_slots: int | None = None
+
+
+def resolve_serve_coverage_max_concurrent() -> int:
+    """Max concurrent splatter coverage runs for ``peaky serve`` (default 1)."""
+    raw = os.environ.get("PEAKY_SERVE_COVERAGE_CONCURRENT", "").strip()
+    if raw:
+        return max(1, int(raw))
+    return DEFAULT_SERVE_COVERAGE_MAX_CONCURRENT
+
+
+def _get_coverage_semaphore() -> threading.BoundedSemaphore:
+    global _coverage_sem, _coverage_sem_slots
+    slots = resolve_serve_coverage_max_concurrent()
+    with _coverage_sem_guard:
+        if _coverage_sem is None or _coverage_sem_slots != slots:
+            _coverage_sem = threading.BoundedSemaphore(slots)
+            _coverage_sem_slots = slots
+        return _coverage_sem
+
+
+def _reset_coverage_semaphore_for_tests() -> None:
+    """Drop the lazy coverage semaphore (tests only)."""
+    global _coverage_sem, _coverage_sem_slots
+    with _coverage_sem_guard:
+        _coverage_sem = None
+        _coverage_sem_slots = None
+
+
+@contextmanager
+def _coverage_slot(*, verbose: bool, site_slug: str) -> Iterator[None]:
+    """Serialize splatter coverage; single jobs already fan out across CPU cores."""
+    sem = _get_coverage_semaphore()
+    if verbose:
+        print(f"serve viewshed: wait coverage slot ({site_slug})", flush=True)
+    sem.acquire()
+    try:
+        if verbose:
+            print(f"serve viewshed: coverage slot ({site_slug})", flush=True)
+        yield
+    finally:
+        sem.release()
 
 
 class ServeViewshedError(Exception):
@@ -252,25 +302,44 @@ def ensure_site_viewshed_png(
             ensure_splat_raster_png(site_name=site_label, data_dir=workdir)
             return png.resolve()
 
-        if verbose:
-            print(
-                f"serve viewshed: coverage {site_slug} ({workdir.name})",
-                flush=True,
-            )
-        rc = run_viewshed_coverage(
-            site_name=site_label,
-            data_dir=workdir,
-            coverage_verbose=verbose,
-        )
-        if rc != 0:
-            raise ServeViewshedError(f"coverage failed for site {site_slug!r}")
+    with _coverage_slot(verbose=verbose, site_slug=site_slug):
+        with _workdir_lock(workdir):
+            if png.is_file() and viewshed_request_digest_matches(
+                workdir, expected_workspace_digest=digest
+            ):
+                return png.resolve()
+            if ppm.is_file() and viewshed_request_digest_matches(
+                workdir, expected_workspace_digest=digest
+            ):
+                if verbose:
+                    print(
+                        f"serve viewshed: raster {site_slug} ({workdir.name})",
+                        flush=True,
+                    )
+                ensure_splat_raster_png(site_name=site_label, data_dir=workdir)
+                return png.resolve()
 
-        ensure_splat_raster_png(site_name=site_label, data_dir=workdir)
-        if not png.is_file():
-            raise ServeViewshedError(f"missing splat.png after generation for {site_slug!r}")
-        if verbose:
-            print(f"serve viewshed: done {site_slug} ({workdir.name})", flush=True)
-        return png.resolve()
+            if verbose:
+                print(
+                    f"serve viewshed: coverage {site_slug} ({workdir.name})",
+                    flush=True,
+                )
+            rc = run_viewshed_coverage(
+                site_name=site_label,
+                data_dir=workdir,
+                coverage_verbose=verbose,
+            )
+            if rc != 0:
+                raise ServeViewshedError(f"coverage failed for site {site_slug!r}")
+
+            ensure_splat_raster_png(site_name=site_label, data_dir=workdir)
+            if not png.is_file():
+                raise ServeViewshedError(
+                    f"missing splat.png after generation for {site_slug!r}"
+                )
+            if verbose:
+                print(f"serve viewshed: done {site_slug} ({workdir.name})", flush=True)
+            return png.resolve()
 
 
 def ensure_site_viewshed_overlay(

@@ -88,7 +88,7 @@ Progressive, on-demand shell over the **same** preset + splatter + build artifac
 | Aspect | CLI / build | Web |
 |--------|-------------|-----|
 | Scheduling | Batch (`peaky build`, DAG waves, `-j`) | Per HTTP request (user toggles map layer, opens project) |
-| Viewsheds | All sites via build graph / `run_viewshed_batch` | One site via `ensure_site_viewshed_png` → `run_viewshed_coverage` |
+| Viewsheds | All sites via build graph / `run_viewshed_batch` | One site via `ensure_site_viewshed_png` → `run_viewshed_coverage`; serve serializes splatter coverage (`PEAKY_SERVE_COVERAGE_CONCURRENT`, default **1**); map UI queues meta fetches the same way |
 | Artifacts | `<preset>/build/…` | Same paths; serve reads cache if build already ran |
 | HTTP layer | — | Waitress WSGI: `serve_app.py` routes + `serve_cli.py` runner; logic in `serve_*.py` |
 | Site links | Build mesh `links` KML + footprint mutual coverage | On-demand splatter `link_mutual_*` via `serve_links.py` |
