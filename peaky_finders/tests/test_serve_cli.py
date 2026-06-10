@@ -312,7 +312,8 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert "maplibre-gl" in body
         assert 'id="basemap"' in body
         assert "Street" in body
-        assert "Topo" in body
+        assert "USGS Topo" in body
+        assert "OpenTopo" in body
         assert "Satellite" in body
         assert '"name": "Hub"' in body
         assert "1 site" in body
@@ -327,6 +328,7 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         js_resp = conn.getresponse()
         js_body = js_resp.read().decode("utf-8")
         assert js_resp.status == 200
+        assert "basemap.nationalmap.gov" in js_body
         assert "clarity.maptiles.arcgis.com" in js_body
         assert "terrain-dem" in js_body
         assert "maxPitch: 85" in js_body

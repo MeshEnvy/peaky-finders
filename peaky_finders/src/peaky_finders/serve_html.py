@@ -129,7 +129,8 @@ def project_html(
           <label for="basemap" class="form-label mb-0 small text-muted">Map</label>
           <select id="basemap" class="form-select form-select-sm" style="width: auto;" title="Base map">
             <option value="street">Street</option>
-            <option value="topo">Topo</option>
+            <option value="topo">USGS Topo</option>
+            <option value="opentopo">OpenTopo</option>
             <option value="satellite">Satellite</option>
           </select>
         </div>

@@ -45,6 +45,12 @@
       maxzoom: 19,
     },
     topo: {
+      tiles: [
+        "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",
+      ],
+      maxzoom: 16,
+    },
+    opentopo: {
       tiles: ["https://tile.opentopomap.org/{z}/{x}/{y}.png"],
       maxzoom: 17,
     },
