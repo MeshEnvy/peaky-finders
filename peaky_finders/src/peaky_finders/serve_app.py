@@ -257,7 +257,6 @@ class ServeDispatcher:
         headers: list[tuple[str, str]] = [
             ("Content-Type", "text/event-stream; charset=utf-8"),
             ("Cache-Control", "no-cache"),
-            ("Connection", "keep-alive"),
             ("X-Accel-Buffering", "no"),
         ]
         self._response = ServeResponse(

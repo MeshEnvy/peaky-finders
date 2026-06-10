@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import threading
 import time
+from pathlib import Path
 
+from peaky_finders.new_cli import scaffold_project
+from peaky_finders.serve_app import make_serve_wsgi_app
 from peaky_finders.serve_events import (
     ServeEvent,
     format_sse_event,
@@ -44,3 +47,40 @@ def test_event_hub_publish_delivers_to_subscriber() -> None:
     text = holder["chunk"].decode("utf-8")
     assert "event: viewshed" in text
     assert "queued" in text
+
+
+def test_events_route_wsgi_streams_hello(tmp_path: Path) -> None:
+    reset_serve_event_hub_for_tests()
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("nevada", parent=projects_dir)
+    app = make_serve_wsgi_app(projects_dir, verbose=False, request_log=False)
+
+    status_holder: list[str] = []
+    headers_holder: list[list[tuple[str, str]]] = []
+
+    def start_response(status: str, headers: list[tuple[str, str]], exc_info=None):
+        status_holder.append(status)
+        headers_holder.append(headers)
+        return lambda data: None
+
+    environ = {
+        "REQUEST_METHOD": "GET",
+        "PATH_INFO": "/api/p/nevada/events",
+        "QUERY_STRING": "",
+        "CONTENT_LENGTH": "0",
+        "wsgi.input": None,
+        "REMOTE_ADDR": "127.0.0.1",
+    }
+    body_iter = app(environ, start_response)
+    assert status_holder == ["200 OK"]
+    header_names = {name.lower() for name, _ in headers_holder[0]}
+    assert "connection" not in header_names
+    assert ("content-type", "text/event-stream; charset=utf-8") in [
+        (k.lower(), v) for k, v in headers_holder[0]
+    ]
+    next(body_iter)
+    hello = next(body_iter)
+    assert hello.startswith(b"event: hello")
+    assert b"nevada" in hello
+    body_iter.close()
