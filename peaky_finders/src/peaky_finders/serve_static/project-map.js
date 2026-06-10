@@ -26,7 +26,6 @@
   const DRAFT_LINKS_LABELS_LAYER = "draft-site-links-label";
   const VIEWSHED_OPACITY_DEFAULT = 0.75;
   const DRAFT_VIEWSHED_SLUG = "_draft";
-  const VIEWSHED_LOAD_MAX_CONCURRENT = 1;
   const simDefaults = config.simulation || {};
   const VIEWSHED_RADIUS_KM_MIN = Number(simDefaults.radius_km_min) || 1;
   const VIEWSHED_RADIUS_KM_MAX = Number(simDefaults.radius_km_max) || 100;
@@ -1341,16 +1340,85 @@
     return params;
   }
 
-  function viewshedMetaUrl(siteSlug) {
-    const params = viewshedSimQueryParams();
-    return `/api/p/${projectSlug}/viewsheds/${siteSlug}?${params}`;
+  function projectEventsUrl() {
+    return `/api/p/${projectSlug}/events`;
   }
 
-  function viewshedPrefetchUrl(lat, lon) {
+  function viewshedWarmUrl(siteSlug) {
+    const params = viewshedSimQueryParams();
+    return `/api/p/${projectSlug}/viewsheds/${siteSlug}/warm?${params}`;
+  }
+
+  function viewshedPrefetchWarmUrl(lat, lon) {
     const params = viewshedSimQueryParams();
     params.set("lat", String(lat));
     params.set("lon", String(lon));
-    return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
+    return `/api/p/${projectSlug}/viewsheds/prefetch/warm?${params}`;
+  }
+
+  let serveEventsSource = null;
+  const viewshedPendingEpoch = new Map();
+
+  function reconcilePendingViewsheds() {
+    for (const [slug, epoch] of viewshedPendingEpoch) {
+      if (slug === DRAFT_VIEWSHED_SLUG) {
+        if (draftPlacementLat != null && draftPlacementLon != null) {
+          void loadDraftViewshedAt(draftPlacementLat, draftPlacementLon, { refreshOnly: true });
+        }
+        continue;
+      }
+      const site = siteBySlug.get(slug);
+      if (site) void loadViewshedForSite(site, epoch);
+    }
+  }
+
+  function connectProjectEvents() {
+    if (serveEventsSource) {
+      serveEventsSource.close();
+      serveEventsSource = null;
+    }
+    serveEventsSource = new EventSource(projectEventsUrl());
+    serveEventsSource.addEventListener("hello", () => {
+      reconcilePendingViewsheds();
+    });
+    serveEventsSource.addEventListener("viewshed", (ev) => {
+      try {
+        handleViewshedEvent(JSON.parse(ev.data));
+      } catch (_) {
+        /* ignore malformed SSE payload */
+      }
+    });
+  }
+
+  function handleViewshedReady(vs, epoch) {
+    if (!vs || !vs.slug || !vs.url || !vs.coordinates) return;
+    if (viewshedPendingEpoch.get(vs.slug) !== epoch) return;
+    viewshedPendingEpoch.delete(vs.slug);
+    if (vs.slug === DRAFT_VIEWSHED_SLUG) {
+      draftViewshedLoading = false;
+      syncCreateViewshedCheckbox();
+    }
+    addViewshedLayer(vs);
+  }
+
+  function handleViewshedEvent(data) {
+    if (!data || !data.slug) return;
+    const epoch = viewshedPendingEpoch.get(data.slug);
+    if (epoch == null) return;
+    if (data.status === "ready") {
+      handleViewshedReady(data, epoch);
+      return;
+    }
+    if (data.status === "error") {
+      viewshedPendingEpoch.delete(data.slug);
+      viewshedLoading.delete(data.slug);
+      if (data.slug === DRAFT_VIEWSHED_SLUG) {
+        draftViewshedLoading = false;
+        syncCreateViewshedCheckbox();
+      }
+      updatePinOverlays();
+      if (data.slug === selectedSlug) syncViewshedCheckbox();
+    }
   }
 
   function updatePinOverlays() {
@@ -1396,42 +1464,20 @@
     }
   }
 
-  const viewshedLoadQueue = [];
-  let viewshedLoadRunning = 0;
   let viewshedLoadEpoch = 0;
 
   function bumpViewshedLoadEpoch() {
     viewshedLoadEpoch += 1;
-    viewshedLoadQueue.length = 0;
-  }
-
-  function drainViewshedLoadQueue() {
-    while (
-      viewshedLoadRunning < VIEWSHED_LOAD_MAX_CONCURRENT &&
-      viewshedLoadQueue.length > 0
-    ) {
-      const item = viewshedLoadQueue.shift();
-      if (item.epoch !== viewshedLoadEpoch) {
-        viewshedLoading.delete(item.site.slug);
-        continue;
-      }
-      viewshedLoadRunning += 1;
-      void loadViewshedForSite(item.site, item.epoch).finally(() => {
-        viewshedLoadRunning -= 1;
-        updatePinOverlays();
-        drainViewshedLoadQueue();
-      });
-    }
-    updatePinOverlays();
   }
 
   function scheduleViewshedLoad(site) {
+    const epoch = viewshedLoadEpoch;
     removeViewshedLayer(site.slug);
     viewshedLoading.add(site.slug);
+    viewshedPendingEpoch.set(site.slug, epoch);
     updatePinOverlays();
     if (site.slug === selectedSlug) syncViewshedCheckbox();
-    viewshedLoadQueue.push({ site, epoch: viewshedLoadEpoch });
-    drainViewshedLoadQueue();
+    void loadViewshedForSite(site, epoch);
   }
 
   function reloadViewshedsForSimChange() {
@@ -1441,6 +1487,8 @@
         scheduleViewshedLoad(site);
       } else {
         removeViewshedLayer(site.slug);
+        viewshedLoading.delete(site.slug);
+        viewshedPendingEpoch.delete(site.slug);
       }
     }
     if (
@@ -1449,8 +1497,7 @@
       draftPlacementLon != null &&
       isViewshedVisible(DRAFT_VIEWSHED_SLUG)
     ) {
-      removeDraftViewshed();
-      void loadDraftViewshedAt(draftPlacementLat, draftPlacementLon);
+      void loadDraftViewshedAt(draftPlacementLat, draftPlacementLon, { refreshOnly: true });
     }
   }
 
@@ -1525,28 +1572,37 @@
     }
   }
 
-  async function loadDraftViewshedAt(lat, lon) {
-    removeDraftViewshed();
-    draftPlacementLat = lat;
-    draftPlacementLon = lon;
+  async function loadDraftViewshedAt(lat, lon, options) {
+    const refreshOnly = Boolean(options && options.refreshOnly);
+    if (refreshOnly) {
+      removeViewshedLayer(DRAFT_VIEWSHED_SLUG);
+    } else {
+      removeDraftViewshed();
+      draftPlacementLat = lat;
+      draftPlacementLon = lon;
+    }
     draftViewshedLoading = true;
     viewshedLoading.add(DRAFT_VIEWSHED_SLUG);
+    const epoch = viewshedLoadEpoch;
+    viewshedPendingEpoch.set(DRAFT_VIEWSHED_SLUG, epoch);
     updatePinOverlays();
     syncCreateViewshedCheckbox();
     try {
-      const resp = await fetch(viewshedPrefetchUrl(lat, lon));
+      const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), { method: "POST" });
+      if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return;
       if (!resp.ok) return;
       const vs = await resp.json();
-      if (vs && vs.url && vs.coordinates) {
-        addViewshedLayer({ ...vs, slug: DRAFT_VIEWSHED_SLUG });
+      if (vs && vs.status === "ready") {
+        handleViewshedReady({ ...vs, slug: DRAFT_VIEWSHED_SLUG }, epoch);
       }
     } catch (_) {
       /* draft viewshed optional */
     } finally {
-      draftViewshedLoading = false;
-      viewshedLoading.delete(DRAFT_VIEWSHED_SLUG);
-      updatePinOverlays();
-      syncCreateViewshedCheckbox();
+      if (!viewshedPendingEpoch.has(DRAFT_VIEWSHED_SLUG)) {
+        draftViewshedLoading = false;
+        updatePinOverlays();
+        syncCreateViewshedCheckbox();
+      }
     }
   }
 
@@ -1606,28 +1662,23 @@
   }
 
   async function loadViewshedForSite(site, epoch) {
-    if (epoch != null && epoch !== viewshedLoadEpoch) {
-      viewshedLoading.delete(site.slug);
-      updatePinOverlays();
-      if (site.slug === selectedSlug) syncViewshedCheckbox();
-      return;
-    }
+    if (epoch != null && viewshedPendingEpoch.get(site.slug) !== epoch) return;
     try {
-      const resp = await fetch(viewshedMetaUrl(site.slug));
+      const resp = await fetch(viewshedWarmUrl(site.slug), { method: "POST" });
+      if (epoch != null && viewshedPendingEpoch.get(site.slug) !== epoch) return;
       if (!resp.ok) {
+        viewshedPendingEpoch.delete(site.slug);
         viewshedLoading.delete(site.slug);
         updatePinOverlays();
         if (site.slug === selectedSlug) syncViewshedCheckbox();
         return;
       }
       const vs = await resp.json();
-      if (vs && vs.url && vs.coordinates) addViewshedLayer(vs);
-      else {
-        viewshedLoading.delete(site.slug);
-        updatePinOverlays();
-        if (site.slug === selectedSlug) syncViewshedCheckbox();
+      if (vs && vs.status === "ready") {
+        handleViewshedReady(vs, epoch);
       }
     } catch (_) {
+      viewshedPendingEpoch.delete(site.slug);
       viewshedLoading.delete(site.slug);
       updatePinOverlays();
       if (site.slug === selectedSlug) syncViewshedCheckbox();
@@ -2039,6 +2090,7 @@
     addSiteLayers();
     addGoalLayers();
     wireMapInteractions();
+    connectProjectEvents();
     void loadSiteLinks();
     void loadGoalLinks();
     loadAllViewsheds();

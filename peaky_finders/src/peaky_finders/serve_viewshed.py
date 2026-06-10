@@ -342,6 +342,69 @@ def ensure_site_viewshed_png(
             return png.resolve()
 
 
+def site_viewshed_overlay_if_ready(
+    project_slug: str,
+    project_dir: Path,
+    site_slug: str,
+    site: SiteEntry,
+    *,
+    sim_overrides: ViewshedSimOverrides | None = None,
+) -> dict[str, object] | None:
+    """Return MapLibre overlay metadata when ``splat.png`` is cached; else ``None``."""
+    try:
+        preset = _load_viewshed_preset(project_dir)
+    except ServeViewshedError:
+        return None
+    if preset.land is None:
+        return None
+
+    workdir = resolve_site_viewshed_workdir(project_dir, preset, site, sim_overrides=sim_overrides)
+    digest = viewshed_workspace_digest(
+        request=_viewshed_request(preset, site, sim_overrides=sim_overrides)
+    )
+    png = workdir / "splat.png"
+    if not png.is_file() or not viewshed_request_digest_matches(
+        workdir, expected_workspace_digest=digest
+    ):
+        return None
+
+    bounds = load_viewshed_bounds(workdir)
+    if bounds is None:
+        return None
+    return {
+        "slug": site_slug,
+        "url": viewshed_png_api_path(project_slug, site_slug, sim_overrides=sim_overrides),
+        "coordinates": image_coordinates_from_bbox(bounds),
+    }
+
+
+def read_site_viewshed_png_if_ready(
+    project_dir: Path,
+    site: SiteEntry,
+    *,
+    site_slug: str,
+    sim_overrides: ViewshedSimOverrides | None = None,
+) -> Path | None:
+    """Return cached ``splat.png`` when digest matches; else ``None``."""
+    try:
+        preset = _load_viewshed_preset(project_dir)
+    except ServeViewshedError:
+        return None
+    if preset.land is None:
+        return None
+
+    workdir = resolve_site_viewshed_workdir(project_dir, preset, site, sim_overrides=sim_overrides)
+    digest = viewshed_workspace_digest(
+        request=_viewshed_request(preset, site, sim_overrides=sim_overrides)
+    )
+    png = workdir / "splat.png"
+    if png.is_file() and viewshed_request_digest_matches(
+        workdir, expected_workspace_digest=digest
+    ):
+        return png.resolve()
+    return None
+
+
 def ensure_site_viewshed_overlay(
     project_slug: str,
     project_dir: Path,

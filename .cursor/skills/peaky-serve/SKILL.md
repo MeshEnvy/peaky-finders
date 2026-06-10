@@ -38,7 +38,7 @@ Runtime roots: `PEAKY_HOME` (default `~/.peaky`), `PEAKY_PROJECTS` (default `<ho
 3. If cached + digest matches → return `splat.png`.
 4. Else → `run_viewshed_coverage` + `ensure_splat_raster_png` (same as CLI viewshed path).
 
-API: `GET /api/p/<slug>/viewsheds/<site>` (JSON bounds + PNG URL), `GET …/splat.png`.
+API: `GET /api/p/<slug>/events` (SSE hub); `POST /api/p/<slug>/viewsheds/<site>/warm` (queue generation, `202` or cached `200`); `GET …/viewsheds/<site>` and `GET …/splat.png` read cache only; `viewshed` SSE events carry `queued` / `running` / `ready` / `error` with overlay metadata on `ready`.
 
 ## Site links pattern
 

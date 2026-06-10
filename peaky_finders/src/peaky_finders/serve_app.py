@@ -6,7 +6,7 @@ import json
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
@@ -25,13 +25,15 @@ from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked
 from peaky_finders.serve_plss_mlrs import apply_plss_mlrs_from_loc_cache
 from peaky_finders.serve_site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
 from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset
+from peaky_finders.serve_events import get_serve_event_hub
 from peaky_finders.serve_viewshed import (
+    DRAFT_VIEWSHED_SLUG,
     ServeViewshedError,
-    ensure_coords_viewshed_overlay,
-    ensure_coords_viewshed_png,
-    ensure_site_viewshed_overlay,
-    ensure_site_viewshed_png,
+    _preview_site_at,
+    read_site_viewshed_png_if_ready,
+    site_viewshed_overlay_if_ready,
 )
+from peaky_finders.serve_viewshed_jobs import warm_coords_viewshed, warm_site_viewshed
 from peaky_finders.serve_viewshed_sim import ViewshedSimOverrides, parse_viewshed_sim_overrides
 from peaky_finders.sites_job import GoalEntry, Preset, SiteEntry, load_preset, load_preset_goals, load_preset_sites
 
@@ -72,6 +74,13 @@ _API_PROJECT_VIEWSHED_PREFETCH_RE = re.compile(
 )
 _API_PROJECT_VIEWSHED_PREFETCH_PNG_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/prefetch/splat\.png$"
+)
+_API_PROJECT_EVENTS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/events/?$")
+_API_PROJECT_VIEWSHED_WARM_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/warm/?$"
+)
+_API_PROJECT_VIEWSHED_PREFETCH_WARM_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/prefetch/warm/?$"
 )
 _API_PROJECT_VIEWSHED_META_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_VIEWSHED_PNG_RE = re.compile(
@@ -196,7 +205,8 @@ def _serialize_project_sites(sites: dict[str, SiteEntry]) -> list[dict[str, obje
 class ServeResponse:
     status: int
     headers: list[tuple[str, str]]
-    body: bytes
+    body: bytes = b""
+    body_iter: Iterable[bytes] | None = None
 
 
 class ServeDispatcher:
@@ -242,6 +252,19 @@ class ServeDispatcher:
             headers.extend(list(extra_headers.items()))
         headers.append(("Content-Length", str(len(body))))
         self._response = ServeResponse(status=status, headers=headers, body=body)
+
+    def _send_sse_stream(self, project_slug: str) -> None:
+        headers: list[tuple[str, str]] = [
+            ("Content-Type", "text/event-stream; charset=utf-8"),
+            ("Cache-Control", "no-cache"),
+            ("Connection", "keep-alive"),
+            ("X-Accel-Buffering", "no"),
+        ]
+        self._response = ServeResponse(
+            status=200,
+            headers=headers,
+            body_iter=get_serve_event_hub().subscribe(project_slug),
+        )
 
     def send_error(self, status: int) -> None:
         try:
@@ -486,6 +509,16 @@ class ServeDispatcher:
             self._send_bytes(payload, "application/json")
             return
 
+        events_match = _API_PROJECT_EVENTS_RE.match(path)
+        if events_match:
+            slug = events_match.group(1)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            self._send_sse_stream(slug)
+            return
+
         viewshed_prefetch_png_match = _API_PROJECT_VIEWSHED_PREFETCH_PNG_RE.match(path)
         if viewshed_prefetch_png_match:
             slug = viewshed_prefetch_png_match.group(1)
@@ -500,19 +533,18 @@ class ServeDispatcher:
                 payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=422)
                 return
-            verbose = bool(self.verbose)
-            try:
-                png_path = ensure_coords_viewshed_png(
-                    project_dir,
-                    lat,
-                    lon,
-                    sim_overrides=sim_overrides,
-                    verbose=verbose,
-                )
-                body = png_path.read_bytes()
-            except ServeViewshedError:
-                self.send_error(503)
+            site = _preview_site_at(lat, lon)
+            png_path = read_site_viewshed_png_if_ready(
+                project_dir,
+                site,
+                site_slug=DRAFT_VIEWSHED_SLUG,
+                sim_overrides=sim_overrides,
+            )
+            if png_path is None:
+                self.send_error(404)
                 return
+            try:
+                body = png_path.read_bytes()
             except OSError:
                 self.send_error(503)
                 return
@@ -535,21 +567,20 @@ class ServeDispatcher:
                 ).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=422)
                 return
-            verbose = bool(self.verbose)
-            try:
-                overlay = ensure_coords_viewshed_overlay(
-                    slug,
-                    project_dir,
-                    lat,
-                    lon,
-                    sim_overrides=sim_overrides,
-                    verbose=verbose,
-                )
-            except ServeViewshedError as e:
-                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
-                self._send_bytes(payload, "application/json", status=503)
+            site = _preview_site_at(lat, lon)
+            overlay = site_viewshed_overlay_if_ready(
+                slug,
+                project_dir,
+                DRAFT_VIEWSHED_SLUG,
+                site,
+                sim_overrides=sim_overrides,
+            )
+            if overlay is None:
+                self.send_error(404)
                 return
-            payload = json.dumps({"project": slug, **overlay}).encode("utf-8")
+            payload = json.dumps({"project": slug, **overlay, "lat": lat, "lon": lon}).encode(
+                "utf-8"
+            )
             self._send_bytes(payload, "application/json")
             return
 
@@ -580,21 +611,15 @@ class ServeDispatcher:
                 ).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=422)
                 return
-            verbose = bool(self.verbose)
-            try:
-                overlay = ensure_site_viewshed_overlay(
-                    slug,
-                    project_dir,
-                    site_slug,
-                    site_map[site_slug],
-                    sim_overrides=sim_overrides,
-                    verbose=verbose,
-                )
-            except ServeViewshedError as e:
-                payload = json.dumps(
-                    {"slug": slug, "site": site_slug, "error": str(e)}
-                ).encode("utf-8")
-                self._send_bytes(payload, "application/json", status=503)
+            overlay = site_viewshed_overlay_if_ready(
+                slug,
+                project_dir,
+                site_slug,
+                site_map[site_slug],
+                sim_overrides=sim_overrides,
+            )
+            if overlay is None:
+                self.send_error(404)
                 return
             payload = json.dumps({"project": slug, **overlay}).encode("utf-8")
             self._send_bytes(payload, "application/json")
@@ -624,19 +649,17 @@ class ServeDispatcher:
                 ).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=422)
                 return
-            verbose = bool(self.verbose)
-            try:
-                png_path = ensure_site_viewshed_png(
-                    project_dir,
-                    site_slug,
-                    site_map[site_slug],
-                    sim_overrides=sim_overrides,
-                    verbose=verbose,
-                )
-                body = png_path.read_bytes()
-            except ServeViewshedError:
-                self.send_error(503)
+            png_path = read_site_viewshed_png_if_ready(
+                project_dir,
+                site_map[site_slug],
+                site_slug=site_slug,
+                sim_overrides=sim_overrides,
+            )
+            if png_path is None:
+                self.send_error(404)
                 return
+            try:
+                body = png_path.read_bytes()
             except OSError:
                 self.send_error(503)
                 return
@@ -693,6 +716,87 @@ class ServeDispatcher:
     def _do_post(self, parsed: ParseResult, body: bytes) -> None:
         parsed_url = parsed
         path = parsed_url.path
+
+        viewshed_warm_match = _API_PROJECT_VIEWSHED_WARM_RE.match(path)
+        if viewshed_warm_match:
+            slug = viewshed_warm_match.group(1)
+            site_slug = viewshed_warm_match.group(2)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            try:
+                site_map = _load_project_sites(project_dir)
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": slug, "site": site_slug, "error": str(e)}).encode(
+                    "utf-8"
+                )
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if site_slug not in site_map:
+                self.send_error(404)
+                return
+            try:
+                sim_overrides = _parse_viewshed_sim_query(parsed_url.query)
+            except ValueError as e:
+                payload = json.dumps(
+                    {"slug": slug, "site": site_slug, "error": str(e)}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            verbose = bool(self.verbose)
+            try:
+                result = warm_site_viewshed(
+                    slug,
+                    project_dir,
+                    site_slug,
+                    site_map[site_slug],
+                    sim_overrides=sim_overrides,
+                    verbose=verbose,
+                )
+            except ServeViewshedError as e:
+                payload = json.dumps(
+                    {"slug": slug, "site": site_slug, "error": str(e)}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=503)
+                return
+            status = 200 if result.get("status") == "ready" else 202
+            payload = json.dumps(result).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=status)
+            return
+
+        viewshed_prefetch_warm_match = _API_PROJECT_VIEWSHED_PREFETCH_WARM_RE.match(path)
+        if viewshed_prefetch_warm_match:
+            slug = viewshed_prefetch_warm_match.group(1)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            try:
+                lat, lon = _parse_lat_lon_query(parsed_url.query)
+                sim_overrides = _parse_viewshed_sim_query(parsed_url.query)
+            except ValueError as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            verbose = bool(self.verbose)
+            try:
+                result = warm_coords_viewshed(
+                    slug,
+                    project_dir,
+                    lat,
+                    lon,
+                    sim_overrides=sim_overrides,
+                    verbose=verbose,
+                )
+            except ServeViewshedError as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=503)
+                return
+            status = 200 if result.get("status") == "ready" else 202
+            payload = json.dumps(result).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=status)
+            return
 
         goals_match = _API_PROJECT_GOALS_RE.match(path)
         if goals_match:
@@ -971,6 +1075,10 @@ def make_serve_wsgi_app(
         status_line = f"{response.status} {phrase}"
 
         headers = list(response.headers)
+        if response.body_iter is not None:
+            start_response(status_line, headers)
+            return response.body_iter
+
         if not any(k.lower() == "content-length" for k, _ in headers):
             headers.append(("Content-Length", str(len(response.body))))
         start_response(status_line, headers)

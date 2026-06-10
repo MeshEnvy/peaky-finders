@@ -147,20 +147,19 @@ def test_serve_viewshed_png_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     png_bytes = b"\x89PNG\r\n\x1a\nfake"
 
-    def _fake_ensure(
+    def _fake_read(
         project_dir: Path,
-        site_slug: str,
         site,
         *,
+        site_slug: str,
         sim_overrides=None,
-        verbose: bool = False,
     ) -> Path:
-        del project_dir, site_slug, site, sim_overrides, verbose
+        del project_dir, site, site_slug, sim_overrides
         out = tmp_path / "cached.png"
         out.write_bytes(png_bytes)
         return out
 
-    monkeypatch.setattr("peaky_finders.serve_app.ensure_site_viewshed_png", _fake_ensure)
+    monkeypatch.setattr("peaky_finders.serve_app.read_site_viewshed_png_if_ready", _fake_read)
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
@@ -181,23 +180,25 @@ def test_serve_viewshed_meta_endpoint(tmp_path: Path, monkeypatch: pytest.Monkey
     projects_dir.mkdir()
     scaffold_project("mesh-demo", parent=projects_dir)
 
-    def _fake_overlay(
+    def _fake_overlay_if_ready(
         project_slug: str,
         project_dir: Path,
         site_slug: str,
         site,
         *,
         sim_overrides=None,
-        verbose: bool = False,
     ) -> dict[str, object]:
-        del project_dir, site, sim_overrides, verbose
+        del project_dir, site, sim_overrides
         return {
             "slug": site_slug,
             "url": viewshed_png_api_path(project_slug, site_slug),
             "coordinates": [[-115.9, 39.1], [-115.7, 39.1], [-115.7, 39.0], [-115.9, 39.0]],
         }
 
-    monkeypatch.setattr("peaky_finders.serve_app.ensure_site_viewshed_overlay", _fake_overlay)
+    monkeypatch.setattr(
+        "peaky_finders.serve_app.site_viewshed_overlay_if_ready",
+        _fake_overlay_if_ready,
+    )
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
@@ -237,8 +238,9 @@ def test_project_page_loads_viewsheds_on_demand(tmp_path: Path) -> None:
         assert js_resp.status == 200
         assert "loadAllViewsheds" in js_body
         assert "scheduleViewshedLoad" in js_body
-        assert "VIEWSHED_LOAD_MAX_CONCURRENT" in js_body
-        assert "viewshedMetaUrl" in js_body
+        assert "connectProjectEvents" in js_body
+        assert "reconcilePendingViewsheds" in js_body
+        assert "viewshedWarmUrl" in js_body
         assert "setViewshedVisible" in js_body
         assert "viewshed-sim-modal" in body
         assert "viewshed-sim-open" in body
@@ -317,28 +319,27 @@ def test_viewshed_prefetch_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     projects_dir.mkdir()
     scaffold_project("demo", parent=projects_dir)
 
-    calls: list[tuple[float, float]] = []
-
-    def _fake_overlay(
+    def _fake_overlay_if_ready(
         project_slug: str,
         project_dir: Path,
-        lat: float,
-        lon: float,
+        site_slug: str,
+        site,
         *,
         sim_overrides=None,
-        verbose: bool = False,
     ) -> dict[str, object]:
-        del project_dir, sim_overrides, verbose
-        calls.append((lat, lon))
+        del project_dir, sim_overrides
+        lat = float(site.lat)
+        lon = float(site.lon)
         return {
-            "slug": "_draft",
+            "slug": site_slug,
             "url": f"/api/p/{project_slug}/viewsheds/prefetch/splat.png?lat={lat}&lon={lon}",
             "coordinates": [[-119.5, 39.7], [-119.3, 39.7], [-119.3, 39.5], [-119.5, 39.5]],
-            "lat": lat,
-            "lon": lon,
         }
 
-    monkeypatch.setattr("peaky_finders.serve_app.ensure_coords_viewshed_overlay", _fake_overlay)
+    monkeypatch.setattr(
+        "peaky_finders.serve_app.site_viewshed_overlay_if_ready",
+        _fake_overlay_if_ready,
+    )
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
@@ -353,7 +354,39 @@ def test_viewshed_prefetch_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         assert payload["lon"] == -119.4
         assert payload["url"] == "/api/p/demo/viewsheds/prefetch/splat.png?lat=39.6&lon=-119.4"
         assert len(payload["coordinates"]) == 4
-        assert calls == [(39.6, -119.4)]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_viewshed_warm_post_queues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+
+    def _fake_warm(
+        project_slug: str,
+        project_dir: Path,
+        site_slug: str,
+        site,
+        *,
+        sim_overrides=None,
+        verbose: bool = False,
+    ) -> dict[str, object]:
+        del project_dir, site, sim_overrides, verbose
+        return {"project": project_slug, "slug": site_slug, "status": "queued"}
+
+    monkeypatch.setattr("peaky_finders.serve_app.warm_site_viewshed", _fake_warm)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("POST", "/api/p/demo/viewsheds/hub/warm")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 202
+        assert payload["status"] == "queued"
+        assert payload["slug"] == "hub"
     finally:
         server.shutdown()
         server.server_close()
@@ -366,20 +399,19 @@ def test_viewshed_prefetch_png_endpoint(tmp_path: Path, monkeypatch: pytest.Monk
 
     png_bytes = b"\x89PNG\r\n\x1a\ndraft"
 
-    def _fake_png(
+    def _fake_read(
         project_dir: Path,
-        lat: float,
-        lon: float,
+        site,
         *,
+        site_slug: str,
         sim_overrides=None,
-        verbose: bool = False,
     ) -> Path:
-        del project_dir, lat, lon, sim_overrides, verbose
+        del project_dir, site, site_slug, sim_overrides
         out = tmp_path / "draft.png"
         out.write_bytes(png_bytes)
         return out
 
-    monkeypatch.setattr("peaky_finders.serve_app.ensure_coords_viewshed_png", _fake_png)
+    monkeypatch.setattr("peaky_finders.serve_app.read_site_viewshed_png_if_ready", _fake_read)
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
