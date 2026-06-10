@@ -1,17 +1,17 @@
 ---
-description: Run tests via ./peaky-test in Docker; never host poetry/pytest against peaky_finders/.venv
+description: Run tests via ./peaky test in Docker; never host poetry/pytest against peaky_finders/.venv
 alwaysApply: true
 ---
 
-# Tests via peaky-test
+# Tests via peaky test
 
 Python tests for `peaky_finders` run **inside the `peaky:dev` Docker image**, not on the macOS host.
 
 ## Do this
 
-- Run tests with **`./peaky-test`** from the repo root (same image/build knobs as `./peaky`: `--build`, `PEAKY_DEV_IMAGE`, `PEAKY_CACHE_DIR`).
-- Pass pytest args through: `./peaky-test tests/test_mesh_connectivity.py`, `./peaky-test -k foo`, `./peaky-test --build`.
-- When verifying changes, use `./peaky-test` (or a targeted path) instead of `poetry run pytest` on the host.
+- Run tests with **`./peaky test`** from the repo root (same image/build knobs as other `./peaky` commands: `--build`, `PEAKY_DEV_IMAGE`, `PEAKY_CACHE_DIR`).
+- Pass pytest args through: `./peaky test tests/test_mesh_connectivity.py`, `./peaky test -k foo`, `./peaky test --build`.
+- When verifying changes, use `./peaky test` (or a targeted path) instead of `poetry run pytest` on the host.
 
 ## Avoid
 
@@ -20,4 +20,4 @@ Python tests for `peaky_finders` run **inside the `peaky:dev` Docker image**, no
 
 ## Why
 
-`./peaky` bind-mounts `peaky_finders/` into the container. The in-project `.venv` must stay **Linux-only**. `./peaky-test` keeps test runs on the same contract as `./peaky`.
+`./peaky` bind-mounts `peaky_finders/` into the container. The in-project `.venv` must stay **Linux-only**. `./peaky test` uses the same Docker contract as `./peaky build`, `./peaky serve`, etc.

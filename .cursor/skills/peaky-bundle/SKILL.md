@@ -46,7 +46,7 @@ GDB paths resolve under `<preset-dir>/<land.inputs_root>` unless absolute.
 
 - Global mirror: `SPLAT_CACHE` or `<peaky_home>/splat_cache`
 - Fetches via `SKADI_HTTP_POOL`; parallel prefetch with worker caps
-- `./peaky` / `./peaky-test` mount host cache at `/.peaky/splat_cache`
+- `./peaky` mounts host cache at `/.peaky/splat_cache`
 
 ## HTTP
 

@@ -176,7 +176,7 @@ cd projects/my-region
 ../../peaky build --verbose
 ```
 
-Run tests from the repo root with [`./peaky-test`](peaky-test) — do not run `poetry install` or `pytest` on the macOS host inside `peaky_finders/` (the bind-mounted `.venv` must stay Linux-only).
+Run tests from the repo root with `./peaky test` — do not run `poetry install` or `pytest` on the macOS host inside `peaky_finders/` (the bind-mounted `.venv` must stay Linux-only).
 
 Build the production image locally:
 
@@ -188,7 +188,7 @@ docker run --rm -v "$HOME/.peaky:/.peaky" -e PEAKY_HOME=/.peaky \
 
 | Variable | Default | Role (dev) |
 |----------|---------|------------|
-| `PEAKY_CACHE_DIR` | `~/.peaky/splat_cache` | Host Skadi cache mount for `./peaky` / `./peaky-test` |
+| `PEAKY_CACHE_DIR` | `~/.peaky/splat_cache` | Host Skadi cache mount for `./peaky` |
 | `PEAKY_DEV_IMAGE` | `peaky:dev` | Dev Docker image tag |
 | `PEAKY_HOME` | repo root | Runtime home in dev container |
 
