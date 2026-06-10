@@ -23,7 +23,8 @@ Do not fork business logic in HTTP handlers. Add or call helpers in `serve_*.py`
 
 | Module | Role |
 |--------|------|
-| `serve_cli.py` | stdlib `HTTPServer`, pages, API routes, MapLibre project map |
+| `serve_cli.py` | Waitress WSGI runner, reload supervisor, CLI flags |
+| `serve_app.py` | WSGI route dispatcher (pages + API) |
 | `serve_viewshed.py` | On-demand RF viewshed PNG + MapLibre metadata |
 | `serve_links.py` | On-demand mutual site links (`link_mutual_viable` / `link_mutual_batch`) |
 | `new_cli.py` | Project discovery/scaffold (shared with CLI `peaky new`) |
