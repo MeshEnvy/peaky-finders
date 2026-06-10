@@ -29,7 +29,7 @@ When two designs compete, pick the **simpler present** and break callers — doc
 | Interface | **CLI** from project dir (`config.yaml` in cwd); **`peaky serve`** progressive web UI (on-demand over shared pipeline) |
 | RF engine | `splatter` submodule (PyO3 Fresnel/FSPL) |
 | Build | Incremental preset DAG (`peaky build`) |
-| Dev/test | Docker — `./peaky`, `./peaky-test` |
+| Dev/test | Docker — `./peaky` (`test`, `serve`, `build`, …) |
 | Reference preset | `projects/nevada/config.yaml` |
 
 ## Domain model: sites vs goals
@@ -140,8 +140,7 @@ projects/          # Job dirs (gitignored except config.yaml)
   nevada/          # Reference project
 docker/            # Entrypoint script
 Dockerfile         # dev + latest targets (GDAL, Poetry, splatter)
-peaky              # Dev runner: Docker + bind-mount project dir
-peaky-test         # Pytest runner in same image
+peaky              # Dev Docker runner (`test`, `serve`, `build`, …)
 ```
 
 ## Artifact paths
@@ -165,7 +164,7 @@ Helpers: `resolved_preset_build_dir`, `resolved_bundle_dir`, `resolved_preset_cl
 | `PEAKY_SHARE` | Optional shared tooling root |
 | `SPLAT_CACHE` | Global Skadi tile mirror (default: `<peaky_home>/splat_cache`) |
 | `PEAKY_DEV_IMAGE` | Docker image tag (default: `peaky:dev`) |
-| `PEAKY_CACHE_DIR` | Host Skadi cache mount for `./peaky` / `./peaky-test` |
+| `PEAKY_CACHE_DIR` | Host Skadi cache mount for `./peaky` |
 
 ## External HTTP
 
@@ -191,7 +190,7 @@ All outbound fetches throttled via `http_pool.py`:
 - **MEMORY first**: read before work, update before done (`.cursor/rules/memory-maintenance.mdc`)
 - **Greenfield**: break freely to simplify (`.cursor/rules/greenfield-no-backcompat.mdc`)
 - Preset YAML first for tunables (`.cursor/rules/preset-yaml-first.mdc`)
-- Tests via `./peaky-test` only (`.cursor/rules/peaky-test.mdc`)
+- Tests via `./peaky test` only (`.cursor/rules/peaky-test.mdc`)
 - Parallelism designed in: `-j`, preset `max_workers`, `ThreadPoolExecutor` waves
 - Verbose mode: start/progress/end operation tracing (`--verbose`)
 
@@ -208,7 +207,7 @@ All outbound fetches throttled via `http_pool.py`:
 | `preset-yaml-writes` | Locked ruamel round-trip writes |
 | `http-fetch-pool` | Outbound HTTP throttling |
 | `build-dag` | Incremental build graph |
-| `peaky-test` | Docker test contract |
+| `peaky-test` | `./peaky test` Docker contract |
 | `parallel-design` / `parallel-execution` | Multi-core patterns |
 | `verbose-logging` | `--verbose` lifecycle |
 | `commit-style` | Points to skill `commit` on commit requests |
@@ -223,6 +222,6 @@ All outbound fetches throttled via `http_pool.py`:
 | `peaky-preset` | `config.yaml`, `Preset`, locked writes |
 | `peaky-bundle` | Clips, eligible land, Skadi DEM |
 | `peaky-build` | Build DAG, staleness, granular targets |
-| `peaky-dev` | `./peaky`, `./peaky-test`, Docker |
+| `peaky-dev` | `./peaky`, Docker |
 | `peaky-serve` | `peaky serve` on-demand web over shared pipeline |
 | `commit` | Scoped session commits (`/commit`); Conventional Commits |

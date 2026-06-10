@@ -19,7 +19,7 @@ description: >-
 | RF engine | `splatter` submodule (PyO3, Fresnel/FSPL) |
 | Config | One preset YAML per project (`projects/<slug>/config.yaml`) |
 | Build | Incremental DAG — bundle → viewsheds → mesh → KMZ |
-| Dev/test | Docker — `./peaky`, `./peaky-test` |
+| Dev/test | Docker — `./peaky` (`test`, `serve`, `build`, …) |
 
 ## Domain model (sites vs goals)
 
