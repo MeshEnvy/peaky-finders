@@ -257,13 +257,13 @@ def project_html(
           <div class="coord-input-row d-flex gap-1 align-items-center mb-1">
             <label class="small text-muted mb-0" for="site-panel-edit-lat">Lat</label>
             <input id="site-panel-edit-lat" type="text" class="form-control form-control-sm font-monospace coord-field" inputmode="decimal" autocomplete="off">
-            <button type="button" id="site-panel-edit-reset-coords" class="btn btn-sm btn-outline-secondary coord-action-btn" title="Reset coordinates">↺</button>
             <button type="button" id="site-panel-edit-copy-coords" class="btn btn-sm btn-outline-secondary coord-action-btn" title="Copy lat, lon">⎘</button>
           </div>
           <div class="coord-input-row d-flex gap-1 align-items-center">
             <label class="small text-muted mb-0" for="site-panel-edit-lon">Lon</label>
             <input id="site-panel-edit-lon" type="text" class="form-control form-control-sm font-monospace coord-field" inputmode="decimal" autocomplete="off">
           </div>
+          <ul class="edit-coord-history list-unstyled mb-0 mt-2" id="site-panel-edit-coord-history" hidden></ul>
         </div>
         <div class="site-panel__section mb-2" id="site-panel-edit-plss-section" hidden>
           <span class="site-panel__label small text-muted text-uppercase">PLSS</span>
