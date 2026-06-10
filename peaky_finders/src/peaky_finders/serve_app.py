@@ -22,7 +22,7 @@ from peaky_finders.serve_goal_links import (
 from peaky_finders.serve_goals import append_goal_to_preset, delete_goal_from_preset, update_goal_in_preset
 from peaky_finders.serve_html import landing_html, project_error_html, project_html
 from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked, load_project_site_links
-from peaky_finders.serve_plss_mlrs import apply_plss_mlrs_from_loc_cache
+from peaky_finders.serve_plss import apply_plss_from_loc_cache
 from peaky_finders.serve_site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
 from peaky_finders.serve_simulation import update_viewshed_sim_to_preset
 from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset, update_site_in_preset
@@ -175,7 +175,7 @@ def _serialize_project_goals(goals: dict[str, GoalEntry]) -> list[dict[str, obje
         }
         if entry.elevation_m is not None:
             row["elevation_m"] = entry.elevation_m
-        for key in ("description", "plss", "mlrs", "rationale"):
+        for key in ("description", "plss", "rationale"):
             val = getattr(entry, key)
             if val and str(val).strip():
                 row[key] = str(val).strip()
@@ -195,7 +195,7 @@ def _serialize_project_sites(sites: dict[str, SiteEntry]) -> list[dict[str, obje
         }
         if entry.elevation_m is not None:
             row["elevation_m"] = entry.elevation_m
-        for key in ("description", "plss", "mlrs", "rationale"):
+        for key in ("description", "plss", "rationale"):
             val = getattr(entry, key)
             if val and str(val).strip():
                 row[key] = str(val).strip()
@@ -895,7 +895,7 @@ class ServeDispatcher:
                     lat=lat,
                     lon=lon,
                 )
-                apply_plss_mlrs_from_loc_cache(preset_path, goal_slug, lat, lon)
+                apply_plss_from_loc_cache(preset_path, goal_slug, lat, lon)
                 goal_map = _load_project_goals(project_dir)
                 goal_entry = goal_map[goal_slug]
                 goal_row = _serialize_project_goals({goal_slug: goal_entry})[0]
@@ -953,7 +953,7 @@ class ServeDispatcher:
                     lat=lat,
                     lon=lon,
                 )
-                apply_plss_mlrs_from_loc_cache(preset_path, site_slug, lat, lon)
+                apply_plss_from_loc_cache(preset_path, site_slug, lat, lon)
                 site_map = _load_project_sites(project_dir)
                 site_entry = site_map[site_slug]
                 site_row = _serialize_project_sites({site_slug: site_entry})[0]
@@ -1053,7 +1053,7 @@ class ServeDispatcher:
                     site_type=site_type_str,
                 )
                 if lat is not None and lon is not None:
-                    apply_plss_mlrs_from_loc_cache(preset_path, updated_slug, lat, lon)
+                    apply_plss_from_loc_cache(preset_path, updated_slug, lat, lon)
                 site_map = _load_project_sites(project_dir)
                 site_entry = site_map[updated_slug]
                 site_row = _serialize_project_sites({updated_slug: site_entry})[0]
@@ -1121,7 +1121,7 @@ class ServeDispatcher:
                     promote_site_type=promote_site_type,
                 )
                 if lat is not None and lon is not None:
-                    apply_plss_mlrs_from_loc_cache(preset_path, updated_slug, lat, lon)
+                    apply_plss_from_loc_cache(preset_path, updated_slug, lat, lon)
                 if promote_site_type is not None:
                     site_map = _load_project_sites(project_dir)
                     site_entry = site_map[updated_slug]

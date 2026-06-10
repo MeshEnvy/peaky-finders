@@ -16,7 +16,7 @@ import pytest
 
 from fixture_paths import SAMPLE_PROJECT_CONFIG
 from peaky_finders.new_cli import scaffold_project
-from peaky_finders.plss_mlrs_fetch import loc_stamp, write_plss_mlrs_loc_cache
+from peaky_finders.plss_fetch import loc_stamp, write_plss_loc_cache
 from peaky_finders.serve_app import _serialize_project_sites, make_serve_wsgi_app
 from peaky_finders.serve_cli import (
     SERVE_RELOAD_CHILD_ENV,
@@ -413,15 +413,13 @@ def test_serialize_project_sites_includes_metadata() -> None:
             name="Peak",
             loc=(39.5, -119.5),
             elevation_m=1713.0,
-            plss="NV; T.30N R.23E",
-            mlrs="NV210300N0230E0SN360",
+            plss="NV210300N0230E0SN360ASENW",
             rationale="Approved site",
         ),
     }
     row = _serialize_project_sites(sites)[0]
     assert row["elevation_m"] == 1713.0
-    assert row["plss"] == "NV; T.30N R.23E"
-    assert row["mlrs"] == "NV210300N0230E0SN360"
+    assert row["plss"] == "NV210300N0230E0SN360ASENW"
     assert row["rationale"] == "Approved site"
     assert "description" not in row
 
@@ -437,8 +435,7 @@ sites:
     name: Peak
     loc: [39.5, -119.5]
     elevation_m: 1713.0
-    plss: NV; T.30N R.23E
-    mlrs: NV210300N0230E0SN360
+    plss: NV210300N0230E0SN360ASENW
     rationale: Approved site
 links: []
 suggest:
@@ -460,7 +457,7 @@ suggest:
         assert resp.status == 200
         site = payload["sites"][0]
         assert site["elevation_m"] == 1713.0
-        assert site["plss"] == "NV; T.30N R.23E"
+        assert site["plss"] == "NV210300N0230E0SN360ASENW"
     finally:
         server.shutdown()
         server.server_close()
@@ -512,8 +509,8 @@ def test_api_sites_prefetch(tmp_path: Path) -> None:
     try:
         with (
             patch(
-                "peaky_finders.serve_plss_mlrs.plss_mlrs_for_point",
-                return_value=("NV; Sec. 1", "NV123"),
+                "peaky_finders.serve_plss.plss_for_point",
+                return_value="NV210300N0230E0SN360ASENW",
             ),
             patch("peaky_finders.serve_links.splatter_session"),
             patch("peaky_finders.serve_links.ensure_dem_for_points"),
@@ -529,8 +526,7 @@ def test_api_sites_prefetch(tmp_path: Path) -> None:
 
         assert resp.status == 200
         assert payload["project"] == "sample"
-        assert payload["plss"] == "NV; Sec. 1"
-        assert payload["mlrs"] == "NV123"
+        assert payload["plss"] == "NV210300N0230E0SN360ASENW"
         assert isinstance(payload["links"], list)
         assert payload["links_geojson"]["type"] == "FeatureCollection"
         assert isinstance(payload["links_geojson"]["features"], list)
@@ -539,16 +535,16 @@ def test_api_sites_prefetch(tmp_path: Path) -> None:
         server.server_close()
 
 
-def test_post_project_site_applies_cached_plss_mlrs(tmp_path: Path) -> None:
+def test_post_project_site_applies_cached_plss(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
     project_dir = scaffold_project("mesh-demo", parent=projects_dir)
     preset_path = project_dir / "config.yaml"
     lat, lon = 39.6, -119.4
     cache_base = resolved_preset_build_dir(preset_path)
-    write_plss_mlrs_loc_cache(
+    write_plss_loc_cache(
         cache_base,
-        {loc_stamp(lat, lon): {"plss": "NV; Sec. 1", "mlrs": "NV123"}},
+        {loc_stamp(lat, lon): {"plss": "NV210300N0230E0SN360ASENW"}},
     )
 
     server, host, port, _thread = _start_server(projects_dir)
@@ -564,8 +560,7 @@ def test_post_project_site_applies_cached_plss_mlrs(tmp_path: Path) -> None:
         resp = conn.getresponse()
         payload = json.loads(resp.read().decode("utf-8"))
         assert resp.status == 201
-        assert payload["site"]["plss"] == "NV; Sec. 1"
-        assert payload["site"]["mlrs"] == "NV123"
+        assert payload["site"]["plss"] == "NV210300N0230E0SN360ASENW"
     finally:
         server.shutdown()
         server.server_close()

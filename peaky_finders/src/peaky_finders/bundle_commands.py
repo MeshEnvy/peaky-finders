@@ -34,7 +34,7 @@ from peaky_finders.bundle_clips import (
     plan_reference_entries,
     write_bundle_resolve,
 )
-from peaky_finders.plss_mlrs_fetch import refresh_plss_mlrs_for_bundle
+from peaky_finders.plss_fetch import refresh_plss_for_bundle
 from peaky_finders.skadi_dem import (
     fetch_skadi_hgt_tile_always,
     iter_skadi_tile_names_for_wgs84_bounds,
@@ -222,13 +222,13 @@ def run_bundle_resolve(preset_path: Path) -> int:
 def run_bundle_plss(preset_path: Path) -> int:
     preset_path_r = Path(preset_path).expanduser().resolve()
     preset = load_preset(preset_path_r)
-    refresh_plss_mlrs_for_bundle(
+    refresh_plss_for_bundle(
         preset_path=preset_path_r,
         cache_base=resolved_preset_build_dir(preset_path_r),
         preset=preset,
     )
     preset = load_preset(preset_path_r)
-    print("bundle plss: preset PLSS/mlrs refreshed under build/", flush=True)
+    print("bundle plss: preset PLSS refreshed under build/", flush=True)
     return 0
 
 

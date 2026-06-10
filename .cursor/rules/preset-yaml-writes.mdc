@@ -1,6 +1,6 @@
 ---
 description: Locked ruamel round-trip writes for preset config.yaml mutations
-globs: peaky_finders/src/peaky_finders/{sites_job,site_suggestions/preset_io,plss_mlrs_fetch}.py
+globs: peaky_finders/src/peaky_finders/{sites_job,site_suggestions/preset_io,plss_fetch}.py
 alwaysApply: false
 ---
 
@@ -18,7 +18,7 @@ Preset files are **`config.yaml`** under `projects/<slug>/`. Mutations must pres
 ## Callers
 
 - `site_suggestions/preset_io.py` — `build --suggest` append/remove sites
-- `plss_mlrs_fetch.py` — PLSS/MLRS string enrichment on sites
+- `plss_fetch.py` — CadNSDI SECDIVID enrichment on sites/goals
 
 ## Avoid
 

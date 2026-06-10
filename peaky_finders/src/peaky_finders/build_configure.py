@@ -43,7 +43,7 @@ from peaky_finders.mesh_pairwise_store import (
 )
 from peaky_finders.path_labels import mesh_depth_network_rel_dir
 from peaky_finders.preset_stamps import list_stamp_sections
-from peaky_finders.plss_mlrs_fetch import plss_mlrs_loc_cache_path
+from peaky_finders.plss_fetch import plss_loc_cache_path
 from peaky_finders.preset_mapping import preset_to_request
 from peaky_finders.sites_job import (
     Preset,
@@ -182,7 +182,7 @@ def configure_preset_build(
     mesh_pairwise_root = resolved_mesh_pairwise_dir(bundles_root)
     mesh_depth_root = resolved_mesh_depth_dir(bundles_root)
     eligible_union_root = resolved_eligible_union_build_dir(bundles_root)
-    plss_cache = plss_mlrs_loc_cache_path(preset_build_root)
+    plss_cache = plss_loc_cache_path(preset_build_root)
 
     slug = resolved_preset_slug(resolved_preset)
     kmz = resolved_aggregate_kmz_path(resolved_preset)

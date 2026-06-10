@@ -1,6 +1,6 @@
 ---
 description: Route outbound HTTP through HttpPool throttling in fetch modules
-globs: peaky_finders/src/peaky_finders/{http_pool,skadi_dem,plss_mlrs_fetch,webmap_arcgis}.py
+globs: peaky_finders/src/peaky_finders/{http_pool,skadi_dem,plss_fetch,webmap_arcgis}.py
 alwaysApply: false
 ---
 

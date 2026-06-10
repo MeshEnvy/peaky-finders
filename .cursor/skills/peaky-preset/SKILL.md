@@ -3,7 +3,7 @@ name: peaky-preset
 description: >-
   Peaky preset YAML: Preset model, config.yaml schema, path resolution,
   locked ruamel writes, site suggest append/remove. Use when editing presets,
-  extending Preset fields, build --suggest, or PLSS/MLRS enrichment.
+  extending Preset fields, build --suggest, or PLSS enrichment.
 ---
 
 # Peaky preset
@@ -67,7 +67,7 @@ resolved_skadi_mirror_dir()              # SPLAT_CACHE / ~/.peaky/splat_cache
 - `update_preset_yaml_tree(path, mutator)` — read, mutate, validate, atomic write
 - `preset_yaml_transaction(path)` — hold lock for multi-step R-M-W
 - Site suggest: `site_suggestions/preset_io.py` (append/remove suggested sites)
-- PLSS enrichment: `plss_mlrs_fetch.py`
+- PLSS enrichment: `plss_fetch.py`
 
 Never bypass with direct `yaml.dump`.
 

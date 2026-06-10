@@ -7,7 +7,7 @@ from pathlib import Path
 
 from peaky_finders.build_configure import BuildConfigurePlan, PlannedClipLayer, PlannedViewshedWorkspace
 from peaky_finders.build_stamp_inputs import land_stamp_section_for_clip_role, stamp_input_paths
-from peaky_finders.plss_mlrs_fetch import plss_bundle_key_path
+from peaky_finders.plss_fetch import plss_bundle_key_path
 from peaky_finders.preset_stamps import stamp_path
 from peaky_finders.sites_job import Preset
 

@@ -30,7 +30,7 @@ DAG nodes in `build_graph.py` mirror these; keep granular commands consistent wi
 | `bundle_clips.py` | Clip GDB layers, build composites, eligible workspace |
 | `bundle_build.py` | Eligible land-use GDF, bundle resolve, DEM bulk prefetch |
 | `skadi_dem.py` | AWS Skadi SRTM tile fetch + mirror |
-| `plss_mlrs_fetch.py` | BLM CadNSDI PLSS/MLRS lookup (via `CADNSDI_HTTP_POOL`) |
+| `plss_fetch.py` | BLM CadNSDI SECDIVID lookup (via `CADNSDI_HTTP_POOL`) |
 | `webmap_arcgis.py` | ArcGIS REST helpers (via `ARCGIS_HTTP_POOL`) |
 
 ## Data flow

@@ -51,7 +51,7 @@ from peaky_finders.mesh_commands import (
 from peaky_finders.mesh_depth_store import mesh_depth_set_update_kind
 from peaky_finders.mesh_pairwise_store import pairwise_complete_digest_matches
 from peaky_finders.preset_mapping import preset_to_request
-from peaky_finders.plss_mlrs_fetch import plss_bundle_build_stale
+from peaky_finders.plss_fetch import plss_bundle_build_stale
 from peaky_finders.preset_stamps import ensure_stamp, stamp_file_is_current, stamp_path
 from peaky_finders.sites_job import Preset, load_preset, resolved_preset_build_dir
 from peaky_finders.skadi_dem import (

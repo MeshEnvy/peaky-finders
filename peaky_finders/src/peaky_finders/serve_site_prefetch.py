@@ -1,11 +1,11 @@
-"""Coordinate placement prefetch for ``peaky serve`` (PLSS/MLRS + site links)."""
+"""Coordinate placement prefetch for ``peaky serve`` (PLSS + site links)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from peaky_finders.serve_links import ServeLinksError, load_coords_site_links
-from peaky_finders.serve_plss_mlrs import ServePlssMlrsError, ensure_plss_mlrs_for_coords
+from peaky_finders.serve_plss import ServePlssError, ensure_plss_for_coords
 from peaky_finders.sites_job import load_preset_sites
 
 
@@ -21,10 +21,10 @@ def load_site_placement_prefetch(
     exclude_site_slug: str | None = None,
     verbose: bool = False,
 ) -> dict[str, object]:
-    """Return PLSS, MLRS, and linked peers for draft coordinates."""
+    """Return PLSS and linked peers for draft coordinates."""
     try:
-        plss_mlrs = ensure_plss_mlrs_for_coords(project_dir, lat, lon, verbose=verbose)
-    except ServePlssMlrsError as e:
+        plss_result = ensure_plss_for_coords(project_dir, lat, lon, verbose=verbose)
+    except ServePlssError as e:
         raise ServeSitePrefetchError(str(e)) from e
 
     try:
@@ -71,8 +71,7 @@ def load_site_placement_prefetch(
     return {
         "lat": lat,
         "lon": lon,
-        "plss": plss_mlrs["plss"],
-        "mlrs": plss_mlrs["mlrs"],
+        "plss": plss_result["plss"],
         "links": links,
         "links_geojson": {"type": "FeatureCollection", "features": link_features},
     }

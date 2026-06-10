@@ -163,25 +163,18 @@ def placemark_description_cdata(
     pin_description: str,
     rationale: str | None,
     plss: str | None = None,
-    mlrs: str | None = None,
 ) -> str:
     """Human-readable placemark balloon; display label stays short — detail lives here."""
     d = (site_description or "").strip()
     r = (rationale or "").strip()
     p = (plss or "").strip()
-    ml = (mlrs or "").strip()
     chunks: list[str] = []
     if d:
         chunks.append(d)
     if r:
         chunks.append(f"Rationale:\n{r}")
-    plat: list[str] = []
     if p:
-        plat.append(f"PLSS:\n{p}")
-    if ml:
-        plat.append(f"MLRS:\n{ml}")
-    if plat:
-        chunks.append("\n\n".join(plat))
+        chunks.append(f"PLSS:\n{p}")
     chunks.append((pin_description or "").strip())
     body = "\n\n".join(c for c in chunks if c)
     if not body:
@@ -214,7 +207,6 @@ class AggregateSiteOverlay:
     rationale: str | None = None
     site_description: str | None = None
     plss: str | None = None
-    mlrs: str | None = None
     coverage_kml_href: str | None = None
 
 
@@ -406,7 +398,6 @@ def build_aggregate_document_kml(
             pin_description=s.pin_description,
             rationale=s.rationale,
             plss=s.plss,
-            mlrs=s.mlrs,
         )
         rot = s.rotation if not math.isnan(s.rotation) else 0.0
         pins_site_folders.append(

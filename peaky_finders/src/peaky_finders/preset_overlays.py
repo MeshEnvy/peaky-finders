@@ -105,7 +105,6 @@ def collect_site_workspace_assets(
                 rationale=site.rationale,
                 site_description=site.description,
                 plss=site.plss,
-                mlrs=site.mlrs,
                 coverage_kml_href=cov_href,
             )
         )

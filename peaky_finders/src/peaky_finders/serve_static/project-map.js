@@ -378,6 +378,9 @@
   const sitePanelEditLat = document.getElementById("site-panel-edit-lat");
   const sitePanelEditLon = document.getElementById("site-panel-edit-lon");
   const sitePanelEditCopyCoords = document.getElementById("site-panel-edit-copy-coords");
+  const sitePanelCopyPlss = document.getElementById("site-panel-copy-plss");
+  const sitePanelEditCopyPlss = document.getElementById("site-panel-edit-copy-plss");
+  const sitePanelCreateCopyPlss = document.getElementById("site-panel-create-copy-plss");
   const sitePanelEditCoordHistory = document.getElementById("site-panel-edit-coord-history");
   const sitePanelEditViewshed = document.getElementById("site-panel-edit-viewshed");
   const sitePanelEditViewshedSection = document.getElementById("site-panel-edit-viewshed-section");
@@ -1007,10 +1010,8 @@
 
   function resetCreatePrefetchUI() {
     setSectionVisible("site-panel-create-plss-section", false);
-    setSectionVisible("site-panel-create-mlrs-section", false);
     setSectionVisible("site-panel-create-links-section", false);
     document.getElementById("site-panel-create-plss").textContent = "";
-    document.getElementById("site-panel-create-mlrs").textContent = "";
     const linksEl = document.getElementById("site-panel-create-links");
     if (linksEl) linksEl.innerHTML = "";
     removeDraftLinksLayer();
@@ -1183,9 +1184,6 @@
     const plss = payload.plss || "";
     setSectionVisible("site-panel-create-plss-section", !!plss);
     document.getElementById("site-panel-create-plss").textContent = plss || "—";
-    const mlrs = payload.mlrs || "";
-    setSectionVisible("site-panel-create-mlrs-section", !!mlrs);
-    document.getElementById("site-panel-create-mlrs").textContent = mlrs || "—";
     const links = Array.isArray(payload.links) ? payload.links : [];
     const linked = links.filter((row) => row.linked !== false);
     setSectionVisible("site-panel-create-links-section", linked.length > 0);
@@ -1872,7 +1870,7 @@
       if (!resp.ok) return;
       const payload = await resp.json();
       if (gen !== placementPrefetchGen) return;
-      if (payload && (payload.plss || payload.mlrs || payload.links || payload.links_geojson)) {
+      if (payload && (payload.plss || payload.links || payload.links_geojson)) {
         renderCreatePrefetch(payload);
       }
     } catch (_) {
@@ -2239,9 +2237,6 @@
     const plss = goal.plss || "";
     setSectionVisible("site-panel-plss-section", !!plss);
     document.getElementById("site-panel-plss").textContent = plss;
-    const mlrs = goal.mlrs || "";
-    setSectionVisible("site-panel-mlrs-section", !!mlrs);
-    document.getElementById("site-panel-mlrs").textContent = mlrs;
     const desc = goal.description || "";
     setSectionVisible("site-panel-desc-section", !!desc);
     document.getElementById("site-panel-desc").textContent = desc;
@@ -2283,9 +2278,6 @@
     const plss = site.plss || "";
     setSectionVisible("site-panel-plss-section", !!plss);
     document.getElementById("site-panel-plss").textContent = plss;
-    const mlrs = site.mlrs || "";
-    setSectionVisible("site-panel-mlrs-section", !!mlrs);
-    document.getElementById("site-panel-mlrs").textContent = mlrs;
     const desc = site.description || "";
     setSectionVisible("site-panel-desc-section", !!desc);
     document.getElementById("site-panel-desc").textContent = desc;
@@ -2352,13 +2344,10 @@
 
   function resetEditPrefetchPanelUI() {
     setSectionVisible("site-panel-edit-plss-section", false);
-    setSectionVisible("site-panel-edit-mlrs-section", false);
     setSectionVisible("site-panel-edit-links-section", false);
     const plssEl = document.getElementById("site-panel-edit-plss");
-    const mlrsEl = document.getElementById("site-panel-edit-mlrs");
     const linksEl = document.getElementById("site-panel-edit-links");
     if (plssEl) plssEl.textContent = "";
-    if (mlrsEl) mlrsEl.textContent = "";
     if (linksEl) linksEl.innerHTML = "";
   }
 
@@ -2372,9 +2361,6 @@
     const plss = payload.plss || "";
     setSectionVisible("site-panel-edit-plss-section", !!plss);
     document.getElementById("site-panel-edit-plss").textContent = plss || "—";
-    const mlrs = payload.mlrs || "";
-    setSectionVisible("site-panel-edit-mlrs-section", !!mlrs);
-    document.getElementById("site-panel-edit-mlrs").textContent = mlrs || "—";
     const links = Array.isArray(payload.links) ? payload.links : [];
     const linked = links.filter((row) => {
       if (row.linked === false) return false;
@@ -3157,6 +3143,17 @@
     await copyCoordPair(coords.lat, coords.lon);
   }
 
+  async function copyPlssFromElement(el) {
+    if (!el) return;
+    const text = (el.textContent || "").trim();
+    if (!text || text === "—") return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      /* clipboard optional */
+    }
+  }
+
   function selectGoal(slug) {
     const goal = goalBySlug.get(slug);
     if (!goal) return;
@@ -3386,6 +3383,21 @@
   if (sitePanelEditCopyCoords) {
     sitePanelEditCopyCoords.addEventListener("click", () => {
       void copyEditCoords();
+    });
+  }
+  if (sitePanelCopyPlss) {
+    sitePanelCopyPlss.addEventListener("click", () => {
+      void copyPlssFromElement(document.getElementById("site-panel-plss"));
+    });
+  }
+  if (sitePanelEditCopyPlss) {
+    sitePanelEditCopyPlss.addEventListener("click", () => {
+      void copyPlssFromElement(document.getElementById("site-panel-edit-plss"));
+    });
+  }
+  if (sitePanelCreateCopyPlss) {
+    sitePanelCreateCopyPlss.addEventListener("click", () => {
+      void copyPlssFromElement(document.getElementById("site-panel-create-plss"));
     });
   }
   if (sitePanelEditLat) {

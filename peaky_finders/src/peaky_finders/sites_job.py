@@ -443,7 +443,6 @@ class MapPointEntry(BaseModel):
     elevation_m: float | None = None
     description: str | None = None
     plss: str | None = None
-    mlrs: str | None = None
     rationale: str | None = None
 
 

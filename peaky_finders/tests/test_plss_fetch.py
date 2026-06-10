@@ -1,4 +1,4 @@
-"""PLSS/MLRS cache, input keys, and incremental build freshness."""
+"""PLSS cache, input keys, and incremental build freshness."""
 
 from __future__ import annotations
 
@@ -10,17 +10,17 @@ import pytest
 
 from fixture_paths import SAMPLE_PROJECT_CONFIG
 from peaky_finders.build_keys import write_build_key
-from peaky_finders.plss_mlrs_fetch import (
+from peaky_finders.plss_fetch import (
     loc_plss_resolved,
     loc_stamp,
     plss_bundle_build_stale,
     plss_bundle_key_path,
-    plss_mlrs_loc_cache_path,
+    plss_loc_cache_path,
     plss_sites_loc_digest,
-    populate_preset_plss_mlrs_file,
-    read_plss_mlrs_loc_cache,
-    refresh_plss_mlrs_for_bundle,
-    write_plss_mlrs_loc_cache,
+    populate_preset_plss_file,
+    read_plss_loc_cache,
+    refresh_plss_for_bundle,
+    write_plss_loc_cache,
 )
 from peaky_finders.preset_stamps import stamp_file_is_current, write_stamp
 from peaky_finders.sites_job import dump_preset_yaml_document, load_preset, read_preset_yaml_tree
@@ -32,17 +32,16 @@ def test_loc_stamp_stable() -> None:
 
 def test_loc_cache_roundtrip(tmp_path: Path) -> None:
     d = {
-        "39.000000,-117.000000": {"plss": "NV; Sec. 1", "mlrs": "NV123"},
-        "40.000000,-118.000000": {"plss": "NV; Sec. 2", "mlrs": "NV456"},
+        "39.000000,-117.000000": {"plss": "NV210300N0230E0SN360ASENW"},
+        "40.000000,-118.000000": {"plss": "NV210300N0230E0SN360ASENW"},
     }
-    write_plss_mlrs_loc_cache(tmp_path, d.copy())
-    assert read_plss_mlrs_loc_cache(tmp_path) == d
+    write_plss_loc_cache(tmp_path, d.copy())
+    assert read_plss_loc_cache(tmp_path) == d
 
 
 def test_loc_plss_resolved() -> None:
-    assert loc_plss_resolved({"plss": "NV", "mlrs": ""})
-    assert loc_plss_resolved({"plss": "", "mlrs": "NV123"})
-    assert not loc_plss_resolved({"plss": "", "mlrs": ""})
+    assert loc_plss_resolved({"plss": "NV210300N0230E0SN360ASENW"})
+    assert not loc_plss_resolved({"plss": ""})
 
 
 def test_plss_bundle_build_stale_when_key_missing(tmp_path: Path) -> None:
@@ -58,11 +57,11 @@ def test_plss_bundle_build_fresh_after_refresh(tmp_path: Path, monkeypatch: pyte
     )
     preset = load_preset(preset_path)
 
-    def fake_plss(_lon: float, _lat: float, **_: object) -> tuple[str, str]:
-        return "NV; Sec. 1", "NV123"
+    def fake_plss(_lon: float, _lat: float, **_: object) -> str:
+        return "NV210300N0230E0SN360ASENW"
 
-    monkeypatch.setattr("peaky_finders.plss_mlrs_fetch.plss_mlrs_for_point", fake_plss)
-    refresh_plss_mlrs_for_bundle(
+    monkeypatch.setattr("peaky_finders.plss_fetch.plss_for_point", fake_plss)
+    refresh_plss_for_bundle(
         preset_path=preset_path,
         cache_base=tmp_path,
         preset=preset,
@@ -70,7 +69,7 @@ def test_plss_bundle_build_fresh_after_refresh(tmp_path: Path, monkeypatch: pyte
     preset = load_preset(preset_path)
     assert not plss_bundle_build_stale(cache_base=tmp_path, preset=preset)
     assert plss_bundle_key_path(tmp_path).is_file()
-    assert plss_mlrs_loc_cache_path(tmp_path).is_file()
+    assert plss_loc_cache_path(tmp_path).is_file()
 
 
 def test_populate_uses_cache_without_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -82,13 +81,13 @@ def test_populate_uses_cache_without_network(tmp_path: Path, monkeypatch: pytest
     preset = load_preset(preset_path)
     loc_cache: dict[str, dict[str, str]] = {}
     for ent in preset.sites.values():
-        loc_cache[loc_stamp(ent.lat, ent.lon)] = {"plss": "cached", "mlrs": "CACHED"}
+        loc_cache[loc_stamp(ent.lat, ent.lon)] = {"plss": "cached-secdivid"}
 
-    def boom(_lon: float, _lat: float, **_: object) -> tuple[str, str]:
+    def boom(_lon: float, _lat: float, **_: object) -> str:
         raise AssertionError("CadNSDI should not be queried for resolved locs")
 
-    monkeypatch.setattr("peaky_finders.plss_mlrs_fetch.plss_mlrs_for_point", boom)
-    network_count = populate_preset_plss_mlrs_file(
+    monkeypatch.setattr("peaky_finders.plss_fetch.plss_for_point", boom)
+    network_count = populate_preset_plss_file(
         preset_path,
         site_slugs=set(preset.sites.keys()),
         loc_cache=loc_cache,
@@ -109,17 +108,17 @@ def test_populate_fetches_only_unresolved(tmp_path: Path, monkeypatch: pytest.Mo
     unresolved_slug = slugs[1]
     resolved_ent = preset.sites[resolved_slug]
     loc_cache = {
-        loc_stamp(resolved_ent.lat, resolved_ent.lon): {"plss": "cached", "mlrs": "CACHED"},
+        loc_stamp(resolved_ent.lat, resolved_ent.lon): {"plss": "cached-secdivid"},
     }
 
     calls: list[tuple[float, float]] = []
 
-    def fake_plss(lon: float, lat: float, **_: object) -> tuple[str, str]:
+    def fake_plss(lon: float, lat: float, **_: object) -> str:
         calls.append((lon, lat))
-        return "NV; Sec. 2", "NV456"
+        return "NV210300N0230E0SN360ASENW"
 
-    monkeypatch.setattr("peaky_finders.plss_mlrs_fetch.plss_mlrs_for_point", fake_plss)
-    network_count = populate_preset_plss_mlrs_file(
+    monkeypatch.setattr("peaky_finders.plss_fetch.plss_for_point", fake_plss)
+    network_count = populate_preset_plss_file(
         preset_path,
         site_slugs={resolved_slug, unresolved_slug},
         loc_cache=loc_cache,
@@ -169,10 +168,10 @@ def test_plss_bundle_stale_when_coords_change_after_refresh(tmp_path: Path, monk
     preset = load_preset(preset_path)
 
     monkeypatch.setattr(
-        "peaky_finders.plss_mlrs_fetch.plss_mlrs_for_point",
-        lambda _lon, _lat: ("NV; Sec. 1", "NV123"),
+        "peaky_finders.plss_fetch.plss_for_point",
+        lambda _lon, _lat: "NV210300N0230E0SN360ASENW",
     )
-    refresh_plss_mlrs_for_bundle(
+    refresh_plss_for_bundle(
         preset_path=preset_path,
         cache_base=tmp_path,
         preset=preset,

@@ -203,12 +203,11 @@ def project_html(
           <p class="site-panel__value small mb-0" id="site-panel-elevation"></p>
         </div>
         <div class="site-panel__section mb-2" id="site-panel-plss-section" hidden>
-          <span class="site-panel__label small text-muted text-uppercase">PLSS</span>
-          <p class="site-panel__value small mb-0" id="site-panel-plss"></p>
-        </div>
-        <div class="site-panel__section mb-2" id="site-panel-mlrs-section" hidden>
-          <span class="site-panel__label small text-muted text-uppercase">MLRS</span>
-          <p class="site-panel__value small mb-0" id="site-panel-mlrs"></p>
+          <span class="site-panel__label small text-muted text-uppercase d-block mb-1">PLSS</span>
+          <div class="d-flex gap-1 align-items-start">
+            <p class="site-panel__value small mb-0 font-monospace flex-grow-1 text-break" id="site-panel-plss"></p>
+            <button type="button" id="site-panel-copy-plss" class="btn btn-sm btn-outline-secondary coord-action-btn flex-shrink-0" title="Copy PLSS">⎘</button>
+          </div>
         </div>
         <div class="site-panel__section mb-2" id="site-panel-desc-section" hidden>
           <span class="site-panel__label small text-muted text-uppercase">Description</span>
@@ -266,12 +265,11 @@ def project_html(
           <ul class="edit-coord-history list-unstyled mb-0 mt-2" id="site-panel-edit-coord-history" hidden></ul>
         </div>
         <div class="site-panel__section mb-2" id="site-panel-edit-plss-section" hidden>
-          <span class="site-panel__label small text-muted text-uppercase">PLSS</span>
-          <p class="site-panel__value small mb-0" id="site-panel-edit-plss"></p>
-        </div>
-        <div class="site-panel__section mb-2" id="site-panel-edit-mlrs-section" hidden>
-          <span class="site-panel__label small text-muted text-uppercase">MLRS</span>
-          <p class="site-panel__value small mb-0" id="site-panel-edit-mlrs"></p>
+          <span class="site-panel__label small text-muted text-uppercase d-block mb-1">PLSS</span>
+          <div class="d-flex gap-1 align-items-start">
+            <p class="site-panel__value small mb-0 font-monospace flex-grow-1 text-break" id="site-panel-edit-plss"></p>
+            <button type="button" id="site-panel-edit-copy-plss" class="btn btn-sm btn-outline-secondary coord-action-btn flex-shrink-0" title="Copy PLSS">⎘</button>
+          </div>
         </div>
         <div class="site-panel__section mb-2" id="site-panel-edit-links-section" hidden>
           <span class="site-panel__label small text-muted text-uppercase" id="site-panel-edit-links-label">Linked sites</span>
@@ -307,12 +305,11 @@ def project_html(
           <p class="site-panel__value small mb-0" id="site-panel-create-coords"></p>
         </div>
         <div class="site-panel__section mb-2" id="site-panel-create-plss-section" hidden>
-          <span class="site-panel__label small text-muted text-uppercase">PLSS</span>
-          <p class="site-panel__value small mb-0" id="site-panel-create-plss"></p>
-        </div>
-        <div class="site-panel__section mb-2" id="site-panel-create-mlrs-section" hidden>
-          <span class="site-panel__label small text-muted text-uppercase">MLRS</span>
-          <p class="site-panel__value small mb-0" id="site-panel-create-mlrs"></p>
+          <span class="site-panel__label small text-muted text-uppercase d-block mb-1">PLSS</span>
+          <div class="d-flex gap-1 align-items-start">
+            <p class="site-panel__value small mb-0 font-monospace flex-grow-1 text-break" id="site-panel-create-plss"></p>
+            <button type="button" id="site-panel-create-copy-plss" class="btn btn-sm btn-outline-secondary coord-action-btn flex-shrink-0" title="Copy PLSS">⎘</button>
+          </div>
         </div>
         <div class="site-panel__section mb-2" id="site-panel-create-links-section" hidden>
           <span class="site-panel__label small text-muted text-uppercase" id="site-panel-create-links-label">Linked sites</span>

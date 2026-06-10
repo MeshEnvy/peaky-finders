@@ -51,7 +51,7 @@ Granular subcommands (`bundle`, `mesh`, `viewshed`, `kmz`, `stamp`, `inspect`) d
 | Bundle | `bundle_clips.py`, `bundle_build.py` |
 | Coverage | `cli.py` (splatter), `splat_pipeline.py` |
 | Suggest | `site_suggestions/` — planner, strategies, `preset_io.py` |
-| HTTP | `http_pool.py`, `skadi_dem.py`, `plss_mlrs_fetch.py` |
+| HTTP | `http_pool.py`, `skadi_dem.py`, `plss_fetch.py` |
 
 ## Greenfield
 
