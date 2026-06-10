@@ -1,52 +1,8 @@
 ---
-description: Commit only conversation-scoped changes; Conventional Commits; subject under 50 chars
+description: On commit requests, follow skill commit — no improvised workflow
 alwaysApply: true
 ---
 
-# Commit style
+# Commits
 
-## Scope (when the user says "commit")
-
-Commit **only changes from the current conversation** — not the entire working tree.
-
-1. Identify files you edited or discussed in this thread.
-2. Stage those paths explicitly (`git add <path>…`); never `git add .` or `git add -A` unless the user asks to commit everything.
-3. Before committing, run `git status` / `git diff` and **exclude** unrelated dirty files (pre-existing edits, other tasks, accidental changes).
-4. If it is unclear which files belong to this conversation, **ask** before staging.
-5. **Split when it helps** — if conversation changes span distinct logical units (e.g. feature + docs + agent rule), make **multiple commits** with one concern each; stage and commit sequentially, not one catch-all commit.
-
-Use **Conventional Commits** for every commit. Keep the **subject line under 50 characters** (including type, optional scope, and description).
-
-## Format
-
-```
-<type>(<scope>): <description>
-```
-
-- **type** (required): `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`, `perf`
-- **scope** (optional): short area name — e.g. `preset`, `cli`, `viewshed`
-- **description**: imperative mood, lowercase, no trailing period
-
-## Do
-
-- One logical change per commit; subject states **what** and **why** in few words.
-- Prefer **several focused commits** over one mixed commit when the conversation touched unrelated areas.
-- Prefer narrow scope over long descriptions.
-
-```text
-feat(preset): add bundle exclude layers
-fix(viewshed): handle empty DEM tiles
-refactor(cli): split render from simulate
-chore: bump poetry lockfile
-```
-
-## Don't
-
-- Subject lines ≥ 50 characters.
-- Vague subjects: `update stuff`, `fix bug`, `wip`.
-- Sentences, periods, or past tense: `Fixed the cache.`
-- Non-conventional prefixes: `Update .gitignore to remove…`
-
-## Length check
-
-Before committing, count characters in the full subject (type through description). If over 50, shorten scope or description — don't drop the conventional prefix.
+When the user asks to commit (including `/commit`), read and follow [`.cursor/skills/commit/SKILL.md`](../skills/commit/SKILL.md). Do not duplicate that workflow here.
