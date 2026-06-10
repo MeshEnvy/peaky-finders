@@ -26,6 +26,8 @@
   const DRAFT_LINKS_LABELS_LAYER = "draft-site-links-label";
   const VIEWSHED_OPACITY_DEFAULT = 0.75;
   const DRAFT_VIEWSHED_SLUG = "_draft";
+  const VIEWSHED_PREVIEW_RASTER_DIMENSION = 256;
+  const COORD_PREFETCH_MS = 350;
   const simDefaults = config.simulation || {};
   const VIEWSHED_RADIUS_KM_MIN = Number(simDefaults.radius_km_min) || 1;
   const VIEWSHED_RADIUS_KM_MAX = Number(simDefaults.radius_km_max) || 100;
@@ -319,6 +321,13 @@
   const pinSpinners = new Map();
   let draftPlacementLat = null;
   let draftPlacementLon = null;
+  let editMode = false;
+  let editKind = null;
+  let editSlug = null;
+  let editSnapshot = null;
+  let editPrefetchTimer = null;
+  let editPrefetchGen = 0;
+  let editHiddenViewshedSlug = null;
   const siteBySlug = new Map(sites.map((s) => [s.slug, s]));
   const goalBySlug = new Map(goals.map((g) => [g.slug, g]));
   const mapShell = document.querySelector(".map-shell");
@@ -341,6 +350,22 @@
   const sitePanelCreateBadge = document.getElementById("site-panel-create-badge");
   const sitePanelCreateLinksLabel = document.getElementById("site-panel-create-links-label");
   const sitePanelViewshedSection = document.getElementById("site-panel-viewshed-section");
+  const sitePanelEdit = document.getElementById("site-panel-edit");
+  const sitePanelEditOpen = document.getElementById("site-panel-edit-open");
+  const sitePanelEditClose = document.getElementById("site-panel-edit-close");
+  const sitePanelEditName = document.getElementById("site-panel-edit-name");
+  const sitePanelEditSlug = document.getElementById("site-panel-edit-slug");
+  const sitePanelEditType = document.getElementById("site-panel-edit-type");
+  const sitePanelEditLat = document.getElementById("site-panel-edit-lat");
+  const sitePanelEditLon = document.getElementById("site-panel-edit-lon");
+  const sitePanelEditResetCoords = document.getElementById("site-panel-edit-reset-coords");
+  const sitePanelEditCopyCoords = document.getElementById("site-panel-edit-copy-coords");
+  const sitePanelEditViewshed = document.getElementById("site-panel-edit-viewshed");
+  const sitePanelEditViewshedSection = document.getElementById("site-panel-edit-viewshed-section");
+  const sitePanelEditError = document.getElementById("site-panel-edit-error");
+  const sitePanelEditSave = document.getElementById("site-panel-edit-save");
+  const sitePanelEditCancel = document.getElementById("site-panel-edit-cancel");
+  const sitePanelEditLinksLabel = document.getElementById("site-panel-edit-links-label");
   const entityPanel = document.getElementById("entity-panel");
   const entityPanelToggle = document.getElementById("entity-panel-toggle");
   const entityPanelSitesList = document.getElementById("entity-panel-sites-list");
@@ -430,19 +455,34 @@
 
   function showPanelView() {
     createMode = false;
+    editMode = false;
     sitePanelView.hidden = false;
     sitePanelCreate.hidden = true;
+    if (sitePanelEdit) sitePanelEdit.hidden = true;
+    syncEditMapShell();
+  }
+
+  function showPanelEdit() {
+    createMode = false;
+    editMode = true;
+    sitePanelView.hidden = true;
+    sitePanelCreate.hidden = true;
+    if (sitePanelEdit) sitePanelEdit.hidden = false;
+    syncEditMapShell();
   }
 
   function showPanelCreate() {
     createMode = true;
+    editMode = false;
     selectedSlug = null;
     selectedGoalSlug = null;
     updateSelectedLayer();
     updateGoalSelectedLayer();
     sitePanelView.hidden = true;
     sitePanelCreate.hidden = false;
+    if (sitePanelEdit) sitePanelEdit.hidden = true;
     syncCreatePanelForKind();
+    syncEditMapShell();
   }
 
   function setCreateError(message) {
@@ -462,9 +502,14 @@
     }
   }
 
+  function syncEditMapShell() {
+    if (mapShell) mapShell.classList.toggle("edit-mode", editMode);
+    syncMapCursor();
+  }
+
   function syncMapCursor() {
     if (!mapReady) return;
-    map.getCanvas().style.cursor = addPlacementMode ? "crosshair" : "";
+    map.getCanvas().style.cursor = addPlacementMode || editMode ? "crosshair" : "";
   }
 
   function setAddPlacementMode(kind) {
@@ -504,6 +549,27 @@
     if (entityPanelGoalsPane) entityPanelGoalsPane.hidden = entityPanelTab !== "goals";
   }
 
+  function combineLayerFilters(...parts) {
+    const filters = parts.filter(Boolean);
+    if (!filters.length) return true;
+    if (filters.length === 1) return filters[0];
+    return ["all", ...filters];
+  }
+
+  function editSiteLayerFilter() {
+    if (editMode && editKind === "site" && editSlug) {
+      return ["!=", ["get", "slug"], editSlug];
+    }
+    return null;
+  }
+
+  function editGoalLayerFilter() {
+    if (editMode && editKind === "goal" && editSlug) {
+      return ["!=", ["get", "slug"], editSlug];
+    }
+    return null;
+  }
+
   function siteVisibilityFilter() {
     if (!siteHidden.size) return null;
     return ["!", ["in", ["get", "slug"], ["literal", [...siteHidden]]]];
@@ -516,45 +582,70 @@
 
   function applySiteLayerFilters() {
     if (!mapReady) return;
-    const hiddenFilter = siteVisibilityFilter();
+    const filter = combineLayerFilters(siteVisibilityFilter(), editSiteLayerFilter());
     for (const layerId of [SITES_CIRCLE, SITES_LABELS]) {
       if (!map.getLayer(layerId)) continue;
-      map.setFilter(layerId, hiddenFilter || true);
+      map.setFilter(layerId, filter);
     }
     updateSelectedLayer();
   }
 
   function applyGoalLayerFilters() {
     if (!mapReady) return;
-    const hiddenFilter = goalVisibilityFilter();
+    const filter = combineLayerFilters(goalVisibilityFilter(), editGoalLayerFilter());
     for (const layerId of [GOALS_CIRCLE, GOALS_LABELS]) {
       if (!map.getLayer(layerId)) continue;
-      map.setFilter(layerId, hiddenFilter || true);
+      map.setFilter(layerId, filter);
     }
     updateGoalSelectedLayer();
   }
 
+  function editCoordsMovedFromSnapshot() {
+    const coords = readEditCoords();
+    if (!coords || !editSnapshot) return false;
+    return !coordsMatchEditSnapshot(coords.lat, coords.lon);
+  }
+
+  function linkFeatureTouchesSnapshotCoords(feature) {
+    if (!editMode || !editSnapshot || !editCoordsMovedFromSnapshot()) return false;
+    const geom = feature.geometry;
+    if (!geom || geom.type !== "LineString" || !Array.isArray(geom.coordinates)) return false;
+    const snapLon = Number(editSnapshot.lon);
+    const snapLat = Number(editSnapshot.lat);
+    for (const pt of geom.coordinates) {
+      if (!Array.isArray(pt) || pt.length < 2) continue;
+      const lon = Number(pt[0]);
+      const lat = Number(pt[1]);
+      if (Math.abs(lon - snapLon) < 1e-5 && Math.abs(lat - snapLat) < 1e-5) return true;
+    }
+    return false;
+  }
+
   function filterSiteLinksGeoJson(geojson) {
-    if (!geojson || !geojson.features || !siteHidden.size) return geojson;
-    return {
-      type: geojson.type || "FeatureCollection",
-      features: geojson.features.filter((feature) => {
-        const props = feature.properties || {};
-        return !siteHidden.has(props.a) && !siteHidden.has(props.b);
-      }),
-    };
+    if (!geojson || !geojson.features) return geojson;
+    const features = geojson.features.filter((feature) => {
+      const props = feature.properties || {};
+      if (siteHidden.has(props.a) || siteHidden.has(props.b)) return false;
+      if (editMode && editKind === "site" && editSlug) {
+        if (props.a === editSlug || props.b === editSlug) return false;
+      }
+      if (linkFeatureTouchesSnapshotCoords(feature)) return false;
+      return true;
+    });
+    return { type: geojson.type || "FeatureCollection", features };
   }
 
   function filterGoalLinksGeoJson(geojson) {
     if (!geojson || !geojson.features) return geojson;
-    if (!goalHidden.size && !siteHidden.size) return geojson;
-    return {
-      type: geojson.type || "FeatureCollection",
-      features: geojson.features.filter((feature) => {
-        const props = feature.properties || {};
-        return !goalHidden.has(props.goal) && !siteHidden.has(props.site);
-      }),
-    };
+    const features = geojson.features.filter((feature) => {
+      const props = feature.properties || {};
+      if (goalHidden.has(props.goal) || siteHidden.has(props.site)) return false;
+      if (editMode && editKind === "goal" && editSlug && props.goal === editSlug) return false;
+      if (editMode && editKind === "site" && editSlug && props.site === editSlug) return false;
+      if (linkFeatureTouchesSnapshotCoords(feature)) return false;
+      return true;
+    });
+    return { type: geojson.type || "FeatureCollection", features };
   }
 
   function refreshFilteredLinks() {
@@ -1374,6 +1465,13 @@
     return params;
   }
 
+  function viewshedPreviewSimQueryParams() {
+    const params = new URLSearchParams();
+    params.set("radius_km", String(viewshedRadiusKm));
+    params.set("raster_dimension", String(VIEWSHED_PREVIEW_RASTER_DIMENSION));
+    return params;
+  }
+
   function projectEventsUrl() {
     return `/api/p/${projectSlug}/events`;
   }
@@ -1383,8 +1481,8 @@
     return `/api/p/${projectSlug}/viewsheds/${siteSlug}/warm?${params}`;
   }
 
-  function viewshedPrefetchWarmUrl(lat, lon) {
-    const params = viewshedSimQueryParams();
+  function viewshedPrefetchWarmUrl(lat, lon, { preview = true } = {}) {
+    const params = preview ? viewshedPreviewSimQueryParams() : viewshedSimQueryParams();
     params.set("lat", String(lat));
     params.set("lon", String(lon));
     return `/api/p/${projectSlug}/viewsheds/prefetch/warm?${params}`;
@@ -1431,6 +1529,7 @@
     if (vs.slug === DRAFT_VIEWSHED_SLUG) {
       draftViewshedLoading = false;
       syncCreateViewshedCheckbox();
+      syncEditViewshedCheckbox();
     }
     addViewshedLayer(vs);
   }
@@ -1449,6 +1548,7 @@
       if (data.slug === DRAFT_VIEWSHED_SLUG) {
         draftViewshedLoading = false;
         syncCreateViewshedCheckbox();
+        syncEditViewshedCheckbox();
       }
       updatePinOverlays();
       if (data.slug === selectedSlug) syncViewshedCheckbox();
@@ -1560,12 +1660,30 @@
     }
   }
 
-  function sitesPrefetchUrl(lat, lon) {
+  function sitesPrefetchUrl(lat, lon, excludeSite) {
     const params = new URLSearchParams({
       lat: String(lat),
       lon: String(lon),
     });
+    if (excludeSite) params.set("exclude_site", excludeSite);
     return `/api/p/${projectSlug}/sites/prefetch?${params}`;
+  }
+
+  function filterEditSitePrefetchPayload(payload) {
+    if (!payload || editKind !== "site" || !editSlug) return payload;
+    const links = Array.isArray(payload.links)
+      ? payload.links.filter((row) => row.slug !== editSlug)
+      : payload.links;
+    let linksGeojson = payload.links_geojson;
+    if (linksGeojson && Array.isArray(linksGeojson.features)) {
+      linksGeojson = {
+        ...linksGeojson,
+        features: linksGeojson.features.filter(
+          (feature) => (feature.properties || {}).slug !== editSlug,
+        ),
+      };
+    }
+    return { ...payload, links, links_geojson: linksGeojson };
   }
 
   let draftViewshedLoading = false;
@@ -1606,6 +1724,15 @@
     }
   }
 
+  function clearDraftViewshedLoading() {
+    viewshedPendingEpoch.delete(DRAFT_VIEWSHED_SLUG);
+    viewshedLoading.delete(DRAFT_VIEWSHED_SLUG);
+    draftViewshedLoading = false;
+    updatePinOverlays();
+    syncCreateViewshedCheckbox();
+    syncEditViewshedCheckbox();
+  }
+
   async function loadDraftViewshedAt(lat, lon, options) {
     const refreshOnly = Boolean(options && options.refreshOnly);
     if (refreshOnly) {
@@ -1621,21 +1748,29 @@
     viewshedPendingEpoch.set(DRAFT_VIEWSHED_SLUG, epoch);
     updatePinOverlays();
     syncCreateViewshedCheckbox();
+    syncEditViewshedCheckbox();
     try {
       const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), { method: "POST" });
       if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return;
-      if (!resp.ok) return;
+      if (!resp.ok) {
+        clearDraftViewshedLoading();
+        return;
+      }
       const vs = await resp.json();
+      if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return;
       if (vs && vs.status === "ready") {
         handleViewshedReady({ ...vs, slug: DRAFT_VIEWSHED_SLUG }, epoch);
       }
     } catch (_) {
-      /* draft viewshed optional */
+      if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) === epoch) {
+        clearDraftViewshedLoading();
+      }
     } finally {
       if (!viewshedPendingEpoch.has(DRAFT_VIEWSHED_SLUG)) {
         draftViewshedLoading = false;
         updatePinOverlays();
         syncCreateViewshedCheckbox();
+        syncEditViewshedCheckbox();
       }
     }
   }
@@ -1654,7 +1789,10 @@
       if (site) scheduleViewshedLoad(site);
     }
     if (slug === selectedSlug) syncViewshedCheckbox();
-    if (slug === DRAFT_VIEWSHED_SLUG) syncCreateViewshedCheckbox();
+    if (slug === DRAFT_VIEWSHED_SLUG) {
+      syncCreateViewshedCheckbox();
+      syncEditViewshedCheckbox();
+    }
   }
 
   function syncViewshedCheckbox() {
@@ -1667,7 +1805,32 @@
   function addViewshedLayer(vs) {
     const sourceId = viewshedSourceId(vs.slug);
     const layerId = viewshedLayerId(vs.slug);
-    if (!map.getSource(sourceId)) {
+    const existingSource = map.getSource(sourceId);
+    if (existingSource) {
+      if (typeof existingSource.updateImage === "function") {
+        existingSource.updateImage({
+          url: vs.url,
+          coordinates: vs.coordinates,
+        });
+      } else {
+        if (map.getLayer(layerId)) map.removeLayer(layerId);
+        map.removeSource(sourceId);
+        map.addSource(sourceId, {
+          type: "image",
+          url: vs.url,
+          coordinates: vs.coordinates,
+        });
+        map.addLayer({
+          id: layerId,
+          type: "raster",
+          source: sourceId,
+          paint: {
+            "raster-opacity": viewshedOpacity,
+            "raster-fade-duration": 0,
+          },
+        });
+      }
+    } else {
       map.addSource(sourceId, {
         type: "image",
         url: vs.url,
@@ -1691,7 +1854,10 @@
     viewshedLoading.delete(vs.slug);
     updatePinOverlays();
     if (vs.slug === selectedSlug) syncViewshedCheckbox();
-    if (vs.slug === DRAFT_VIEWSHED_SLUG) syncCreateViewshedCheckbox();
+    if (vs.slug === DRAFT_VIEWSHED_SLUG) {
+      syncCreateViewshedCheckbox();
+      syncEditViewshedCheckbox();
+    }
     raiseSiteLayers();
   }
 
@@ -1834,30 +2000,28 @@
 
   function updateGoalSelectedLayer() {
     if (!map.getLayer(GOALS_SELECTED)) return;
-    const hiddenFilter = goalVisibilityFilter();
-    if (hiddenFilter) {
-      map.setFilter(GOALS_SELECTED, [
-        "all",
-        ["==", ["get", "slug"], selectedGoalSlug || ""],
-        hiddenFilter,
-      ]);
-    } else {
-      map.setFilter(GOALS_SELECTED, ["==", ["get", "slug"], selectedGoalSlug || ""]);
+    if (editMode && editKind === "goal" && selectedGoalSlug === editSlug) {
+      map.setFilter(GOALS_SELECTED, ["==", ["get", "slug"], ""]);
+      return;
     }
+    const filter = combineLayerFilters(
+      ["==", ["get", "slug"], selectedGoalSlug || ""],
+      goalVisibilityFilter(),
+    );
+    map.setFilter(GOALS_SELECTED, filter);
   }
 
   function updateSelectedLayer() {
     if (!map.getLayer(SITES_SELECTED)) return;
-    const hiddenFilter = siteVisibilityFilter();
-    if (hiddenFilter) {
-      map.setFilter(SITES_SELECTED, [
-        "all",
-        ["==", ["get", "slug"], selectedSlug || ""],
-        hiddenFilter,
-      ]);
-    } else {
-      map.setFilter(SITES_SELECTED, ["==", ["get", "slug"], selectedSlug || ""]);
+    if (editMode && editKind === "site" && selectedSlug === editSlug) {
+      map.setFilter(SITES_SELECTED, ["==", ["get", "slug"], ""]);
+      return;
     }
+    const filter = combineLayerFilters(
+      ["==", ["get", "slug"], selectedSlug || ""],
+      siteVisibilityFilter(),
+    );
+    map.setFilter(SITES_SELECTED, filter);
   }
 
   function formatCoord(n) {
@@ -1994,10 +2158,408 @@
     syncViewshedCheckbox();
   }
 
+  function setEditError(message) {
+    if (!sitePanelEditError) return;
+    if (!message) {
+      sitePanelEditError.hidden = true;
+      sitePanelEditError.textContent = "";
+      return;
+    }
+    sitePanelEditError.textContent = message;
+    sitePanelEditError.hidden = false;
+  }
+
+  function populateEditTypeSelect(kind, entity) {
+    if (!sitePanelEditType) return;
+    sitePanelEditType.innerHTML = "";
+    const options =
+      kind === "goal"
+        ? [
+            { value: "goal", label: "goal" },
+            { value: "installed", label: "installed" },
+            { value: "planned", label: "planned" },
+          ]
+        : [
+            { value: "installed", label: "installed" },
+            { value: "planned", label: "planned" },
+            { value: "suggested", label: "suggested" },
+          ];
+    const current = kind === "goal" ? "goal" : entity.type || "installed";
+    for (const opt of options) {
+      const el = document.createElement("option");
+      el.value = opt.value;
+      el.textContent = opt.label;
+      if (opt.value === current) el.selected = true;
+      sitePanelEditType.appendChild(el);
+    }
+  }
+
+  function resetEditPrefetchPanelUI() {
+    setSectionVisible("site-panel-edit-plss-section", false);
+    setSectionVisible("site-panel-edit-mlrs-section", false);
+    setSectionVisible("site-panel-edit-links-section", false);
+    const plssEl = document.getElementById("site-panel-edit-plss");
+    const mlrsEl = document.getElementById("site-panel-edit-mlrs");
+    const linksEl = document.getElementById("site-panel-edit-links");
+    if (plssEl) plssEl.textContent = "";
+    if (mlrsEl) mlrsEl.textContent = "";
+    if (linksEl) linksEl.innerHTML = "";
+  }
+
+  function resetEditPrefetchUI() {
+    resetEditPrefetchPanelUI();
+    removeDraftLinksLayer();
+  }
+
+  function renderEditPrefetch(payload, { goal = false } = {}) {
+    const plss = payload.plss || "";
+    setSectionVisible("site-panel-edit-plss-section", !!plss);
+    document.getElementById("site-panel-edit-plss").textContent = plss || "—";
+    const mlrs = payload.mlrs || "";
+    setSectionVisible("site-panel-edit-mlrs-section", !!mlrs);
+    document.getElementById("site-panel-edit-mlrs").textContent = mlrs || "—";
+    const links = Array.isArray(payload.links) ? payload.links : [];
+    const linked = links.filter((row) => {
+      if (row.linked === false) return false;
+      if (!goal && editMode && editKind === "site" && editSlug && row.slug === editSlug) return false;
+      return true;
+    });
+    setSectionVisible("site-panel-edit-links-section", linked.length > 0);
+    if (sitePanelEditLinksLabel) {
+      sitePanelEditLinksLabel.textContent = goal ? "Linked repeaters" : "Linked sites";
+    }
+    const linksEl = document.getElementById("site-panel-edit-links");
+    linksEl.innerHTML = "";
+    for (const row of linked) {
+      const slug = goal ? row.site : row.slug;
+      const site = siteBySlug.get(slug);
+      const label = site ? site.name : slug;
+      const dist = formatLinkDistanceKm(row.distance_km);
+      const li = document.createElement("li");
+      li.textContent = dist ? `${label} — ${dist}` : label;
+      linksEl.appendChild(li);
+    }
+    if (payload.links_geojson) addDraftLinksLayer(payload.links_geojson, { goal });
+    else removeDraftLinksLayer();
+  }
+
+  function readEditCoords() {
+    const lat = Number.parseFloat(sitePanelEditLat.value);
+    const lon = Number.parseFloat(sitePanelEditLon.value);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return { lat, lon };
+  }
+
+  function parseCoordPairFromText(text) {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return null;
+    const parts = trimmed.split(/[,\s]+/).filter(Boolean);
+    if (parts.length < 2) return null;
+    const lat = Number.parseFloat(parts[0]);
+    const lon = Number.parseFloat(parts[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return { lat, lon };
+  }
+
+  function applyCoordPaste(text, targetField) {
+    const pair = parseCoordPairFromText(text);
+    if (!pair) return false;
+    sitePanelEditLat.value = formatCoord(pair.lat);
+    sitePanelEditLon.value = formatCoord(pair.lon);
+    onEditCoordsChanged();
+    return true;
+  }
+
+  function updateEditDraftMarker(lat, lon) {
+    removeDraftMarker();
+    const isGoal = editKind === "goal";
+    const markerColor = isGoal ? "#f59e0b" : "#4a6cf7";
+    draftMarker = new maplibregl.Marker({ color: markerColor })
+      .setLngLat([lon, lat])
+      .addTo(map);
+  }
+
+  function syncEditViewshedCheckbox() {
+    if (!sitePanelEditViewshed || !editMode) return;
+    const coords = readEditCoords();
+    const atOriginal = coords && coordsMatchEditSnapshot(coords.lat, coords.lon);
+    const hint = document.getElementById("site-panel-edit-viewshed-hint");
+    if (atOriginal && editKind === "site" && editSlug) {
+      sitePanelEditViewshed.checked = isViewshedVisible(editSlug);
+      if (hint) hint.textContent = viewshedLoading.has(editSlug) ? "Loading…" : "";
+      return;
+    }
+    sitePanelEditViewshed.checked = isViewshedVisible(DRAFT_VIEWSHED_SLUG);
+    if (hint) hint.textContent = draftViewshedLoading ? "Loading…" : "";
+  }
+
+  function coordsMatchEditSnapshot(lat, lon) {
+    if (!editSnapshot) return false;
+    return (
+      Math.abs(lat - Number(editSnapshot.lat)) < 1e-5 &&
+      Math.abs(lon - Number(editSnapshot.lon)) < 1e-5
+    );
+  }
+
+  function resetEditCoords() {
+    if (!editSnapshot) return;
+    sitePanelEditLat.value = formatCoord(editSnapshot.lat);
+    sitePanelEditLon.value = formatCoord(editSnapshot.lon);
+    onEditCoordsChanged();
+  }
+
+  async function runEditPrefetchAt(lat, lon) {
+    const gen = ++editPrefetchGen;
+    const isGoal = editKind === "goal";
+    const atOriginal = coordsMatchEditSnapshot(lat, lon);
+    resetEditPrefetchPanelUI();
+    updateEditDraftMarker(lat, lon);
+    applySiteLayerFilters();
+    applyGoalLayerFilters();
+    refreshFilteredLinks();
+    if (sitePanelEditViewshedSection) {
+      sitePanelEditViewshedSection.hidden = isGoal;
+    }
+    if (!isGoal) {
+      if (atOriginal) {
+        removeDraftViewshed();
+        restoreEditHiddenViewshed();
+      } else {
+        hideViewshedLayerForEdit(editSlug);
+        if (isViewshedVisible(editSlug) || isViewshedVisible(DRAFT_VIEWSHED_SLUG)) {
+          viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
+          void loadDraftViewshedAt(lat, lon);
+        }
+      }
+    } else {
+      removeDraftViewshed();
+    }
+    try {
+      const url = isGoal
+        ? goalsPrefetchUrl(lat, lon)
+        : sitesPrefetchUrl(lat, lon, editKind === "site" ? editSlug : null);
+      const resp = await fetch(url);
+      if (gen !== editPrefetchGen) return;
+      if (!resp.ok) return;
+      let payload = await resp.json();
+      if (gen !== editPrefetchGen) return;
+      if (!isGoal) payload = filterEditSitePrefetchPayload(payload);
+      renderEditPrefetch(payload, { goal: isGoal });
+    } catch (_) {
+      /* edit prefetch optional */
+    }
+  }
+
+  function onEditCoordsChanged() {
+    if (!editMode) return;
+    const coords = readEditCoords();
+    if (!coords) return;
+    const atOriginal = coordsMatchEditSnapshot(coords.lat, coords.lon);
+    updateEditDraftMarker(coords.lat, coords.lon);
+    if (!atOriginal) {
+      removeDraftLinksLayer();
+    }
+    refreshFilteredLinks();
+    scheduleEditPrefetch();
+  }
+
+  function scheduleEditPrefetch() {
+    if (!editMode) return;
+    if (editPrefetchTimer) clearTimeout(editPrefetchTimer);
+    editPrefetchTimer = setTimeout(() => {
+      editPrefetchTimer = null;
+      const coords = readEditCoords();
+      if (!coords) return;
+      void runEditPrefetchAt(coords.lat, coords.lon);
+    }, COORD_PREFETCH_MS);
+  }
+
+  function restoreEditHiddenViewshed() {
+    if (editHiddenViewshedSlug) {
+      applyViewshedVisibilityForSite(editHiddenViewshedSlug);
+      editHiddenViewshedSlug = null;
+    }
+  }
+
+  function hideViewshedLayerForEdit(slug) {
+    const layerId = viewshedLayerId(slug);
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", "none");
+      editHiddenViewshedSlug = slug;
+    }
+  }
+
+  function openEditPanel() {
+    const isGoal = !!selectedGoalSlug;
+    const slug = isGoal ? selectedGoalSlug : selectedSlug;
+    const entity = isGoal ? goalBySlug.get(slug) : siteBySlug.get(slug);
+    if (!entity || !slug) return;
+    editKind = isGoal ? "goal" : "site";
+    editSlug = slug;
+    editSnapshot = { ...entity, kind: editKind };
+    setEditError("");
+    document.getElementById("site-panel-edit-title").textContent = entity.name;
+    sitePanelEditSlug.textContent = slug;
+    sitePanelEditName.value = entity.name;
+    sitePanelEditLat.value = formatCoord(entity.lat);
+    sitePanelEditLon.value = formatCoord(entity.lon);
+    populateEditTypeSelect(editKind, entity);
+    if (sitePanelEditViewshedSection) sitePanelEditViewshedSection.hidden = isGoal;
+    showPanelEdit();
+    applySiteLayerFilters();
+    applyGoalLayerFilters();
+    refreshFilteredLinks();
+    void runEditPrefetchAt(entity.lat, entity.lon);
+  }
+
+  function cancelEdit() {
+    if (!editMode) return;
+    editMode = false;
+    editKind = null;
+    editSlug = null;
+    editSnapshot = null;
+    editPrefetchGen += 1;
+    if (editPrefetchTimer) {
+      clearTimeout(editPrefetchTimer);
+      editPrefetchTimer = null;
+    }
+    setEditError("");
+    removeDraftMarker();
+    removeDraftViewshed();
+    removeDraftLinksLayer();
+    restoreEditHiddenViewshed();
+    resetEditPrefetchUI();
+    applySiteLayerFilters();
+    applyGoalLayerFilters();
+    refreshFilteredLinks();
+    syncEditMapShell();
+    sitePanel.hidden = false;
+    showPanelView();
+    if (selectedGoalSlug) renderGoalPanel(goalBySlug.get(selectedGoalSlug));
+    else if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));
+  }
+
+  async function saveEdit() {
+    if (!editMode || !editSlug || !editKind) return;
+    const name = sitePanelEditName.value.trim();
+    if (!name) {
+      setEditError("Name is required.");
+      return;
+    }
+    const coords = readEditCoords();
+    if (!coords) {
+      setEditError("Valid latitude and longitude are required.");
+      return;
+    }
+    const typeValue = sitePanelEditType ? sitePanelEditType.value : null;
+    setEditError("");
+    sitePanelEditSave.disabled = true;
+    const savedEditSlug = editSlug;
+    const savedEditKind = editKind;
+    const apiUrl =
+      savedEditKind === "goal"
+        ? `/api/p/${projectSlug}/goals/${savedEditSlug}`
+        : `/api/p/${projectSlug}/sites/${savedEditSlug}`;
+    const body = {
+      name,
+      lat: coords.lat,
+      lon: coords.lon,
+    };
+    if (typeValue) body.type = typeValue;
+    try {
+      const resp = await fetch(apiUrl, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setEditError(payload.error || `Save failed (${resp.status})`);
+        return;
+      }
+      removeDraftMarker();
+      removeDraftViewshed();
+      removeDraftLinksLayer();
+      restoreEditHiddenViewshed();
+      editMode = false;
+      editKind = null;
+      editSlug = null;
+      editSnapshot = null;
+      editPrefetchGen += 1;
+      applySiteLayerFilters();
+      applyGoalLayerFilters();
+      refreshFilteredLinks();
+      syncEditMapShell();
+      if (payload.promoted && payload.site) {
+        const site = payload.site;
+        const goalIx = goals.findIndex((g) => g.slug === savedEditSlug);
+        if (goalIx >= 0) goals.splice(goalIx, 1);
+        goalBySlug.delete(savedEditSlug);
+        goalHidden.delete(savedEditSlug);
+        registerSite(site);
+        selectedGoalSlug = null;
+        selectedSlug = site.slug;
+        viewshedVisible.set(site.slug, true);
+        scheduleViewshedLoad(site);
+        void loadSiteLinks();
+        void loadGoalLinks();
+        showPanelView();
+        renderPanel(site);
+        updateSelectedLayer();
+        updateGoalSelectedLayer();
+        renderEntityPanel();
+        updateGoalCountBadge();
+        return;
+      }
+      if (savedEditKind === "goal" && payload.goal) {
+        const goal = payload.goal;
+        const ix = goals.findIndex((g) => g.slug === goal.slug);
+        if (ix >= 0) goals[ix] = goal;
+        goalBySlug.set(goal.slug, goal);
+        selectedGoalSlug = goal.slug;
+        void loadGoalLinks();
+        showPanelView();
+        renderGoalPanel(goal);
+        renderEntityPanel();
+        return;
+      }
+      if (payload.site) {
+        const site = payload.site;
+        const ix = sites.findIndex((s) => s.slug === site.slug);
+        if (ix >= 0) sites[ix] = site;
+        siteBySlug.set(site.slug, site);
+        selectedSlug = site.slug;
+        if (map.getSource(SITES_SOURCE)) map.getSource(SITES_SOURCE).setData(sitesGeoJson());
+        scheduleViewshedLoad(site);
+        void loadSiteLinks();
+        void loadGoalLinks();
+        showPanelView();
+        renderPanel(site);
+        renderEntityPanel();
+      }
+    } catch (_) {
+      setEditError("Could not reach server.");
+    } finally {
+      sitePanelEditSave.disabled = false;
+    }
+  }
+
+  async function copyEditCoords() {
+    const coords = readEditCoords();
+    if (!coords) return;
+    const text = `${formatCoord(coords.lat)}, ${formatCoord(coords.lon)}`;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      /* clipboard optional */
+    }
+  }
+
   function selectGoal(slug) {
     const goal = goalBySlug.get(slug);
     if (!goal) return;
     if (createMode) cancelCreate();
+    if (editMode) cancelEdit();
     selectedSlug = null;
     selectedGoalSlug = slug;
     sitePanel.hidden = false;
@@ -2013,6 +2575,7 @@
     const site = siteBySlug.get(slug);
     if (!site) return;
     if (createMode) cancelCreate();
+    if (editMode) cancelEdit();
     selectedGoalSlug = null;
     selectedSlug = slug;
     sitePanel.hidden = false;
@@ -2029,6 +2592,10 @@
       cancelCreate();
       return;
     }
+    if (editMode) {
+      cancelEdit();
+      return;
+    }
     selectedSlug = null;
     selectedGoalSlug = null;
     sitePanel.hidden = true;
@@ -2040,11 +2607,11 @@
     const siteLayerIds = [SITES_CIRCLE, SITES_LABELS];
     const goalLayerIds = [GOALS_CIRCLE, GOALS_LABELS];
     map.on("mousemove", () => {
-      if (addPlacementMode) map.getCanvas().style.cursor = "crosshair";
+      if (addPlacementMode || editMode) map.getCanvas().style.cursor = "crosshair";
     });
     for (const layerId of [...siteLayerIds, ...goalLayerIds]) {
       map.on("mouseenter", layerId, () => {
-        if (addPlacementMode) {
+        if (addPlacementMode || editMode) {
           map.getCanvas().style.cursor = "crosshair";
           return;
         }
@@ -2055,6 +2622,12 @@
       });
     }
     map.on("click", (ev) => {
+      if (editMode) {
+        sitePanelEditLat.value = formatCoord(ev.lngLat.lat);
+        sitePanelEditLon.value = formatCoord(ev.lngLat.lng);
+        onEditCoordsChanged();
+        return;
+      }
       const goalFeats = map.queryRenderedFeatures(ev.point, { layers: goalLayerIds });
       if (goalFeats.length) {
         const slug = goalFeats[0].properties && goalFeats[0].properties.slug;
@@ -2194,6 +2767,64 @@
     scheduleSaveMapState();
   });
   sitePanelClose.addEventListener("click", deselectSite);
+  if (sitePanelEditOpen) {
+    sitePanelEditOpen.addEventListener("click", () => openEditPanel());
+  }
+  if (sitePanelEditClose) {
+    sitePanelEditClose.addEventListener("click", cancelEdit);
+  }
+  if (sitePanelEditCancel) {
+    sitePanelEditCancel.addEventListener("click", cancelEdit);
+  }
+  if (sitePanelEditSave) {
+    sitePanelEditSave.addEventListener("click", () => {
+      void saveEdit();
+    });
+  }
+  if (sitePanelEditResetCoords) {
+    sitePanelEditResetCoords.addEventListener("click", () => {
+      resetEditCoords();
+    });
+  }
+  if (sitePanelEditCopyCoords) {
+    sitePanelEditCopyCoords.addEventListener("click", () => {
+      void copyEditCoords();
+    });
+  }
+  if (sitePanelEditLat) {
+    sitePanelEditLat.addEventListener("input", onEditCoordsChanged);
+    sitePanelEditLat.addEventListener("paste", (ev) => {
+      const text = ev.clipboardData && ev.clipboardData.getData("text");
+      if (text && applyCoordPaste(text, "lat")) ev.preventDefault();
+    });
+  }
+  if (sitePanelEditLon) {
+    sitePanelEditLon.addEventListener("input", onEditCoordsChanged);
+    sitePanelEditLon.addEventListener("paste", (ev) => {
+      const text = ev.clipboardData && ev.clipboardData.getData("text");
+      if (text && applyCoordPaste(text, "lon")) ev.preventDefault();
+    });
+  }
+  if (sitePanelEditViewshed) {
+    sitePanelEditViewshed.addEventListener("change", (ev) => {
+      if (!editMode) return;
+      const coords = readEditCoords();
+      const atOriginal = coords && coordsMatchEditSnapshot(coords.lat, coords.lon);
+      const visible = ev.target.checked;
+      if (atOriginal && editKind === "site" && editSlug) {
+        setViewshedVisible(editSlug, visible);
+        if (!visible) removeDraftViewshed();
+        return;
+      }
+      setViewshedVisible(DRAFT_VIEWSHED_SLUG, visible);
+      if (visible && coords) {
+        hideViewshedLayerForEdit(editSlug);
+        void loadDraftViewshedAt(coords.lat, coords.lon);
+      } else {
+        removeDraftViewshed();
+      }
+    });
+  }
   sitePanelCreateClose.addEventListener("click", cancelCreate);
   sitePanelCreateCancel.addEventListener("click", cancelCreate);
   sitePanelCreateSave.addEventListener("click", () => {
@@ -2247,6 +2878,10 @@
       cancelCreate();
       return;
     }
-    if (selectedSlug) deselectSite();
+    if (editMode) {
+      cancelEdit();
+      return;
+    }
+    if (selectedSlug || selectedGoalSlug) deselectSite();
   });
 })();

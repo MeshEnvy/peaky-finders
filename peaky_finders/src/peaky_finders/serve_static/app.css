@@ -103,6 +103,29 @@ body.wide #map {
   color: #f59e0b;
 }
 
+.coord-input-row .coord-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.coord-input-row .coord-action-btn {
+  flex: 0 0 auto;
+  width: 2rem;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.coord-action-btn.active {
+  background-color: var(--bs-primary);
+  border-color: var(--bs-primary);
+  color: #fff;
+}
+
+.map-shell.edit-mode #map,
+.map-shell.edit-mode .maplibregl-canvas {
+  cursor: crosshair;
+}
+
 .map-shell.add-placement-mode #map,
 .map-shell.add-placement-mode .maplibregl-canvas,
 .map-shell.add-site-mode #map,

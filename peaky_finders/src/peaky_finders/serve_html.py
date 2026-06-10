@@ -230,6 +230,62 @@ def project_html(
           <label class="form-check-label small" for="site-panel-viewshed">Show viewshed</label>
           <span class="site-panel__viewshed-hint small text-muted ms-1" id="site-panel-viewshed-hint"></span>
         </div>
+        <div class="site-panel__actions border-top pt-3 mt-2">
+          <button type="button" id="site-panel-edit-open" class="btn btn-outline-primary btn-sm w-100">Edit</button>
+        </div>
+      </div>
+      <div id="site-panel-edit" hidden>
+        <div class="site-panel__header d-flex align-items-start justify-content-between gap-2 mb-3">
+          <h2 class="site-panel__title h6 mb-0" id="site-panel-edit-title">Edit</h2>
+          <button type="button" class="btn-close btn-close-sm" id="site-panel-edit-close" title="Close" aria-label="Close"></button>
+        </div>
+        <div class="site-panel__section mb-2">
+          <label class="site-panel__label small text-muted text-uppercase" for="site-panel-edit-name">Name</label>
+          <input id="site-panel-edit-name" type="text" class="form-control form-control-sm" required>
+        </div>
+        <div class="site-panel__section mb-2">
+          <span class="site-panel__label small text-muted text-uppercase">Slug</span>
+          <p class="site-panel__value small mb-0 font-monospace text-muted" id="site-panel-edit-slug"></p>
+        </div>
+        <div class="site-panel__section mb-2">
+          <label class="site-panel__label small text-muted text-uppercase" for="site-panel-edit-type">Type</label>
+          <select id="site-panel-edit-type" class="form-select form-select-sm"></select>
+        </div>
+        <div class="site-panel__section mb-2">
+          <span class="site-panel__label small text-muted text-uppercase d-block mb-1">Coordinates</span>
+          <div class="coord-input-row d-flex gap-1 align-items-center mb-1">
+            <label class="small text-muted mb-0" for="site-panel-edit-lat">Lat</label>
+            <input id="site-panel-edit-lat" type="text" class="form-control form-control-sm font-monospace coord-field" inputmode="decimal" autocomplete="off">
+            <button type="button" id="site-panel-edit-reset-coords" class="btn btn-sm btn-outline-secondary coord-action-btn" title="Reset coordinates">↺</button>
+            <button type="button" id="site-panel-edit-copy-coords" class="btn btn-sm btn-outline-secondary coord-action-btn" title="Copy lat, lon">⎘</button>
+          </div>
+          <div class="coord-input-row d-flex gap-1 align-items-center">
+            <label class="small text-muted mb-0" for="site-panel-edit-lon">Lon</label>
+            <input id="site-panel-edit-lon" type="text" class="form-control form-control-sm font-monospace coord-field" inputmode="decimal" autocomplete="off">
+          </div>
+        </div>
+        <div class="site-panel__section mb-2" id="site-panel-edit-plss-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">PLSS</span>
+          <p class="site-panel__value small mb-0" id="site-panel-edit-plss"></p>
+        </div>
+        <div class="site-panel__section mb-2" id="site-panel-edit-mlrs-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase">MLRS</span>
+          <p class="site-panel__value small mb-0" id="site-panel-edit-mlrs"></p>
+        </div>
+        <div class="site-panel__section mb-2" id="site-panel-edit-links-section" hidden>
+          <span class="site-panel__label small text-muted text-uppercase" id="site-panel-edit-links-label">Linked sites</span>
+          <ul class="site-panel__links small mb-0 ps-3" id="site-panel-edit-links"></ul>
+        </div>
+        <div class="site-panel__viewshed form-check border-top pt-2 mt-2" id="site-panel-edit-viewshed-section">
+          <input class="form-check-input" type="checkbox" id="site-panel-edit-viewshed" checked>
+          <label class="form-check-label small" for="site-panel-edit-viewshed">Show viewshed preview</label>
+          <span class="site-panel__viewshed-hint small text-muted ms-1" id="site-panel-edit-viewshed-hint"></span>
+        </div>
+        <div id="site-panel-edit-error" class="alert alert-danger py-2 small mb-2" role="alert" hidden></div>
+        <div class="site-panel__create-actions d-flex gap-2 mt-3">
+          <button type="button" id="site-panel-edit-save" class="btn btn-primary btn-sm">Save</button>
+          <button type="button" id="site-panel-edit-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+        </div>
       </div>
       <div id="site-panel-create" hidden>
         <div class="site-panel__header d-flex align-items-start justify-content-between gap-2 mb-3">
