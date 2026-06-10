@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from peaky_finders.new_cli import scaffold_project
-from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset, unique_site_slug
+from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset, unique_site_slug, update_site_in_preset
 from peaky_finders.sites_job import load_preset, write_preset_document
 
 
@@ -116,3 +116,30 @@ def test_delete_site_missing_raises(tmp_path: Path) -> None:
     preset_path = projects_dir / "demo" / "config.yaml"
     with pytest.raises(ValueError, match="not found"):
         delete_site_from_preset(preset_path, "missing")
+
+
+def test_update_site_in_preset(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slug = append_planned_site_to_preset(
+        preset_path,
+        name="New Peak",
+        lat=39.6,
+        lon=-119.4,
+    )
+    update_site_in_preset(
+        preset_path,
+        slug,
+        name="Renamed Peak",
+        lat=39.61,
+        lon=-119.41,
+        site_type="installed",
+    )
+    preset = load_preset(preset_path)
+    entry = preset.sites[slug]
+    assert entry.name == "Renamed Peak"
+    assert entry.lat == 39.61
+    assert entry.lon == -119.41
+    assert entry.type.value == "installed"

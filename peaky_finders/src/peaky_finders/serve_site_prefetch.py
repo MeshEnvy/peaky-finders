@@ -18,6 +18,7 @@ def load_site_placement_prefetch(
     lat: float,
     lon: float,
     *,
+    exclude_site_slug: str | None = None,
     verbose: bool = False,
 ) -> dict[str, object]:
     """Return PLSS, MLRS, and linked peers for draft coordinates."""
@@ -32,7 +33,14 @@ def load_site_placement_prefetch(
         raise ServeSitePrefetchError(f"invalid preset: {e}") from e
 
     try:
-        links = load_coords_site_links(project_dir, lat, lon, sites, verbose=verbose)
+        links = load_coords_site_links(
+            project_dir,
+            lat,
+            lon,
+            sites,
+            exclude_site_slug=exclude_site_slug,
+            verbose=verbose,
+        )
     except ServeLinksError as e:
         raise ServeSitePrefetchError(str(e)) from e
 

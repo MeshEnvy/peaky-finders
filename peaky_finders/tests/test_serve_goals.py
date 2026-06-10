@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from peaky_finders.serve_goals import append_goal_to_preset, delete_goal_from_preset, unique_goal_slug
+from peaky_finders.serve_goals import (
+    append_goal_to_preset,
+    delete_goal_from_preset,
+    unique_goal_slug,
+    update_goal_in_preset,
+)
 from peaky_finders.sites_job import load_preset, write_preset_document
 
 
@@ -173,3 +178,63 @@ def test_delete_goal_missing_raises(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="not found"):
         delete_goal_from_preset(preset_path, "missing")
+
+
+def test_update_goal_promotes_preserving_fields(tmp_path: Path) -> None:
+    preset_path = tmp_path / "config.yaml"
+    write_preset_document(
+        preset_path,
+        {
+            "simulation": {
+                "modem_presets": {
+                    "m": {
+                        "frequency_mhz": 910.525,
+                        "bandwidth_khz": 62.5,
+                        "spreading_factor": 7,
+                        "coding_rate": 5,
+                        "implementation_margin_db": 3.0,
+                        "power_dbm": 22.0,
+                        "sensitivity_dbm": -121.0,
+                    }
+                },
+                "environment_presets": {
+                    "e": {
+                        "climate": "desert",
+                        "polarization": "vertical",
+                        "clutter_height_m": 1.0,
+                    }
+                },
+                "modem": "m",
+                "environment": "e",
+                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
+                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
+            },
+            "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
+            "sites": {"hub": {"name": "Hub", "loc": [39.5, -119.5]}},
+            "goals": {
+                "bridge": {
+                    "name": "Bridge",
+                    "loc": [39.6, -119.4],
+                    "description": "valley crossing",
+                    "plss": "T24N R19E",
+                },
+            },
+        },
+    )
+    update_goal_in_preset(
+        preset_path,
+        "bridge",
+        name="Bridge site",
+        lat=39.61,
+        lon=-119.41,
+        promote_site_type="planned",
+    )
+    preset = load_preset(preset_path)
+    assert "bridge" not in preset.goals
+    site = preset.sites["bridge"]
+    assert site.name == "Bridge site"
+    assert site.lat == 39.61
+    assert site.lon == -119.41
+    assert site.type.value == "planned"
+    assert site.description == "valley crossing"
+    assert site.plss == "T24N R19E"

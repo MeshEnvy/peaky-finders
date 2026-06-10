@@ -85,6 +85,59 @@ def _scrub_manual_links_for_site(links_raw: Any, site_slug: str) -> list[list[st
     return kept
 
 
+def _coerce_site_type(raw: str) -> str:
+    s = str(raw).strip().lower()
+    if s == "placed":
+        s = "installed"
+    try:
+        return SiteType(s).value
+    except ValueError as e:
+        raise ValueError(
+            f"type must be one of: installed, planned, suggested (got {raw!r})"
+        ) from e
+
+
+def update_site_in_preset(
+    preset_path: Path,
+    site_slug: str,
+    *,
+    name: str | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+    site_type: str | None = None,
+) -> str:
+    """Update an existing site in ``sites``; return slug."""
+    slug = str(site_slug).strip()
+    if not slug:
+        raise ValueError("site slug is required")
+    if name is not None:
+        name = validate_site_name(name)
+    if lat is not None or lon is not None:
+        if lat is None or lon is None:
+            raise ValueError("lat and lon must both be provided")
+        validate_site_coords(lat, lon)
+    type_value: str | None = None
+    if site_type is not None:
+        type_value = _coerce_site_type(site_type)
+
+    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> str:
+        sites_raw = root.get("sites")
+        if not isinstance(sites_raw, dict) or slug not in sites_raw:
+            raise ValueError(f"site not found: {slug!r}")
+        ent = sites_raw[slug]
+        if not isinstance(ent, dict):
+            raise ValueError(f"site entry must be a mapping: {slug!r}")
+        if name is not None:
+            ent["name"] = name
+        if lat is not None and lon is not None:
+            ent["loc"] = [lat, lon]
+        if type_value is not None:
+            ent["type"] = type_value
+        return slug
+
+    return str(update_preset_yaml_tree(preset_path, mutator, validate=False))
+
+
 def delete_site_from_preset(preset_path: Path, site_slug: str) -> str:
     """Remove a site from ``sites`` and scrub manual ``links`` pairs; return deleted slug."""
     slug = str(site_slug).strip()

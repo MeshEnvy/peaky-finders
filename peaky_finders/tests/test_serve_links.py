@@ -209,6 +209,75 @@ def test_load_coords_site_links_rf_batch(tmp_path: Path) -> None:
     assert all(isinstance(row["distance_km"], (int, float)) for row in records)
 
 
+def test_load_coords_site_links_exclude_edited_site(tmp_path: Path) -> None:
+    project_dir = tmp_path / "sample"
+    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    sites = load_preset_sites(project_dir / "config.yaml")
+    hub = sites["hub"]
+    lat = float(hub.lat)
+    lon = float(hub.lon)
+
+    def _rf_batch(_session, pairs, *, rf_json: str) -> list[bool]:
+        return [True] * len(pairs)
+
+    with (
+        patch("peaky_finders.serve_links.splatter_session"),
+        patch("peaky_finders.serve_links.ensure_dem_for_points"),
+        patch("peaky_finders.serve_links.mutual_hop_batch", side_effect=_rf_batch),
+    ):
+        all_records = load_coords_site_links(project_dir, lat, lon, sites)
+        filtered = load_coords_site_links(
+            project_dir,
+            lat,
+            lon,
+            sites,
+            exclude_site_slug="hub",
+        )
+
+    assert any(row["slug"] == "hub" for row in all_records)
+    assert not any(row["slug"] == "hub" for row in filtered)
+
+
+def test_api_sites_prefetch_exclude_site(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, projects_dir / "sample")
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        sites = load_preset_sites(projects_dir / "sample" / "config.yaml")
+        hub = sites["hub"]
+        lat = float(hub.lat)
+        lon = float(hub.lon)
+
+        def _rf_batch(_session, pairs, *, rf_json: str) -> list[bool]:
+            return [True] * len(pairs)
+
+        with (
+            patch("peaky_finders.serve_links.splatter_session"),
+            patch("peaky_finders.serve_links.ensure_dem_for_points"),
+            patch("peaky_finders.serve_links.mutual_hop_batch", side_effect=_rf_batch),
+        ):
+            conn = HTTPConnection(host, port, timeout=2)
+            conn.request(
+                "GET",
+                f"/api/p/sample/sites/prefetch?lat={lat}&lon={lon}&exclude_site=hub",
+            )
+            resp = conn.getresponse()
+            payload = json.loads(resp.read().decode("utf-8"))
+
+        assert resp.status == 200
+        slugs = {row["slug"] for row in payload["links"]}
+        assert "hub" not in slugs
+        feature_slugs = {
+            feature["properties"]["slug"] for feature in payload["links_geojson"]["features"]
+        }
+        assert "hub" not in feature_slugs
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_project_page_includes_site_links_toggle(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()

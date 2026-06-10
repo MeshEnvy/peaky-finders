@@ -19,13 +19,13 @@ from peaky_finders.serve_goal_links import (
     evaluate_goal_site_prefetch_links,
     load_project_goal_links,
 )
-from peaky_finders.serve_goals import append_goal_to_preset, delete_goal_from_preset
+from peaky_finders.serve_goals import append_goal_to_preset, delete_goal_from_preset, update_goal_in_preset
 from peaky_finders.serve_html import landing_html, project_error_html, project_html
 from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked, load_project_site_links
 from peaky_finders.serve_plss_mlrs import apply_plss_mlrs_from_loc_cache
 from peaky_finders.serve_site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
 from peaky_finders.serve_simulation import update_viewshed_sim_to_preset
-from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset
+from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset, update_site_in_preset
 from peaky_finders.serve_events import get_serve_event_hub
 from peaky_finders.serve_viewshed import (
     DRAFT_VIEWSHED_SLUG,
@@ -225,6 +225,8 @@ class ServeDispatcher:
             self._do_get(parsed)
         elif method == "POST":
             self._do_post(parsed, body)
+        elif method == "PATCH":
+            self._do_patch(parsed, body)
         elif method == "DELETE":
             self._do_delete(parsed)
         else:
@@ -400,12 +402,15 @@ class ServeDispatcher:
                 payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=422)
                 return
+            qs = parse_qs(parsed_url.query)
+            exclude_site = str(qs.get("exclude_site", [""])[0]).strip() or None
             verbose = bool(self.verbose)
             try:
                 payload_obj = load_site_placement_prefetch(
                     project_dir,
                     lat,
                     lon,
+                    exclude_site_slug=exclude_site,
                     verbose=verbose,
                 )
             except ServeSitePrefetchError as e:
@@ -718,6 +723,40 @@ class ServeDispatcher:
         parsed_url = parsed
         path = parsed_url.path
 
+        # Prefetch warm must precede per-site warm — otherwise ``prefetch`` matches as a site slug.
+        viewshed_prefetch_warm_match = _API_PROJECT_VIEWSHED_PREFETCH_WARM_RE.match(path)
+        if viewshed_prefetch_warm_match:
+            slug = viewshed_prefetch_warm_match.group(1)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            try:
+                lat, lon = _parse_lat_lon_query(parsed_url.query)
+                sim_overrides = _parse_viewshed_sim_query(parsed_url.query)
+            except ValueError as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            verbose = bool(self.verbose)
+            try:
+                result = warm_coords_viewshed(
+                    slug,
+                    project_dir,
+                    lat,
+                    lon,
+                    sim_overrides=sim_overrides,
+                    verbose=verbose,
+                )
+            except ServeViewshedError as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=503)
+                return
+            status = 200 if result.get("status") == "ready" else 202
+            payload = json.dumps(result).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=status)
+            return
+
         viewshed_warm_match = _API_PROJECT_VIEWSHED_WARM_RE.match(path)
         if viewshed_warm_match:
             slug = viewshed_warm_match.group(1)
@@ -759,39 +798,6 @@ class ServeDispatcher:
                 payload = json.dumps(
                     {"slug": slug, "site": site_slug, "error": str(e)}
                 ).encode("utf-8")
-                self._send_bytes(payload, "application/json", status=503)
-                return
-            status = 200 if result.get("status") == "ready" else 202
-            payload = json.dumps(result).encode("utf-8")
-            self._send_bytes(payload, "application/json", status=status)
-            return
-
-        viewshed_prefetch_warm_match = _API_PROJECT_VIEWSHED_PREFETCH_WARM_RE.match(path)
-        if viewshed_prefetch_warm_match:
-            slug = viewshed_prefetch_warm_match.group(1)
-            project_dir = self.projects_dir / slug
-            if not (project_dir / "config.yaml").is_file():
-                self.send_error(404)
-                return
-            try:
-                lat, lon = _parse_lat_lon_query(parsed_url.query)
-                sim_overrides = _parse_viewshed_sim_query(parsed_url.query)
-            except ValueError as e:
-                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
-                self._send_bytes(payload, "application/json", status=422)
-                return
-            verbose = bool(self.verbose)
-            try:
-                result = warm_coords_viewshed(
-                    slug,
-                    project_dir,
-                    lat,
-                    lon,
-                    sim_overrides=sim_overrides,
-                    verbose=verbose,
-                )
-            except ServeViewshedError as e:
-                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=503)
                 return
             status = 200 if result.get("status") == "ready" else 202
@@ -990,6 +996,164 @@ class ServeDispatcher:
             return
 
         self._redirect(f"/p/{slug}/")
+
+    def _parse_entity_patch_body(self, body: bytes) -> dict[str, object]:
+        try:
+            raw = _parse_json_body(body)
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise ValueError(f"invalid JSON: {e}") from e
+        if not isinstance(raw, dict):
+            raise ValueError("body must be a JSON object")
+        return raw
+
+    def _do_patch(self, parsed: ParseResult, body: bytes) -> None:
+        parsed_url = parsed
+        path = parsed_url.path
+
+        site_match = _API_PROJECT_SITE_SLUG_RE.match(path)
+        if site_match:
+            project_slug = site_match.group(1)
+            site_slug = site_match.group(2)
+            project_dir = self.projects_dir / project_slug
+            preset_path = project_dir / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = self._parse_entity_patch_body(body)
+            except ValueError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            name = raw.get("name")
+            name_str = str(name).strip() if name is not None else None
+            lat_raw = raw.get("lat")
+            lon_raw = raw.get("lon")
+            lat: float | None = None
+            lon: float | None = None
+            if lat_raw is not None or lon_raw is not None:
+                try:
+                    lat = float(lat_raw)  # type: ignore[arg-type]
+                    lon = float(lon_raw)  # type: ignore[arg-type]
+                except (TypeError, ValueError) as e:
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": f"lat and lon required: {e}"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+            site_type = raw.get("type")
+            site_type_str = str(site_type).strip() if site_type is not None else None
+            try:
+                updated_slug = update_site_in_preset(
+                    preset_path,
+                    site_slug,
+                    name=name_str,
+                    lat=lat,
+                    lon=lon,
+                    site_type=site_type_str,
+                )
+                if lat is not None and lon is not None:
+                    apply_plss_mlrs_from_loc_cache(preset_path, updated_slug, lat, lon)
+                site_map = _load_project_sites(project_dir)
+                site_entry = site_map[updated_slug]
+                site_row = _serialize_project_sites({updated_slug: site_entry})[0]
+            except ValueError as e:
+                if "not found" in str(e):
+                    self.send_error(404)
+                    return
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {"slug": project_slug, "site": site_row},
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        goal_match = _API_PROJECT_GOAL_SLUG_RE.match(path)
+        if goal_match:
+            project_slug = goal_match.group(1)
+            goal_slug = goal_match.group(2)
+            project_dir = self.projects_dir / project_slug
+            preset_path = project_dir / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = self._parse_entity_patch_body(body)
+            except ValueError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            name = raw.get("name")
+            name_str = str(name).strip() if name is not None else None
+            lat_raw = raw.get("lat")
+            lon_raw = raw.get("lon")
+            lat: float | None = None
+            lon: float | None = None
+            if lat_raw is not None or lon_raw is not None:
+                try:
+                    lat = float(lat_raw)  # type: ignore[arg-type]
+                    lon = float(lon_raw)  # type: ignore[arg-type]
+                except (TypeError, ValueError) as e:
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": f"lat and lon required: {e}"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+            type_raw = raw.get("type")
+            type_str = str(type_raw).strip().lower() if type_raw is not None else None
+            promote_site_type: str | None = None
+            if type_str and type_str not in ("goal", ""):
+                promote_site_type = type_str
+            try:
+                updated_slug = update_goal_in_preset(
+                    preset_path,
+                    goal_slug,
+                    name=name_str,
+                    lat=lat,
+                    lon=lon,
+                    promote_site_type=promote_site_type,
+                )
+                if lat is not None and lon is not None:
+                    apply_plss_mlrs_from_loc_cache(preset_path, updated_slug, lat, lon)
+                if promote_site_type is not None:
+                    site_map = _load_project_sites(project_dir)
+                    site_entry = site_map[updated_slug]
+                    site_row = _serialize_project_sites({updated_slug: site_entry})[0]
+                    payload = json.dumps(
+                        {"slug": project_slug, "promoted": True, "site": site_row},
+                        sort_keys=True,
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=200)
+                    return
+                goal_map = _load_project_goals(project_dir)
+                goal_entry = goal_map[updated_slug]
+                goal_row = _serialize_project_goals({updated_slug: goal_entry})[0]
+            except ValueError as e:
+                if "not found" in str(e):
+                    self.send_error(404)
+                    return
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {"slug": project_slug, "goal": goal_row},
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        self.send_error(404)
 
     def _do_delete(self, parsed: ParseResult) -> None:
         parsed_url = parsed

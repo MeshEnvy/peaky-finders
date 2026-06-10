@@ -246,6 +246,7 @@ def load_coords_site_links(
     lon: float,
     sites: Mapping[str, SiteEntry],
     *,
+    exclude_site_slug: str | None = None,
     verbose: bool = False,
 ) -> list[dict[str, object]]:
     """Evaluate RF links from draft coordinates to each existing site within hop range."""
@@ -258,8 +259,11 @@ def load_coords_site_links(
     if preset.land is None:
         raise ServeLinksError("preset land.* required for RF link checks")
 
+    exclude = str(exclude_site_slug).strip() if exclude_site_slug else ""
     rf_pairs: list[tuple[str, float, float]] = []
     for slug, site in sorted(sites.items()):
+        if exclude and slug == exclude:
+            continue
         site_lat, site_lon = float(site.lat), float(site.lon)
         if not _pair_within_hop_range(
             preset,

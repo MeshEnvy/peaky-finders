@@ -461,3 +461,23 @@ def test_coverage_slot_serializes(monkeypatch: pytest.MonkeyPatch) -> None:
     for thread in threads:
         thread.join(timeout=2.0)
     assert max_active == 1
+
+
+def test_post_prefetch_warm_route_not_site_slug(tmp_path: Path) -> None:
+    """``/viewsheds/prefetch/warm`` must not match the per-site warm route."""
+    from peaky_finders.serve_app import ServeDispatcher
+
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    dispatcher = ServeDispatcher(projects_dir, verbose=False)
+    resp = dispatcher.dispatch(
+        "POST",
+        "/api/p/demo/viewsheds/prefetch/warm",
+        "lat=39.5&lon=-119.5&radius_km=60&raster_dimension=256",
+        b"",
+    )
+    assert resp.status != 404
+    payload = json.loads(resp.body.decode("utf-8"))
+    assert payload.get("slug") == "_draft"
+    assert payload.get("status") in ("ready", "queued")
