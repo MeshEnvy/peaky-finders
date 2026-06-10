@@ -211,7 +211,8 @@ All outbound fetches throttled via `http_pool.py`:
 | `peaky-test` | Docker test contract |
 | `parallel-design` / `parallel-execution` | Multi-core patterns |
 | `verbose-logging` | `--verbose` lifecycle |
-| `commit-style` / `communication-style` | Commits and prose |
+| `commit-style` | Points to skill `commit` on commit requests |
+| `communication-style` | Prose style |
 | `serve-web-ui` | Progressive web UI; reuse CLI/pipeline logic |
 
 ### Skills (`.cursor/skills/`)
@@ -224,3 +225,4 @@ All outbound fetches throttled via `http_pool.py`:
 | `peaky-build` | Build DAG, staleness, granular targets |
 | `peaky-dev` | `./peaky`, `./peaky-test`, Docker |
 | `peaky-serve` | `peaky serve` on-demand web over shared pipeline |
+| `commit` | Scoped session commits (`/commit`); Conventional Commits |
