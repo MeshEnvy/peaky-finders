@@ -21,6 +21,7 @@ from peaky_finders.serve_links import (
 )
 from peaky_finders.serve_app import make_serve_wsgi_app
 from peaky_finders.sites_job import load_preset_sites
+from rf_fixtures import make_goal_entry
 
 
 def _start_server(projects_dir: Path):
@@ -206,6 +207,62 @@ def test_load_coords_site_links_rf_batch(tmp_path: Path) -> None:
     assert all(not row["manual"] for row in records)
     assert all("distance_km" in row for row in records)
     assert all(isinstance(row["distance_km"], (int, float)) for row in records)
+
+
+def test_load_coords_site_links_excludes_goals(tmp_path: Path) -> None:
+    project_dir = tmp_path / "sample"
+    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    sites = load_preset_sites(project_dir / "config.yaml")
+    sites["bridge-goal"] = make_goal_entry("Bridge goal", (39.5296, -119.8138))
+    lat = 39.5296
+    lon = -119.8138
+
+    def _rf_batch(_session, pairs, *, rf_json: str) -> list[bool]:
+        return [True] * len(pairs)
+
+    with (
+        patch("peaky_finders.serve_links.splatter_session"),
+        patch("peaky_finders.serve_links.ensure_dem_for_points"),
+        patch("peaky_finders.serve_links.mutual_hop_batch", side_effect=_rf_batch),
+    ):
+        records = load_coords_site_links(project_dir, lat, lon, sites)
+
+    assert not any(row["slug"] == "bridge-goal" for row in records)
+
+
+def test_load_project_site_links_excludes_goals(tmp_path: Path) -> None:
+    project_dir = tmp_path / "sample"
+    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    sites = load_preset_sites(project_dir / "config.yaml")
+    sites["bridge-goal"] = make_goal_entry("Bridge goal", (39.5296, -119.8138))
+
+    with (
+        patch("peaky_finders.serve_links.splatter_session"),
+        patch("peaky_finders.serve_links.ensure_dem_for_points"),
+        patch("peaky_finders.serve_links.mutual_hop_batch", side_effect=_rf_batch_none),
+    ):
+        payload = load_project_site_links(project_dir, sites)
+
+    for row in payload["links"]:
+        assert row["a"] != "bridge-goal"
+        assert row["b"] != "bridge-goal"
+    for feature in payload["geojson"]["features"]:
+        props = feature["properties"]
+        assert props["a"] != "bridge-goal"
+        assert props["b"] != "bridge-goal"
+
+
+def test_evaluate_site_pair_with_goal_is_not_linked(tmp_path: Path) -> None:
+    project_dir = tmp_path / "sample"
+    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    sites = load_preset_sites(project_dir / "config.yaml")
+    sites["bridge-goal"] = make_goal_entry("Bridge goal", (39.5296, -119.8138))
+
+    with patch("peaky_finders.serve_links.mutual_hop_viable") as mock_rf:
+        result = evaluate_site_pair_linked(project_dir, "hub", "bridge-goal", sites)
+
+    assert result == {"a": "bridge-goal", "b": "hub", "linked": False, "manual": False}
+    mock_rf.assert_not_called()
 
 
 def test_load_coords_site_links_exclude_edited_site(tmp_path: Path) -> None:

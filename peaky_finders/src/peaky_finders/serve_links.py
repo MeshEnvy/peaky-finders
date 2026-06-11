@@ -18,7 +18,13 @@ from peaky_finders.site_suggestions.rf_link import (
     rf_json_for_preset,
     splatter_session,
 )
-from peaky_finders.sites_job import Preset, SiteEntry, load_preset_for_coverage
+from peaky_finders.sites_job import (
+    Preset,
+    SiteEntry,
+    SiteType,
+    load_preset_for_coverage,
+    preset_repeater_sites,
+)
 from peaky_finders.viewshed_links import manual_link_slug_pairs
 
 _links_eval_lock = threading.Lock()
@@ -63,6 +69,15 @@ def _pair_within_hop_range(
 
 def _manual_link_pairs(preset: Preset) -> set[tuple[str, str]]:
     return set(manual_link_slug_pairs(preset.links))
+
+
+def _repeater_sites(sites: Mapping[str, SiteEntry]) -> dict[str, SiteEntry]:
+    """Mesh P2P links only apply between repeaters — never ``type: goal`` sites."""
+    return preset_repeater_sites(sites)
+
+
+def _site_is_goal(site: SiteEntry) -> bool:
+    return site.type == SiteType.GOAL
 
 
 def _link_record(
@@ -124,6 +139,9 @@ def evaluate_site_pair_linked(
 
     site_a = sites[a_slug]
     site_b = sites[b_slug]
+    if _site_is_goal(site_a) or _site_is_goal(site_b):
+        return _link_record(slug_a=a_slug, slug_b=b_slug, linked=False, manual=False)
+
     lat_a, lon_a = float(site_a.lat), float(site_a.lon)
     lat_b, lon_b = float(site_b.lat), float(site_b.lon)
     if not _pair_within_hop_range(preset, lat_a=lat_a, lon_a=lon_a, lat_b=lat_b, lon_b=lon_b):
@@ -161,7 +179,8 @@ def load_project_site_links(
     preset = _load_links_preset(project_dir)
 
     manual_pairs = _manual_link_pairs(preset)
-    slug_list = sorted(sites.keys())
+    repeaters = _repeater_sites(sites)
+    slug_list = sorted(repeaters.keys())
     records: list[dict[str, object]] = []
     features: list[dict[str, object]] = []
     rf_pairs: list[tuple[str, str, float, float, float, float]] = []
@@ -174,15 +193,15 @@ def load_project_site_links(
                 _line_feature(
                     slug_a=slug_a,
                     slug_b=slug_b,
-                    site_a=sites[slug_a],
-                    site_b=sites[slug_b],
+                    site_a=repeaters[slug_a],
+                    site_b=repeaters[slug_b],
                     manual=True,
                 )
             )
             continue
 
-        site_a = sites[slug_a]
-        site_b = sites[slug_b]
+        site_a = repeaters[slug_a]
+        site_b = repeaters[slug_b]
         lat_a, lon_a = float(site_a.lat), float(site_a.lon)
         lat_b, lon_b = float(site_b.lat), float(site_b.lon)
         if not _pair_within_hop_range(preset, lat_a=lat_a, lon_a=lon_a, lat_b=lat_b, lon_b=lon_b):
@@ -223,8 +242,8 @@ def load_project_site_links(
                 _line_feature(
                     slug_a=slug_a,
                     slug_b=slug_b,
-                    site_a=sites[slug_a],
-                    site_b=sites[slug_b],
+                    site_a=repeaters[slug_a],
+                    site_b=repeaters[slug_b],
                     manual=False,
                 )
             )
@@ -254,8 +273,9 @@ def load_coords_site_links(
     preset = _load_links_preset(project_dir)
 
     exclude = str(exclude_site_slug).strip() if exclude_site_slug else ""
+    repeaters = _repeater_sites(sites)
     rf_pairs: list[tuple[str, float, float]] = []
-    for slug, site in sorted(sites.items()):
+    for slug, site in sorted(repeaters.items()):
         if exclude and slug == exclude:
             continue
         site_lat, site_lon = float(site.lat), float(site.lon)

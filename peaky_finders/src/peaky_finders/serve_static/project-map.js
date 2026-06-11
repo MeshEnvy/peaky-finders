@@ -391,6 +391,25 @@
   let editHiddenViewshedSlug = null;
   const siteBySlug = new Map(sites.map((s) => [s.slug, s]));
   const goalBySlug = new Map(goals.map((g) => [g.slug, g]));
+
+  function isGoalSlug(slug) {
+    return goalBySlug.has(slug);
+  }
+
+  function filterSiteLinkPrefetchPayload(payload) {
+    if (!payload) return payload;
+    const links = Array.isArray(payload.links)
+      ? payload.links.filter((row) => !isGoalSlug(row.slug))
+      : payload.links;
+    let linksGeojson = payload.links_geojson;
+    if (linksGeojson && Array.isArray(linksGeojson.features)) {
+      linksGeojson = {
+        ...linksGeojson,
+        features: linksGeojson.features.filter((feature) => !isGoalSlug((feature.properties || {}).slug)),
+      };
+    }
+    return { ...payload, links, links_geojson: linksGeojson };
+  }
   const mapShell = document.querySelector(".map-shell");
   const sitePanel = document.getElementById("site-panel");
   const sitePanelView = document.getElementById("site-panel-view");
@@ -720,6 +739,7 @@
     if (!geojson || !geojson.features) return geojson;
     const features = geojson.features.filter((feature) => {
       const props = feature.properties || {};
+      if (isGoalSlug(props.a) || isGoalSlug(props.b)) return false;
       if (siteHidden.has(props.a) || siteHidden.has(props.b)) return false;
       if (editMode && editKind === "site" && editSlug) {
         if (props.a === editSlug || props.b === editSlug) return false;
@@ -1846,11 +1866,13 @@
   }
 
   function filterEditSitePrefetchPayload(payload) {
-    if (!payload || editKind !== "site" || !editSlug) return payload;
-    const links = Array.isArray(payload.links)
-      ? payload.links.filter((row) => row.slug !== editSlug)
-      : payload.links;
-    let linksGeojson = payload.links_geojson;
+    if (!payload) return payload;
+    let next = filterSiteLinkPrefetchPayload(payload);
+    if (editKind !== "site" || !editSlug) return next;
+    const links = Array.isArray(next.links)
+      ? next.links.filter((row) => row.slug !== editSlug)
+      : next.links;
+    let linksGeojson = next.links_geojson;
     if (linksGeojson && Array.isArray(linksGeojson.features)) {
       linksGeojson = {
         ...linksGeojson,
@@ -1931,7 +1953,7 @@
       const payload = await resp.json();
       if (gen !== placementPrefetchGen) return;
       if (payload && (payload.plss || payload.links || payload.links_geojson)) {
-        renderCreatePrefetch(payload);
+        renderCreatePrefetch(filterSiteLinkPrefetchPayload(payload));
       }
     } catch (_) {
       /* placement prefetch optional */
@@ -2276,6 +2298,7 @@
     const peers = [];
     for (const row of siteLinksPayload.links) {
       if (!row.linked) continue;
+      if (isGoalSlug(row.a) || isGoalSlug(row.b)) continue;
       if (row.a === slug) peers.push(row.b);
       else if (row.b === slug) peers.push(row.a);
     }
