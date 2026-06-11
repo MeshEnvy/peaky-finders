@@ -232,4 +232,5 @@ All outbound fetches throttled via `http_pool.py`:
 | `peaky-build` | Build DAG, staleness, granular targets |
 | `peaky-dev` | `./peaky`, Docker |
 | `peaky-serve` | `peaky serve` on-demand web over shared pipeline |
+| `splatter` | RF engine (Rust/PyO3), request hash, viewshed/link API |
 | `commit` | Scoped session commits (`/commit`); Conventional Commits |
