@@ -908,6 +908,7 @@
   function buildSiteEntityRow(site) {
     const row = document.createElement("div");
     row.className = "entity-panel__row";
+    row.dataset.siteSlug = site.slug;
     if (selectedSlug === site.slug) row.classList.add("entity-panel__row--selected");
     if (isSiteHidden(site.slug)) row.classList.add("entity-panel__row--hidden");
 
@@ -937,7 +938,7 @@
 
     const vsCheck = document.createElement("input");
     vsCheck.type = "checkbox";
-    vsCheck.className = "form-check-input";
+    vsCheck.className = "form-check-input entity-panel__viewshed-check";
     vsCheck.title = "Show viewshed";
     vsCheck.checked = isViewshedVisible(site.slug);
     vsCheck.disabled = isSiteHidden(site.slug);
@@ -945,7 +946,6 @@
     vsCheck.addEventListener("change", (ev) => {
       ev.stopPropagation();
       setViewshedVisible(site.slug, ev.target.checked);
-      applyViewshedVisibilityForSite(site.slug);
       scheduleSaveMapState();
     });
 
@@ -2008,6 +2008,32 @@
     return viewshedVisible.get(slug) !== false;
   }
 
+  function syncEntityPanelViewshedCheckbox(slug) {
+    if (!entityPanelSitesList) return;
+    const row = entityPanelSitesList.querySelector(`[data-site-slug="${CSS.escape(slug)}"]`);
+    if (!row) return;
+    const check = row.querySelector(".entity-panel__viewshed-check");
+    if (check) check.checked = isViewshedVisible(slug);
+  }
+
+  function syncSitePanelViewshedCheckbox(slug) {
+    if (!sitePanelViewshed || slug !== selectedSlug) return;
+    if (sitePanelView && sitePanelView.hidden) return;
+    sitePanelViewshed.checked = isViewshedVisible(slug);
+    if (sitePanelViewshedHint) {
+      sitePanelViewshedHint.textContent = viewshedLoading.has(slug) ? "Loading…" : "";
+    }
+  }
+
+  /** Mirror viewshedVisible state into every checkbox bound to this site slug. */
+  function syncViewshedUiForSlug(slug) {
+    if (!slug) return;
+    syncEntityPanelViewshedCheckbox(slug);
+    syncSitePanelViewshedCheckbox(slug);
+    if (editMode && editKind === "site" && editSlug === slug) syncEditViewshedCheckbox();
+    updatePinOverlays();
+  }
+
   function setViewshedVisible(slug, visible) {
     viewshedVisible.set(slug, visible);
     const layerId = viewshedLayerId(slug);
@@ -2017,18 +2043,16 @@
       const site = siteBySlug.get(slug);
       if (site) scheduleViewshedLoad(site);
     }
-    if (slug === selectedSlug) syncViewshedCheckbox();
+    syncViewshedUiForSlug(slug);
     if (slug === DRAFT_VIEWSHED_SLUG) {
       syncCreateViewshedCheckbox();
-      syncEditViewshedCheckbox();
+      if (editMode) syncEditViewshedCheckbox();
     }
   }
 
   function syncViewshedCheckbox() {
     if (!selectedSlug) return;
-    sitePanelViewshed.checked = isViewshedVisible(selectedSlug);
-    sitePanelViewshedHint.textContent = viewshedLoading.has(selectedSlug) ? "Loading…" : "";
-    updatePinOverlays();
+    syncViewshedUiForSlug(selectedSlug);
   }
 
   function addViewshedLayer(vs) {
@@ -3039,6 +3063,7 @@
     applySiteLayerFilters();
     applyGoalLayerFilters();
     refreshFilteredLinks();
+    syncEditViewshedCheckbox();
     void runEditPrefetchAt(entity.lat, entity.lon);
   }
 
