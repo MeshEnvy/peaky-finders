@@ -67,12 +67,14 @@ def _goal_link_record(
     site_slug: str,
     linked: bool,
     captured: bool,
+    distance_km: float,
 ) -> dict[str, object]:
     return {
         "goal": goal_slug,
         "site": site_slug,
         "linked": linked,
         "captured": captured,
+        "distance_km": round(distance_km, 1),
     }
 
 
@@ -83,6 +85,7 @@ def _goal_line_feature(
     goal: SiteEntry,
     site: SiteEntry,
     captured: bool,
+    distance_km: float,
 ) -> dict[str, object]:
     return {
         "type": "Feature",
@@ -97,6 +100,7 @@ def _goal_line_feature(
             "goal": goal_slug,
             "site": site_slug,
             "captured": captured,
+            "distance_km": round(distance_km, 1),
         },
     }
 
@@ -166,12 +170,14 @@ def load_project_goal_links(
             footprints[site_slug] = _site_footprint(project_dir, site_slug, preset=preset)
         fp = footprints[site_slug]
         captured = _footprint_covers_goal(fp, lat=lat_g, lon=lon_g)
+        distance_km = _haversine_m(lat_g, lon_g, lat_s, lon_s) / 1000.0
         records.append(
             _goal_link_record(
                 goal_slug=goal_slug,
                 site_slug=site_slug,
                 linked=True,
                 captured=captured,
+                distance_km=distance_km,
             )
         )
         features.append(
@@ -181,6 +187,7 @@ def load_project_goal_links(
                 goal=goals[goal_slug],
                 site=sites[site_slug],
                 captured=captured,
+                distance_km=distance_km,
             )
         )
 

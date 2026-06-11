@@ -21,6 +21,7 @@
   const LINKS_LABELS_LAYER = "site-links-label";
   const GOAL_LINKS_SOURCE = "goal-links";
   const GOAL_LINKS_LAYER = "goal-links-line";
+  const GOAL_LINKS_LABELS_LAYER = "goal-links-label";
   const DRAFT_LINKS_SOURCE = "draft-site-links";
   const DRAFT_LINKS_LAYER = "draft-site-links-line";
   const DRAFT_LINKS_LABELS_LAYER = "draft-site-links-label";
@@ -1403,24 +1404,29 @@
     if (!mapReady) return;
     const vis = visible ? "visible" : "none";
     if (map.getLayer(GOAL_LINKS_LAYER)) map.setLayoutProperty(GOAL_LINKS_LAYER, "visibility", vis);
+    if (map.getLayer(GOAL_LINKS_LABELS_LAYER)) {
+      map.setLayoutProperty(GOAL_LINKS_LABELS_LAYER, "visibility", vis);
+    }
   }
 
   function addGoalLinksLayer(geojson) {
     const filtered = filterGoalLinksGeoJson(geojson);
     if (!filtered || !filtered.features || !filtered.features.length) {
+      if (map.getLayer(GOAL_LINKS_LABELS_LAYER)) map.removeLayer(GOAL_LINKS_LABELS_LAYER);
       if (map.getLayer(GOAL_LINKS_LAYER)) map.removeLayer(GOAL_LINKS_LAYER);
       if (map.getSource(GOAL_LINKS_SOURCE)) map.removeSource(GOAL_LINKS_SOURCE);
       raiseSiteLayers();
       return;
     }
+    const labeled = linksGeoJsonWithLabels(filtered);
     const linkVisibility = showGoalLinks ? "visible" : "none";
     if (map.getSource(GOAL_LINKS_SOURCE)) {
-      map.getSource(GOAL_LINKS_SOURCE).setData(filtered);
+      map.getSource(GOAL_LINKS_SOURCE).setData(labeled);
       setGoalLinksVisible(showGoalLinks);
       raiseSiteLayers();
       return;
     }
-    map.addSource(GOAL_LINKS_SOURCE, { type: "geojson", data: filtered });
+    map.addSource(GOAL_LINKS_SOURCE, { type: "geojson", data: labeled });
     map.addLayer(
       {
         id: GOAL_LINKS_LAYER,
@@ -1444,6 +1450,7 @@
       },
       SITES_CIRCLE,
     );
+    map.addLayer(linkLabelsLayerSpec(GOAL_LINKS_LABELS_LAYER, GOAL_LINKS_SOURCE, linkVisibility), SITES_CIRCLE);
     raiseSiteLayers();
   }
 
@@ -1528,6 +1535,7 @@
       DRAFT_LINKS_LAYER,
       DRAFT_LINKS_LABELS_LAYER,
       GOAL_LINKS_LAYER,
+      GOAL_LINKS_LABELS_LAYER,
       LINKS_LAYER,
       LINKS_LABELS_LAYER,
       GOALS_CIRCLE,

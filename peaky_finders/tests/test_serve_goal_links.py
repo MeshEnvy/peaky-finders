@@ -80,6 +80,10 @@ def test_load_project_goal_links_without_bundle_gdb(tmp_path: Path) -> None:
     assert row["site"] == "hub"
     assert row["linked"] is True
     assert row["captured"] is False
+    assert isinstance(row["distance_km"], (int, float))
+    assert row["distance_km"] > 0
+    feature = payload["geojson"]["features"][0]
+    assert feature["properties"]["distance_km"] == row["distance_km"]
 
 
 def test_api_project_goal_links_without_bundle_gdb(tmp_path: Path) -> None:
