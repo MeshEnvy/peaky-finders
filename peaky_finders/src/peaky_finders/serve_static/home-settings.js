@@ -43,18 +43,16 @@
   }
 
   function updateGearSummary() {
-    const el = document.getElementById("home-settings-gear-summary");
     const btn = document.getElementById("home-settings-open");
     const sim =
       state.simulation || (onProjectMap() ? window.PEAKY_PROJECT && window.PEAKY_PROJECT.simulation : null);
+    if (!btn) return;
     if (!onProjectMap() || !sim) {
-      if (el) el.textContent = "";
-      if (btn) btn.title = "Settings";
+      btn.title = "Settings";
       return;
     }
     const text = `${Math.round(Number(sim.radius_km))} km · ${sim.raster_dimension} px`;
-    if (el) el.textContent = text;
-    if (btn) btn.title = `Settings — ${text}`;
+    btn.title = `Settings — ${text}`;
   }
 
   function showError(message) {

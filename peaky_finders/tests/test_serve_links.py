@@ -293,8 +293,6 @@ def test_project_page_includes_site_links_toggle(tmp_path: Path) -> None:
         resp = conn.getresponse()
         body = resp.read().decode("utf-8")
         assert resp.status == 200
-        assert 'id="show-links"' in body
-        assert "Site links" in body
         assert 'id="viewshed-opacity"' in body
         assert "/static/project-map.js" in body
 

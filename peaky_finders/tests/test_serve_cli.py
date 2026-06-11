@@ -312,16 +312,7 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert resp.status == 200
         assert 'id="map"' in body
         assert "maplibre-gl" in body
-        assert 'id="map-tool-basemap"' in body
-        assert 'id="map-basemap-menu"' in body
-        assert 'id="map-tool-sites"' in body
-        assert 'id="map-tool-goals"' in body
-        assert "Street" in body
-        assert "USGS Topo" in body
-        assert "OpenTopo" in body
-        assert "Satellite" in body
         assert '"name": "Hub"' in body
-        assert "1 site" in body
         assert 'id="site-panel"' in body
         assert "/static/project-map.js" in body
         assert 'data-bs-theme="dark"' in body
@@ -348,6 +339,14 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert "localStorage" in js_body
         assert "peaky.map.v1." in js_body
         assert "scheduleSaveMapState" in js_body
+        assert "function installMapToolbar" in js_body
+        assert "map-tool-basemap" in js_body
+        assert "map-tool-sites" in js_body
+        assert "map-tool-goals" in js_body
+        assert "home-settings-open" in js_body
+        assert "USGS Topo" in js_body
+        assert "Satellite" in js_body
+        assert "opentopo" not in js_body
     finally:
         server.shutdown()
         server.server_close()
@@ -699,14 +698,11 @@ def test_project_page_includes_add_controls(tmp_path: Path) -> None:
         body = resp.read().decode("utf-8")
         assert resp.status == 200
         assert 'id="entity-panel"' in body
-        assert 'id="map-tool-sites"' in body
-        assert 'id="map-tool-goals"' in body
         assert 'id="entity-panel-add-site"' in body
         assert 'id="entity-panel-add-goal"' in body
         assert 'id="site-panel-create"' in body
         assert 'id="site-panel-create-viewshed"' in body
         assert 'id="site-panel-slug-preview"' in body
-        assert 'id="goal-count-badge"' in body
     finally:
         server.shutdown()
         server.server_close()

@@ -48,6 +48,93 @@
   const MAP_STATE_KEY = `peaky.map.v1.${projectSlug}`;
   const MAP_STATE_SAVE_MS = 400;
 
+  const MAP_TOOL_LAYERS_SVG =
+    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg>';
+  const MAP_TOOL_RADIO_TOWER_SVG =
+    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9m2.9 2.8a6.14 6.14 0 0 0-.8 7.5"/><circle cx="12" cy="9" r="2"/><path d="M16.2 4.8c2 2 2.26 5.11.8 7.47M19.1 1.9a9.96 9.96 0 0 1 0 14.1m-9.6 2h5M8 22l4-11l4 11"/></svg>';
+  const MAP_TOOL_GOAL_SVG =
+    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 13V2l8 4l-8 4"/><path d="M20.561 10.222a9 9 0 1 1-12.55-5.29"/><path d="M8.002 9.997a5 5 0 1 0 8.9 2.02"/></svg>';
+  const MAP_TOOL_GEAR_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/><path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319z"/></svg>';
+
+  function installMapToolbar(navGroup) {
+    const basemapDropdown = document.createElement("div");
+    basemapDropdown.className = "dropdown map-toolbar-dropdown";
+
+    const basemapBtn = document.createElement("button");
+    basemapBtn.type = "button";
+    basemapBtn.id = "map-tool-basemap";
+    basemapBtn.className = "map-toolbar-tool";
+    basemapBtn.setAttribute("data-bs-toggle", "dropdown");
+    basemapBtn.setAttribute("data-bs-auto-close", "true");
+    basemapBtn.setAttribute("aria-expanded", "false");
+    basemapBtn.setAttribute("aria-label", "Base map");
+    basemapBtn.title = "Base map";
+    basemapBtn.innerHTML = MAP_TOOL_LAYERS_SVG;
+
+    const basemapMenu = document.createElement("ul");
+    basemapMenu.id = "map-basemap-menu";
+    basemapMenu.className = "dropdown-menu dropdown-menu-dark shadow";
+    basemapMenu.setAttribute("aria-label", "Base map options");
+    for (const [key, label] of [
+      ["street", "Street"],
+      ["topo", "USGS Topo"],
+      ["satellite", "Satellite"],
+    ]) {
+      const li = document.createElement("li");
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "dropdown-item";
+      item.setAttribute("data-basemap", key);
+      item.textContent = label;
+      li.appendChild(item);
+      basemapMenu.appendChild(li);
+    }
+    basemapDropdown.appendChild(basemapBtn);
+    basemapDropdown.appendChild(basemapMenu);
+
+    const sitesBtn = document.createElement("button");
+    sitesBtn.type = "button";
+    sitesBtn.id = "map-tool-sites";
+    sitesBtn.className = "map-toolbar-tool";
+    sitesBtn.setAttribute("aria-pressed", "false");
+    sitesBtn.setAttribute("aria-controls", "entity-panel");
+    sitesBtn.setAttribute("aria-label", "Sites");
+    sitesBtn.title = "Sites";
+    sitesBtn.innerHTML = MAP_TOOL_RADIO_TOWER_SVG;
+
+    const goalsBtn = document.createElement("button");
+    goalsBtn.type = "button";
+    goalsBtn.id = "map-tool-goals";
+    goalsBtn.className = "map-toolbar-tool";
+    goalsBtn.setAttribute("aria-pressed", "false");
+    goalsBtn.setAttribute("aria-controls", "entity-panel");
+    goalsBtn.setAttribute("aria-label", "Goals");
+    goalsBtn.title = "Goals";
+    goalsBtn.innerHTML = MAP_TOOL_GOAL_SVG;
+
+    const settingsBtn = document.createElement("button");
+    settingsBtn.type = "button";
+    settingsBtn.id = "home-settings-open";
+    settingsBtn.className = "map-toolbar-tool";
+    settingsBtn.setAttribute("data-bs-toggle", "modal");
+    settingsBtn.setAttribute("data-bs-target", "#home-settings-modal");
+    settingsBtn.setAttribute("aria-label", "Settings");
+    settingsBtn.title = "Settings";
+    settingsBtn.innerHTML = MAP_TOOL_GEAR_SVG;
+
+    for (const el of [basemapDropdown, sitesBtn, goalsBtn, settingsBtn]) {
+      navGroup.appendChild(el);
+    }
+
+    return {
+      mapBasemapMenu: basemapMenu,
+      mapToolSites: sitesBtn,
+      mapToolGoals: goalsBtn,
+      mapToolSettings: settingsBtn,
+    };
+  }
+
   const BASEMAPS = {
     street: {
       tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
@@ -58,10 +145,6 @@
         "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",
       ],
       maxzoom: 16,
-    },
-    opentopo: {
-      tiles: ["https://tile.opentopomap.org/{z}/{x}/{y}.png"],
-      maxzoom: 17,
     },
     satellite: {
       tiles: [
@@ -103,6 +186,8 @@
   const savedMapState = loadMapState();
   let currentBasemapKey =
     savedMapState && BASEMAPS[savedMapState.basemap] ? savedMapState.basemap : "street";
+  let showSiteLinks = savedMapState?.showLinks ?? true;
+  let showGoalLinks = savedMapState?.showGoalLinks ?? true;
   let viewshedOpacity = savedMapState?.viewshedOpacity ?? VIEWSHED_OPACITY_DEFAULT;
   const defaultRadiusKm = Number(simDefaults.radius_km) || 60;
   const defaultRasterDimension = Number(simDefaults.raster_dimension) || 500;
@@ -120,10 +205,8 @@
   function syncToolbarFromSaved(saved) {
     if (!saved) return;
     if (BASEMAPS[saved.basemap]) currentBasemapKey = saved.basemap;
-    const linksEl = document.getElementById("show-links");
-    if (linksEl && typeof saved.showLinks === "boolean") linksEl.checked = saved.showLinks;
-    const goalLinksEl = document.getElementById("show-goal-links");
-    if (goalLinksEl && typeof saved.showGoalLinks === "boolean") goalLinksEl.checked = saved.showGoalLinks;
+    if (typeof saved.showLinks === "boolean") showSiteLinks = saved.showLinks;
+    if (typeof saved.showGoalLinks === "boolean") showGoalLinks = saved.showGoalLinks;
     const opacityEl = document.getElementById("viewshed-opacity");
     if (opacityEl && typeof saved.viewshedOpacity === "number") {
       opacityEl.value = Math.round(saved.viewshedOpacity * 100);
@@ -222,6 +305,10 @@
   });
   const navControl = new maplibregl.NavigationControl({ visualizePitch: true });
   map.addControl(navControl, "top-right");
+  const mapToolbarRefs = installMapToolbar(navControl._container);
+  const mapBasemapMenu = mapToolbarRefs.mapBasemapMenu;
+  const mapToolSites = mapToolbarRefs.mapToolSites;
+  const mapToolGoals = mapToolbarRefs.mapToolGoals;
   const compassButton = navControl._container.querySelector(".maplibregl-ctrl-compass");
   if (compassButton) {
     compassButton.addEventListener(
@@ -312,17 +399,12 @@
   const sitePanelEditCancel = document.getElementById("site-panel-edit-cancel");
   const sitePanelEditLinksLabel = document.getElementById("site-panel-edit-links-label");
   const entityPanel = document.getElementById("entity-panel");
-  const mapBasemapMenu = document.getElementById("map-basemap-menu");
-  const mapToolSites = document.getElementById("map-tool-sites");
-  const mapToolGoals = document.getElementById("map-tool-goals");
   const entityPanelSitesList = document.getElementById("entity-panel-sites-list");
   const entityPanelGoalsList = document.getElementById("entity-panel-goals-list");
   const entityPanelSitesPane = document.getElementById("entity-panel-sites-pane");
   const entityPanelGoalsPane = document.getElementById("entity-panel-goals-pane");
   const entityPanelAddSite = document.getElementById("entity-panel-add-site");
   const entityPanelAddGoal = document.getElementById("entity-panel-add-goal");
-  const siteCountBadge = document.getElementById("site-count-badge");
-  const goalCountBadge = document.getElementById("goal-count-badge");
   const siteHidden = new Set(savedMapState?.hiddenSites || []);
   const goalHidden = new Set(savedMapState?.hiddenGoals || []);
   let entityPanelOpen = false;
@@ -695,7 +777,6 @@
     removeViewshedLayer(slug);
     if (selectedSlug === slug) deselectSite();
     addSiteLayers();
-    updateSiteCountBadge();
     renderEntityPanel();
   }
 
@@ -706,7 +787,6 @@
     goalHidden.delete(slug);
     if (selectedGoalSlug === slug) deselectSite();
     addGoalLayers();
-    updateGoalCountBadge();
     renderEntityPanel();
   }
 
@@ -881,23 +961,10 @@
     return row;
   }
 
-  function updateSiteCountBadge() {
-    if (!siteCountBadge) return;
-    const n = sites.length;
-    siteCountBadge.textContent = `${n} ${n === 1 ? "site" : "sites"}`;
-  }
-
-  function updateGoalCountBadge() {
-    if (!goalCountBadge) return;
-    const n = goals.length;
-    goalCountBadge.textContent = `${n} ${n === 1 ? "goal" : "goals"}`;
-  }
-
   function registerSite(site) {
     sites.push(site);
     siteBySlug.set(site.slug, site);
     addSiteLayers();
-    updateSiteCountBadge();
     renderEntityPanel();
   }
 
@@ -905,7 +972,6 @@
     goals.push(goal);
     goalBySlug.set(goal.slug, goal);
     addGoalLayers();
-    updateGoalCountBadge();
     renderEntityPanel();
   }
 
@@ -1253,8 +1319,8 @@
       bearing: map.getBearing(),
       pitch: map.getPitch(),
       basemap: currentBasemapKey,
-      showLinks: document.getElementById("show-links").checked,
-      showGoalLinks: document.getElementById("show-goal-links").checked,
+      showLinks: showSiteLinks,
+      showGoalLinks: showGoalLinks,
       viewshedOpacity,
       hiddenSites: [...siteHidden],
       hiddenGoals: [...goalHidden],
@@ -1285,10 +1351,10 @@
       raiseSiteLayers();
       return;
     }
-    const linkVisibility = document.getElementById("show-goal-links").checked ? "visible" : "none";
+    const linkVisibility = showGoalLinks ? "visible" : "none";
     if (map.getSource(GOAL_LINKS_SOURCE)) {
       map.getSource(GOAL_LINKS_SOURCE).setData(filtered);
-      setGoalLinksVisible(document.getElementById("show-goal-links").checked);
+      setGoalLinksVisible(showGoalLinks);
       raiseSiteLayers();
       return;
     }
@@ -1350,10 +1416,10 @@
       return;
     }
     const labeled = linksGeoJsonWithLabels(filtered);
-    const linkVisibility = document.getElementById("show-links").checked ? "visible" : "none";
+    const linkVisibility = showSiteLinks ? "visible" : "none";
     if (map.getSource(LINKS_SOURCE)) {
       map.getSource(LINKS_SOURCE).setData(labeled);
-      setSiteLinksVisible(document.getElementById("show-links").checked);
+      setSiteLinksVisible(showSiteLinks);
       raiseSiteLayers();
       return;
     }
@@ -3002,7 +3068,6 @@
         showPanelView();
         renderPanel(site);
         renderEntityPanel();
-        updateGoalCountBadge();
         finishEditSaveUi();
         void loadSiteLinks();
         void loadGoalLinks();
@@ -3047,7 +3112,6 @@
     if (map.getSource(SITES_SOURCE)) {
       map.getSource(SITES_SOURCE).setData(sitesGeoJson());
     }
-    updateSiteCountBadge();
   }
 
   function applyGoalRowUpdate(goal) {
@@ -3058,7 +3122,6 @@
     if (map.getSource(GOALS_SOURCE)) {
       map.getSource(GOALS_SOURCE).setData(goalsGeoJson());
     }
-    updateGoalCountBadge();
   }
 
   function finishEditSaveUi() {
@@ -3259,15 +3322,14 @@
     void loadSiteLinks();
     void loadGoalLinks();
     loadAllViewsheds();
-    updateGoalCountBadge();
     setEntityTab("sites");
     renderEntityPanel();
     applyEntityVisibility();
     syncBasemapMenu();
     setBasemap(currentBasemapKey);
     if (savedMapState) {
-      setSiteLinksVisible(document.getElementById("show-links").checked);
-      setGoalLinksVisible(document.getElementById("show-goal-links").checked);
+      setSiteLinksVisible(showSiteLinks);
+      setGoalLinksVisible(showGoalLinks);
       syncTerrainFromPitch();
     } else {
       fitSites();
@@ -3290,16 +3352,8 @@
       });
     }
   }
-  document.getElementById("show-links").addEventListener("change", (ev) => {
-    setSiteLinksVisible(ev.target.checked);
-    scheduleSaveMapState();
-  });
   document.getElementById("viewshed-opacity").addEventListener("input", (ev) => {
     setViewshedOpacity(Number(ev.target.value) / 100);
-    scheduleSaveMapState();
-  });
-  document.getElementById("show-goal-links").addEventListener("change", (ev) => {
-    setGoalLinksVisible(ev.target.checked);
     scheduleSaveMapState();
   });
   sitePanelClose.addEventListener("click", deselectSite);
