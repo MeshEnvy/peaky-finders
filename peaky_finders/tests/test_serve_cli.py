@@ -160,11 +160,13 @@ def test_run_serve_reload_uses_supervisor(monkeypatch: pytest.MonkeyPatch) -> No
 def test_resolve_serve_projects_dir_defaults_to_peaky_home_projects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    home_dir = workspace / "peaky_home"
+    (home_dir / "projects").mkdir(parents=True)
+    monkeypatch.setattr("peaky_finders.sites_job.repo_root", lambda: workspace)
     monkeypatch.delenv("PEAKY_HOME", raising=False)
     monkeypatch.delenv("PEAKY_PROJECTS", raising=False)
-    monkeypatch.setenv("HOME", str(home))
-    assert resolve_serve_projects_dir() == (home / ".peaky" / "projects").resolve()
+    assert resolve_serve_projects_dir() == (home_dir / "projects").resolve()
 
 
 def test_resolve_serve_projects_dir_honors_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

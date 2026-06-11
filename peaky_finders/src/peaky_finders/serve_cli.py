@@ -15,7 +15,9 @@ from pathlib import Path
 import peaky_finders
 from waitress import serve as waitress_serve
 
+from peaky_finders.bundled_templates import ensure_peaky_home
 from peaky_finders.serve_app import SERVE_STATIC_DIR, make_serve_wsgi_app
+from peaky_finders.sites_job import peaky_home as resolve_runtime_peaky_home
 
 SERVE_RELOAD_CHILD_ENV = "PEAKY_SERVE_RELOAD_CHILD"
 SERVE_RELOAD_POLL_S = 0.5
@@ -28,11 +30,8 @@ SERVE_THREADS = 8
 
 
 def resolve_serve_peaky_home() -> Path:
-    """Runtime home for ``peaky serve`` (``PEAKY_HOME`` or ``~/.peaky``)."""
-    raw = os.environ.get("PEAKY_HOME", "").strip()
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return Path("~/.peaky").expanduser().resolve()
+    """Runtime home for ``peaky serve`` (same resolution as :func:`sites_job.peaky_home`)."""
+    return resolve_runtime_peaky_home()
 
 
 def resolve_serve_projects_dir() -> Path:
@@ -343,6 +342,7 @@ def _run_serve_blocking(
 
 
 def run_serve(args: argparse.Namespace) -> int:
+    ensure_peaky_home()
     host = str(args.host)
     port = int(args.port)
     verbose = bool(args.verbose)

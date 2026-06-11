@@ -15,9 +15,14 @@ dist/
 *.kmz
 share
 build
-# Ignore project build artifacts; keep preset config.yaml tracked
+# Runtime home: track YAML presets only (not data/build/cache)
+peaky_home/**
+!peaky_home/*.yaml
+!peaky_home/projects/
+peaky_home/projects/**
+!peaky_home/projects/**/
+!peaky_home/projects/**/config.yaml
 projects/**
 !projects/**/
-!projects/config.yaml
 !projects/**/config.yaml
 *.log

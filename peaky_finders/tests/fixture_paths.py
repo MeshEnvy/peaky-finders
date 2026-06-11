@@ -2,7 +2,7 @@
 
 ``peaky_finders/templates/`` ships production seeds copied to a real ``$PEAKY_HOME``.
 ``tests/fixtures/peaky_home/`` is a committed fake ``PEAKY_HOME`` for ``./peaky test`` only.
-Defaults: ``projects/config.yaml``; sample project: ``projects/sample/config.yaml``.
+Defaults: ``config.yaml`` at home root; sample project: ``projects/sample/config.yaml``.
 RF catalogs use generic ``fixture-modem`` / ``fixture-desert`` only.
 """
 

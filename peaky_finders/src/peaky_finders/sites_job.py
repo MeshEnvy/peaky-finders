@@ -60,20 +60,24 @@ def ensure_skadi_mirror_dir() -> Path:
 
 
 def repo_root() -> Path:
-    """Workspace root: monorepo parent when ``projects/`` lives there, else package root."""
+    """Workspace root: monorepo parent when ``peaky_home/`` or ``projects/`` exists, else package root."""
     pkg_root = Path(__file__).resolve().parents[2]
     workspace = pkg_root.parent
-    if (workspace / "projects").is_dir():
+    if (workspace / "peaky_home").is_dir() or (workspace / "projects").is_dir():
         return workspace
     return pkg_root
 
 
 def peaky_home() -> Path:
-    """Runtime home directory (``PEAKY_HOME`` or :func:`repo_root`)."""
+    """Runtime home directory (``PEAKY_HOME``, else ``<repo>/peaky_home`` when present, else :func:`repo_root`)."""
     raw = os.environ.get("PEAKY_HOME", "").strip()
     if raw:
         return Path(raw).expanduser().resolve()
-    return repo_root()
+    workspace = repo_root()
+    candidate = workspace / "peaky_home"
+    if candidate.is_dir():
+        return candidate.resolve()
+    return workspace
 
 
 def peaky_projects_dir() -> Path:

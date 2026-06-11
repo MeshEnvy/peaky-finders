@@ -1,4 +1,4 @@
-"""Global preset defaults at ``<projects>/config.yaml`` (sibling to project slugs)."""
+"""Global preset defaults at ``$PEAKY_HOME/config.yaml``."""
 
 from __future__ import annotations
 
@@ -7,31 +7,21 @@ from typing import Any, Mapping
 
 import yaml
 
-from peaky_finders.bundled_templates import bundled_template_path
-from peaky_finders.sites_job import peaky_projects_dir
+from peaky_finders.bundled_templates import ensure_bundled_home_file
+from peaky_finders.sites_job import peaky_home
 
 CONFIG_FILENAME = "config.yaml"
 _PROJECT_ONLY_KEYS = frozenset({"land", "sites", "links"})
 
 
-def projects_defaults_path() -> Path:
-    """``projects/config.yaml`` — shared defaults for all presets under ``projects/<slug>/``."""
-    return peaky_projects_dir() / CONFIG_FILENAME
-
-
 def peaky_home_config_path() -> Path:
-    """Alias for :func:`projects_defaults_path` (defaults live under ``projects/``)."""
-    return projects_defaults_path()
+    """``$PEAKY_HOME/config.yaml`` — shared defaults for all ``projects/<slug>/`` presets."""
+    return peaky_home() / CONFIG_FILENAME
 
 
 def ensure_peaky_home_config() -> None:
-    """Seed ``projects/config.yaml`` from the bundled template when missing."""
-    projects_root = peaky_projects_dir()
-    projects_root.mkdir(parents=True, exist_ok=True)
-    dest = projects_defaults_path()
-    if dest.is_file():
-        return
-    dest.write_text(bundled_template_path(CONFIG_FILENAME).read_text(encoding="utf-8"), encoding="utf-8")
+    """Seed ``$PEAKY_HOME/config.yaml`` from the bundled template when missing."""
+    ensure_bundled_home_file(CONFIG_FILENAME)
 
 
 def _read_yaml_mapping(path: Path) -> dict[str, Any]:
@@ -44,9 +34,9 @@ def _read_yaml_mapping(path: Path) -> dict[str, Any]:
 
 
 def load_preset_defaults() -> dict[str, Any]:
-    """Load merged global defaults from ``projects/config.yaml``."""
+    """Load merged global defaults from ``$PEAKY_HOME/config.yaml``."""
     ensure_peaky_home_config()
-    return _read_yaml_mapping(projects_defaults_path())
+    return _read_yaml_mapping(peaky_home_config_path())
 
 
 def deep_merge_preset_dict(

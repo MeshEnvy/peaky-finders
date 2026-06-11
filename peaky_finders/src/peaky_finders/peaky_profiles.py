@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from peaky_finders.bundled_templates import bundled_template_path
+from peaky_finders.bundled_templates import ensure_bundled_home_file
 from peaky_finders.sites_job import peaky_home
 
 MODEMS_FILENAME = "modems.yaml"
@@ -27,13 +27,8 @@ def peaky_home_environments_path() -> Path:
 
 def ensure_peaky_home_profiles() -> None:
     """Seed ``$PEAKY_HOME`` profile files from bundled templates when missing."""
-    home = peaky_home()
-    home.mkdir(parents=True, exist_ok=True)
     for filename in (MODEMS_FILENAME, ENVIRONMENTS_FILENAME):
-        dest = home / filename
-        if dest.is_file():
-            continue
-        dest.write_text(bundled_template_path(filename).read_text(encoding="utf-8"), encoding="utf-8")
+        ensure_bundled_home_file(filename)
 
 
 def _read_yaml_mapping(path: Path) -> dict[str, Any]:

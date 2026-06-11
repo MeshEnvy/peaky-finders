@@ -13,10 +13,12 @@ from peaky_finders.inspect_cli import build_inspect_parser, run_inspect
 from peaky_finders.mesh_commands import run_mesh_entry
 from peaky_finders.new_cli import build_new_parser, run_new
 from peaky_finders.serve_cli import build_serve_parser, run_serve
+from peaky_finders.bundled_templates import ensure_peaky_home
 from peaky_finders.stamp_cli import build_stamp_parser, run_stamp
 
 
 def main() -> None:
+    ensure_peaky_home()
     parser = argparse.ArgumentParser(
         prog="peaky",
         description=(

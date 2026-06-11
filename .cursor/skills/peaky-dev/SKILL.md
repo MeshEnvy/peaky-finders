@@ -15,14 +15,14 @@ Read [MEMORY.md](../../MEMORY.md) for env vars.
 From a **project directory** (contains `config.yaml`):
 
 ```bash
-cd projects/nevada
-../../peaky build
-../../peaky build --verbose -j 4
+cd peaky_home/projects/nevada
+../../../peaky build
+../../../peaky build --verbose -j 4
 ```
 
-`./peaky` mounts `$PWD` as `/project`, bind-mounts `peaky_finders/`, runs the Python CLI inside `peaky:dev`.
+`./peaky` mounts `<repo>/peaky_home` → `/.peaky` (`PEAKY_HOME`), `$PWD` as `/project`, bind-mounts `peaky_finders/`, runs the Python CLI inside `peaky:dev`.
 
-`./peaky serve` also mounts the repo at `/app`, sets `PEAKY_HOME=/app` and `PEAKY_PROJECTS=/app/projects`, and passes `--reload` (disable with `--no-reload`). Serve is the on-demand web shell over the same pipeline as CLI — see skill `peaky-serve`.
+`./peaky serve` uses the same `PEAKY_HOME` mount and passes `--reload` by default (disable with `--no-reload`). Serve is the on-demand web shell over the same pipeline as CLI — see skill `peaky-serve`.
 
 Build image: `./peaky --build` or set `PEAKY_DEV_IMAGE`.
 
@@ -44,9 +44,10 @@ Never `poetry run pytest` on the macOS host — bind-mounted `.venv` must stay L
 | Host | Container |
 |------|-----------|
 | `$PWD` (project dir) | `/project` (cwd for CLI) |
+| `peaky_home/` (or `PEAKY_HOME`) | `/.peaky` |
 | `peaky_finders/` | `/app/peaky_finders` |
 | `PEAKY_CACHE_DIR` (default `~/.peaky/splat_cache`) | `/.peaky/splat_cache` |
-| Test fixtures projects | `/app/projects` (`./peaky test` only) |
+| Test fixtures `peaky_home/` | `/.peaky` (`./peaky test` only) |
 
 ## Env vars
 
@@ -54,7 +55,7 @@ Never `poetry run pytest` on the macOS host — bind-mounted `.venv` must stay L
 |-----|---------|------|
 | `PEAKY_DEV_IMAGE` | `peaky:dev` | Docker image tag |
 | `PEAKY_CACHE_DIR` | `~/.peaky/splat_cache` | Skadi tile cache on host |
-| `PEAKY_HOME` | repo root | Runtime home in container |
+| `PEAKY_HOME` | `<repo>/peaky_home` | Runtime home in container (`/.peaky`) |
 | `SPLAT_CACHE` | `<peaky_home>/splat_cache` | Skadi mirror path |
 
 ## splatter submodule

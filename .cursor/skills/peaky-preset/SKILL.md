@@ -12,8 +12,8 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 
 ## Layout
 
-- Global defaults: `projects/config.yaml` (bundled template `peaky_finders/templates/config.yaml`; see `peaky_preset_defaults.py`)
-- Reference project: `projects/nevada/config.yaml` (overrides + `land` / `sites` / `links` only)
+- Global defaults: `$PEAKY_HOME/config.yaml` (bundled template; see `peaky_preset_defaults.py`, `ensure_peaky_home()`)
+- Reference project: `peaky_home/projects/nevada/config.yaml` (overrides + `land` / `sites` / `links` only)
 - Global RF catalogs: `$PEAKY_HOME/modems.yaml`, `$PEAKY_HOME/environments.yaml` (see `peaky_profiles.py`)
 - Run CLI from project dir: `require_cwd_config_yaml()` → `./config.yaml`
 - Resolve by slug: `resolve_preset_yaml_arg("nevada")` → `projects/nevada/config.yaml`
@@ -22,8 +22,8 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 
 | File | Contents |
 |------|----------|
-| `projects/config.yaml` | Default `simulation`, `display`, `mesh`, `suggest` |
-| `projects/<slug>/config.yaml` | Overrides only (plus `land`, `sites`, `links`) |
+| `$PEAKY_HOME/config.yaml` | Default `simulation`, `display`, `mesh`, `suggest` |
+| `$PEAKY_HOME/projects/<slug>/config.yaml` | Overrides only (plus `land`, `sites`, `links`) |
 
 `load_preset` merges defaults ← project. `update_preset_yaml_tree` prunes default-equal keys after writes.
 

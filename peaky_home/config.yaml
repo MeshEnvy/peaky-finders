@@ -1,4 +1,4 @@
-# Peaky global preset defaults — seeded to ``projects/config.yaml`` on first use.
+# Peaky global preset defaults — seeded to ``$PEAKY_HOME/config.yaml`` on first use.
 # Per-project presets at ``projects/<slug>/config.yaml`` override these sections;
 # only differing keys are persisted in project YAML (``land``, ``sites``, ``links`` always project-local).
 # Modem/environment names resolve via ``$PEAKY_HOME/modems.yaml`` and ``environments.yaml``.

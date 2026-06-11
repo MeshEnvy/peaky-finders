@@ -12,7 +12,8 @@ ROOT="$(cd -P "$(dirname "$_script")" && pwd)"
 
 IMAGE="${PEAKY_DEV_IMAGE:-peaky:dev}"
 CACHE_DIR="${PEAKY_CACHE_DIR:-$HOME/.peaky/splat_cache}"
-mkdir -p "$CACHE_DIR"
+PEAKY_HOME_DIR="${PEAKY_HOME:-$ROOT/peaky_home}"
+mkdir -p "$PEAKY_HOME_DIR" "$CACHE_DIR"
 
 filtered=()
 for arg in "$@"; do
@@ -43,6 +44,8 @@ if [ -t 0 ] && [ -t 1 ]; then
   DOCKER_FLAGS+=(-it)
 fi
 
+PEAKY_HOME_FLAGS=(-v "$PEAKY_HOME_DIR:/.peaky" -e "PEAKY_HOME=/.peaky" -v "$CACHE_DIR:/.peaky/splat_cache")
+
 mode=cli
 if [ ${#filtered[@]} -gt 0 ] && [ "${filtered[0]}" = "test" ]; then
   mode=test
@@ -70,14 +73,16 @@ elif [ ${#filtered[@]} -gt 0 ] && [ "${filtered[0]}" = "serve" ]; then
     filtered=(serve --reload "${filtered[@]:1}")
   fi
   DOCKER_FLAGS+=(-p "${SERVE_PORT}:${SERVE_PORT}")
-  DOCKER_FLAGS+=(-v "$ROOT:/app" -e "PEAKY_HOME=/app" -e "PEAKY_PROJECTS=/app/projects")
+  DOCKER_FLAGS+=("${PEAKY_HOME_FLAGS[@]}" -v "$ROOT/peaky_finders:/app/peaky_finders")
 fi
 
 if [ "$mode" = test ]; then
+  TEST_HOME="$ROOT/peaky_finders/tests/fixtures/peaky_home"
   run_cmd=(docker run "${DOCKER_FLAGS[@]}" \
     -e POETRY_VIRTUALENVS_CREATE=false \
     -v "$ROOT/peaky_finders:/app/peaky_finders" \
-    -v "$ROOT/peaky_finders/tests/fixtures/peaky_home/projects:/app/projects" \
+    -v "$TEST_HOME:/.peaky" \
+    -e "PEAKY_HOME=/.peaky" \
     -v "$CACHE_DIR:/.peaky/splat_cache" \
     -w /app/peaky_finders \
     --entrypoint bash \
@@ -85,13 +90,11 @@ if [ "$mode" = test ]; then
     -lc 'cd /app/peaky_finders && poetry install --no-interaction && exec poetry run pytest -ra --durations=20 "$@"' \
     _)
 else
-  mkdir -p "$ROOT/projects"
   run_cmd=(docker run "${DOCKER_FLAGS[@]}" \
     -e POETRY_VIRTUALENVS_CREATE=false \
     -v "$PWD:/project" \
     -v "$ROOT/peaky_finders:/app/peaky_finders" \
-    -v "$ROOT/projects:/app/projects" \
-    -v "$CACHE_DIR:/.peaky/splat_cache" \
+    "${PEAKY_HOME_FLAGS[@]}" \
     -w /project \
     --entrypoint bash \
     "$IMAGE" \

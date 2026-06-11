@@ -30,11 +30,15 @@ def peaky_env(monkeypatch: pytest.MonkeyPatch) -> Path:
     return home
 
 
-def test_peaky_home_defaults_to_repo_root(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_peaky_home_defaults_to_peaky_home_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    home_dir = workspace / "peaky_home"
+    (home_dir / "projects").mkdir(parents=True)
+    monkeypatch.setattr("peaky_finders.sites_job.repo_root", lambda: workspace)
     monkeypatch.delenv("PEAKY_HOME", raising=False)
-    home = peaky_home()
-    assert home == repo_root()
-    assert (home / "projects").is_dir()
+    assert peaky_home() == home_dir.resolve()
 
 
 def test_peaky_home_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

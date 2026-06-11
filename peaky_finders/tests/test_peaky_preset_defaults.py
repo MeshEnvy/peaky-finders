@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from peaky_finders.bundled_templates import ensure_peaky_home
 from peaky_finders.peaky_preset_defaults import (
     deep_merge_preset_dict,
     load_preset_defaults,
@@ -12,6 +15,17 @@ from peaky_finders.peaky_preset_defaults import (
 )
 from peaky_finders.sites_job import load_preset, write_preset_document
 from rf_fixtures import MINIMAL_SIMULATION
+
+
+def test_ensure_peaky_home_seeds_templates_at_home_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PEAKY_HOME", str(tmp_path))
+    ensure_peaky_home()
+    assert (tmp_path / "config.yaml").is_file()
+    assert (tmp_path / "modems.yaml").is_file()
+    assert (tmp_path / "environments.yaml").is_file()
+    assert (tmp_path / "projects").is_dir()
 
 
 def test_load_preset_merges_home_defaults(peaky_test_home: Path, tmp_path: Path) -> None:

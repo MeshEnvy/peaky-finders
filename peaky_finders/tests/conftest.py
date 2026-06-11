@@ -18,11 +18,9 @@ if str(_SRC) not in sys.path:
 def _default_peaky_home_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
     """Route global preset defaults and RF catalogs to committed test fixtures."""
     monkeypatch.setenv("PEAKY_HOME", str(PEAKY_TEST_HOME))
-    from peaky_finders.peaky_preset_defaults import ensure_peaky_home_config
-    from peaky_finders.peaky_profiles import ensure_peaky_home_profiles
+    from peaky_finders.bundled_templates import ensure_peaky_home
 
-    ensure_peaky_home_profiles()
-    ensure_peaky_home_config()
+    ensure_peaky_home()
 
 
 @pytest.fixture

@@ -30,7 +30,7 @@ When two designs compete, pick the **simpler present** and break callers — doc
 | RF engine | `splatter` submodule (PyO3 Fresnel/FSPL) |
 | Build | Incremental preset DAG (`peaky build`) |
 | Dev/test | Docker — `./peaky` (`test`, `serve`, `build`, …) |
-| Reference preset | `projects/nevada/config.yaml` |
+| Reference preset | `peaky_home/projects/nevada/config.yaml` |
 
 ## Domain model: sites vs goals
 
@@ -114,10 +114,10 @@ Outputs under `<preset-dir>/build/` (clips, bundle, viewsheds, mesh, aggregate K
 
 | Tier | Path | Role |
 |------|------|------|
-| Global defaults | `projects/config.yaml` | `simulation`, `display`, `mesh`, `suggest` — seeded from bundled `peaky_finders/templates/config.yaml` on first use |
-| Project | `projects/<slug>/config.yaml` | **Overrides** + always-local `land`, `sites`, `links` |
+| Global defaults | `$PEAKY_HOME/config.yaml` | `simulation`, `display`, `mesh`, `suggest` — seeded from bundled templates on first CLI/serve start |
+| Project | `$PEAKY_HOME/projects/<slug>/config.yaml` | **Overrides** + always-local `land`, `sites`, `links` |
 
-Load: `deep_merge(projects/config.yaml ← project)`. Writes (`update_preset_yaml_tree`, serve PATCH): mutate project file, validate merged preset, **prune** keys equal to defaults. `load_preset` / `resolve_preset_raw` return the merged effective config.
+Load: `deep_merge($PEAKY_HOME/config.yaml ← project)`. Writes (`update_preset_yaml_tree`, serve PATCH): mutate project file, validate merged preset, **prune** keys equal to defaults. `load_preset` / `resolve_preset_raw` return the merged effective config. `ensure_peaky_home()` seeds missing `config.yaml`, `modems.yaml`, `environments.yaml`.
 
 **Global RF catalogs** (not per project): `$PEAKY_HOME/modems.yaml` (`modem_presets:`) and `$PEAKY_HOME/environments.yaml` (`environment_presets:`). Project preset selects `simulation.modem` / `simulation.environment` by name. Build simulation stamp fingerprints **resolved** merged simulation + catalog fingerprint.
 
@@ -140,8 +140,12 @@ Model: `Preset` in `sites_job.py`. Writes: `update_preset_yaml_tree` (ruamel rou
 ```
 peaky_finders/     # Python package (Poetry, src layout)
 splatter/          # Git submodule — Rust/PyO3 coverage engine
-projects/          # Job dirs (gitignored except config.yaml)
-  nevada/          # Reference project
+peaky_home/        # Dev runtime home (`PEAKY_HOME` via `./peaky`; gitignored except YAML)
+  config.yaml      # Global preset defaults
+  modems.yaml      # RF modem catalog
+  environments.yaml
+  projects/
+    nevada/        # Reference project
 docker/            # Entrypoint script
 Dockerfile         # dev + latest targets (GDAL, Poetry, splatter)
 peaky              # Dev Docker runner (`test`, `serve`, `build`, …)
@@ -163,12 +167,12 @@ Helpers: `resolved_preset_build_dir`, `resolved_bundle_dir`, `resolved_preset_cl
 
 | Var | Role |
 |-----|------|
-| `PEAKY_HOME` | `~/.peaky` (`peaky serve`); repo root (CLI via `./peaky`); **`modems.yaml`** + **`environments.yaml`** RF profile catalogs |
+| `PEAKY_HOME` | `/.peaky` in Docker; default `<repo>/peaky_home` when unset and dir exists; **`config.yaml`** + **`modems.yaml`** + **`environments.yaml`** |
 | `PEAKY_PROJECTS` | Project presets root (default: `<PEAKY_HOME>/projects`) |
 | `PEAKY_SHARE` | Optional shared tooling root |
-| `SPLAT_CACHE` | Global Skadi tile mirror (default: `<peaky_home>/splat_cache`) |
+| `SPLAT_CACHE` | Global Skadi tile mirror (default: `<PEAKY_HOME>/splat_cache`) |
 | `PEAKY_DEV_IMAGE` | Docker image tag (default: `peaky:dev`) |
-| `PEAKY_CACHE_DIR` | Host Skadi cache mount for `./peaky` |
+| `PEAKY_CACHE_DIR` | Host Skadi cache mount for `./peaky` (default `~/.peaky/splat_cache`) |
 
 ## External HTTP
 
@@ -186,7 +190,7 @@ All outbound fetches throttled via `http_pool.py`:
 - `HttpPool` throttling for Skadi, CadNSDI, ArcGIS, Nominatim
 - Locked preset writes: `preset_yaml_transaction` / `update_preset_yaml_tree`
 - Site suggest via `peaky build --suggest` → `site_suggestions/preset_io.py`
-- `./peaky` contract: mount `$PWD` as `/project`, run CLI from project cwd
+- `./peaky` contract: mount `<repo>/peaky_home` → `/.peaky` (`PEAKY_HOME`), `$PWD` as `/project`, run CLI from project cwd
 - Published **`peaky-finders`** image: mount `~/.peaky` → `/.peaky`, `PEAKY_HOME=/.peaky`; projects under `projects/`, cache under `splat_cache/`
 
 ## Invariants
