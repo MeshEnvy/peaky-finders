@@ -312,7 +312,10 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert resp.status == 200
         assert 'id="map"' in body
         assert "maplibre-gl" in body
-        assert 'id="basemap"' in body
+        assert 'id="map-tool-basemap"' in body
+        assert 'id="map-basemap-menu"' in body
+        assert 'id="map-tool-sites"' in body
+        assert 'id="map-tool-goals"' in body
         assert "Street" in body
         assert "USGS Topo" in body
         assert "OpenTopo" in body
@@ -696,7 +699,8 @@ def test_project_page_includes_add_controls(tmp_path: Path) -> None:
         body = resp.read().decode("utf-8")
         assert resp.status == 200
         assert 'id="entity-panel"' in body
-        assert 'id="entity-panel-toggle"' in body
+        assert 'id="map-tool-sites"' in body
+        assert 'id="map-tool-goals"' in body
         assert 'id="entity-panel-add-site"' in body
         assert 'id="entity-panel-add-goal"' in body
         assert 'id="site-panel-create"' in body

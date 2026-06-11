@@ -36,6 +36,76 @@ data-bs-toggle="modal" data-bs-target="#home-settings-modal" title="Settings">
   <span id="home-settings-gear-summary" class="small font-monospace"></span>
 </button>"""
 
+_LUCIDE_LAYERS_SVG = """\
+<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" \
+stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+  <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/>
+  <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/>
+  <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/>
+</svg>"""
+
+_LUCIDE_RADIO_TOWER_SVG = """\
+<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" \
+stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+  <path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9m2.9 2.8a6.14 6.14 0 0 0-.8 7.5"/>
+  <circle cx="12" cy="9" r="2"/>
+  <path d="M16.2 4.8c2 2 2.26 5.11.8 7.47M19.1 1.9a9.96 9.96 0 0 1 0 14.1m-9.6 2h5M8 22l4-11l4 11"/>
+</svg>"""
+
+_LUCIDE_GOAL_SVG = """\
+<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" \
+stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+  <path d="M12 13V2l8 4l-8 4"/>
+  <path d="M20.561 10.222a9 9 0 1 1-12.55-5.29"/>
+  <path d="M8.002 9.997a5 5 0 1 0 8.9 2.02"/>
+</svg>"""
+
+_MAP_TOOLBAR = f"""\
+  <div id="map-toolbar" class="map-toolbar" role="group" aria-label="Map tools">
+    <div class="dropdown">
+      <button
+        type="button"
+        id="map-tool-basemap"
+        class="map-toolbar__btn dropdown-toggle"
+        data-bs-toggle="dropdown"
+        data-bs-auto-close="true"
+        aria-expanded="false"
+        aria-label="Base map"
+        title="Base map"
+      >
+        {_LUCIDE_LAYERS_SVG}
+      </button>
+      <ul class="dropdown-menu dropdown-menu-dark shadow" id="map-basemap-menu" aria-label="Base map options">
+        <li><button type="button" class="dropdown-item" data-basemap="street">Street</button></li>
+        <li><button type="button" class="dropdown-item" data-basemap="topo">USGS Topo</button></li>
+        <li><button type="button" class="dropdown-item" data-basemap="opentopo">OpenTopo</button></li>
+        <li><button type="button" class="dropdown-item" data-basemap="satellite">Satellite</button></li>
+      </ul>
+    </div>
+    <button
+      type="button"
+      id="map-tool-sites"
+      class="map-toolbar__btn"
+      aria-pressed="false"
+      aria-controls="entity-panel"
+      aria-label="Sites"
+      title="Sites"
+    >
+      {_LUCIDE_RADIO_TOWER_SVG}
+    </button>
+    <button
+      type="button"
+      id="map-tool-goals"
+      class="map-toolbar__btn"
+      aria-pressed="false"
+      aria-controls="entity-panel"
+      aria-label="Goals"
+      title="Goals"
+    >
+      {_LUCIDE_GOAL_SVG}
+    </button>
+  </div>"""
+
 _CLIMATE_OPTIONS = (
     "equatorial",
     "continental_subtropical",
@@ -438,16 +508,6 @@ def project_html(
         <span id="goal-count-badge" class="badge text-bg-secondary">{goal_count} {goal_noun}</span>
       </div>
       <div class="d-flex flex-wrap align-items-center gap-2 gap-md-3">
-        <button type="button" id="entity-panel-toggle" class="btn btn-sm btn-outline-secondary" title="Sites and goals" aria-expanded="false" aria-controls="entity-panel">Sites</button>
-        <div class="d-flex align-items-center gap-2">
-          <label for="basemap" class="form-label mb-0 small text-muted">Map</label>
-          <select id="basemap" class="form-select form-select-sm" style="width: auto;" title="Base map">
-            <option value="street">Street</option>
-            <option value="topo">USGS Topo</option>
-            <option value="opentopo">OpenTopo</option>
-            <option value="satellite">Satellite</option>
-          </select>
-        </div>
         <div class="form-check mb-0">
           <input id="show-links" class="form-check-input" type="checkbox" checked>
           <label class="form-check-label small" for="show-links">Site links</label>
@@ -495,6 +555,7 @@ def project_html(
       </div>
     </div>
   </aside>
+{_MAP_TOOLBAR}
   <div id="map"></div>
   <div id="pin-load-overlays" class="pin-load-overlays" aria-hidden="true"></div>
   <aside id="site-panel" class="site-panel card shadow" hidden>

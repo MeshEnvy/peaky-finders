@@ -101,6 +101,8 @@
   }
 
   const savedMapState = loadMapState();
+  let currentBasemapKey =
+    savedMapState && BASEMAPS[savedMapState.basemap] ? savedMapState.basemap : "street";
   let viewshedOpacity = savedMapState?.viewshedOpacity ?? VIEWSHED_OPACITY_DEFAULT;
   const defaultRadiusKm = Number(simDefaults.radius_km) || 60;
   const defaultRasterDimension = Number(simDefaults.raster_dimension) || 500;
@@ -117,8 +119,7 @@
 
   function syncToolbarFromSaved(saved) {
     if (!saved) return;
-    const basemapEl = document.getElementById("basemap");
-    if (basemapEl && BASEMAPS[saved.basemap]) basemapEl.value = saved.basemap;
+    if (BASEMAPS[saved.basemap]) currentBasemapKey = saved.basemap;
     const linksEl = document.getElementById("show-links");
     if (linksEl && typeof saved.showLinks === "boolean") linksEl.checked = saved.showLinks;
     const goalLinksEl = document.getElementById("show-goal-links");
@@ -211,7 +212,7 @@
 
   const map = new maplibregl.Map({
     container: "map",
-    style: basemapStyle(savedMapState ? savedMapState.basemap : "street"),
+    style: basemapStyle(currentBasemapKey),
     center: savedMapState ? savedMapState.center : [-98.35, 39.5],
     zoom: savedMapState ? savedMapState.zoom : 4,
     maxPitch: 85,
@@ -311,7 +312,9 @@
   const sitePanelEditCancel = document.getElementById("site-panel-edit-cancel");
   const sitePanelEditLinksLabel = document.getElementById("site-panel-edit-links-label");
   const entityPanel = document.getElementById("entity-panel");
-  const entityPanelToggle = document.getElementById("entity-panel-toggle");
+  const mapBasemapMenu = document.getElementById("map-basemap-menu");
+  const mapToolSites = document.getElementById("map-tool-sites");
+  const mapToolGoals = document.getElementById("map-tool-goals");
   const entityPanelSitesList = document.getElementById("entity-panel-sites-list");
   const entityPanelGoalsList = document.getElementById("entity-panel-goals-list");
   const entityPanelSitesPane = document.getElementById("entity-panel-sites-pane");
@@ -468,14 +471,43 @@
     if (!kind) cancelCreate();
   }
 
+  function syncBasemapMenu() {
+    if (!mapBasemapMenu) return;
+    for (const btn of mapBasemapMenu.querySelectorAll("[data-basemap]")) {
+      const active = btn.getAttribute("data-basemap") === currentBasemapKey;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-current", active ? "true" : "false");
+    }
+  }
+
+  function syncEntityPanelToggles() {
+    if (mapToolSites) {
+      const active = entityPanelOpen && entityPanelTab === "sites";
+      mapToolSites.classList.toggle("active", active);
+      mapToolSites.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+    if (mapToolGoals) {
+      const active = entityPanelOpen && entityPanelTab === "goals";
+      mapToolGoals.classList.toggle("active", active);
+      mapToolGoals.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+  }
+
   function setEntityPanelOpen(open) {
     entityPanelOpen = !!open;
     if (entityPanel) entityPanel.hidden = !entityPanelOpen;
     if (mapShell) mapShell.classList.toggle("entity-panel-open", entityPanelOpen);
-    if (entityPanelToggle) {
-      entityPanelToggle.classList.toggle("active", entityPanelOpen);
-      entityPanelToggle.setAttribute("aria-expanded", entityPanelOpen ? "true" : "false");
+    syncEntityPanelToggles();
+  }
+
+  function toggleEntityPanelTab(tab) {
+    const wantTab = tab === "goals" ? "goals" : "sites";
+    if (entityPanelOpen && entityPanelTab === wantTab) {
+      setEntityPanelOpen(false);
+      return;
     }
+    setEntityPanelOpen(true);
+    setEntityTab(wantTab);
   }
 
   function setEntityTab(tab) {
@@ -487,6 +519,7 @@
     }
     if (entityPanelSitesPane) entityPanelSitesPane.hidden = entityPanelTab !== "sites";
     if (entityPanelGoalsPane) entityPanelGoalsPane.hidden = entityPanelTab !== "goals";
+    syncEntityPanelToggles();
   }
 
   function combineLayerFilters(...parts) {
@@ -1219,7 +1252,7 @@
       zoom: map.getZoom(),
       bearing: map.getBearing(),
       pitch: map.getPitch(),
-      basemap: document.getElementById("basemap").value,
+      basemap: currentBasemapKey,
       showLinks: document.getElementById("show-links").checked,
       showGoalLinks: document.getElementById("show-goal-links").checked,
       viewshedOpacity,
@@ -3197,6 +3230,14 @@
     fitSites();
   }
 
+  function setBasemapKey(key) {
+    if (!BASEMAPS[key]) return;
+    currentBasemapKey = key;
+    syncBasemapMenu();
+    setBasemap(key);
+    scheduleSaveMapState();
+  }
+
   function setBasemap(key) {
     const bm = BASEMAPS[key];
     if (!bm || !mapReady) return;
@@ -3222,8 +3263,8 @@
     setEntityTab("sites");
     renderEntityPanel();
     applyEntityVisibility();
-    const basemapKey = document.getElementById("basemap").value;
-    setBasemap(basemapKey);
+    syncBasemapMenu();
+    setBasemap(currentBasemapKey);
     if (savedMapState) {
       setSiteLinksVisible(document.getElementById("show-links").checked);
       setGoalLinksVisible(document.getElementById("show-goal-links").checked);
@@ -3242,10 +3283,13 @@
   map.on("rotateend", scheduleSaveMapState);
   map.on("move", updatePinOverlays);
   map.on("resize", updatePinOverlays);
-  document.getElementById("basemap").addEventListener("change", (ev) => {
-    setBasemap(ev.target.value);
-    scheduleSaveMapState();
-  });
+  if (mapBasemapMenu) {
+    for (const btn of mapBasemapMenu.querySelectorAll("[data-basemap]")) {
+      btn.addEventListener("click", () => {
+        setBasemapKey(btn.getAttribute("data-basemap") || "street");
+      });
+    }
+  }
   document.getElementById("show-links").addEventListener("change", (ev) => {
     setSiteLinksVisible(ev.target.checked);
     scheduleSaveMapState();
@@ -3342,9 +3386,14 @@
       void saveNewPlacement();
     }
   });
-  if (entityPanelToggle) {
-    entityPanelToggle.addEventListener("click", () => {
-      setEntityPanelOpen(!entityPanelOpen);
+  if (mapToolSites) {
+    mapToolSites.addEventListener("click", () => {
+      toggleEntityPanelTab("sites");
+    });
+  }
+  if (mapToolGoals) {
+    mapToolGoals.addEventListener("click", () => {
+      toggleEntityPanelTab("goals");
     });
   }
   for (const btn of document.querySelectorAll("[data-entity-tab]")) {
