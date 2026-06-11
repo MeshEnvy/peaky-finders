@@ -116,9 +116,11 @@ Outputs under `<preset-dir>/build/` (clips, bundle, viewsheds, mesh, aggregate K
 
 One YAML per project — `projects/<slug>/config.yaml` (legacy `.json` unsupported).
 
+**Global RF catalogs** (not per project): `$PEAKY_HOME/modems.yaml` (`modem_presets:`) and `$PEAKY_HOME/environments.yaml` (`environment_presets:` — clutter, Fresnel, pessimism, situation/time %). Seeded from bundled templates on first use. Project preset selects `simulation.modem` / `simulation.environment` by name; inline `{ preset: foo, … }` overrides allowed. Build simulation stamp includes resolved profiles + catalog fingerprint.
+
 | Section | Contents |
 |---------|----------|
-| `simulation` | `provider: splatter`, RF/modem/env presets, `radius_km` (≤100), `raster_dimension` (128–4096 px square), `max_workers.splatter` batch fan-out |
+| `simulation` | `provider: splatter`, active **`modem`** / **`environment`** names (catalogs in `$PEAKY_HOME`), `radius_km` (≤100), `raster_dimension` (128–4096 px square), `max_workers.splatter`, `transmitter`/`receiver` chains |
 | `display` | Viewshed raster (`colormap`, `transparency`, dBm range) + `kml` styles + `kmz` layer toggles |
 | `land` | Slug-keyed `layers:` with roles `aoi` / `positive` / `negative` / `reference`; vector paths under `<preset-dir>/data/` |
 | `mesh` | Pairwise/depth build knobs, raster size, worker counts |
@@ -159,7 +161,7 @@ Helpers: `resolved_preset_build_dir`, `resolved_bundle_dir`, `resolved_preset_cl
 
 | Var | Role |
 |-----|------|
-| `PEAKY_HOME` | `~/.peaky` (`peaky serve`); repo root (CLI via `./peaky`) |
+| `PEAKY_HOME` | `~/.peaky` (`peaky serve`); repo root (CLI via `./peaky`); **`modems.yaml`** + **`environments.yaml`** RF profile catalogs |
 | `PEAKY_PROJECTS` | Project presets root (default: `<PEAKY_HOME>/projects`) |
 | `PEAKY_SHARE` | Optional shared tooling root |
 | `SPLAT_CACHE` | Global Skadi tile mirror (default: `<peaky_home>/splat_cache`) |

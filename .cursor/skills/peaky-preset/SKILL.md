@@ -13,14 +13,24 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 ## Layout
 
 - Reference: `projects/nevada/config.yaml`
+- Global RF catalogs: `$PEAKY_HOME/modems.yaml`, `$PEAKY_HOME/environments.yaml` (see `peaky_profiles.py`)
 - Run CLI from project dir: `require_cwd_config_yaml()` → `./config.yaml`
 - Resolve by slug: `resolve_preset_yaml_arg("nevada")` → `projects/nevada/config.yaml`
+
+## Global RF profiles (`peaky_profiles.py`)
+
+| File | Contents |
+|------|----------|
+| `$PEAKY_HOME/modems.yaml` | `modem_presets:` — frequency, SF, BW, CR, power, sensitivity |
+| `$PEAKY_HOME/environments.yaml` | `environment_presets:` — clutter, Fresnel, `coverage_pessimism_db`, situation/time %, climate, ground params |
+
+Bundled templates in `peaky_finders/data/` seed missing files on first use (`peaky new`, `load_modem_presets_catalog()`). Project preset holds **`simulation.modem`** / **`simulation.environment`** names only (+ optional inline `{ preset: name, …overrides }`). Propagation mapping: `preset_mapping.preset_to_request()`.
 
 ## Schema (`Preset` in `sites_job.py`)
 
 | Section | Purpose |
 |---------|---------|
-| `simulation` | RF modem/env presets, `radius_km` (≤100), `raster_dimension` (128–4096 px square), `max_workers` |
+| `simulation` | Active `modem` / `environment` names, `radius_km` (≤100), `raster_dimension`, `transmitter`/`receiver`, `max_workers` |
 | `display` | Viewshed raster + `display.kml` / `display.kmz` presentation |
 | `land` | Slug-keyed `layers:` — roles `aoi`, `positive`, `negative`, `reference`; paths under `<preset-dir>/data/` |
 | `mesh` | Pairwise/depth analysis knobs |

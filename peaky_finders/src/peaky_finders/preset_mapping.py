@@ -7,6 +7,7 @@ from statistics import NormalDist
 from typing import Any, Literal, cast
 
 from peaky_finders.models import LoRaModemParams, RadioClimate, SplatCoverageRequest
+from peaky_finders.peaky_profiles import load_environment_presets_catalog, load_modem_presets_catalog
 from peaky_finders.sites_job import Preset, SimulationConfig
 
 _CLIMATES: frozenset[str] = frozenset(
@@ -41,6 +42,10 @@ _DEFAULT_ENVIRONMENT: dict[str, Any] = {
     "ground_dielectric_v_m": 15.0,
     "ground_conductivity_s_m": 0.005,
     "atmosphere_bending_n": 301.0,
+    "fresnel_clearance_fraction": 0.6,
+    "coverage_pessimism_db": 0.0,
+    "situation_pct": 95.0,
+    "time_pct": 95.0,
 }
 
 
@@ -69,7 +74,7 @@ def _resolve_catalog_entry(
 ) -> dict[str, Any]:
     if selected is None:
         if catalog:
-            raise ValueError(f"preset defines {label}_presets but {label} is unset")
+            raise ValueError(f"preset {label} is unset; set simulation.{label} to a name from $PEAKY_HOME/{label}s.yaml")
         return {}
 
     if isinstance(selected, str):
@@ -94,17 +99,21 @@ def _resolve_catalog_entry(
 
 
 def resolved_modem(preset: Preset) -> dict[str, Any]:
-    """Merge ``simulation.modem_presets`` entry, active ``modem`` name, and inline overrides."""
+    """Merge ``$PEAKY_HOME/modems.yaml`` entry, active ``modem`` name, and inline overrides."""
     sim = _sim(preset)
-    return _resolve_catalog_entry(selected=sim.modem, catalog=sim.modem_presets, label="modem")
+    return _resolve_catalog_entry(
+        selected=sim.modem,
+        catalog=load_modem_presets_catalog(),
+        label="modem",
+    )
 
 
 def resolved_environment(preset: Preset) -> dict[str, Any]:
-    """Merge ``simulation.environment_presets`` entry, active ``environment`` name, and overrides."""
+    """Merge ``$PEAKY_HOME/environments.yaml`` entry, active ``environment`` name, and overrides."""
     sim = _sim(preset)
     env = _resolve_catalog_entry(
         selected=sim.environment,
-        catalog=sim.environment_presets,
+        catalog=load_environment_presets_catalog(),
         label="environment",
     )
     if not env:
@@ -122,7 +131,7 @@ def _preset_frequency_mhz(preset: Preset) -> float:
     if "frequency_mhz" in tx:
         return _f(tx["frequency_mhz"])
     raise ValueError(
-        "preset requires modem frequency (via simulation.modem_presets) "
+        "preset requires modem frequency (via $PEAKY_HOME/modems.yaml) "
         "or simulation.transmitter.frequency_mhz"
     )
 
@@ -228,12 +237,14 @@ def preset_to_request(
     pol: Literal["horizontal", "vertical"] = "vertical" if polar == "vertical" else "horizontal"
 
     modem_raw = _modem_dict_for_request(preset)
-    # Fold scenario pessimism into emitted modem margins only (YAML catalogs stay literal on-spec).
+    # Fold environment pessimism into emitted modem margins only (YAML catalogs stay literal on-spec).
     modem_eff = dict(modem_raw)
     modem_eff["implementation_margin_db"] = _f(modem_eff.get("implementation_margin_db", 0.0)) + _f(
-        sim.coverage_pessimism_db
+        env.get("coverage_pessimism_db", 0.0)
     )
-    rel_margin = reliability_margin_db(_f(sim.situation_pct), _f(sim.time_pct))
+    situation_pct = _f(env["situation_pct"])
+    time_pct = _f(env["time_pct"])
+    rel_margin = reliability_margin_db(situation_pct, time_pct)
     decode = modem_decode_threshold_dbm(modem_eff)
     sens_raw = modem_eff.get("sensitivity_dbm")
 
@@ -263,9 +274,9 @@ def preset_to_request(
         system_loss=system_loss,
         radio_climate=cast(RadioClimate, climate),
         polarization=pol,
-        situation_fraction=_f(sim.situation_pct),
-        time_fraction=_f(sim.time_pct),
-        fresnel_clearance_fraction=float(sim.fresnel_clearance_fraction),
+        situation_fraction=situation_pct,
+        time_fraction=time_pct,
+        fresnel_clearance_fraction=float(env["fresnel_clearance_fraction"]),
         colormap=str(disp.colormap),
         min_dbm=_f(disp.min_dbm),
         max_dbm=_f(disp.max_dbm),

@@ -19,6 +19,8 @@ from peaky_finders.bundle_clips import (
     composite_exclude_fingerprint_body,
     composite_include_fingerprint_body,
 )
+from peaky_finders.peaky_profiles import profile_catalog_fingerprint_body
+from peaky_finders.preset_mapping import resolved_environment, resolved_modem
 from peaky_finders.sites_job import (
     Preset,
     load_preset,
@@ -46,7 +48,13 @@ def stamp_path(preset_path: Path, section: str) -> Path:
 
 
 def _simulation_stamp_body(preset: Preset) -> str:
-    return json.dumps(preset.simulation.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
+    payload = {
+        "simulation": preset.simulation.model_dump(mode="json"),
+        "resolved_modem": resolved_modem(preset),
+        "resolved_environment": resolved_environment(preset),
+        "profile_catalogs": profile_catalog_fingerprint_body(),
+    }
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
 def _display_stamp_body(preset: Preset) -> str:

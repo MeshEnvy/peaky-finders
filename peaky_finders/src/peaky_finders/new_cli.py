@@ -8,6 +8,7 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
+from peaky_finders.peaky_profiles import ensure_peaky_home_profiles
 from peaky_finders.sites_job import load_preset, peaky_projects_dir
 
 _PROJECT_SLUG_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
@@ -83,6 +84,7 @@ def scaffold_project(
     for sub in _DATA_SUBDIRS:
         (project_dir / "data" / sub).mkdir(parents=True, exist_ok=True)
 
+    ensure_peaky_home_profiles()
     config_path.write_text(_project_template_text(), encoding="utf-8")
     load_preset(config_path)
     return project_dir

@@ -319,13 +319,15 @@ class SimulationMaxWorkers(BaseModel):
 
 
 class SimulationConfig(BaseModel):
-    """Preset ``simulation`` block: propagation engine, RF catalogs, and antenna chains."""
+    """Preset ``simulation`` block: propagation selection, grid, and antenna chains.
+
+    Modem and environment **catalogs** live under ``$PEAKY_HOME/modems.yaml`` and
+    ``environments.yaml``; projects reference preset names only.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     provider: CoverageProvider = CoverageProvider.SPLATTER
-    situation_pct: Any = "95.0"
-    time_pct: Any = "95.0"
     radius_km: Any = "50.0"
     raster_dimension: int = Field(
         default=500,
@@ -336,41 +338,17 @@ class SimulationConfig(BaseModel):
             "(radius_km × 1000) / raster_dimension."
         ),
     )
-    fresnel_clearance_fraction: float = Field(
-        default=0.6,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "Fresnel clearance floor (fraction of F₁); obstruction depth feeds knife-edge loss."
-        ),
-    )
-    coverage_pessimism_db: float = Field(
-        default=0.0,
-        ge=0.0,
-        description=(
-            "Extra decode margin (dB) for conservative coverage: added to ``implementation_margin_db`` only in "
-            "emitted ``request.json``. ``modem_presets`` stay datasheet-spec."
-        ),
-    )
     max_workers: SimulationMaxWorkers = Field(
         default_factory=SimulationMaxWorkers,
         description="Concurrent site jobs on the host; pick the entry matching ``provider`` (see each field).",
     )
-    modem_presets: dict[str, dict[str, Any]] = Field(
-        default_factory=dict,
-        description="Named LoRa air-interface profiles (frequency, SF, BW, CR, power, sensitivity).",
-    )
-    environment_presets: dict[str, dict[str, Any]] = Field(
-        default_factory=dict,
-        description="Named RF environment profiles (clutter height and ground parameters for splatter).",
-    )
     modem: str | dict[str, Any] | None = Field(
         default=None,
-        description="Active modem preset name, or mapping with ``preset:`` key plus overrides.",
+        description="Active modem preset name from ``$PEAKY_HOME/modems.yaml``, or mapping with ``preset:`` plus overrides.",
     )
     environment: str | dict[str, Any] | None = Field(
         default=None,
-        description="Active environment preset name, or mapping with ``preset:`` key plus overrides.",
+        description="Active environment preset from ``$PEAKY_HOME/environments.yaml``, or mapping with ``preset:`` plus overrides.",
     )
     transmitter: dict[str, Any] = Field(
         default_factory=dict,
