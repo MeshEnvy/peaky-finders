@@ -24,9 +24,8 @@ _BOOTSTRAP_FOOT = """\
 integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>"""
 
 _GEAR_SVG = """\
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
-  <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
-  <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319z"/>
+<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+  <path fill="currentColor" d="m9.25 22l-.4-3.2q-.325-.125-.612-.3t-.563-.375L4.7 19.375l-2.75-4.75l2.575-1.95Q4.5 12.5 4.5 12.338v-.675q0-.163.025-.338L1.95 9.375l2.75-4.75l2.975 1.25q.275-.2.575-.375t.6-.3l.4-3.2h5.5l.4 3.2q.325.125.613.3t.562.375l2.975-1.25l2.75 4.75l-2.575 1.95q.025.175.025.338v.674q0 .163-.05.338l2.575 1.95l-2.75 4.75l-2.95-1.25q-.275.2-.575.375t-.6.3l-.4 3.2zm2.8-6.5q1.45 0 2.475-1.025T15.55 12t-1.025-2.475T12.05 8.5q-1.475 0-2.488 1.025T8.55 12t1.013 2.475T12.05 15.5"/>
 </svg>"""
 
 _HOME_SETTINGS_GEAR = f"""\
@@ -34,6 +33,11 @@ _HOME_SETTINGS_GEAR = f"""\
 data-bs-toggle="modal" data-bs-target="#home-settings-modal" title="Settings" aria-label="Settings">
   {_GEAR_SVG}
 </button>"""
+
+_PEAKY_LOGO_LINK = """\
+<a class="project-toolbar__logo" href="/" aria-label="Peaky Finders">
+  <img src="/favicon-96x96.png" width="28" height="28" alt="">
+</a>"""
 
 _CLIMATE_OPTIONS = (
     "equatorial",
@@ -426,13 +430,8 @@ def project_html(
     body = f"""<header class="project-toolbar border-bottom">
   <div class="container-fluid py-2 px-3">
     <div class="d-flex flex-wrap align-items-center gap-2 gap-md-3">
-      <a class="btn btn-sm btn-outline-secondary" href="/">&larr; Projects</a>
+      {_PEAKY_LOGO_LINK}
       <h1 class="h5 mb-0 me-auto">{html.escape(slug)}</h1>
-      <div class="d-flex align-items-center gap-2">
-        <label for="viewshed-opacity" class="form-label mb-0 small text-muted">Opacity</label>
-        <input id="viewshed-opacity" type="range" class="form-range" min="0" max="100" value="75"
-          style="width: 5.5rem;" title="Viewshed opacity">
-      </div>
     </div>
     <p class="text-muted small mb-0 mt-1 d-md-none">{html.escape(str(project_dir))}</p>
   </div>
@@ -464,6 +463,19 @@ def project_html(
       </div>
     </div>
   </aside>
+  <button
+    type="button"
+    id="entity-panel-toggle"
+    class="entity-panel-toggle"
+    title="Sites and goals"
+    aria-label="Show sites and goals"
+    aria-expanded="false"
+    aria-controls="entity-panel"
+  >
+    <svg class="entity-panel-toggle__icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path fill="currentColor" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+    </svg>
+  </button>
   <div id="map"></div>
   <div id="pin-load-overlays" class="pin-load-overlays" aria-hidden="true"></div>
   <aside id="site-panel" class="site-panel card shadow" hidden>

@@ -19,6 +19,25 @@ body.wide .project-toolbar {
   flex-shrink: 0;
 }
 
+.project-toolbar__logo {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+  border-radius: 0.25rem;
+  opacity: 0.92;
+  transition: opacity 0.15s ease;
+}
+
+.project-toolbar__logo:hover {
+  opacity: 1;
+}
+
+.project-toolbar__logo img {
+  display: block;
+  width: 28px;
+  height: 28px;
+}
+
 .map-shell {
   position: relative;
   flex: 1 1 0;
@@ -239,9 +258,15 @@ body.wide #map {
   stroke: currentColor;
 }
 
-#home-settings-open svg path {
+#home-settings-open svg path,
+#map-tool-opacity svg path {
   fill: currentColor;
   stroke: none;
+}
+
+.map-opacity-menu {
+  min-width: 11rem;
+  padding: 0.65rem 0.75rem;
 }
 
 .map-toolbar-tool.active,
@@ -258,6 +283,45 @@ body.wide #map {
 #map-basemap-menu .dropdown-item.active {
   background: rgba(74, 108, 247, 0.2);
   color: #8ba4ff;
+}
+
+.entity-panel-toggle {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 4;
+  transform: translateY(-50%);
+  width: 1.35rem;
+  height: 2.25rem;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0 0.25rem 0.25rem 0;
+  background-color: #fff;
+  color: #333;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+  transition: left 0.2s ease-out, background-color 0.15s ease;
+}
+
+.entity-panel-toggle:hover {
+  color: #333;
+  background-color: rgb(240, 240, 240);
+}
+
+.map-shell.entity-panel-open .entity-panel-toggle {
+  left: 20rem;
+}
+
+.entity-panel-toggle__icon {
+  display: block;
+  transition: transform 0.2s ease-out;
+}
+
+.map-shell.entity-panel-open .entity-panel-toggle__icon {
+  transform: rotate(180deg);
 }
 
 .entity-panel {

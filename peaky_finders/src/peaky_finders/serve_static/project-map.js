@@ -55,7 +55,14 @@
   const MAP_TOOL_GOAL_SVG =
     '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 13V2l8 4l-8 4"/><path d="M20.561 10.222a9 9 0 1 1-12.55-5.29"/><path d="M8.002 9.997a5 5 0 1 0 8.9 2.02"/></svg>';
   const MAP_TOOL_GEAR_SVG =
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/><path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319z"/></svg>';
+    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor"><path fill="currentColor" d="m9.25 22l-.4-3.2q-.325-.125-.612-.3t-.563-.375L4.7 19.375l-2.75-4.75l2.575-1.95Q4.5 12.5 4.5 12.338v-.675q0-.163.025-.338L1.95 9.375l2.75-4.75l2.975 1.25q.275-.2.575-.375t.6-.3l.4-3.2h5.5l.4 3.2q.325.125.613.3t.562.375l2.975-1.25l2.75 4.75l-2.575 1.95q.025.175.025.338v.674q0 .163-.05.338l2.575 1.95l-2.75 4.75l-2.95-1.25q-.275.2-.575.375t-.6.3l-.4 3.2zm2.8-6.5q1.45 0 2.475-1.025T15.55 12t-1.025-2.475T12.05 8.5q-1.475 0-2.488 1.025T8.55 12t1.013 2.475T12.05 15.5"/></svg>';
+  const MAP_TOOL_OPACITY_SVG =
+    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor"><path fill="currentColor" d="M18 10V8h2v2zm0 2v-2h-2v2zm0-4V6h-2v2zm-2-5.16V4h2c-.63-.46-1.29-.85-2-1.16M18 4v2h2c-.58-.75-1.25-1.42-2-2m2 2v2h1.16c-.31-.71-.7-1.37-1.16-2m2 6c0-.68-.07-1.35-.2-2H20v2zm-6-6V4h-2v2zm0 10h2v-2h-2zm2 2h2v-2h-2zm-2 2h2v-2h-2zm-2 1.8c.7-.14 1.36-.36 2-.64V20h-2zm4-7.8h2v-2h-2zm-2-6h-2v2h2zm4 8h1.16c.28-.64.5-1.3.64-2H20zm-4-4h-2v2h2zm-4 6v-2h2v-2h-2v-2h2v-2h-2V8h2V6h-2V4h2V2.2c-.65-.13-1.31-.2-2-.2C6.5 2 2 6.5 2 12s4.5 10 10 10v-2h2v-2zm2 0h2v-2h-2z"/></svg>';
+
+  function syncOpacitySlider() {
+    const opacityEl = document.getElementById("viewshed-opacity");
+    if (opacityEl) opacityEl.value = String(Math.round(viewshedOpacity * 100));
+  }
 
   function installMapToolbar(navGroup) {
     const basemapDropdown = document.createElement("div");
@@ -123,14 +130,55 @@
     settingsBtn.title = "Settings";
     settingsBtn.innerHTML = MAP_TOOL_GEAR_SVG;
 
-    for (const el of [basemapDropdown, sitesBtn, goalsBtn, settingsBtn]) {
+    const opacityDropdown = document.createElement("div");
+    opacityDropdown.className = "dropdown map-toolbar-dropdown";
+
+    const opacityBtn = document.createElement("button");
+    opacityBtn.type = "button";
+    opacityBtn.id = "map-tool-opacity";
+    opacityBtn.className = "map-toolbar-tool";
+    opacityBtn.setAttribute("data-bs-toggle", "dropdown");
+    opacityBtn.setAttribute("data-bs-auto-close", "outside");
+    opacityBtn.setAttribute("aria-expanded", "false");
+    opacityBtn.setAttribute("aria-label", "Viewshed opacity");
+    opacityBtn.title = "Viewshed opacity";
+    opacityBtn.innerHTML = MAP_TOOL_OPACITY_SVG;
+
+    const opacityMenu = document.createElement("div");
+    opacityMenu.id = "map-opacity-menu";
+    opacityMenu.className = "dropdown-menu dropdown-menu-dark shadow map-opacity-menu";
+    opacityMenu.setAttribute("aria-label", "Viewshed opacity");
+
+    const opacityLabel = document.createElement("label");
+    opacityLabel.className = "form-label small mb-2";
+    opacityLabel.htmlFor = "viewshed-opacity";
+    opacityLabel.textContent = "Viewshed opacity";
+
+    const opacitySlider = document.createElement("input");
+    opacitySlider.type = "range";
+    opacitySlider.id = "viewshed-opacity";
+    opacitySlider.className = "form-range";
+    opacitySlider.min = "0";
+    opacitySlider.max = "100";
+    opacitySlider.value = String(Math.round(viewshedOpacity * 100));
+    opacitySlider.title = "Viewshed opacity";
+
+    opacityMenu.appendChild(opacityLabel);
+    opacityMenu.appendChild(opacitySlider);
+    opacityDropdown.appendChild(opacityBtn);
+    opacityDropdown.appendChild(opacityMenu);
+
+    for (const el of [basemapDropdown, sitesBtn, goalsBtn, opacityDropdown, settingsBtn]) {
       navGroup.appendChild(el);
     }
+
+    syncOpacitySlider();
 
     return {
       mapBasemapMenu: basemapMenu,
       mapToolSites: sitesBtn,
       mapToolGoals: goalsBtn,
+      viewshedOpacityInput: opacitySlider,
       mapToolSettings: settingsBtn,
     };
   }
@@ -207,9 +255,9 @@
     if (BASEMAPS[saved.basemap]) currentBasemapKey = saved.basemap;
     if (typeof saved.showLinks === "boolean") showSiteLinks = saved.showLinks;
     if (typeof saved.showGoalLinks === "boolean") showGoalLinks = saved.showGoalLinks;
-    const opacityEl = document.getElementById("viewshed-opacity");
-    if (opacityEl && typeof saved.viewshedOpacity === "number") {
-      opacityEl.value = Math.round(saved.viewshedOpacity * 100);
+    if (typeof saved.viewshedOpacity === "number") {
+      viewshedOpacity = saved.viewshedOpacity;
+      syncOpacitySlider();
     }
   }
 
@@ -309,6 +357,7 @@
   const mapBasemapMenu = mapToolbarRefs.mapBasemapMenu;
   const mapToolSites = mapToolbarRefs.mapToolSites;
   const mapToolGoals = mapToolbarRefs.mapToolGoals;
+  const viewshedOpacityInput = mapToolbarRefs.viewshedOpacityInput;
   const compassButton = navControl._container.querySelector(".maplibregl-ctrl-compass");
   if (compassButton) {
     compassButton.addEventListener(
@@ -399,6 +448,7 @@
   const sitePanelEditCancel = document.getElementById("site-panel-edit-cancel");
   const sitePanelEditLinksLabel = document.getElementById("site-panel-edit-links-label");
   const entityPanel = document.getElementById("entity-panel");
+  const entityPanelToggle = document.getElementById("entity-panel-toggle");
   const entityPanelSitesList = document.getElementById("entity-panel-sites-list");
   const entityPanelGoalsList = document.getElementById("entity-panel-goals-list");
   const entityPanelSitesPane = document.getElementById("entity-panel-sites-pane");
@@ -579,6 +629,13 @@
     entityPanelOpen = !!open;
     if (entityPanel) entityPanel.hidden = !entityPanelOpen;
     if (mapShell) mapShell.classList.toggle("entity-panel-open", entityPanelOpen);
+    if (entityPanelToggle) {
+      entityPanelToggle.setAttribute("aria-expanded", entityPanelOpen ? "true" : "false");
+      entityPanelToggle.setAttribute(
+        "aria-label",
+        entityPanelOpen ? "Hide sites and goals" : "Show sites and goals",
+      );
+    }
     syncEntityPanelToggles();
   }
 
@@ -1568,6 +1625,7 @@
 
   function setViewshedOpacity(opacity) {
     viewshedOpacity = Math.max(0, Math.min(1, opacity));
+    syncOpacitySlider();
     applyViewshedOpacityToAllLayers();
   }
 
@@ -3352,10 +3410,12 @@
       });
     }
   }
-  document.getElementById("viewshed-opacity").addEventListener("input", (ev) => {
-    setViewshedOpacity(Number(ev.target.value) / 100);
-    scheduleSaveMapState();
-  });
+  if (viewshedOpacityInput) {
+    viewshedOpacityInput.addEventListener("input", (ev) => {
+      setViewshedOpacity(Number(ev.target.value) / 100);
+      scheduleSaveMapState();
+    });
+  }
   sitePanelClose.addEventListener("click", deselectSite);
   if (sitePanelEditOpen) {
     sitePanelEditOpen.addEventListener("click", () => openEditPanel());
@@ -3440,6 +3500,16 @@
       void saveNewPlacement();
     }
   });
+  if (entityPanelToggle) {
+    entityPanelToggle.addEventListener("click", () => {
+      if (entityPanelOpen) {
+        setEntityPanelOpen(false);
+      } else {
+        setEntityPanelOpen(true);
+        setEntityTab("sites");
+      }
+    });
+  }
   if (mapToolSites) {
     mapToolSites.addEventListener("click", () => {
       toggleEntityPanelTab("sites");

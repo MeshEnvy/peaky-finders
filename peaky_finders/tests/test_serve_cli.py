@@ -343,6 +343,7 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert "map-tool-basemap" in js_body
         assert "map-tool-sites" in js_body
         assert "map-tool-goals" in js_body
+        assert "map-tool-opacity" in js_body
         assert "home-settings-open" in js_body
         assert "USGS Topo" in js_body
         assert "Satellite" in js_body
@@ -698,6 +699,7 @@ def test_project_page_includes_add_controls(tmp_path: Path) -> None:
         body = resp.read().decode("utf-8")
         assert resp.status == 200
         assert 'id="entity-panel"' in body
+        assert 'id="entity-panel-toggle"' in body
         assert 'id="entity-panel-add-site"' in body
         assert 'id="entity-panel-add-goal"' in body
         assert 'id="site-panel-create"' in body
