@@ -204,11 +204,9 @@
   }
 
   function activeSettingsTab() {
-    const active = document.querySelector("#home-settings-tabs .nav-link.active");
-    if (!active) return "simulation";
-    if (active.id === "home-tab-modems") return "modems";
-    if (active.id === "home-tab-environments") return "environments";
-    return "simulation";
+    const tabGroup = document.getElementById("home-settings-tabs");
+    if (!tabGroup) return "simulation";
+    return tabGroup.active || "simulation";
   }
 
   function updateSaveButtonLabel() {
@@ -225,9 +223,26 @@
   }
 
   function closeSettingsModal() {
-    const modalEl = document.getElementById("home-settings-modal");
-    if (!modalEl || !window.bootstrap?.Modal) return;
-    bootstrap.Modal.getInstance(modalEl)?.hide();
+    const dialog = document.getElementById("home-settings-modal");
+    if (!dialog) return;
+    dialog.open = false;
+  }
+
+  function openSettingsModal() {
+    const dialog = document.getElementById("home-settings-modal");
+    if (!dialog) return;
+    dialog.open = true;
+  }
+
+  function wireSettingsOpenButtons() {
+    document.addEventListener("click", (ev) => {
+      const opener = ev
+        .composedPath()
+        .find((el) => el instanceof Element && el.id === "home-settings-open");
+      if (!opener) return;
+      ev.preventDefault();
+      openSettingsModal();
+    });
   }
 
   function onSimulationFieldInput() {
@@ -294,7 +309,7 @@
     for (const name of names) {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "list-group-item list-group-item-action" + (name === selected ? " active" : "");
+      btn.className = "home-settings-list__item" + (name === selected ? " is-active" : "");
       btn.textContent = name;
       btn.addEventListener("click", () => onSelect(name));
       listEl.appendChild(btn);
@@ -694,18 +709,19 @@
     }
   }
 
-  function bindUi() {
-    const modal = document.getElementById("home-settings-modal");
-    if (!modal) return;
+  async function bindUi() {
+    const dialog = document.getElementById("home-settings-modal");
+    if (!dialog) return;
+    await customElements.whenDefined("wa-dialog");
+    wireSettingsOpenButtons();
 
-    modal.addEventListener("show.bs.modal", () => {
+    dialog.addEventListener("wa-show", () => {
       updateSaveButtonLabel();
       void loadAll().catch((err) => showError(err.message || String(err)));
     });
 
-    document.querySelectorAll("#home-settings-tabs button[data-bs-toggle='tab']").forEach((tab) => {
-      tab.addEventListener("shown.bs.tab", updateSaveButtonLabel);
-    });
+    const tabGroup = document.getElementById("home-settings-tabs");
+    tabGroup?.addEventListener("wa-tab-show", updateSaveButtonLabel);
 
     document.getElementById("home-settings-save")?.addEventListener("click", () => void saveActiveTab());
     document.getElementById("home-modem-add")?.addEventListener("click", addModemDraft);
@@ -731,7 +747,7 @@
       onSimulationFieldInput();
     });
 
-    const simPane = document.getElementById("home-pane-simulation");
+    const simPane = document.querySelector('wa-tab-panel[name="simulation"]');
     if (simPane) {
       simPane.addEventListener("input", (ev) => {
         const t = ev.target;
@@ -756,8 +772,8 @@
   };
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bindUi);
+    document.addEventListener("DOMContentLoaded", () => void bindUi());
   } else {
-    bindUi();
+    void bindUi();
   }
 })();

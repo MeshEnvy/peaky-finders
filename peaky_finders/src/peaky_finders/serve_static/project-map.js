@@ -47,58 +47,45 @@
   const SITE_FIT_BUFFER_KM = 30;
   const MAP_STATE_KEY = `peaky.map.v1.${projectSlug}`;
   const MAP_STATE_SAVE_MS = 400;
-
-  const MAP_TOOL_LAYERS_SVG =
-    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg>';
-  const MAP_TOOL_RADIO_TOWER_SVG =
-    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9m2.9 2.8a6.14 6.14 0 0 0-.8 7.5"/><circle cx="12" cy="9" r="2"/><path d="M16.2 4.8c2 2 2.26 5.11.8 7.47M19.1 1.9a9.96 9.96 0 0 1 0 14.1m-9.6 2h5M8 22l4-11l4 11"/></svg>';
-  const MAP_TOOL_GOAL_SVG =
-    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 13V2l8 4l-8 4"/><path d="M20.561 10.222a9 9 0 1 1-12.55-5.29"/><path d="M8.002 9.997a5 5 0 1 0 8.9 2.02"/></svg>';
-  const MAP_TOOL_GEAR_SVG =
-    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor"><path fill="currentColor" d="m9.25 22l-.4-3.2q-.325-.125-.612-.3t-.563-.375L4.7 19.375l-2.75-4.75l2.575-1.95Q4.5 12.5 4.5 12.338v-.675q0-.163.025-.338L1.95 9.375l2.75-4.75l2.975 1.25q.275-.2.575-.375t.6-.3l.4-3.2h5.5l.4 3.2q.325.125.613.3t.562.375l2.975-1.25l2.75 4.75l-2.575 1.95q.025.175.025.338v.674q0 .163-.05.338l2.575 1.95l-2.75 4.75l-2.95-1.25q-.275.2-.575.375t-.6.3l-.4 3.2zm2.8-6.5q1.45 0 2.475-1.025T15.55 12t-1.025-2.475T12.05 8.5q-1.475 0-2.488 1.025T8.55 12t1.013 2.475T12.05 15.5"/></svg>';
-  const MAP_TOOL_OPACITY_SVG =
-    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor"><path fill="currentColor" d="M18 10V8h2v2zm0 2v-2h-2v2zm0-4V6h-2v2zm-2-5.16V4h2c-.63-.46-1.29-.85-2-1.16M18 4v2h2c-.58-.75-1.25-1.42-2-2m2 2v2h1.16c-.31-.71-.7-1.37-1.16-2m2 6c0-.68-.07-1.35-.2-2H20v2zm-6-6V4h-2v2zm0 10h2v-2h-2zm2 2h2v-2h-2zm-2 2h2v-2h-2zm-2 1.8c.7-.14 1.36-.36 2-.64V20h-2zm4-7.8h2v-2h-2zm-2-6h-2v2h2zm4 8h1.16c.28-.64.5-1.3.64-2H20zm-4-4h-2v2h2zm-4 6v-2h2v-2h-2v-2h2v-2h-2V8h2V6h-2V4h2V2.2c-.65-.13-1.31-.2-2-.2C6.5 2 2 6.5 2 12s4.5 10 10 10v-2h2v-2zm2 0h2v-2h-2z"/></svg>';
+  const MAP_GLYPHS_URL = "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf";
+  const MAP_TEXT_FONT = ["Noto Sans Regular"];
+  const MAP_LABEL_FONT = ["Noto Sans Medium"];
 
   function syncOpacitySlider() {
     const opacityEl = document.getElementById("viewshed-opacity");
     if (opacityEl) opacityEl.value = String(Math.round(viewshedOpacity * 100));
   }
 
+  function mapToolIcon(name, label) {
+    return `<wa-icon name="${name}" label="${label}"></wa-icon>`;
+  }
+
   function installMapToolbar(navGroup) {
-    const basemapDropdown = document.createElement("div");
-    basemapDropdown.className = "dropdown map-toolbar-dropdown";
+    const basemapDropdown = document.createElement("wa-dropdown");
+    basemapDropdown.className = "map-toolbar-dropdown";
+    basemapDropdown.placement = "bottom-end";
 
     const basemapBtn = document.createElement("button");
     basemapBtn.type = "button";
+    basemapBtn.slot = "trigger";
     basemapBtn.id = "map-tool-basemap";
     basemapBtn.className = "map-toolbar-tool";
-    basemapBtn.setAttribute("data-bs-toggle", "dropdown");
-    basemapBtn.setAttribute("data-bs-auto-close", "true");
-    basemapBtn.setAttribute("aria-expanded", "false");
     basemapBtn.setAttribute("aria-label", "Base map");
     basemapBtn.title = "Base map";
-    basemapBtn.innerHTML = MAP_TOOL_LAYERS_SVG;
+    basemapBtn.innerHTML = mapToolIcon("layer-group", "Base map");
 
-    const basemapMenu = document.createElement("ul");
-    basemapMenu.id = "map-basemap-menu";
-    basemapMenu.className = "dropdown-menu dropdown-menu-dark shadow";
-    basemapMenu.setAttribute("aria-label", "Base map options");
     for (const [key, label] of [
       ["street", "Street"],
       ["topo", "USGS Topo"],
       ["satellite", "Satellite"],
     ]) {
-      const li = document.createElement("li");
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "dropdown-item";
+      const item = document.createElement("wa-dropdown-item");
       item.setAttribute("data-basemap", key);
+      item.value = key;
       item.textContent = label;
-      li.appendChild(item);
-      basemapMenu.appendChild(li);
+      basemapDropdown.appendChild(item);
     }
-    basemapDropdown.appendChild(basemapBtn);
-    basemapDropdown.appendChild(basemapMenu);
+    basemapDropdown.insertBefore(basemapBtn, basemapDropdown.firstChild);
 
     const sitesBtn = document.createElement("button");
     sitesBtn.type = "button";
@@ -108,7 +95,7 @@
     sitesBtn.setAttribute("aria-controls", "entity-panel");
     sitesBtn.setAttribute("aria-label", "Sites");
     sitesBtn.title = "Sites";
-    sitesBtn.innerHTML = MAP_TOOL_RADIO_TOWER_SVG;
+    sitesBtn.innerHTML = mapToolIcon("tower-broadcast", "Sites");
 
     const goalsBtn = document.createElement("button");
     goalsBtn.type = "button";
@@ -118,46 +105,42 @@
     goalsBtn.setAttribute("aria-controls", "entity-panel");
     goalsBtn.setAttribute("aria-label", "Goals");
     goalsBtn.title = "Goals";
-    goalsBtn.innerHTML = MAP_TOOL_GOAL_SVG;
+    goalsBtn.innerHTML = mapToolIcon("bullseye", "Goals");
 
     const settingsBtn = document.createElement("button");
     settingsBtn.type = "button";
     settingsBtn.id = "home-settings-open";
     settingsBtn.className = "map-toolbar-tool";
-    settingsBtn.setAttribute("data-bs-toggle", "modal");
-    settingsBtn.setAttribute("data-bs-target", "#home-settings-modal");
     settingsBtn.setAttribute("aria-label", "Settings");
     settingsBtn.title = "Settings";
-    settingsBtn.innerHTML = MAP_TOOL_GEAR_SVG;
+    settingsBtn.innerHTML = mapToolIcon("gear", "Settings");
 
-    const opacityDropdown = document.createElement("div");
-    opacityDropdown.className = "dropdown map-toolbar-dropdown";
+    const opacityDropdown = document.createElement("wa-dropdown");
+    opacityDropdown.className = "map-toolbar-dropdown";
+    opacityDropdown.placement = "bottom-end";
 
     const opacityBtn = document.createElement("button");
     opacityBtn.type = "button";
+    opacityBtn.slot = "trigger";
     opacityBtn.id = "map-tool-opacity";
     opacityBtn.className = "map-toolbar-tool";
-    opacityBtn.setAttribute("data-bs-toggle", "dropdown");
-    opacityBtn.setAttribute("data-bs-auto-close", "outside");
-    opacityBtn.setAttribute("aria-expanded", "false");
     opacityBtn.setAttribute("aria-label", "Viewshed opacity");
     opacityBtn.title = "Viewshed opacity";
-    opacityBtn.innerHTML = MAP_TOOL_OPACITY_SVG;
+    opacityBtn.innerHTML = mapToolIcon("droplet", "Viewshed opacity");
 
     const opacityMenu = document.createElement("div");
     opacityMenu.id = "map-opacity-menu";
-    opacityMenu.className = "dropdown-menu dropdown-menu-dark shadow map-opacity-menu";
-    opacityMenu.setAttribute("aria-label", "Viewshed opacity");
+    opacityMenu.className = "map-opacity-menu";
 
     const opacityLabel = document.createElement("label");
-    opacityLabel.className = "form-label small mb-2";
+    opacityLabel.className = "pf-label";
     opacityLabel.htmlFor = "viewshed-opacity";
     opacityLabel.textContent = "Viewshed opacity";
 
     const opacitySlider = document.createElement("input");
     opacitySlider.type = "range";
     opacitySlider.id = "viewshed-opacity";
-    opacitySlider.className = "form-range";
+    opacitySlider.className = "pf-range";
     opacitySlider.min = "0";
     opacitySlider.max = "100";
     opacitySlider.value = String(Math.round(viewshedOpacity * 100));
@@ -175,7 +158,7 @@
     syncOpacitySlider();
 
     return {
-      mapBasemapMenu: basemapMenu,
+      mapBasemapMenu: basemapDropdown,
       mapToolSites: sitesBtn,
       mapToolGoals: goalsBtn,
       viewshedOpacityInput: opacitySlider,
@@ -287,7 +270,7 @@
     const bm = BASEMAPS[key] || BASEMAPS.street;
     return {
       version: 8,
-      glyphs: "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
+      glyphs: MAP_GLYPHS_URL,
       sources: {
         basemap: {
           type: "raster",
@@ -607,7 +590,7 @@
     if (!mapBasemapMenu) return;
     for (const btn of mapBasemapMenu.querySelectorAll("[data-basemap]")) {
       const active = btn.getAttribute("data-basemap") === currentBasemapKey;
-      btn.classList.toggle("active", active);
+      btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-current", active ? "true" : "false");
     }
   }
@@ -926,9 +909,9 @@
     const controls = document.createElement("div");
     controls.className = "entity-panel__controls";
 
-    const eyeBtn = document.createElement("button");
-    eyeBtn.type = "button";
-    eyeBtn.className = "btn btn-sm btn-outline-secondary";
+    const eyeBtn = document.createElement("wa-button");
+    eyeBtn.size = "s";
+    eyeBtn.appearance = "outlined";
     eyeBtn.title = isSiteHidden(site.slug) ? "Show site" : "Hide site";
     eyeBtn.textContent = isSiteHidden(site.slug) ? "Show" : "Hide";
     eyeBtn.addEventListener("click", (ev) => {
@@ -938,7 +921,7 @@
 
     const vsCheck = document.createElement("input");
     vsCheck.type = "checkbox";
-    vsCheck.className = "form-check-input entity-panel__viewshed-check";
+    vsCheck.className = "entity-panel__viewshed-check";
     vsCheck.title = "Show viewshed";
     vsCheck.checked = isViewshedVisible(site.slug);
     vsCheck.disabled = isSiteHidden(site.slug);
@@ -949,9 +932,10 @@
       scheduleSaveMapState();
     });
 
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "btn btn-sm btn-outline-danger";
+    const delBtn = document.createElement("wa-button");
+    delBtn.size = "s";
+    delBtn.appearance = "outlined";
+    delBtn.variant = "danger";
     delBtn.title = "Delete site";
     delBtn.textContent = "Del";
     delBtn.addEventListener("click", (ev) => {
@@ -989,9 +973,9 @@
     const controls = document.createElement("div");
     controls.className = "entity-panel__controls";
 
-    const eyeBtn = document.createElement("button");
-    eyeBtn.type = "button";
-    eyeBtn.className = "btn btn-sm btn-outline-secondary";
+    const eyeBtn = document.createElement("wa-button");
+    eyeBtn.size = "s";
+    eyeBtn.appearance = "outlined";
     eyeBtn.title = isGoalHidden(goal.slug) ? "Show goal" : "Hide goal";
     eyeBtn.textContent = isGoalHidden(goal.slug) ? "Show" : "Hide";
     eyeBtn.addEventListener("click", (ev) => {
@@ -999,9 +983,10 @@
       setGoalHidden(goal.slug, !isGoalHidden(goal.slug));
     });
 
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "btn btn-sm btn-outline-danger";
+    const delBtn = document.createElement("wa-button");
+    delBtn.size = "s";
+    delBtn.appearance = "outlined";
+    delBtn.variant = "danger";
     delBtn.title = "Delete goal";
     delBtn.textContent = "Del";
     delBtn.addEventListener("click", (ev) => {
@@ -1044,7 +1029,7 @@
     }
     if (sitePanelCreateBadge) {
       sitePanelCreateBadge.textContent = isGoal ? "goal" : "planned";
-      sitePanelCreateBadge.className = `site-panel__badge badge site-panel__badge--${isGoal ? "goal" : "planned"} mb-3`;
+      sitePanelCreateBadge.className = `site-panel__badge site-panel__badge--${isGoal ? "goal" : "planned"}`;
     }
     if (sitePanelCreateLinksLabel) {
       sitePanelCreateLinksLabel.textContent = isGoal ? "Linked repeaters" : "Linked sites";
@@ -1128,7 +1113,7 @@
         "symbol-placement": "line-center",
         "text-field": ["get", "label"],
         "text-size": 11,
-        "text-font": ["Noto Sans Regular"],
+        "text-font": MAP_TEXT_FONT,
         "text-allow-overlap": true,
         "text-ignore-placement": true,
         visibility,
@@ -2174,7 +2159,7 @@
         "text-size": 12,
         "text-offset": [0, -1.4],
         "text-anchor": "bottom",
-        "text-font": ["Noto Sans Bold"],
+        "text-font": MAP_LABEL_FONT,
         "text-allow-overlap": true,
       },
       paint: {
@@ -2226,7 +2211,7 @@
         "text-size": 12,
         "text-offset": [0, -1.4],
         "text-anchor": "bottom",
-        "text-font": ["Noto Sans Bold"],
+        "text-font": MAP_LABEL_FONT,
         "text-allow-overlap": true,
       },
       paint: {
@@ -2322,7 +2307,7 @@
     document.getElementById("site-panel-name").textContent = goal.name;
     const badge = document.getElementById("site-panel-type");
     badge.textContent = "goal";
-    badge.className = "site-panel__badge badge site-panel__badge--goal mb-3";
+    badge.className = "site-panel__badge site-panel__badge--goal";
     document.getElementById("site-panel-coords").textContent =
       `${formatCoord(goal.lat)}, ${formatCoord(goal.lon)}`;
     const elevEl = document.getElementById("site-panel-elevation");
@@ -2363,7 +2348,7 @@
     document.getElementById("site-panel-name").textContent = site.name;
     const badge = document.getElementById("site-panel-type");
     badge.textContent = site.type;
-    badge.className = `site-panel__badge badge site-panel__badge--${site.type}`;
+    badge.className = `site-panel__badge site-panel__badge--${site.type}`;
     document.getElementById("site-panel-coords").textContent =
       `${formatCoord(site.lat)}, ${formatCoord(site.lon)}`;
     const elevEl = document.getElementById("site-panel-elevation");
@@ -2902,9 +2887,10 @@
       row.className = "edit-coord-history__row";
       if (entry.visible) row.classList.add("edit-coord-history__row--visible");
 
-      const viewBtn = document.createElement("button");
-      viewBtn.type = "button";
-      viewBtn.className = `btn btn-sm btn-outline-secondary coord-action-btn${entry.visible ? " active" : ""}`;
+      const viewBtn = document.createElement("wa-button");
+      viewBtn.appearance = "outlined";
+      viewBtn.size = "s";
+      viewBtn.className = `coord-action-btn${entry.visible ? " active" : ""}`;
       viewBtn.title = entry.visible ? "Hide on map" : "Show on map";
       viewBtn.textContent = entry.visible ? "◉" : "○";
       viewBtn.addEventListener("click", () => {
@@ -2923,20 +2909,22 @@
       const actions = document.createElement("div");
       actions.className = "edit-coord-history__actions";
 
-      const copyBtn = document.createElement("button");
-      copyBtn.type = "button";
-      copyBtn.className = "btn btn-sm btn-outline-secondary coord-action-btn";
+      const copyBtn = document.createElement("wa-button");
+      copyBtn.appearance = "outlined";
+      copyBtn.size = "s";
+      copyBtn.className = "coord-action-btn";
       copyBtn.title = "Copy lat, lon";
-      copyBtn.textContent = "⎘";
+      copyBtn.innerHTML = '<wa-icon name="copy" label="Copy coordinates"></wa-icon>';
       copyBtn.addEventListener("click", () => {
         void copyCoordPair(entry.lat, entry.lon);
       });
 
-      const deleteBtn = document.createElement("button");
-      deleteBtn.type = "button";
-      deleteBtn.className = "btn btn-sm btn-outline-secondary coord-action-btn";
+      const deleteBtn = document.createElement("wa-button");
+      deleteBtn.appearance = "outlined";
+      deleteBtn.size = "s";
+      deleteBtn.className = "coord-action-btn";
       deleteBtn.title = "Remove from history";
-      deleteBtn.textContent = "×";
+      deleteBtn.innerHTML = '<wa-icon name="xmark" label="Remove from history"></wa-icon>';
       deleteBtn.addEventListener("click", () => {
         deleteEditHistoryEntry(entry.id);
       });
@@ -3429,11 +3417,11 @@
   map.on("move", updatePinOverlays);
   map.on("resize", updatePinOverlays);
   if (mapBasemapMenu) {
-    for (const btn of mapBasemapMenu.querySelectorAll("[data-basemap]")) {
-      btn.addEventListener("click", () => {
-        setBasemapKey(btn.getAttribute("data-basemap") || "street");
-      });
-    }
+    mapBasemapMenu.addEventListener("wa-select", (ev) => {
+      const item = ev.detail.item;
+      if (!item) return;
+      setBasemapKey(item.value || item.getAttribute("data-basemap") || "street");
+    });
   }
   if (viewshedOpacityInput) {
     viewshedOpacityInput.addEventListener("input", (ev) => {

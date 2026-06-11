@@ -193,8 +193,9 @@ def test_landing_lists_projects(tmp_path: Path) -> None:
         assert "Create empty template" in body
         assert 'href="/favicon.svg"' in body
         assert 'href="/site.webmanifest"' in body
-        assert 'data-bs-theme="dark"' in body
-        assert "bootstrap@5.3.3" in body
+        assert 'class="wa-dark wa-theme-default wa-brand-blue"' in body
+        assert "@awesome.me/webawesome@" in body
+        assert "dist-cdn/webawesome.loader.js" in body
     finally:
         server.shutdown()
         server.server_close()
@@ -315,8 +316,9 @@ def test_project_page_includes_site_map(tmp_path: Path) -> None:
         assert '"name": "Hub"' in body
         assert 'id="site-panel"' in body
         assert "/static/project-map.js" in body
-        assert 'data-bs-theme="dark"' in body
-        assert "bootstrap@5.3.3" in body
+        assert 'class="wa-dark wa-theme-default wa-brand-blue"' in body
+        assert "@awesome.me/webawesome@" in body
+        assert "dist-cdn/webawesome.loader.js" in body
         assert "PEAKY_PROJECT" in body
 
         conn = HTTPConnection(host, port, timeout=2)
