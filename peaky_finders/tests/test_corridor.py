@@ -26,8 +26,8 @@ from peaky_finders.site_suggestions.corridor_scoring import (
 )
 from peaky_finders.site_suggestions.depth_grid import build_coverage_depth_grid
 from peaky_finders.site_suggestions.providers.mesh_backbone.candidates import generate_corridor_grow_candidates
+from rf_fixtures import make_goal_entry
 from peaky_finders.sites_job import (
-    GoalEntry,
     SuggestConfig,
     MeshBackboneRouting,
     MeshBackboneStrategyConfig,
@@ -74,7 +74,8 @@ def _ctx(*, eligible, goals: dict[str, tuple[float, float]], footprint=None) -> 
             (),
             {
                 "sites": {"seed": type("E", (), {"lat": 39.0, "lon": -116.0})()},
-                "goals": {k: GoalEntry(name=k, loc=v) for k, v in goals.items()},
+                "goals": {k: make_goal_entry(k, v) for k, v in goals.items()},
+                "repeaters": {"seed": type("E", (), {"lat": 39.0, "lon": -116.0})()},
             },
         )(),
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),

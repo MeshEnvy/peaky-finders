@@ -537,9 +537,6 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "land": _MINIMAL_LAND,
-            "goals": {
-                "goal-b": {"name": "Goal B", "loc": [39.02, -114.99]},
-            },
             "suggest": {
                     "strategy": "mesh-backbone",
                     "planner_raster_dimension": 256,
@@ -553,6 +550,7 @@ def test_mesh_backbone_planner_picks_along_incomplete_link(tmp_path: Path) -> No
             "sites": {
                 "seed": {"name": "Seed", "loc": [39.02, -115.04]},
                 "site-b": {"name": "B", "loc": [39.02, -114.99]},
+                "goal-b": {"type": "goal", "name": "Goal B", "loc": [39.02, -114.99]},
             },
         },
     )
@@ -624,9 +622,6 @@ def test_suggest_cli_n_stops_after_goal_budget(monkeypatch, tmp_path: Path) -> N
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "land": _MINIMAL_LAND,
-            "goals": {
-                "goal-b": {"name": "Goal B", "loc": [39.02, -114.99]},
-            },
             "suggest": {
                     "strategy": "mesh-backbone",
                     "planner_raster_dimension": 256,
@@ -636,7 +631,10 @@ def test_suggest_cli_n_stops_after_goal_budget(monkeypatch, tmp_path: Path) -> N
                         "goal_order": ["goal-b"],
                     },
             },
-            "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.04]}},
+            "sites": {
+                "seed": {"name": "Seed", "loc": [39.02, -115.04]},
+                "goal-b": {"type": "goal", "name": "Goal B", "loc": [39.02, -114.99]},
+            },
         },
     )
     preset = load_preset(preset_path)
@@ -764,9 +762,6 @@ def test_suggest_cli_n_adds_new_sites_when_prior_suggested_exist(monkeypatch, tm
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "land": _MINIMAL_LAND,
-            "goals": {
-                "goal-b": {"name": "Goal B", "loc": [39.02, -114.99]},
-            },
             "suggest": {
                     "strategy": "mesh-backbone",
                     "planner_raster_dimension": 256,
@@ -778,6 +773,7 @@ def test_suggest_cli_n_adds_new_sites_when_prior_suggested_exist(monkeypatch, tm
             },
             "sites": {
                 "seed": {"name": "Seed", "loc": [39.02, -115.04]},
+                "goal-b": {"type": "goal", "name": "Goal B", "loc": [39.02, -114.99]},
                 "suggest-01-prior": {
                     "type": "suggested",
                     "name": "Suggested 1",
@@ -888,9 +884,6 @@ def test_on_pick_writes_each_site_to_preset(monkeypatch, tmp_path: Path) -> None
             "simulation": dict(_SUGGEST_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "land": _MINIMAL_LAND,
-            "goals": {
-                "goal-b": {"name": "Goal B", "loc": [39.02, -114.99]},
-            },
             "suggest": {
                     "strategy": "mesh-backbone",
                     "planner_raster_dimension": 256,
@@ -900,7 +893,10 @@ def test_on_pick_writes_each_site_to_preset(monkeypatch, tmp_path: Path) -> None
                         "goal_order": ["goal-b"],
                     },
             },
-            "sites": {"seed": {"name": "Seed", "loc": [39.02, -115.04]}},
+            "sites": {
+                "seed": {"name": "Seed", "loc": [39.02, -115.04]},
+                "goal-b": {"type": "goal", "name": "Goal B", "loc": [39.02, -114.99]},
+            },
         },
     )
     preset = load_preset(preset_path)

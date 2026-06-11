@@ -46,7 +46,8 @@ def update_viewshed_sim_to_preset(
     def mutator(_yaml_rt: Any, root: dict[str, Any]) -> dict[str, float | int]:
         sim_raw = root.get("simulation")
         if not isinstance(sim_raw, dict):
-            raise ValueError("preset simulation must be a mapping")
+            sim_raw = {}
+            root["simulation"] = sim_raw
         sim_raw["radius_km"] = radius_km
         sim_raw["raster_dimension"] = raster_dimension
         return {"radius_km": radius_km, "raster_dimension": raster_dimension}

@@ -11,7 +11,12 @@ from unittest.mock import patch
 from rf_fixtures import MINIMAL_SPLATTER_SIMULATION
 from peaky_finders.serve_app import make_serve_wsgi_app
 from peaky_finders.serve_goal_links import load_project_goal_links
-from peaky_finders.sites_job import load_preset_goals, load_preset_sites, write_preset_document
+from peaky_finders.sites_job import (
+    load_preset_goals,
+    load_preset_sites,
+    preset_repeater_sites,
+    write_preset_document,
+)
 
 
 def _start_server(projects_dir: Path):
@@ -44,8 +49,10 @@ def _write_land_preset(preset_path: Path) -> None:
                     }
                 }
             },
-            "sites": {"hub": {"name": "Hub", "loc": [39.5, -119.5]}},
-            "goals": {"valley": {"name": "Valley", "loc": [39.6, -119.4]}},
+            "sites": {
+                "hub": {"name": "Hub", "loc": [39.5, -119.5]},
+                "valley": {"type": "goal", "name": "Valley", "loc": [39.6, -119.4]},
+            },
         },
     )
 
@@ -54,7 +61,7 @@ def test_load_project_goal_links_without_bundle_gdb(tmp_path: Path) -> None:
     project_dir = tmp_path / "nevada"
     project_dir.mkdir()
     _write_land_preset(project_dir / "config.yaml")
-    sites = load_preset_sites(project_dir / "config.yaml")
+    sites = preset_repeater_sites(load_preset_sites(project_dir / "config.yaml"))
     goals = load_preset_goals(project_dir / "config.yaml")
 
     def _rf_batch(_session, pairs, *, rf_json: str) -> list[bool]:

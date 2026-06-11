@@ -23,8 +23,8 @@ from peaky_finders.site_suggestions.mesh_connectivity import (
     uncaptured_healing_goals,
 )
 from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import grow_goals, main_footprint_slugs
+from rf_fixtures import make_goal_entry
 from peaky_finders.sites_job import (
-    GoalEntry,
     SuggestConfig,
     MeshBackboneStrategyConfig,
     SiteEntry,
@@ -84,7 +84,12 @@ def test_bridge_uncaptured_until_satellite_in_main_hop_component() -> None:
             "sites": {
                 "main": SiteEntry(type=SiteType.INSTALLED, name="Main", loc=(41.5, -119.0)),
                 "sat": SiteEntry(type=SiteType.INSTALLED, name="Sat", loc=(36.2, -115.3)),
-            }
+            },
+            "goals": {},
+            "repeaters": {
+                "main": SiteEntry(type=SiteType.INSTALLED, name="Main", loc=(41.5, -119.0)),
+                "sat": SiteEntry(type=SiteType.INSTALLED, name="Sat", loc=(36.2, -115.3)),
+            },
         },
     )()
     ctx = SiteSuggestionContext(
@@ -124,7 +129,7 @@ def test_bridge_uncaptured_until_satellite_in_main_hop_component() -> None:
 
 
 def test_mesh_healing_needed_when_disconnected_even_if_goals_captured() -> None:
-    goals = {"g0": GoalEntry(name="G0", loc=(39.0, -115.95))}
+    goals = {"g0": make_goal_entry("G0", (39.0, -115.95))}
     sites = [
         BackboneSite(slug="seed", lat=39.0, lon=-115.98),
         BackboneSite(slug="relay", lat=39.0, lon=-115.92),
@@ -141,8 +146,12 @@ def test_mesh_healing_needed_when_disconnected_even_if_goals_captured() -> None:
         {
             "sites": {
                 "seed": SiteEntry(type=SiteType.INSTALLED, name="Seed", loc=(39.0, -115.98)),
+                **goals,
             },
             "goals": goals,
+            "repeaters": {
+                "seed": SiteEntry(type=SiteType.INSTALLED, name="Seed", loc=(39.0, -115.98)),
+            },
         },
     )()
     ctx = SiteSuggestionContext(
@@ -184,7 +193,7 @@ def test_minimum_component_gap_uses_pins_not_overlapping_footprints() -> None:
         "east": box(-115.95, 38.9, -114.5, 39.1),
     }
     ctx = SiteSuggestionContext(
-        preset=type("P", (), {"sites": {}})(),
+        preset=type("P", (), {"sites": {}, "goals": {}, "repeaters": {}})(),
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),
         grid=type("G", (), {"depth_at_point": lambda *a, **k: 0})(),
         eligible_ll=box(-117.0, 38.5, -114.0, 39.5),
@@ -227,8 +236,13 @@ def test_healing_context_yields_bridge_goals_on_satellite_pins() -> None:
             "sites": {
                 "main": SiteEntry(type=SiteType.INSTALLED, name="Main", loc=(41.5, -119.0)),
                 "sat": SiteEntry(type=SiteType.INSTALLED, name="Sat", loc=(36.2, -115.3)),
+                "g0": make_goal_entry("G0", (39.0, -115.5)),
             },
-            "goals": {"g0": GoalEntry(name="G0", loc=(39.0, -115.5))},
+            "goals": {"g0": make_goal_entry("G0", (39.0, -115.5))},
+            "repeaters": {
+                "main": SiteEntry(type=SiteType.INSTALLED, name="Main", loc=(41.5, -119.0)),
+                "sat": SiteEntry(type=SiteType.INSTALLED, name="Sat", loc=(36.2, -115.3)),
+            },
         },
     )()
     ctx = SiteSuggestionContext(
@@ -277,7 +291,12 @@ def test_healing_goals_one_bridge_goal_per_satellite_component() -> None:
             "sites": {
                 slug: SiteEntry(type=SiteType.INSTALLED, name=slug, loc=(sites[i].lat, sites[i].lon))
                 for i, slug in enumerate(["main", "sat-a", "sat-b"])
-            }
+            },
+            "goals": {},
+            "repeaters": {
+                slug: SiteEntry(type=SiteType.INSTALLED, name=slug, loc=(sites[i].lat, sites[i].lon))
+                for i, slug in enumerate(["main", "sat-a", "sat-b"])
+            },
         },
     )()
     ctx = SiteSuggestionContext(
@@ -320,7 +339,11 @@ def test_mesh_connectivity_incomplete_when_two_anchor_islands() -> None:
                 "slpt": SiteEntry(type=SiteType.INSTALLED, name="SLPT", loc=(41.5, -119.0)),
                 "vegas": SiteEntry(type=SiteType.INSTALLED, name="Vegas", loc=(36.2, -115.3)),
             },
-            "goals": {"g0": GoalEntry(name="G0", loc=(39.0, -115.5))},
+            "goals": {},
+            "repeaters": {
+                "slpt": SiteEntry(type=SiteType.INSTALLED, name="SLPT", loc=(41.5, -119.0)),
+                "vegas": SiteEntry(type=SiteType.INSTALLED, name="Vegas", loc=(36.2, -115.3)),
+            },
         },
     )()
     ctx = SiteSuggestionContext(

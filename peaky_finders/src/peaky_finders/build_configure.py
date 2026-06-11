@@ -266,7 +266,7 @@ def configure_preset_build(
 
     digest_to_slugs: dict[str, list[str]] = {}
     try:
-        for site_slug, site in preset.sites.items():
+        for site_slug, site in preset.repeaters.items():
             req = preset_to_request(preset, float(site.lat), float(site.lon))
             vd = viewshed_workspace_digest(request=req)
             digest_to_slugs.setdefault(vd, []).append(site_slug)
@@ -292,7 +292,7 @@ def configure_preset_build(
             )
         )
 
-    site_slugs = tuple(preset.sites.keys())
+    site_slugs = tuple(preset.repeaters.keys())
     emit_mesh = len(site_slugs) >= 2 and has_land
     mesh_cov = preset.mesh if preset.land is not None else None
     pairwise_enabled = resolved_mesh_pairwise_enabled(mesh_cov)

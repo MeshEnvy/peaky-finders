@@ -20,10 +20,10 @@ from peaky_finders.site_suggestions.rf_link import (
     splatter_session,
 )
 from peaky_finders.sites_job import (
-    GoalEntry,
     Preset,
     SiteEntry,
     load_preset_for_coverage,
+    preset_repeater_sites,
     resolved_bundle_dir,
     resolved_viewshed_dir,
 )
@@ -80,7 +80,7 @@ def _goal_line_feature(
     *,
     goal_slug: str,
     site_slug: str,
-    goal: GoalEntry,
+    goal: SiteEntry,
     site: SiteEntry,
     captured: bool,
 ) -> dict[str, object]:
@@ -103,7 +103,7 @@ def _goal_line_feature(
 
 def load_project_goal_links(
     project_dir: Path,
-    goals: Mapping[str, GoalEntry],
+    goals: Mapping[str, SiteEntry],
     sites: Mapping[str, SiteEntry],
     *,
     verbose: bool = False,
@@ -206,7 +206,7 @@ def evaluate_goal_site_prefetch_links(
     max_hop_m = max_hop_range_m(preset)
     pairs: list[tuple[float, float, float, float]] = []
     site_slugs: list[str] = []
-    for slug, site in sorted(sites.items()):
+    for slug, site in sorted(preset_repeater_sites(sites).items()):
         lat_s, lon_s = float(site.lat), float(site.lon)
         if _haversine_m(lat, lon, lat_s, lon_s) > max_hop_m:
             continue

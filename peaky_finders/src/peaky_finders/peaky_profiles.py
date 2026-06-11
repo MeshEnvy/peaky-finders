@@ -3,22 +3,18 @@
 from __future__ import annotations
 
 import hashlib
-from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from peaky_finders.bundled_templates import bundled_template_path
 from peaky_finders.sites_job import peaky_home
 
 MODEMS_FILENAME = "modems.yaml"
 ENVIRONMENTS_FILENAME = "environments.yaml"
 MODEM_CATALOG_KEY = "modem_presets"
 ENVIRONMENT_CATALOG_KEY = "environment_presets"
-
-
-def _bundled_profile_path(filename: str) -> Path:
-    return Path(str(files("peaky_finders.data").joinpath(filename)))
 
 
 def peaky_home_modems_path() -> Path:
@@ -37,7 +33,7 @@ def ensure_peaky_home_profiles() -> None:
         dest = home / filename
         if dest.is_file():
             continue
-        dest.write_text(_bundled_profile_path(filename).read_text(encoding="utf-8"), encoding="utf-8")
+        dest.write_text(bundled_template_path(filename).read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def _read_yaml_mapping(path: Path) -> dict[str, Any]:

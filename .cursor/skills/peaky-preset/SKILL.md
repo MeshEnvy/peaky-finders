@@ -12,10 +12,20 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 
 ## Layout
 
-- Reference: `projects/nevada/config.yaml`
+- Global defaults: `projects/config.yaml` (bundled template `peaky_finders/templates/config.yaml`; see `peaky_preset_defaults.py`)
+- Reference project: `projects/nevada/config.yaml` (overrides + `land` / `sites` / `links` only)
 - Global RF catalogs: `$PEAKY_HOME/modems.yaml`, `$PEAKY_HOME/environments.yaml` (see `peaky_profiles.py`)
 - Run CLI from project dir: `require_cwd_config_yaml()` → `./config.yaml`
 - Resolve by slug: `resolve_preset_yaml_arg("nevada")` → `projects/nevada/config.yaml`
+
+## Global preset defaults (`peaky_preset_defaults.py`)
+
+| File | Contents |
+|------|----------|
+| `projects/config.yaml` | Default `simulation`, `display`, `mesh`, `suggest` |
+| `projects/<slug>/config.yaml` | Overrides only (plus `land`, `sites`, `links`) |
+
+`load_preset` merges defaults ← project. `update_preset_yaml_tree` prunes default-equal keys after writes.
 
 ## Global RF profiles (`peaky_profiles.py`)
 
@@ -24,7 +34,7 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 | `$PEAKY_HOME/modems.yaml` | `modem_presets:` — frequency, SF, BW, CR, power, sensitivity |
 | `$PEAKY_HOME/environments.yaml` | `environment_presets:` — clutter, Fresnel, `coverage_pessimism_db`, situation/time %, climate, ground params |
 
-Bundled templates in `peaky_finders/data/` seed missing files on first use (`peaky new`, `load_modem_presets_catalog()`). Project preset holds **`simulation.modem`** / **`simulation.environment`** names only (+ optional inline `{ preset: name, …overrides }`). Propagation mapping: `preset_mapping.preset_to_request()`.
+Bundled templates in `peaky_finders/templates/` (`bundled_templates.py`) seed missing `$PEAKY_HOME` files on first use (`config.yaml`, `modems.yaml`, `environments.yaml`). **`tests/fixtures/peaky_home/`** is only the isolated test `PEAKY_HOME` (generic `fixture-modem` / `fixture-desert` catalogs) — not shipped templates. Project preset holds **`simulation.modem`** / **`simulation.environment`** names only (+ optional inline overrides). Propagation mapping: `preset_mapping.preset_to_request()`.
 
 ## Schema (`Preset` in `sites_job.py`)
 
@@ -34,16 +44,15 @@ Bundled templates in `peaky_finders/data/` seed missing files on first use (`pea
 | `display` | Viewshed raster + `display.kml` / `display.kmz` presentation |
 | `land` | Slug-keyed `layers:` — roles `aoi`, `positive`, `negative`, `reference`; paths under `<preset-dir>/data/` |
 | `mesh` | Pairwise/depth analysis knobs |
-| `suggest` | Site planner for `build --suggest`; `mesh_backbone.goal_order` sequences `goals:` |
-| `goals` | Coverage attractors — `name`, `loc: [lat, lon]`; slugs must not collide with `sites:` |
-| `sites` | Repeaters with viewsheds — see **Sites vs goals** below |
+| `suggest` | Site planner for `build --suggest`; `mesh_backbone.goal_order` sequences `type: goal` site slugs |
+| `sites` | All map points — repeaters (`installed`/`planned`/`suggested`) and goals (`type: goal`); see **Sites vs goals** |
 | `links` | Manual mutual site pairs `[[a, b], …]` |
 
 Legacy `.json` presets are rejected.
 
 ## Sites vs goals
 
-**Sites** (`sites:`) are **repeaters** — each has a splatter viewshed. **Goals** (top-level `goals:`) are **coverage attractors** — map points where coverage is desired; no viewshed until a site captures them (footprint + RF hop).
+All map points under **`sites:`**. **`type: goal`** = coverage attractor (no viewshed). Other types = repeaters with viewsheds.
 
 ### Site types (`SiteType`)
 
@@ -52,16 +61,17 @@ Legacy `.json` presets are rejected.
 | `installed` | Deployed repeater | Fixed — must not move |
 | `planned` | User-committed future site | Fixed — must not move |
 | `suggested` | `build --suggest` output | May move — `--replace-suggested` drops prior suggestions |
+| `goal` | Coverage attractor | Fixed — must not move |
 
-Suggest **never relocates** `installed` or `planned` sites. Only `type: suggested` entries are removed/replaced on re-suggest.
+Suggest **never relocates** `installed`, `planned`, or `goal` sites. Only `type: suggested` entries are removed/replaced on re-suggest.
 
-### Goals
+### Goals (`type: goal`)
 
-- User-defined under top-level `goals:` — slug keys, `name`, `loc: [lat, lon]`.
-- Solver sequencing via `suggest.mesh_backbone.goal_order` (references goal slugs).
-- Slug namespace validated disjoint from `sites:` at preset load.
-- Ephemeral `bridge:*` goals appear when healing disconnected mesh components.
+- User-defined in `sites:` with `type: goal`, `name`, `loc: [lat, lon]`.
+- Solver sequencing via `suggest.mesh_backbone.goal_order` (references those slugs).
+- Ephemeral runtime `bridge:*` goals appear when healing disconnected mesh components.
 - A goal is **captured** when a repeater footprint covers the point **and** mutual RF hop is viable.
+- Serve promote: PATCH goal → change `type` to `installed` or `planned` (same slug).
 
 ## Path helpers
 

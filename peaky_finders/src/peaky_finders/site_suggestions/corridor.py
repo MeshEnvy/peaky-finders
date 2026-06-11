@@ -1232,7 +1232,7 @@ def corridor_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
     if uncaptured:
         return False
 
-    seed_slugs = set(ctx.preset.sites.keys())
+    seed_slugs = set(ctx.preset.repeaters.keys())
     if not seed_slugs:
         return True
 

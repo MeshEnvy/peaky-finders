@@ -648,8 +648,8 @@ sites:
   hub:
     name: Hub
     loc: [39.5, -119.5]
-goals:
   bridge:
+    type: goal
     name: Bridge
     loc: [39.9, -119.3]
 links: []
@@ -757,8 +757,8 @@ sites:
   hub:
     name: Hub
     loc: [39.5, -119.5]
-goals:
   bridge:
+    type: goal
     name: Bridge
     loc: [39.9, -119.3]
 """.strip(),

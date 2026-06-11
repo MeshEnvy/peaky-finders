@@ -20,7 +20,7 @@ from peaky_finders.site_suggestions.rf_link import (
     rf_json_for_preset,
     splatter_session,
 )
-from peaky_finders.sites_job import GoalEntry, Preset, SiteSuggestionStrategy, SiteType
+from peaky_finders.sites_job import Preset, SiteEntry, SiteSuggestionStrategy, SiteType
 
 
 def backbone_sites_from_preset(sites: Mapping[str, object]) -> list[BackboneSite]:
@@ -50,7 +50,7 @@ def sites_capturing_goal_footprint(
 
 def _rf_viable_goal_site_pairs(
     preset: Preset,
-    goals: Mapping[str, GoalEntry],
+    goals: Mapping[str, SiteEntry],
     sites: Sequence[BackboneSite],
     footprint_captors: Mapping[str, set[str]],
     *,
@@ -111,7 +111,7 @@ def sites_capturing_goal(
 
 
 def captured_goal_keys(
-    goals: Mapping[str, GoalEntry],
+    goals: Mapping[str, SiteEntry],
     sites: Sequence[BackboneSite],
     footprints: Mapping[str, BaseGeometry | None],
     preset: Preset,
@@ -142,7 +142,7 @@ def captured_goal_keys(
 
 
 def uncaptured_goal_keys(
-    goals: Mapping[str, GoalEntry],
+    goals: Mapping[str, SiteEntry],
     sites: Sequence[BackboneSite],
     footprints: Mapping[str, BaseGeometry | None],
     preset: Preset,
@@ -269,7 +269,7 @@ def site_location_key(lat: float, lon: float) -> tuple[int, int]:
 
 
 def all_backbone_sites(ctx: SiteSuggestionContext) -> list[BackboneSite]:
-    sites = backbone_sites_from_preset(ctx.preset.sites)
+    sites = backbone_sites_from_preset(ctx.preset.repeaters)
     seen = {s.slug for s in sites}
     for site in ctx.session_sites:
         if site.slug not in seen:
@@ -333,7 +333,7 @@ def mesh_grow_planning_complete(ctx: SiteSuggestionContext) -> bool:
     if uncaptured:
         return False
 
-    seed_slugs = set(ctx.preset.sites.keys())
+    seed_slugs = set(ctx.preset.repeaters.keys())
     if not seed_slugs:
         return True
 

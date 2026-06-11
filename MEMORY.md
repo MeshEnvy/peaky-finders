@@ -34,24 +34,20 @@ When two designs compete, pick the **simpler present** and break callers — doc
 
 ## Domain model: sites vs goals
 
-**Sites** are repeater locations — each gets a splatter RF **viewshed**. Preset key: `sites:` (slug → entry with `loc: [lat, lon]`).
+All map points live under **`sites:`** (slug → entry with `name`, `loc: [lat, lon]`, `type`).
 
-| `type` | Role | Position |
-|--------|------|----------|
-| `installed` | Deployed repeater | **Fixed** — must not move |
-| `planned` | User-committed future site (e.g. serve **Add site**) | **Fixed** — must not move |
-| `suggested` | Output of `peaky build --suggest` | **May move** — re-suggest may replace with a better pick |
+| `type` | Role | Viewshed | Position |
+|--------|------|----------|----------|
+| `installed` | Deployed repeater | Yes | **Fixed** |
+| `planned` | User-committed future site (serve **Add site**) | Yes | **Fixed** |
+| `suggested` | `peaky build --suggest` output | Yes | **May move** on re-suggest |
+| `goal` | Coverage attractor (planner target) | **No** | **Fixed** |
 
-Build, mesh, and serve treat every site type as a coverage source. Suggest **never relocates** `installed` or `planned` sites; only `type: suggested` entries are removed/replaced (`--replace-suggested`).
+Repeaters (`installed` / `planned` / `suggested`) are coverage **sources** for build, mesh, and serve viewsheds. **`type: goal`** entries are planner attractors only — no viewshed, not mesh link endpoints, not in manual `links`. Solver sequencing via `suggest.mesh_backbone.goal_order` (site slugs with `type: goal`). Ephemeral runtime `bridge:*` goals still appear during connectivity healing (not preset YAML). **Captured** when a repeater footprint covers the point **and** mutual RF hop is viable.
 
-**Goals** are map points where coverage is **desired** — planner **attractors**, not repeaters. No viewshed until a site is placed. Preset key: top-level `goals:` (slug → `name`, `loc: [lat, lon]`); solver sequencing via `suggest.mesh_backbone.goal_order`. Ephemeral `bridge:*` goals appear during connectivity healing. **Captured** when a repeater footprint covers the point **and** mutual RF hop is viable.
+Suggest **never relocates** `installed`, `planned`, or `goal` sites; only `type: suggested` entries are removed/replaced (`--replace-suggested`). Serve **promote** changes a goal's `type` to `installed` or `planned` in place (same slug).
 
-| Concept | Sites | Goals |
-|---------|-------|-------|
-| What | Repeaters (actual or candidate) | Coverage targets |
-| Viewshed | Yes (per site) | No |
-| Who writes | User (`installed`/`planned`) or suggest (`suggested`) | User in preset YAML |
-| Solver use | Seeds, constraints, mesh nodes | What to capture / grow toward |
+Top-level `goals:` is **removed** — use `sites:` with `type: goal`. Helpers: `Preset.goals` / `Preset.repeaters`, `preset_goal_sites()`, `preset_repeater_sites()`.
 
 Rule: `.cursor/rules/sites-and-goals.mdc`. Skill detail: `peaky-preset`.
 
@@ -114,19 +110,25 @@ Outputs under `<preset-dir>/build/` (clips, bundle, viewsheds, mesh, aggregate K
 
 ## Preset schema
 
-One YAML per project — `projects/<slug>/config.yaml` (legacy `.json` unsupported).
+**Two-tier YAML** (legacy `.json` unsupported):
 
-**Global RF catalogs** (not per project): `$PEAKY_HOME/modems.yaml` (`modem_presets:`) and `$PEAKY_HOME/environments.yaml` (`environment_presets:` — clutter, Fresnel, pessimism, situation/time %). Seeded from bundled templates on first use. Project preset selects `simulation.modem` / `simulation.environment` by name; inline `{ preset: foo, … }` overrides allowed. Build simulation stamp includes resolved profiles + catalog fingerprint.
+| Tier | Path | Role |
+|------|------|------|
+| Global defaults | `projects/config.yaml` | `simulation`, `display`, `mesh`, `suggest` — seeded from bundled `peaky_finders/templates/config.yaml` on first use |
+| Project | `projects/<slug>/config.yaml` | **Overrides** + always-local `land`, `sites`, `links` |
+
+Load: `deep_merge(projects/config.yaml ← project)`. Writes (`update_preset_yaml_tree`, serve PATCH): mutate project file, validate merged preset, **prune** keys equal to defaults. `load_preset` / `resolve_preset_raw` return the merged effective config.
+
+**Global RF catalogs** (not per project): `$PEAKY_HOME/modems.yaml` (`modem_presets:`) and `$PEAKY_HOME/environments.yaml` (`environment_presets:`). Project preset selects `simulation.modem` / `simulation.environment` by name. Build simulation stamp fingerprints **resolved** merged simulation + catalog fingerprint.
 
 | Section | Contents |
 |---------|----------|
-| `simulation` | `provider: splatter`, active **`modem`** / **`environment`** names (catalogs in `$PEAKY_HOME`), `radius_km` (≤100), `raster_dimension` (128–4096 px square), `max_workers.splatter`, `transmitter`/`receiver` chains |
+| `simulation` | Active **`modem`** / **`environment`** names (catalogs in `$PEAKY_HOME`), `radius_km` (≤100), `raster_dimension` (128–4096 px square), `max_workers.splatter`, `transmitter`/`receiver` chains |
 | `display` | Viewshed raster (`colormap`, `transparency`, dBm range) + `kml` styles + `kmz` layer toggles |
 | `land` | Slug-keyed `layers:` with roles `aoi` / `positive` / `negative` / `reference`; vector paths under `<preset-dir>/data/` |
 | `mesh` | Pairwise/depth build knobs, raster size, worker counts |
-| `suggest` | Site planner (`land-grab` / `mesh-backbone`); `mesh_backbone.goal_order` sequences top-level `goals:` |
-| `goals` | Coverage attractors — `name`, `loc: [lat, lon]`; slug namespace disjoint from `sites:` |
-| `sites` | Repeaters with viewsheds — `installed` / `planned` (fixed) / `suggested` (replaceable) |
+| `suggest` | Site planner (`land-grab` / `mesh-backbone`); `mesh_backbone.goal_order` sequences `type: goal` site slugs |
+| `sites` | All map points — `installed` / `planned` / `suggested` (repeaters + viewsheds) and `goal` (attractors) |
 | `links` | Manual mutual site pairs `[[a, b], …]` (field-verified; unioned with viewshed mutual coverage) |
 
 CLI `peaky bundle` unchanged; artifact dir remains `<preset>/build/bundle/`. Build stamps: `land_*`, `display_kml`, `display_kmz`, `mesh` (replaces `bundle_*` stamp names).

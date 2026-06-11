@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from importlib.resources import files
 from pathlib import Path
 
+from peaky_finders.bundled_templates import bundled_template_path
+from peaky_finders.peaky_preset_defaults import ensure_peaky_home_config
 from peaky_finders.peaky_profiles import ensure_peaky_home_profiles
 from peaky_finders.sites_job import load_preset, peaky_projects_dir
 
@@ -30,8 +31,7 @@ def validate_project_slug(slug: str) -> str:
 
 
 def _project_template_text() -> str:
-    ref = files("peaky_finders.data").joinpath("new_project_config.yaml")
-    return ref.read_text(encoding="utf-8")
+    return bundled_template_path("new_project_config.yaml").read_text(encoding="utf-8")
 
 
 def discover_projects(projects_root: Path | None = None) -> list[str]:
@@ -85,6 +85,7 @@ def scaffold_project(
         (project_dir / "data" / sub).mkdir(parents=True, exist_ok=True)
 
     ensure_peaky_home_profiles()
+    ensure_peaky_home_config()
     config_path.write_text(_project_template_text(), encoding="utf-8")
     load_preset(config_path)
     return project_dir

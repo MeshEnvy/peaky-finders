@@ -49,7 +49,7 @@ class MeshBackboneStrategy:
     def validate_config(self, cfg: SuggestConfig, preset: Preset) -> None:
         del cfg
         if not preset.goals:
-            raise ValueError("mesh-backbone strategy requires top-level goals:")
+            raise ValueError("mesh-backbone strategy requires at least one site with type: goal")
 
     def max_suggested_nodes(self, cfg: SuggestConfig) -> int | None:
         cap = cfg.mesh_backbone.max_nodes

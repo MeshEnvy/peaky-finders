@@ -30,8 +30,8 @@ from peaky_finders.site_suggestions.corridor_kml import (
     write_corridor_goal_kml,
 )
 from peaky_finders.site_suggestions.planner import CandidateOutcome, CandidateTrial
+from rf_fixtures import make_goal_entry
 from peaky_finders.sites_job import (
-    GoalEntry,
     SuggestConfig,
     MeshBackboneStrategyConfig,
 )
@@ -45,8 +45,9 @@ def _minimal_ctx(tmp_path: Path) -> SiteSuggestionContext:
             "P",
             (),
             {
-                "sites": {},
-                "goals": {"east": GoalEntry(name="East", loc=(39.0, -115.0))},
+                "sites": {"seed": type("E", (), {"lat": 39.0, "lon": -116.0})()},
+                "goals": {"east": make_goal_entry("East", (39.0, -115.0))},
+                "repeaters": {"seed": type("E", (), {"lat": 39.0, "lon": -116.0})()},
             },
         )(),
         plan=None,  # type: ignore[arg-type]

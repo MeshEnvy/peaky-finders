@@ -1,0 +1,16 @@
+# Peaky project preset — overrides ``$PEAKY_HOME/config.yaml`` defaults.
+# Add GDB/KML under ``data/``; list layers with ``peaky inspect``.
+land:
+  layers:
+    region_boundary:
+      role: aoi
+      path: aoi/region.gdb
+      layers:
+        - name: boundary
+
+sites:
+  hub:
+    name: Hub
+    loc: [39.5, -119.5]
+
+links: []

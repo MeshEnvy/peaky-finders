@@ -104,7 +104,7 @@ def pairwise_mtime_prereqs(plan: BuildConfigurePlan, slug_a: str, slug_b: str) -
 
 def footprints_all(plan: BuildConfigurePlan, preset: Preset) -> tuple[Path, ...]:
     out: list[Path] = []
-    for slug in sorted(preset.sites.keys()):
+    for slug in sorted(preset.repeaters.keys()):
         rep = site_workspace_digest(plan, slug)
         ws = _workspace_for_digest(plan, rep)
         if ws:
@@ -128,7 +128,7 @@ def mesh_links_mtime_prereqs(plan: BuildConfigurePlan, preset: Preset) -> tuple[
 def build_target_graph(plan: BuildConfigurePlan, preset: Preset) -> dict[str, PeakyGraphTarget]:
     preset_f = Path(plan.preset_path).expanduser().resolve()
     nodes: dict[str, PeakyGraphTarget] = {}
-    site_slugs = tuple(sorted(preset.sites.keys()))
+    site_slugs = tuple(sorted(preset.repeaters.keys()))
 
     def put(t: PeakyGraphTarget) -> None:
         nodes[t.id] = t
@@ -465,7 +465,7 @@ def subgraph_roots_for(
     nodes: dict[str, PeakyGraphTarget],
 ) -> tuple[str, ...]:
     s = selection.strip().lower()
-    site_slugs = tuple(sorted(preset.sites.keys()))
+    site_slugs = tuple(sorted(preset.repeaters.keys()))
 
     def rep(slug: str) -> str:
         return site_workspace_digest(plan, slug)

@@ -36,7 +36,14 @@ from peaky_finders.serve_viewshed import (
 )
 from peaky_finders.serve_viewshed_jobs import warm_coords_viewshed, warm_site_viewshed
 from peaky_finders.serve_viewshed_sim import ViewshedSimOverrides, parse_viewshed_sim_overrides
-from peaky_finders.sites_job import GoalEntry, Preset, SiteEntry, load_preset, load_preset_goals, load_preset_sites
+from peaky_finders.sites_job import (
+    Preset,
+    SiteEntry,
+    load_preset,
+    load_preset_goals,
+    load_preset_sites,
+    preset_repeater_sites,
+)
 
 SERVE_STATIC_DIR = Path(__file__).resolve().parent / "serve_static"
 
@@ -127,7 +134,7 @@ def _read_serve_static(url_path: str) -> tuple[bytes, str] | None:
 
 
 def _load_project_sites(project_dir: Path) -> dict[str, SiteEntry]:
-    return load_preset_sites(project_dir / "config.yaml")
+    return preset_repeater_sites(load_preset_sites(project_dir / "config.yaml"))
 
 
 def _parse_lat_lon_query(query: str) -> tuple[float, float]:
@@ -159,11 +166,11 @@ def _serialize_serve_simulation(preset: Preset) -> dict[str, object]:
     }
 
 
-def _load_project_goals(project_dir: Path) -> dict[str, GoalEntry]:
+def _load_project_goals(project_dir: Path) -> dict[str, SiteEntry]:
     return load_preset_goals(project_dir / "config.yaml")
 
 
-def _serialize_project_goals(goals: dict[str, GoalEntry]) -> list[dict[str, object]]:
+def _serialize_project_goals(goals: dict[str, SiteEntry]) -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
     for goal_slug, entry in sorted(goals.items()):
         row: dict[str, object] = {
@@ -681,7 +688,7 @@ class ServeDispatcher:
                 return
             try:
                 preset = load_preset(project_dir / "config.yaml")
-                sites = preset.sites
+                sites = preset.repeaters
                 goals = preset.goals
             except (ValueError, ValidationError) as e:
                 self._send_html(project_error_html(slug, project_dir, str(e)), status=422)

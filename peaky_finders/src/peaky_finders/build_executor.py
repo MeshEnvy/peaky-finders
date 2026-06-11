@@ -303,7 +303,7 @@ def target_stale(plan: BuildConfigurePlan, preset: Preset, node: PeakyGraphTarge
         kind = mesh_depth_set_update_kind(
             set_dir=sdir,
             viewshed_digests=vds,
-            site_slugs=sorted(preset.sites.keys()),
+            site_slugs=sorted(preset.repeaters.keys()),
             max_raster_dimension=mx,
             site_slug_to_digest=slug_to_digest,
         )

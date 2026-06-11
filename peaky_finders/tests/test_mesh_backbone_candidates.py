@@ -20,8 +20,8 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import (
     uncaptured_goals,
 )
 from peaky_finders.site_suggestions.providers.mesh_backbone import MeshBackboneStrategy
+from rf_fixtures import make_goal_entry
 from peaky_finders.sites_job import (
-    GoalEntry,
     SuggestConfig,
     MeshBackboneStrategyConfig,
     SiteSuggestionStrategy,
@@ -45,13 +45,15 @@ def _mesh_ctx(
     session_sites: list[BackboneSite] | None = None,
     session_footprints: dict[str, object] | None = None,
 ) -> SiteSuggestionContext:
-    goal_entries = {key: GoalEntry(name=key, loc=loc) for key, loc in goals.items()}
+    repeater_sites = {"seed": type("E", (), {"lat": 39.0, "lon": -115.8})()}
+    goal_entries = {key: make_goal_entry(key, loc) for key, loc in goals.items()}
     preset = type(
         "P",
         (),
         {
-            "sites": {"seed": type("E", (), {"lat": 39.0, "lon": -115.8})()},
+            "sites": {**repeater_sites, **goal_entries},
             "goals": goal_entries,
+            "repeaters": repeater_sites,
         },
     )()
     return SiteSuggestionContext(
@@ -110,7 +112,8 @@ def test_generate_mesh_grow_candidates_on_frontier() -> None:
             (),
             {
                 "sites": {"seed": type("E", (), {"lat": 39.0, "lon": -115.8})()},
-                "goals": {"g1": GoalEntry(name="G1", loc=(39.0, -115.2))},
+                "goals": {"g1": make_goal_entry("G1", (39.0, -115.2))},
+                "repeaters": {"seed": type("E", (), {"lat": 39.0, "lon": -115.8})()},
             },
         )(),
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),
@@ -290,7 +293,11 @@ def test_score_mesh_grow_trial_heal_ignores_satellite_hop() -> None:
                     "main": type("E", (), {"lat": 41.5, "lon": -119.0})(),
                     "sat": type("E", (), {"lat": 36.2, "lon": -115.3})(),
                 },
-                "goals": {"g0": GoalEntry(name="G0", loc=(39.0, -115.5))},
+                "goals": {"g0": make_goal_entry("G0", (39.0, -115.5))},
+                "repeaters": {
+                    "main": type("E", (), {"lat": 41.5, "lon": -119.0})(),
+                    "sat": type("E", (), {"lat": 36.2, "lon": -115.3})(),
+                },
             },
         )(),
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),
@@ -351,7 +358,11 @@ def test_healing_candidates_sample_from_main_mesh_not_satellite_grid() -> None:
                     "main": type("E", (), {"lat": 41.5, "lon": -119.0})(),
                     "sat": type("E", (), {"lat": 36.2, "lon": -115.3})(),
                 },
-                "goals": {"g0": GoalEntry(name="G0", loc=(39.0, -115.5))},
+                "goals": {"g0": make_goal_entry("G0", (39.0, -115.5))},
+                "repeaters": {
+                    "main": type("E", (), {"lat": 41.5, "lon": -119.0})(),
+                    "sat": type("E", (), {"lat": 36.2, "lon": -115.3})(),
+                },
             },
         )(),
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),
@@ -383,7 +394,7 @@ def test_healing_candidates_sample_from_main_mesh_not_satellite_grid() -> None:
 
 def test_mesh_backbone_max_nodes_counts_preset_sites() -> None:
     ctx = SiteSuggestionContext(
-        preset=type("P", (), {"sites": {}})(),
+        preset=type("P", (), {"sites": {}, "goals": {}, "repeaters": {}})(),
         plan=type("Plan", (), {"viewshed_workspaces": ()})(),
         grid=type("G", (), {"depth_at_point": lambda *a, **k: 0})(),
         eligible_ll=box(-116.5, 38.5, -114.5, 39.5),

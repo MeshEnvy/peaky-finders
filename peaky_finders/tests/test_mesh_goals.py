@@ -24,7 +24,6 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.goals import (
 from peaky_finders.site_suggestions.mesh_connectivity import main_footprint_slugs
 from peaky_finders.site_suggestions.providers.mesh_backbone.scoring import analysis_sites
 from peaky_finders.sites_job import (
-    GoalEntry,
     SuggestConfig,
     MeshBackboneRouting,
     MeshBackboneStrategyConfig,
@@ -63,9 +62,7 @@ def _disconnected_ctx() -> SiteSuggestionContext:
             "sites": {
                 "main": {"name": "Main", "loc": [41.5, -119.0]},
                 "sat": {"name": "Sat", "loc": [36.2, -115.3]},
-            },
-            "goals": {
-                "g0": {"name": "G0", "loc": [39.0, -115.5]},
+                "g0": {"type": "goal", "name": "G0", "loc": [39.0, -115.5]},
             },
         },
     )

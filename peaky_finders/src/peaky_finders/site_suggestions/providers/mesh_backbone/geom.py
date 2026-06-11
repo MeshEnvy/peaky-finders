@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
-from peaky_finders.sites_job import GoalEntry
+from peaky_finders.sites_job import SiteEntry
 
 
 @dataclass(frozen=True)
@@ -15,8 +15,8 @@ class GoalPoint:
     lon: float
 
 
-def goals_from_preset(goals: Mapping[str, GoalEntry]) -> dict[str, GoalPoint]:
-    """Resolve top-level ``goals`` to ``GoalPoint`` locations."""
+def goals_from_preset(goals: Mapping[str, SiteEntry]) -> dict[str, GoalPoint]:
+    """Resolve ``type: goal`` sites to ``GoalPoint`` locations."""
     return {
         key: GoalPoint(key=str(key), lat=float(goal.lat), lon=float(goal.lon))
         for key, goal in goals.items()

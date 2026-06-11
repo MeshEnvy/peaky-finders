@@ -18,5 +18,6 @@ build
 # Ignore project build artifacts; keep preset config.yaml tracked
 projects/**
 !projects/**/
+!projects/config.yaml
 !projects/**/config.yaml
 *.log

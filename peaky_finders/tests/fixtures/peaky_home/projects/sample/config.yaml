@@ -1,22 +1,6 @@
 # Minimal project preset for integration-style tests (not production data).
 simulation:
-  provider: splatter
   radius_km: 10.0
-  modem: fixture-modem
-  environment: fixture-desert
-  transmitter:
-    height_m: 2.0
-    gain_dbi: 3.0
-    loss_db: 2.0
-  receiver:
-    height_m: 2.0
-    gain_dbi: 3.0
-    loss_db: 2.0
-
-display:
-  colormap: plasma
-  min_dbm: -130.0
-  max_dbm: -80.0
 
 land:
   layers:

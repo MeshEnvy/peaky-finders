@@ -62,15 +62,24 @@ def test_load_preset_rejects_invalid_goal_loc(tmp_path: Path) -> None:
     preset_path = tmp_path / "config.yaml"
     preset_path.write_text(
         """
+simulation:
+  modem: fixture-modem
+  environment: fixture-desert
+  transmitter: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
+  receiver: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
+display:
+  colormap: rainbow
+  min_dbm: -130.0
+  max_dbm: -80.0
 sites:
   hub:
     name: Hub
     loc: [39.5, -119.5]
-links: []
-goals:
   russel-bridge:
+    type: goal
     name: Russell Bridge
     loc: russell-peak
+links: []
 suggest:
   strategy: mesh-backbone
   mesh_backbone:
@@ -78,7 +87,5 @@ suggest:
 """.strip(),
         encoding="utf-8",
     )
-    sites = load_preset_sites(preset_path)
-    assert sites["hub"].name == "Hub"
     with pytest.raises(ValidationError):
-        load_preset(preset_path)
+        load_preset_sites(preset_path)

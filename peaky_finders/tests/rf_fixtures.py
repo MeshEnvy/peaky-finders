@@ -42,3 +42,15 @@ MINIMAL_SPLATTER_SIMULATION: dict[str, Any] = {
     "provider": "splatter",
     "radius_km": 60.0,
 }
+
+
+def goal_site(name: str, loc: tuple[float, float], *, slug: str | None = None) -> dict[str, object]:
+    """YAML-shaped ``type: goal`` site entry for tests."""
+    _ = slug
+    return {"type": "goal", "name": name, "loc": list(loc)}
+
+
+def make_goal_entry(name: str, loc: tuple[float, float]) -> "SiteEntry":
+    from peaky_finders.sites_job import SiteEntry, SiteType
+
+    return SiteEntry(type=SiteType.GOAL, name=name, loc=loc)

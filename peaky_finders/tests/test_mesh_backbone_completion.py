@@ -17,7 +17,6 @@ from peaky_finders.site_suggestions.providers.mesh_backbone.completion import (
 )
 from peaky_finders.site_suggestions.providers.mesh_backbone.geom import GoalPoint
 from peaky_finders.sites_job import (
-    GoalEntry,
     Preset,
     SimulationConfig,
     SuggestConfig,
@@ -26,17 +25,19 @@ from peaky_finders.sites_job import (
     SiteType,
     DisplayConfig,
 )
-from rf_fixtures import MINIMAL_SIMULATION
+from rf_fixtures import MINIMAL_SIMULATION, make_goal_entry
 
 
-def _minimal_preset(*, goals: dict[str, GoalEntry] | None = None) -> Preset:
+def _minimal_preset(*, goals: dict[str, SiteEntry] | None = None) -> Preset:
+    sites: dict[str, SiteEntry] = {
+        "seed": SiteEntry(type=SiteType.INSTALLED, name="Seed", loc=(39.0, -115.8)),
+    }
+    if goals:
+        sites.update(goals)
     return Preset(
         simulation=SimulationConfig.model_validate(MINIMAL_SIMULATION),
         display=DisplayConfig(colormap="rainbow", min_dbm=-130.0, max_dbm=-80.0),
-        sites={
-            "seed": SiteEntry(type=SiteType.INSTALLED, name="Seed", loc=(39.0, -115.8)),
-        },
-        goals=goals or {},
+        sites=sites,
     )
 
 
@@ -66,7 +67,7 @@ def test_sites_capturing_goal_requires_footprint_and_rf() -> None:
     sites = [BackboneSite(slug="near", lat=39.0, lon=-115.75)]
     footprints = {"near": box(-115.9, 38.9, -115.4, 39.1)}
     preset = _minimal_preset(
-        goals={"g0": GoalEntry(name="G0", loc=(39.0, -115.8))},
+        goals={"g0": make_goal_entry("G0", (39.0, -115.8))},
     )
     assert (
         sites_capturing_goal(
@@ -91,7 +92,7 @@ def test_sites_capturing_goal_requires_footprint_and_rf() -> None:
 
 
 def test_mesh_grow_planning_complete_when_goals_captured_and_connected() -> None:
-    goals = {"g0": GoalEntry(name="G0", loc=(39.0, -115.85))}
+    goals = {"g0": make_goal_entry("G0", (39.0, -115.85))}
     preset = _minimal_preset(goals=goals)
     sites = [
         BackboneSite(slug="seed", lat=39.0, lon=-115.8),

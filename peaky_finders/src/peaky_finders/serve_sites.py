@@ -93,7 +93,7 @@ def _coerce_site_type(raw: str) -> str:
         return SiteType(s).value
     except ValueError as e:
         raise ValueError(
-            f"type must be one of: installed, planned, suggested (got {raw!r})"
+            f"type must be one of: installed, planned, suggested, goal (got {raw!r})"
         ) from e
 
 

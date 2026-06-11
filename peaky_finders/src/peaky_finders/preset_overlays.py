@@ -52,7 +52,7 @@ def collect_site_workspace_assets(
     from peaky_finders.sites_job import viewshed_polygon_coverage_kml_arcname, viewshed_raster_png_arcname
 
     slug_to_digest: dict[str, str] = {}
-    for site_slug, site in preset.sites.items():
+    for site_slug, site in preset.repeaters.items():
         vd = viewshed_workspace_digest(request=preset_to_request(preset, float(site.lat), float(site.lon)))
         slug_to_digest[site_slug] = vd
 

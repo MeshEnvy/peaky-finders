@@ -73,7 +73,7 @@ def _links_stamp_body(preset: Preset) -> str:
 
 
 def _topology_stamp_body(preset: Preset) -> str:
-    slugs = sorted(preset.sites.keys())
+    slugs = sorted(preset.repeaters.keys())
     land = preset.land
     layer_jobs = 0
     if land is not None:
@@ -138,7 +138,7 @@ def compute_stamp_hex(section: str, preset: Preset, *, preset_path: Path, data_d
 
 def list_stamp_sections(preset: Preset) -> list[str]:
     sections = ["simulation", "display", "display_kml", "display_kmz", "mesh", "topology", "links"]
-    sections.extend(sorted(f"site__{slug}" for slug in preset.sites.keys()))
+    sections.extend(sorted(f"site__{slug}" for slug in preset.repeaters.keys()))
     if preset.land is not None and preset.land.is_configured():
         require_land_config(preset)
         sections.extend(

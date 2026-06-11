@@ -8,14 +8,13 @@ import pytest
 
 from peaky_finders.site_suggestions.providers.mesh_backbone.geom import goals_from_preset
 from peaky_finders.sites_job import (
-    GoalEntry,
     SuggestConfig,
     MeshBackboneStrategyConfig,
     SiteSuggestionStrategy,
     load_preset,
     write_preset_document,
 )
-from rf_fixtures import MINIMAL_SIMULATION
+from rf_fixtures import MINIMAL_SIMULATION, make_goal_entry
 
 _PRESET_SIMULATION = MINIMAL_SIMULATION
 
@@ -28,8 +27,8 @@ def test_mesh_backbone_config_defaults() -> None:
 
 def test_goals_from_preset() -> None:
     goals = {
-        "reno": GoalEntry(name="Reno", loc=(39.5296, -119.8138)),
-        "elko": GoalEntry(name="Elko", loc=(40.8324, -115.7631)),
+        "reno": make_goal_entry("Reno", (39.5296, -119.8138)),
+        "elko": make_goal_entry("Elko", (40.8324, -115.7631)),
     }
     pts = goals_from_preset(goals)
     assert set(pts) == {"elko", "reno"}
@@ -49,12 +48,10 @@ def test_preset_loads_top_level_goals(tmp_path: Path) -> None:
                     "goal_order": ["goal-a", "goal-b"],
                 },
             },
-            "goals": {
-                "goal-a": {"name": "Goal A", "loc": [39.0, -119.0]},
-                "goal-b": {"name": "Goal B", "loc": [40.0, -118.0]},
-            },
             "sites": {
                 "seed": {"name": "Seed", "loc": [39.0, -119.0]},
+                "goal-a": {"type": "goal", "name": "Goal A", "loc": [39.0, -119.0]},
+                "goal-b": {"type": "goal", "name": "Goal B", "loc": [40.0, -118.0]},
             },
         },
     )

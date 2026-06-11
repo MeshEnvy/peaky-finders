@@ -267,17 +267,37 @@ def preset_yaml_transaction(path: Path) -> Iterator[tuple[YAML, Any]]:
         yield yaml_rt, root
 
 
+def _replace_rt_mapping(root: Any, payload: Mapping[str, Any]) -> None:
+    """Replace ruamel round-trip root mapping contents with *payload*."""
+    for key in list(root.keys()):
+        del root[key]
+    for key, val in payload.items():
+        root[key] = val
+
+
 def update_preset_yaml_tree(
     path: Path,
     mutator: Callable[[YAML, Any], Any],
     *,
     validate: bool = True,
 ) -> Any:
-    """Read, mutate, optionally validate, and atomically write preset YAML under lock."""
+    """Read, mutate, validate merged preset, prune defaults, and atomically write project YAML."""
+    from peaky_finders.peaky_preset_defaults import (
+        load_preset_defaults,
+        prune_project_preset_dict,
+        resolve_preset_raw,
+    )
+
     with preset_yaml_transaction(path) as (yaml_rt, root):
         result = mutator(yaml_rt, root)
+        plain = yaml_plain_preset_value(root)
+        if not isinstance(plain, dict):
+            raise ValueError(f"preset YAML root must be a mapping at {path}")
         if validate:
-            parse_preset_dict(root)
+            parse_preset_dict(resolve_preset_raw(plain))
+        defaults = load_preset_defaults()
+        pruned = prune_project_preset_dict(plain, defaults)
+        _replace_rt_mapping(root, pruned)
         dump_preset_yaml_document(yaml_rt, root, path)
         return result
 
@@ -301,7 +321,7 @@ def write_preset_document(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 class CoverageProvider(StrEnum):
-    """Coverage engine selected by ``simulation.provider`` (splatter Fresnel/FSPL)."""
+    """Coverage engine (splatter Fresnel/FSPL only)."""
 
     SPLATTER = "splatter"
 
@@ -386,6 +406,7 @@ class SiteType(StrEnum):
     INSTALLED = "installed"
     PLANNED = "planned"
     SUGGESTED = "suggested"
+    GOAL = "goal"
 
 
 def _coerce_map_point_loc(v: Any) -> tuple[float, float]:
@@ -395,7 +416,7 @@ def _coerce_map_point_loc(v: Any) -> tuple[float, float]:
 
 
 class MapPointEntry(BaseModel):
-    """Shared map-point fields for repeaters (``SiteEntry``) and coverage goals (``GoalEntry``)."""
+    """Shared map-point fields for preset sites (repeaters and coverage goals)."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -438,12 +459,18 @@ class SiteEntry(MapPointEntry):
             return SiteType(s)
         except ValueError as e:
             raise ValueError(
-                f"type must be one of: installed, planned, suggested (got {v!r})"
+                f"type must be one of: installed, planned, suggested, goal (got {v!r})"
             ) from e
 
 
-class GoalEntry(MapPointEntry):
-    """Coverage attractor — map point where repeater coverage is desired (no viewshed)."""
+def preset_goal_sites(sites: Mapping[str, SiteEntry]) -> dict[str, SiteEntry]:
+    """Coverage attractors — ``type: goal`` entries (no viewshed)."""
+    return {slug: ent for slug, ent in sites.items() if ent.type == SiteType.GOAL}
+
+
+def preset_repeater_sites(sites: Mapping[str, SiteEntry]) -> dict[str, SiteEntry]:
+    """Repeaters and suggest candidates — all site types except ``goal``."""
+    return {slug: ent for slug, ent in sites.items() if ent.type != SiteType.GOAL}
 
 
 def _coerce_link_pair(item: Any, *, index: int) -> tuple[str, str]:
@@ -476,6 +503,10 @@ def _validate_preset_links(sites: dict[str, SiteEntry], links: list[tuple[str, s
             raise ValueError(f"links references unknown site slug {a!r}")
         if b not in sites:
             raise ValueError(f"links references unknown site slug {b!r}")
+        if sites[a].type == SiteType.GOAL:
+            raise ValueError(f"links must not reference goal site {a!r}")
+        if sites[b].type == SiteType.GOAL:
+            raise ValueError(f"links must not reference goal site {b!r}")
         if (a, b) in seen:
             raise ValueError(f"duplicate links pair [{a!r}, {b!r}]")
         seen.add((a, b))
@@ -1370,15 +1401,17 @@ def resolved_kmz_document_layers(preset: Preset):
     return KmzDocumentLayerVisibility(**flat)
 
 
-def _validate_goal_slugs(
-    sites: dict[str, SiteEntry],
-    goals: dict[str, GoalEntry],
-    suggest: SuggestConfig | None,
-) -> None:
-    overlap = set(sites.keys()) & set(goals.keys())
-    if overlap:
-        slug = sorted(overlap)[0]
-        raise ValueError(f"goal slug {slug!r} collides with a site slug")
+def _reject_legacy_goals_section(raw: Mapping[str, Any]) -> None:
+    if raw.get("goals") is not None:
+        raise ValueError(
+            "top-level goals: is removed; add coverage attractors under sites: with type: goal"
+        )
+
+
+def _validate_site_goals(sites: dict[str, SiteEntry], suggest: SuggestConfig | None) -> None:
+    if not preset_repeater_sites(sites):
+        raise ValueError("sites must contain at least one repeater (type other than goal)")
+    goals = preset_goal_sites(sites)
     if suggest is None:
         return
     mb = suggest.mesh_backbone
@@ -1388,7 +1421,7 @@ def _validate_goal_slugs(
 
 
 class Preset(BaseModel):
-    """One YAML preset: simulation RF, land masks, mesh/suggest knobs, sites, goals, and manual links."""
+    """One YAML preset: simulation RF, land masks, mesh/suggest knobs, sites, and manual links."""
 
     simulation: SimulationConfig
     display: DisplayConfig
@@ -1396,10 +1429,6 @@ class Preset(BaseModel):
     mesh: MeshConfig | None = None
     suggest: SuggestConfig | None = None
     sites: dict[str, SiteEntry]
-    goals: dict[str, GoalEntry] = Field(
-        default_factory=dict,
-        description="Coverage attractors (no viewshed) — planner targets under ``suggest.mesh_backbone``.",
-    )
     links: list[tuple[str, str]] = Field(
         default_factory=list,
         description=(
@@ -1407,6 +1436,16 @@ class Preset(BaseModel):
             "unioned with mutual viewshed footprint overlap for mesh edge KML."
         ),
     )
+
+    @property
+    def goals(self) -> dict[str, SiteEntry]:
+        """Coverage attractors — ``sites`` entries with ``type: goal``."""
+        return preset_goal_sites(self.sites)
+
+    @property
+    def repeaters(self) -> dict[str, SiteEntry]:
+        """Repeaters and suggest candidates — all ``sites`` except ``type: goal``."""
+        return preset_repeater_sites(self.sites)
 
     @field_validator("links", mode="before")
     @classmethod
@@ -1424,7 +1463,7 @@ class Preset(BaseModel):
         if not self.sites:
             raise ValueError("sites must contain at least one entry")
         _validate_preset_links(self.sites, self.links)
-        _validate_goal_slugs(self.sites, self.goals, self.suggest)
+        _validate_site_goals(self.sites, self.suggest)
         return self
 
 
@@ -1494,6 +1533,8 @@ def coerce_preset_sites(sites_raw: Any) -> dict[str, SiteEntry]:
 
     if not sites:
         raise ValueError("sites must contain at least one entry")
+    if not preset_repeater_sites(sites):
+        raise ValueError("sites must contain at least one repeater (type other than goal)")
     return sites
 
 
@@ -1502,25 +1543,13 @@ def parse_preset_sites_dict(raw: Mapping[str, Any]) -> dict[str, SiteEntry]:
     return coerce_preset_sites(raw.get("sites"))
 
 
-def coerce_preset_goals(goals_raw: Any) -> dict[str, GoalEntry]:
-    """Parse and validate the ``goals`` section of a preset mapping."""
-    if goals_raw is None:
-        return {}
-    if not isinstance(goals_raw, Mapping):
-        raise ValueError("goals must be a mapping")
-    return {
-        str(slug): GoalEntry.model_validate(dict(goal))
-        for slug, goal in goals_raw.items()
-    }
-
-
 def parse_preset_dict(raw: Mapping[str, Any]) -> Preset:
     """Coerce/validate a preset mapping (same rules as :func:`load_preset` without file I/O)."""
     _reject_legacy_site_sees(raw)
+    _reject_legacy_goals_section(raw)
     raw = {
         **raw,
         "sites": coerce_preset_sites(raw.get("sites")),
-        "goals": coerce_preset_goals(raw.get("goals")),
     }
     return Preset.model_validate(raw)
 
@@ -1531,27 +1560,49 @@ def load_preset_sites(path: Path) -> dict[str, SiteEntry]:
     return parse_preset_sites_dict(raw)
 
 
-def parse_preset_goals_dict(raw: Mapping[str, Any]) -> dict[str, GoalEntry]:
-    """Validate only ``goals`` (for UIs that do not need a full :class:`Preset`)."""
-    return coerce_preset_goals(raw.get("goals"))
+def parse_preset_goals_dict(raw: Mapping[str, Any]) -> dict[str, SiteEntry]:
+    """Validate goal sites from a preset mapping (``sites`` with ``type: goal``)."""
+    _reject_legacy_goals_section(raw)
+    return preset_goal_sites(coerce_preset_sites(raw.get("sites")))
 
 
-def load_preset_goals(path: Path) -> dict[str, GoalEntry]:
-    """Load and validate only ``goals`` from a preset YAML file."""
-    raw = read_preset_document(path)
-    return parse_preset_goals_dict(raw)
+def load_preset_goals(path: Path) -> dict[str, SiteEntry]:
+    """Load coverage-goal sites from a preset YAML file."""
+    return parse_preset_goals_dict(read_preset_document(path))
 
 
 def load_preset(path: Path) -> Preset:
+    from peaky_finders.peaky_preset_defaults import resolve_preset_raw
+
     raw = read_preset_document(path)
-    return parse_preset_dict(raw)
+    return parse_preset_dict(resolve_preset_raw(raw))
+
+
+def _strip_goal_sites_from_raw(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Drop ``type: goal`` entries from ``sites`` (coverage paths ignore attractors)."""
+    out = dict(raw)
+    sites_raw = out.get("sites")
+    if not isinstance(sites_raw, Mapping):
+        return out
+    out["sites"] = {
+        slug: ent
+        for slug, ent in sites_raw.items()
+        if not (
+            isinstance(ent, Mapping)
+            and str(ent.get("type", "")).strip().lower() == SiteType.GOAL.value
+        )
+    }
+    return out
 
 
 def load_preset_for_coverage(path: Path) -> Preset:
-    """Load preset for splatter/viewshed; ``suggest`` and ``goals`` do not affect RF."""
+    """Load preset for splatter/viewshed; ``suggest`` and goal sites do not affect RF."""
+    from peaky_finders.peaky_preset_defaults import resolve_preset_raw
+
     raw = read_preset_document(path)
-    raw = {k: v for k, v in raw.items() if k not in ("suggest", "goals")}
-    return parse_preset_dict(raw)
+    raw = {k: v for k, v in raw.items() if k != "suggest"}
+    raw = _strip_goal_sites_from_raw(raw)
+    return parse_preset_dict(resolve_preset_raw(raw))
 
 
 def viewshed_raster_png_arcname(site_slug: str) -> str:
