@@ -5,17 +5,19 @@
 #
 simulation:
   radius_km: 50.0
-  raster_dimension: 417
+  raster_dimension: 1024
   modem: meshcore-us
   environment: nevada-desert
   transmitter:
-    height_m: 2.0
-    gain_dbi: 3.0
-    loss_db: 2.0
+    height_m: 2
+    gain_dbi: 3
+    loss_db: 2
   receiver:
-    height_m: 2.0
-    gain_dbi: 3.0
-    loss_db: 2.0
+    height_m: 2
+    gain_dbi: 3
+    loss_db: 2
+  max_workers:
+    splatter: 1
 display:
   colormap: plasma
   transparency: 50
