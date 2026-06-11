@@ -20,11 +20,27 @@ from peaky_finders.serve_goal_links import (
     load_project_goal_links,
 )
 from peaky_finders.serve_goals import append_goal_to_preset, delete_goal_from_preset, update_goal_in_preset
-from peaky_finders.serve_html import landing_html, project_error_html, project_html
+from peaky_finders.serve_home import (
+    create_environment_preset,
+    create_modem_preset,
+    delete_environment_preset,
+    delete_modem_preset,
+    get_environment_catalog_payload,
+    get_home_simulation_payload,
+    get_modem_catalog_payload,
+    patch_environment_preset,
+    patch_home_simulation,
+    patch_modem_preset,
+)
+from peaky_finders.serve_html import home_settings_modal_html, landing_html, project_error_html, project_html
 from peaky_finders.serve_links import ServeLinksError, evaluate_site_pair_linked, load_project_site_links
 from peaky_finders.serve_plss import apply_plss_from_loc_cache
 from peaky_finders.serve_site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
-from peaky_finders.serve_simulation import update_viewshed_sim_to_preset
+from peaky_finders.serve_simulation import (
+    get_project_simulation_payload,
+    patch_project_simulation,
+    update_viewshed_sim_to_preset,
+)
 from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset, update_site_in_preset
 from peaky_finders.serve_events import get_serve_event_hub
 from peaky_finders.serve_viewshed import (
@@ -100,6 +116,11 @@ _API_PROJECT_LINK_PAIR_RE = re.compile(
 _API_PROJECT_LINKS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/links/?$")
 _API_PROJECT_GOAL_LINKS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/goal-links/?$")
 _API_PROJECT_SIMULATION_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/simulation/?$")
+_API_HOME_SIMULATION_RE = re.compile(r"^/api/home/simulation/?$")
+_API_HOME_MODEMS_RE = re.compile(r"^/api/home/modems/?$")
+_API_HOME_MODEM_NAME_RE = re.compile(r"^/api/home/modems/([a-zA-Z][a-zA-Z0-9_-]+)/?$")
+_API_HOME_ENVIRONMENTS_RE = re.compile(r"^/api/home/environments/?$")
+_API_HOME_ENVIRONMENT_NAME_RE = re.compile(r"^/api/home/environments/([a-zA-Z][a-zA-Z0-9_-]+)/?$")
 
 
 def _parse_json_body(body: bytes) -> object:
@@ -308,6 +329,70 @@ class ServeDispatcher:
             self._send_bytes(payload, "application/json")
             return
 
+        if _API_HOME_SIMULATION_RE.match(path):
+            try:
+                payload = json.dumps(get_home_simulation_payload(), sort_keys=True).encode("utf-8")
+            except (ValueError, OSError) as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            self._send_bytes(payload, "application/json")
+            return
+
+        if _API_HOME_MODEMS_RE.match(path):
+            try:
+                payload = json.dumps(get_modem_catalog_payload(), sort_keys=True).encode("utf-8")
+            except (ValueError, OSError) as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            self._send_bytes(payload, "application/json")
+            return
+
+        home_modem_match = _API_HOME_MODEM_NAME_RE.match(path)
+        if home_modem_match:
+            name = home_modem_match.group(1)
+            try:
+                catalog = get_modem_catalog_payload()
+            except (ValueError, OSError) as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            preset = catalog.get("presets", {}).get(name)
+            if preset is None:
+                self.send_error(404)
+                return
+            payload = json.dumps({"name": name, "preset": preset}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
+        if _API_HOME_ENVIRONMENTS_RE.match(path):
+            try:
+                payload = json.dumps(get_environment_catalog_payload(), sort_keys=True).encode("utf-8")
+            except (ValueError, OSError) as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            self._send_bytes(payload, "application/json")
+            return
+
+        home_env_match = _API_HOME_ENVIRONMENT_NAME_RE.match(path)
+        if home_env_match:
+            name = home_env_match.group(1)
+            try:
+                catalog = get_environment_catalog_payload()
+            except (ValueError, OSError) as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            preset = catalog.get("presets", {}).get(name)
+            if preset is None:
+                self.send_error(404)
+                return
+            payload = json.dumps({"name": name, "preset": preset}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
         api_match = _API_PROJECT_SITES_RE.match(path)
         if api_match:
             slug = api_match.group(1)
@@ -461,6 +546,23 @@ class ServeDispatcher:
                 self._send_bytes(payload, "application/json", status=503)
                 return
             payload = json.dumps({"project": slug, **result}).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
+        project_sim_match = _API_PROJECT_SIMULATION_RE.match(path)
+        if project_sim_match:
+            project_slug = project_sim_match.group(1)
+            preset_path = self.projects_dir / project_slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                payload_obj = get_project_simulation_payload(preset_path)
+            except (ValueError, ValidationError, OSError) as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            payload = json.dumps({"slug": project_slug, **payload_obj}, sort_keys=True).encode("utf-8")
             self._send_bytes(payload, "application/json")
             return
 
@@ -729,6 +831,38 @@ class ServeDispatcher:
     def _do_post(self, parsed: ParseResult, body: bytes) -> None:
         parsed_url = parsed
         path = parsed_url.path
+
+        if _API_HOME_MODEMS_RE.match(path):
+            try:
+                raw = self._parse_entity_patch_body(body)
+                result = create_modem_preset(raw)
+            except ValueError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(result, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=201)
+            return
+
+        if _API_HOME_ENVIRONMENTS_RE.match(path):
+            try:
+                raw = self._parse_entity_patch_body(body)
+                result = create_environment_preset(raw)
+            except ValueError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(result, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=201)
+            return
 
         # Prefetch warm must precede per-site warm — otherwise ``prefetch`` matches as a site slug.
         viewshed_prefetch_warm_match = _API_PROJECT_VIEWSHED_PREFETCH_WARM_RE.match(path)
@@ -1017,6 +1151,86 @@ class ServeDispatcher:
         parsed_url = parsed
         path = parsed_url.path
 
+        if _API_HOME_SIMULATION_RE.match(path):
+            try:
+                raw = self._parse_entity_patch_body(body)
+                result = patch_home_simulation(raw)
+            except ValueError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(result, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        home_modem_match = _API_HOME_MODEM_NAME_RE.match(path)
+        if home_modem_match:
+            name = home_modem_match.group(1)
+            try:
+                raw = self._parse_entity_patch_body(body)
+                result = patch_modem_preset(name, raw)
+            except KeyError:
+                self.send_error(404)
+                return
+            except ValueError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(result, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        home_env_match = _API_HOME_ENVIRONMENT_NAME_RE.match(path)
+        if home_env_match:
+            name = home_env_match.group(1)
+            try:
+                raw = self._parse_entity_patch_body(body)
+                result = patch_environment_preset(name, raw)
+            except KeyError:
+                self.send_error(404)
+                return
+            except ValueError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(result, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        project_sim_match = _API_PROJECT_SIMULATION_RE.match(path)
+        if project_sim_match:
+            project_slug = project_sim_match.group(1)
+            preset_path = self.projects_dir / project_slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = self._parse_entity_patch_body(body)
+                result = patch_project_simulation(preset_path, raw)
+            except ValueError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps({"slug": project_slug, **result}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
         site_match = _API_PROJECT_SITE_SLUG_RE.match(path)
         if site_match:
             project_slug = site_match.group(1)
@@ -1165,6 +1379,54 @@ class ServeDispatcher:
     def _do_delete(self, parsed: ParseResult) -> None:
         parsed_url = parsed
         path = parsed_url.path
+
+        home_modem_match = _API_HOME_MODEM_NAME_RE.match(path)
+        if home_modem_match:
+            name = home_modem_match.group(1)
+            try:
+                delete_modem_preset(name)
+            except KeyError:
+                self.send_error(404)
+                return
+            except ReferenceError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=409)
+                return
+            except ValueError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps({"deleted": name}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        home_env_match = _API_HOME_ENVIRONMENT_NAME_RE.match(path)
+        if home_env_match:
+            name = home_env_match.group(1)
+            try:
+                delete_environment_preset(name)
+            except KeyError:
+                self.send_error(404)
+                return
+            except ReferenceError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=409)
+                return
+            except ValueError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps({"deleted": name}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
 
         site_match = _API_PROJECT_SITE_SLUG_RE.match(path)
         if site_match:

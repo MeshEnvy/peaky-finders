@@ -23,6 +23,313 @@ _BOOTSTRAP_FOOT = """\
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" \
 integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>"""
 
+_GEAR_SVG = """\
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+  <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
+  <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319z"/>
+</svg>"""
+
+_HOME_SETTINGS_GEAR = f"""\
+<button type="button" id="home-settings-open" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" \
+data-bs-toggle="modal" data-bs-target="#home-settings-modal" title="Settings">
+  {_GEAR_SVG}
+  <span id="home-settings-gear-summary" class="small font-monospace"></span>
+</button>"""
+
+_CLIMATE_OPTIONS = (
+    "equatorial",
+    "continental_subtropical",
+    "maritime_subtropical",
+    "desert",
+    "continental_temperate",
+    "maritime_temperate_land",
+    "maritime_temperate_sea",
+)
+
+
+def _sim_inline_field(override_key: str, label: str, control_html: str, *, title: str = "") -> str:
+    key = html.escape(override_key)
+    title_attr = f' title="{html.escape(title)}"' if title else ""
+    return f"""\
+                  <div class="home-sim-field home-sim-field--inline" data-override-key="{key}">
+                    <label class="home-sim-inline-label"{title_attr}>{html.escape(label)}</label>
+                    {control_html}
+                    <button type="button" class="btn btn-link btn-sm py-0 px-1 home-sim-reset" \
+data-override-key="{key}" hidden>Reset</button>
+                  </div>"""
+
+
+def _sim_chain_group(title: str, fields_html: str) -> str:
+    return f"""\
+              <div class="col-md-6">
+                <div class="home-sim-chain">
+                  <div class="home-sim-chain__title">{html.escape(title)}</div>
+                  <div class="home-sim-chain__fields">
+{fields_html}
+                  </div>
+                </div>
+              </div>"""
+
+
+def _sim_reset_row(override_key: str, label: str, control_html: str, *, compact: bool = False) -> str:
+    key = html.escape(override_key)
+    col = "col-md-4 home-sim-field--compact" if compact else "col-md-6"
+    return f"""\
+              <div class="home-sim-field {col}" data-override-key="{key}">
+                <div class="d-flex justify-content-between align-items-center mb-1 gap-2">
+                  <span class="form-label small mb-0">{html.escape(label)}</span>
+                  <button type="button" class="btn btn-link btn-sm py-0 px-1 home-sim-reset" \
+data-override-key="{key}" hidden>Reset</button>
+                </div>
+                {control_html}
+              </div>"""
+
+
+def home_settings_modal_html(*, on_project_map: bool = False) -> str:
+    project_hint = ""
+    if on_project_map:
+        project_hint = (
+            '<p class="small text-muted mb-3" id="home-settings-project-hint">'
+            "Simulation values show this project's effective settings. "
+            "Highlighted fields override <code>$PEAKY_HOME</code> defaults; "
+            "<strong>Reset</strong> removes the project override."
+            "</p>"
+        )
+    else:
+        project_hint = (
+            '<p class="small text-muted mb-3" id="home-settings-project-hint">'
+            "Simulation tab edits global defaults in <code>$PEAKY_HOME/config.yaml</code>. "
+            "Open a project map to override per project."
+            "</p>"
+        )
+    climate_opts = "\n".join(
+        f'              <option value="{html.escape(c)}">{html.escape(c.replace("_", " "))}</option>'
+        for c in _CLIMATE_OPTIONS
+    )
+    return f"""\
+<div class="modal fade" id="home-settings-modal" tabindex="-1" aria-labelledby="home-settings-modal-label" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="home-settings-modal-label">Settings</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="home-settings-error" class="alert alert-danger py-2 small mb-3" role="alert" hidden></div>
+        {project_hint}
+        <ul class="nav nav-tabs mb-3" id="home-settings-tabs" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="home-tab-simulation" data-bs-toggle="tab" \
+data-bs-target="#home-pane-simulation" type="button" role="tab">Simulation</button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="home-tab-modems" data-bs-toggle="tab" \
+data-bs-target="#home-pane-modems" type="button" role="tab">Modems</button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="home-tab-environments" data-bs-toggle="tab" \
+data-bs-target="#home-pane-environments" type="button" role="tab">Environments</button>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane fade show active" id="home-pane-simulation" role="tabpanel">
+            <div class="row g-3">
+              {_sim_reset_row("modem", "Modem preset", '<select id="home-sim-modem" class="form-select form-select-sm"></select>')}
+              {_sim_reset_row("environment", "Environment preset", '<select id="home-sim-environment" class="form-select form-select-sm"></select>')}
+              <div class="home-sim-field col-md-6" data-override-key="radius_km">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                  <span class="form-label small mb-0">Radius (km)</span>
+                  <div class="d-flex align-items-center gap-2">
+                    <span id="home-sim-radius-km-value" class="small font-monospace text-muted home-sim-field__value-label">50</span>
+                    <button type="button" class="btn btn-link btn-sm py-0 home-sim-reset" \
+data-override-key="radius_km" hidden>Reset</button>
+                  </div>
+                </div>
+                <input id="home-sim-radius-km" type="range" class="form-range" min="1" max="100" value="50">
+              </div>
+              <div class="home-sim-field col-md-6" data-override-key="raster_dimension">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                  <span class="form-label small mb-0">Resolution (px)</span>
+                  <div class="d-flex align-items-center gap-2">
+                    <span id="home-sim-raster-dimension-value" class="small font-monospace text-muted home-sim-field__value-label">500</span>
+                    <button type="button" class="btn btn-link btn-sm py-0 home-sim-reset" \
+data-override-key="raster_dimension" hidden>Reset</button>
+                  </div>
+                </div>
+                <input id="home-sim-raster-dimension" type="range" class="form-range" min="128" max="4096" value="500">
+              </div>
+              {_sim_chain_group(
+                  "Transmitter",
+                  _sim_inline_field(
+                      "transmitter.height_m",
+                      "Height",
+                      '<input id="home-sim-tx-height" type="number" step="0.1" class="form-control form-control-sm">',
+                      title="Height (m)",
+                  )
+                  + _sim_inline_field(
+                      "transmitter.gain_dbi",
+                      "Gain",
+                      '<input id="home-sim-tx-gain" type="number" step="0.1" class="form-control form-control-sm">',
+                      title="Gain (dBi)",
+                  )
+                  + _sim_inline_field(
+                      "transmitter.loss_db",
+                      "Loss",
+                      '<input id="home-sim-tx-loss" type="number" step="0.1" class="form-control form-control-sm">',
+                      title="Loss (dB)",
+                  ),
+              )}
+              {_sim_chain_group(
+                  "Receiver",
+                  _sim_inline_field(
+                      "receiver.height_m",
+                      "Height",
+                      '<input id="home-sim-rx-height" type="number" step="0.1" class="form-control form-control-sm">',
+                      title="Height (m)",
+                  )
+                  + _sim_inline_field(
+                      "receiver.gain_dbi",
+                      "Gain",
+                      '<input id="home-sim-rx-gain" type="number" step="0.1" class="form-control form-control-sm">',
+                      title="Gain (dBi)",
+                  )
+                  + _sim_inline_field(
+                      "receiver.loss_db",
+                      "Loss",
+                      '<input id="home-sim-rx-loss" type="number" step="0.1" class="form-control form-control-sm">',
+                      title="Loss (dB)",
+                  ),
+              )}
+              {_sim_reset_row("max_workers.splatter", "Splatter workers", '<input id="home-sim-splatter-workers" type="number" min="1" step="1" class="form-control form-control-sm home-sim-field--narrow">')}
+            </div>
+          </div>
+          <div class="tab-pane fade" id="home-pane-modems" role="tabpanel">
+            <div class="home-settings-split row g-3">
+              <div class="col-md-4">
+                <div class="d-flex flex-wrap gap-2 mb-2">
+                  <button type="button" id="home-modem-add" class="btn btn-outline-secondary btn-sm">Add</button>
+                  <button type="button" id="home-modem-duplicate" class="btn btn-outline-secondary btn-sm">Duplicate</button>
+                  <button type="button" id="home-modem-delete" class="btn btn-outline-danger btn-sm">Delete</button>
+                </div>
+                <div id="home-modem-list" class="list-group home-settings-list"></div>
+              </div>
+              <div class="col-md-8">
+                <div class="row g-2">
+                  <div class="col-md-6">
+                    <label for="home-modem-name" class="form-label small">Name</label>
+                    <input id="home-modem-name" type="text" class="form-control form-control-sm" readonly>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="home-modem-frequency" class="form-label small">Frequency (MHz)</label>
+                    <input id="home-modem-frequency" type="number" step="0.001" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-modem-bandwidth" class="form-label small">Bandwidth (kHz)</label>
+                    <input id="home-modem-bandwidth" type="number" step="0.1" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-modem-sf" class="form-label small">Spreading factor</label>
+                    <input id="home-modem-sf" type="number" min="6" max="12" step="1" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-modem-cr" class="form-label small">Coding rate</label>
+                    <input id="home-modem-cr" type="number" min="5" max="8" step="1" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-modem-margin" class="form-label small">Implementation margin (dB)</label>
+                    <input id="home-modem-margin" type="number" step="0.1" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-modem-power" class="form-label small">Power (dBm)</label>
+                    <input id="home-modem-power" type="number" step="0.1" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-modem-sensitivity" class="form-label small">Sensitivity (dBm)</label>
+                    <input id="home-modem-sensitivity" type="number" step="0.1" class="form-control form-control-sm">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="tab-pane fade" id="home-pane-environments" role="tabpanel">
+            <div class="home-settings-split row g-3">
+              <div class="col-md-4">
+                <div class="d-flex flex-wrap gap-2 mb-2">
+                  <button type="button" id="home-env-add" class="btn btn-outline-secondary btn-sm">Add</button>
+                  <button type="button" id="home-env-duplicate" class="btn btn-outline-secondary btn-sm">Duplicate</button>
+                  <button type="button" id="home-env-delete" class="btn btn-outline-danger btn-sm">Delete</button>
+                </div>
+                <div id="home-env-list" class="list-group home-settings-list"></div>
+              </div>
+              <div class="col-md-8">
+                <div class="row g-2">
+                  <div class="col-12">
+                    <label for="home-env-name" class="form-label small">Name</label>
+                    <input id="home-env-name" type="text" class="form-control form-control-sm" readonly>
+                  </div>
+                  <div class="col-12">
+                    <label for="home-env-description" class="form-label small">Description</label>
+                    <input id="home-env-description" type="text" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-6">
+                    <label for="home-env-climate" class="form-label small">Climate</label>
+                    <select id="home-env-climate" class="form-select form-select-sm">
+{climate_opts}
+                    </select>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="home-env-polarization" class="form-label small">Polarization</label>
+                    <select id="home-env-polarization" class="form-select form-select-sm">
+                      <option value="vertical">vertical</option>
+                      <option value="horizontal">horizontal</option>
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-env-clutter" class="form-label small">Clutter height (m)</label>
+                    <input id="home-env-clutter" type="number" step="0.1" min="0" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-env-fresnel" class="form-label small">Fresnel clearance</label>
+                    <input id="home-env-fresnel" type="number" step="0.01" min="0" max="1" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-env-pessimism" class="form-label small">Coverage pessimism (dB)</label>
+                    <input id="home-env-pessimism" type="number" step="0.1" min="0" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-env-situation" class="form-label small">Situation %</label>
+                    <input id="home-env-situation" type="number" step="0.1" min="1" max="100" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-env-time" class="form-label small">Time %</label>
+                    <input id="home-env-time" type="number" step="0.1" min="1" max="100" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="home-env-dielectric" class="form-label small">Ground dielectric</label>
+                    <input id="home-env-dielectric" type="number" step="0.1" min="1" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-6">
+                    <label for="home-env-conductivity" class="form-label small">Ground conductivity (S/m)</label>
+                    <input id="home-env-conductivity" type="number" step="0.0001" min="0" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-6">
+                    <label for="home-env-bending" class="form-label small">Atmosphere bending (N)</label>
+                    <input id="home-env-bending" type="number" step="0.1" min="0" class="form-control form-control-sm">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        <button type="button" id="home-settings-save" class="btn btn-primary btn-sm">Save</button>
+      </div>
+    </div>
+  </div>
+</div>"""
+
 _MAPLIBRE_HEAD = """\
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" crossorigin="">"""
 
@@ -64,8 +371,13 @@ def landing_html(projects_dir: Path, projects: list[str], *, error: str | None =
 
     body = f"""<div class="container py-4 landing-container">
   {err}
-  <h1 class="h2 mb-1">Peaky</h1>
-  <p class="text-muted small mb-4">Projects in {html.escape(str(projects_dir))}</p>
+  <div class="d-flex justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <h1 class="h2 mb-1">Peaky</h1>
+      <p class="text-muted small mb-0">Projects in {html.escape(str(projects_dir))}</p>
+    </div>
+    {_HOME_SETTINGS_GEAR}
+  </div>
   {project_block}
   <div class="card">
     <div class="card-body">
@@ -78,7 +390,9 @@ def landing_html(projects_dir: Path, projects: list[str], *, error: str | None =
       </form>
     </div>
   </div>
-</div>"""
+</div>
+{home_settings_modal_html(on_project_map=False)}
+<script src="/static/home-settings.js"></script>"""
     return html_page("Peaky", body)
 
 
@@ -142,10 +456,7 @@ def project_html(
           <input id="show-goal-links" class="form-check-input" type="checkbox" checked>
           <label class="form-check-label small" for="show-goal-links">Goal links</label>
         </div>
-        <button type="button" id="viewshed-sim-open" class="btn btn-sm btn-outline-secondary"
-          data-bs-toggle="modal" data-bs-target="#viewshed-sim-modal" title="Viewshed radius and resolution">
-          <span id="viewshed-sim-summary" class="font-monospace">60 km · 500 px</span>
-        </button>
+        {_HOME_SETTINGS_GEAR}
         <div class="d-flex align-items-center gap-2">
           <label for="viewshed-opacity" class="form-label mb-0 small text-muted">Opacity</label>
           <input id="viewshed-opacity" type="range" class="form-range" min="0" max="100" value="75"
@@ -329,39 +640,9 @@ def project_html(
     </div>
   </aside>
 </div>
-<div class="modal fade" id="viewshed-sim-modal" tabindex="-1" aria-labelledby="viewshed-sim-modal-label" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="viewshed-sim-modal-label">Viewshed grid</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <p class="small text-muted mb-3">Tune coverage radius and raster size. Apply saves to <code>config.yaml</code> and reloads visible viewsheds.</p>
-        <div id="viewshed-sim-error" class="alert alert-danger py-2 small mb-3" role="alert" hidden></div>
-        <div class="mb-3">
-          <div class="d-flex justify-content-between align-items-center mb-1">
-            <label for="viewshed-sim-radius-km" class="form-label small mb-0">Radius (km)</label>
-            <span id="viewshed-sim-radius-km-value" class="small font-monospace text-muted">60</span>
-          </div>
-          <input id="viewshed-sim-radius-km" type="range" class="form-range" min="1" max="100" value="60">
-        </div>
-        <div>
-          <div class="d-flex justify-content-between align-items-center mb-1">
-            <label for="viewshed-sim-raster-dimension" class="form-label small mb-0">Resolution (px)</label>
-            <span id="viewshed-sim-raster-dimension-value" class="small font-monospace text-muted">500</span>
-          </div>
-          <input id="viewshed-sim-raster-dimension" type="range" class="form-range" min="128" max="4096" value="500">
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" id="viewshed-sim-apply" class="btn btn-primary btn-sm">Apply</button>
-      </div>
-    </div>
-  </div>
-</div>
+{home_settings_modal_html(on_project_map=True)}
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" crossorigin=""></script>
 <script>window.PEAKY_PROJECT = {peaky_config};</script>
+<script src="/static/home-settings.js"></script>
 <script src="/static/project-map.js"></script>"""
     return html_page(slug, body, wide=True, extra_head=_MAPLIBRE_HEAD)

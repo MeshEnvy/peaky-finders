@@ -300,3 +300,83 @@ body.wide #map {
   color: var(--bs-secondary-color);
   padding: 0.5rem 0.25rem;
 }
+
+.home-settings-list {
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+#home-settings-modal .modal-body {
+  min-height: 22rem;
+}
+
+.home-sim-field.is-overridden .form-control,
+.home-sim-field.is-overridden .form-select,
+.home-sim-field.is-overridden .form-range {
+  color: var(--bs-warning);
+  border-color: rgba(var(--bs-warning-rgb), 0.65);
+}
+
+.home-sim-field.is-overridden .form-label,
+.home-sim-field.is-overridden > .d-flex > .form-label,
+.home-sim-field.is-overridden > .d-flex > span.form-label {
+  color: var(--bs-warning);
+}
+
+.home-sim-field--compact .form-control {
+  max-width: 6.5rem;
+}
+
+.home-sim-field--narrow {
+  max-width: 6.5rem;
+}
+
+.home-sim-chain {
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.65rem 0.65rem;
+  height: 100%;
+}
+
+.home-sim-chain__title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+  margin-bottom: 0.45rem;
+}
+
+.home-sim-chain__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+}
+
+.home-sim-field--inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.home-sim-inline-label {
+  font-size: 0.75rem;
+  color: var(--bs-secondary-color);
+  margin: 0;
+  white-space: nowrap;
+}
+
+.home-sim-field--inline .form-control {
+  width: 4.25rem;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+}
+
+.home-sim-field--inline.is-overridden .home-sim-inline-label {
+  color: var(--bs-warning);
+}
+
+.home-sim-field.is-overridden .home-sim-field__value-label {
+  color: var(--bs-warning);
+}

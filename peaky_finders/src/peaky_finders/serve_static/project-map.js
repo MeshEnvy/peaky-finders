@@ -129,9 +129,6 @@
     }
   }
 
-  let draftRadiusKm = viewshedRadiusKm;
-  let draftRasterDimension = viewshedRasterDimension;
-
   function clampRadiusKm(km) {
     return Math.max(VIEWSHED_RADIUS_KM_MIN, Math.min(VIEWSHED_RADIUS_KM_MAX, Number(km)));
   }
@@ -143,91 +140,16 @@
     );
   }
 
-  function syncViewshedSimSummary() {
-    const summary = document.getElementById("viewshed-sim-summary");
-    if (summary) {
-      summary.textContent = `${Math.round(viewshedRadiusKm)} km · ${viewshedRasterDimension} px`;
-    }
-  }
-
-  function syncViewshedSimModalFields() {
-    const radiusEl = document.getElementById("viewshed-sim-radius-km");
-    const radiusVal = document.getElementById("viewshed-sim-radius-km-value");
-    if (radiusEl) radiusEl.value = String(Math.round(draftRadiusKm));
-    if (radiusVal) radiusVal.textContent = String(Math.round(draftRadiusKm));
-    const rasterEl = document.getElementById("viewshed-sim-raster-dimension");
-    const rasterVal = document.getElementById("viewshed-sim-raster-dimension-value");
-    if (rasterEl) rasterEl.value = String(draftRasterDimension);
-    if (rasterVal) rasterVal.textContent = String(draftRasterDimension);
-  }
-
-  function readViewshedSimModalDraft() {
-    const radiusEl = document.getElementById("viewshed-sim-radius-km");
-    const rasterEl = document.getElementById("viewshed-sim-raster-dimension");
-    if (radiusEl) draftRadiusKm = clampRadiusKm(radiusEl.value);
-    if (rasterEl) draftRasterDimension = clampRasterDimension(rasterEl.value);
-    syncViewshedSimModalFields();
-  }
-
-  function resetViewshedSimModalDraft() {
-    draftRadiusKm = viewshedRadiusKm;
-    draftRasterDimension = viewshedRasterDimension;
-    syncViewshedSimModalFields();
-  }
-
-  function setViewshedSimError(message) {
-    const el = document.getElementById("viewshed-sim-error");
-    if (!el) return;
-    if (message) {
-      el.textContent = message;
-      el.hidden = false;
-    } else {
-      el.textContent = "";
-      el.hidden = true;
-    }
-  }
-
-  async function applyViewshedSimSettings() {
-    readViewshedSimModalDraft();
-    const nextRadius = clampRadiusKm(draftRadiusKm);
-    const nextRaster = clampRasterDimension(draftRasterDimension);
-    const changed =
-      nextRadius !== viewshedRadiusKm || nextRaster !== viewshedRasterDimension;
-    const applyBtn = document.getElementById("viewshed-sim-apply");
-    setViewshedSimError("");
-    if (applyBtn) applyBtn.disabled = true;
-    try {
-      const resp = await fetch(simulationApiUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          radius_km: nextRadius,
-          raster_dimension: nextRaster,
-        }),
-      });
-      const payload = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        setViewshedSimError(payload.error || `Save failed (${resp.status})`);
-        return;
-      }
-      viewshedRadiusKm = nextRadius;
-      viewshedRasterDimension = nextRaster;
-      syncViewshedSimSummary();
-      const modalEl = document.getElementById("viewshed-sim-modal");
-      if (modalEl && window.bootstrap) {
-        const inst = window.bootstrap.Modal.getInstance(modalEl);
-        if (inst) inst.hide();
-      }
-      if (changed) reloadViewshedsForSimChange();
-    } catch (_) {
-      setViewshedSimError("Could not reach server.");
-    } finally {
-      if (applyBtn) applyBtn.disabled = false;
+  function setViewshedSimulation(radiusKm, rasterDimension) {
+    viewshedRadiusKm = clampRadiusKm(radiusKm);
+    viewshedRasterDimension = clampRasterDimension(rasterDimension);
+    if (window.PEAKY_HOME_SETTINGS && typeof window.PEAKY_HOME_SETTINGS.updateGearSummary === "function") {
+      window.PEAKY_HOME_SETTINGS.updateGearSummary();
     }
   }
 
   syncToolbarFromSaved(savedMapState);
-  syncViewshedSimSummary();
+  setViewshedSimulation(defaultRadiusKm, defaultRasterDimension);
 
   function basemapStyle(key) {
     const bm = BASEMAPS[key] || BASEMAPS.street;
@@ -450,10 +372,6 @@
 
   function sitesApiUrl() {
     return `/api/p/${projectSlug}/sites`;
-  }
-
-  function simulationApiUrl() {
-    return `/api/p/${projectSlug}/simulation`;
   }
 
   function slugifyName(name) {
@@ -3336,31 +3254,6 @@
     setViewshedOpacity(Number(ev.target.value) / 100);
     scheduleSaveMapState();
   });
-  const viewshedSimModal = document.getElementById("viewshed-sim-modal");
-  if (viewshedSimModal) {
-    viewshedSimModal.addEventListener("show.bs.modal", () => {
-      setViewshedSimError("");
-      resetViewshedSimModalDraft();
-    });
-  }
-  const viewshedSimRadiusInput = document.getElementById("viewshed-sim-radius-km");
-  if (viewshedSimRadiusInput) {
-    viewshedSimRadiusInput.min = String(VIEWSHED_RADIUS_KM_MIN);
-    viewshedSimRadiusInput.max = String(VIEWSHED_RADIUS_KM_MAX);
-    viewshedSimRadiusInput.addEventListener("input", readViewshedSimModalDraft);
-  }
-  const viewshedSimRasterInput = document.getElementById("viewshed-sim-raster-dimension");
-  if (viewshedSimRasterInput) {
-    viewshedSimRasterInput.min = String(VIEWSHED_RASTER_MIN);
-    viewshedSimRasterInput.max = String(VIEWSHED_RASTER_MAX);
-    viewshedSimRasterInput.addEventListener("input", readViewshedSimModalDraft);
-  }
-  const viewshedSimApply = document.getElementById("viewshed-sim-apply");
-  if (viewshedSimApply) {
-    viewshedSimApply.addEventListener("click", () => {
-      void applyViewshedSimSettings();
-    });
-  }
   document.getElementById("show-goal-links").addEventListener("change", (ev) => {
     setGoalLinksVisible(ev.target.checked);
     scheduleSaveMapState();
@@ -3496,4 +3389,9 @@
     }
     if (selectedSlug || selectedGoalSlug) deselectSite();
   });
+
+  window.PEAKY_MAP = {
+    reloadViewshedsForSimChange,
+    setViewshedSimulation,
+  };
 })();
