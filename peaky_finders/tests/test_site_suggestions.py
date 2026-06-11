@@ -15,6 +15,7 @@ from peaky_finders.site_suggestions.depth_grid import build_coverage_depth_grid
 from peaky_finders.site_suggestions.planner import plan_greedy_site_suggestions, planned_to_preset_entries
 from peaky_finders.site_suggestions.preset_io import append_suggested_sites_to_preset, remove_suggested_sites_from_preset
 from peaky_finders.sites_job import SiteType, load_preset, write_preset_document
+from rf_fixtures import MINIMAL_SIMULATION
 
 
 _MINIMAL_LAND = {
@@ -24,30 +25,7 @@ _MINIMAL_LAND = {
     }
 }
 
-_SUGGEST_SIMULATION = {
-    "modem_presets": {
-        "meshcore-us": {
-            "frequency_mhz": 910.525,
-            "bandwidth_khz": 62.5,
-            "spreading_factor": 7,
-            "coding_rate": 5,
-            "implementation_margin_db": 3.0,
-            "power_dbm": 22.0,
-            "sensitivity_dbm": -121.0,
-        }
-    },
-    "environment_presets": {
-        "test-desert": {
-            "climate": "desert",
-            "polarization": "vertical",
-            "clutter_height_m": 1.0,
-        }
-    },
-    "modem": "meshcore-us",
-    "environment": "test-desert",
-    "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-    "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-}
+_SUGGEST_SIMULATION = MINIMAL_SIMULATION
 
 
 def _write_gpkg(path: Path, geom, *, layer: str) -> None:

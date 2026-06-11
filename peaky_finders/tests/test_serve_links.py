@@ -58,22 +58,8 @@ def test_evaluate_site_pair_out_of_range_skips_rf(tmp_path: Path) -> None:
 simulation:
   provider: splatter
   radius_km: 1.0
-  modem_presets:
-    meshcore-us:
-      frequency_mhz: 910.525
-      bandwidth_khz: 62.5
-      spreading_factor: 7
-      coding_rate: 5
-      implementation_margin_db: 3.0
-      power_dbm: 22.0
-      sensitivity_dbm: -121.0
-  environment_presets:
-    open:
-      climate: desert
-      polarization: vertical
-      clutter_height_m: 1.0
-  modem: meshcore-us
-  environment: open
+  modem: fixture-modem
+  environment: fixture-desert
   transmitter: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
   receiver: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
 display:
@@ -267,6 +253,10 @@ def test_api_sites_prefetch_exclude_site(tmp_path: Path) -> None:
             return [True] * len(pairs)
 
         with (
+            patch(
+                "peaky_finders.serve_plss.plss_for_point",
+                return_value="NV210300N0230E0SN360ASENW",
+            ),
             patch("peaky_finders.serve_links.splatter_session"),
             patch("peaky_finders.serve_links.ensure_dem_for_points"),
             patch("peaky_finders.serve_links.mutual_hop_batch", side_effect=_rf_batch),

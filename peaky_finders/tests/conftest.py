@@ -14,6 +14,12 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 
+@pytest.fixture(autouse=True)
+def _default_peaky_home_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route global RF profile catalogs to committed test fixtures."""
+    monkeypatch.setenv("PEAKY_HOME", str(PEAKY_TEST_HOME))
+
+
 @pytest.fixture
 def peaky_test_home(monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolated ``PEAKY_HOME`` with ``projects/sample/config.yaml`` (no repo Nevada preset)."""

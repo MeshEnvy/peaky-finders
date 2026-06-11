@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from rf_fixtures import MINIMAL_SIMULATION
 from peaky_finders.serve_goals import (
     append_goal_to_preset,
     delete_goal_from_preset,
@@ -27,30 +28,7 @@ def test_append_goal_to_preset(tmp_path: Path) -> None:
     write_preset_document(
         preset_path,
         {
-            "simulation": {
-                "modem_presets": {
-                    "m": {
-                        "frequency_mhz": 910.525,
-                        "bandwidth_khz": 62.5,
-                        "spreading_factor": 7,
-                        "coding_rate": 5,
-                        "implementation_margin_db": 3.0,
-                        "power_dbm": 22.0,
-                        "sensitivity_dbm": -121.0,
-                    }
-                },
-                "environment_presets": {
-                    "e": {
-                        "climate": "desert",
-                        "polarization": "vertical",
-                        "clutter_height_m": 1.0,
-                    }
-                },
-                "modem": "m",
-                "environment": "e",
-                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-            },
+            "simulation": dict(MINIMAL_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "sites": {"hub": {"name": "Hub", "loc": [39.5, -119.5]}},
         },
@@ -71,30 +49,7 @@ def test_append_goal_rejects_site_slug_collision(tmp_path: Path) -> None:
     write_preset_document(
         preset_path,
         {
-            "simulation": {
-                "modem_presets": {
-                    "m": {
-                        "frequency_mhz": 910.525,
-                        "bandwidth_khz": 62.5,
-                        "spreading_factor": 7,
-                        "coding_rate": 5,
-                        "implementation_margin_db": 3.0,
-                        "power_dbm": 22.0,
-                        "sensitivity_dbm": -121.0,
-                    }
-                },
-                "environment_presets": {
-                    "e": {
-                        "climate": "desert",
-                        "polarization": "vertical",
-                        "clutter_height_m": 1.0,
-                    }
-                },
-                "modem": "m",
-                "environment": "e",
-                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-            },
+            "simulation": dict(MINIMAL_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "sites": {"hub": {"name": "Hub", "loc": [39.5, -119.5]}},
             "goals": {"hub": {"name": "Hub goal", "loc": [39.6, -119.4]}},
@@ -109,30 +64,7 @@ def test_delete_goal_from_preset(tmp_path: Path) -> None:
     write_preset_document(
         preset_path,
         {
-            "simulation": {
-                "modem_presets": {
-                    "m": {
-                        "frequency_mhz": 910.525,
-                        "bandwidth_khz": 62.5,
-                        "spreading_factor": 7,
-                        "coding_rate": 5,
-                        "implementation_margin_db": 3.0,
-                        "power_dbm": 22.0,
-                        "sensitivity_dbm": -121.0,
-                    }
-                },
-                "environment_presets": {
-                    "e": {
-                        "climate": "desert",
-                        "polarization": "vertical",
-                        "clutter_height_m": 1.0,
-                    }
-                },
-                "modem": "m",
-                "environment": "e",
-                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-            },
+            "simulation": dict(MINIMAL_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "sites": {"hub": {"name": "Hub", "loc": [39.5, -119.5]}},
             "goals": {"bridge": {"name": "Bridge", "loc": [39.6, -119.4]}},
@@ -148,30 +80,7 @@ def test_delete_goal_missing_raises(tmp_path: Path) -> None:
     write_preset_document(
         preset_path,
         {
-            "simulation": {
-                "modem_presets": {
-                    "m": {
-                        "frequency_mhz": 910.525,
-                        "bandwidth_khz": 62.5,
-                        "spreading_factor": 7,
-                        "coding_rate": 5,
-                        "implementation_margin_db": 3.0,
-                        "power_dbm": 22.0,
-                        "sensitivity_dbm": -121.0,
-                    }
-                },
-                "environment_presets": {
-                    "e": {
-                        "climate": "desert",
-                        "polarization": "vertical",
-                        "clutter_height_m": 1.0,
-                    }
-                },
-                "modem": "m",
-                "environment": "e",
-                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-            },
+            "simulation": dict(MINIMAL_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "sites": {"hub": {"name": "Hub", "loc": [39.5, -119.5]}},
         },
@@ -185,30 +94,7 @@ def test_update_goal_promotes_preserving_fields(tmp_path: Path) -> None:
     write_preset_document(
         preset_path,
         {
-            "simulation": {
-                "modem_presets": {
-                    "m": {
-                        "frequency_mhz": 910.525,
-                        "bandwidth_khz": 62.5,
-                        "spreading_factor": 7,
-                        "coding_rate": 5,
-                        "implementation_margin_db": 3.0,
-                        "power_dbm": 22.0,
-                        "sensitivity_dbm": -121.0,
-                    }
-                },
-                "environment_presets": {
-                    "e": {
-                        "climate": "desert",
-                        "polarization": "vertical",
-                        "clutter_height_m": 1.0,
-                    }
-                },
-                "modem": "m",
-                "environment": "e",
-                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-            },
+            "simulation": dict(MINIMAL_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "sites": {"hub": {"name": "Hub", "loc": [39.5, -119.5]}},
             "goals": {

@@ -1,0 +1,14 @@
+# Test-only environment catalog (committed fixtures; not user-facing defaults).
+environment_presets:
+  fixture-desert:
+    description: Fixed desert profile for unit tests
+    climate: desert
+    polarization: vertical
+    clutter_height_m: 1.0
+    fresnel_clearance_fraction: 0.6
+    coverage_pessimism_db: 0.0
+    situation_pct: 95.0
+    time_pct: 95.0
+    ground_dielectric_v_m: 15.0
+    ground_conductivity_s_m: 0.005
+    atmosphere_bending_n: 301.0

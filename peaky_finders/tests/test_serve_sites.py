@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from rf_fixtures import MINIMAL_SIMULATION
 from peaky_finders.new_cli import scaffold_project
 from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset, unique_site_slug, update_site_in_preset
 from peaky_finders.sites_job import load_preset, write_preset_document
@@ -70,30 +71,7 @@ def test_delete_site_scrubs_manual_links(tmp_path: Path) -> None:
     write_preset_document(
         preset_path,
         {
-            "simulation": {
-                "modem_presets": {
-                    "m": {
-                        "frequency_mhz": 910.525,
-                        "bandwidth_khz": 62.5,
-                        "spreading_factor": 7,
-                        "coding_rate": 5,
-                        "implementation_margin_db": 3.0,
-                        "power_dbm": 22.0,
-                        "sensitivity_dbm": -121.0,
-                    }
-                },
-                "environment_presets": {
-                    "e": {
-                        "climate": "desert",
-                        "polarization": "vertical",
-                        "clutter_height_m": 1.0,
-                    }
-                },
-                "modem": "m",
-                "environment": "e",
-                "transmitter": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-                "receiver": {"height_m": 2.0, "gain_dbi": 2.0, "loss_db": 0.0},
-            },
+            "simulation": dict(MINIMAL_SIMULATION),
             "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
             "sites": {
                 "alpha": {"name": "Alpha", "loc": [39.5, -119.5]},

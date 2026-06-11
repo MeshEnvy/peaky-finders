@@ -357,22 +357,8 @@ def test_project_page_loads_sites_when_bundle_invalid(tmp_path: Path) -> None:
 simulation:
   provider: splatter
   radius_km: 50.0
-  modem_presets:
-    m:
-      frequency_mhz: 910.525
-      bandwidth_khz: 62.5
-      spreading_factor: 7
-      coding_rate: 5
-      implementation_margin_db: 3.0
-      power_dbm: 22.0
-      sensitivity_dbm: -121.0
-  environment_presets:
-    e:
-      climate: desert
-      polarization: vertical
-      clutter_height_m: 1.0
-  modem: m
-  environment: e
+  modem: fixture-modem
+  environment: fixture-desert
   transmitter: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
   receiver: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
 display:
@@ -650,22 +636,8 @@ def test_post_project_site_with_top_level_goals(tmp_path: Path) -> None:
     (project_dir / "config.yaml").write_text(
         """
 simulation:
-  modem_presets:
-    m:
-      frequency_mhz: 910.525
-      bandwidth_khz: 62.5
-      spreading_factor: 7
-      coding_rate: 5
-      implementation_margin_db: 3.0
-      power_dbm: 22.0
-      sensitivity_dbm: -121.0
-  environment_presets:
-    e:
-      climate: desert
-      polarization: vertical
-      clutter_height_m: 1.0
-  modem: m
-  environment: e
+  modem: fixture-modem
+  environment: fixture-desert
   transmitter: {height_m: 2.0, gain_dbi: 2.0, loss_db: 0.0}
   receiver: {height_m: 2.0, gain_dbi: 2.0, loss_db: 0.0}
 display:
@@ -773,22 +745,8 @@ def test_delete_project_goal(tmp_path: Path) -> None:
     (project_dir / "config.yaml").write_text(
         """
 simulation:
-  modem_presets:
-    m:
-      frequency_mhz: 910.525
-      bandwidth_khz: 62.5
-      spreading_factor: 7
-      coding_rate: 5
-      implementation_margin_db: 3.0
-      power_dbm: 22.0
-      sensitivity_dbm: -121.0
-  environment_presets:
-    e:
-      climate: desert
-      polarization: vertical
-      clutter_height_m: 1.0
-  modem: m
-  environment: e
+  modem: fixture-modem
+  environment: fixture-desert
   transmitter: {height_m: 2.0, gain_dbi: 2.0, loss_db: 0.0}
   receiver: {height_m: 2.0, gain_dbi: 2.0, loss_db: 0.0}
 display:
