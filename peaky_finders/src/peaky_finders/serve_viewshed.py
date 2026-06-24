@@ -14,10 +14,10 @@ from peaky_finders.build_fresh_checks import viewshed_request_digest_matches
 from peaky_finders.coverage_png import bbox_rotation_normalized, fraction_to_lat_lon
 from peaky_finders.kml_bundle import load_bounds_from_manifest, parse_lat_lon_box
 from peaky_finders.preset_mapping import preset_to_request
+from peaky_finders.serve_preset_cache import load_serve_project_context
 from peaky_finders.sites_job import (
     Preset,
     SiteEntry,
-    load_preset_for_coverage,
     resolved_bundle_dir,
     resolved_viewshed_dir,
 )
@@ -29,7 +29,7 @@ from peaky_finders.viewshed_workspace import resolved_viewshed_workdir, viewshed
 _workdir_locks: dict[str, threading.Lock] = {}
 _workdir_locks_guard = threading.Lock()
 
-DEFAULT_SERVE_COVERAGE_MAX_CONCURRENT = 1
+DEFAULT_SERVE_COVERAGE_MAX_CONCURRENT = 4
 
 _coverage_sem: threading.BoundedSemaphore | None = None
 _coverage_sem_guard = threading.Lock()
@@ -179,7 +179,7 @@ def _workdir_lock(workdir: Path) -> threading.Lock:
 
 def _load_viewshed_preset(project_dir: Path) -> Preset:
     try:
-        return load_preset_for_coverage(project_dir / "config.yaml")
+        return load_serve_project_context(project_dir).preset
     except (ValueError, ValidationError) as e:
         raise ServeViewshedError(f"invalid preset: {e}") from e
 

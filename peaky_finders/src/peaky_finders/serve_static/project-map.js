@@ -257,11 +257,16 @@
   }
 
   function setViewshedSimulation(radiusKm, rasterDimension) {
-    viewshedRadiusKm = clampRadiusKm(radiusKm);
-    viewshedRasterDimension = clampRasterDimension(rasterDimension);
+    const nextRadius = clampRadiusKm(radiusKm);
+    const nextRaster = clampRasterDimension(rasterDimension);
+    const changed =
+      nextRadius !== viewshedRadiusKm || nextRaster !== viewshedRasterDimension;
+    viewshedRadiusKm = nextRadius;
+    viewshedRasterDimension = nextRaster;
     if (window.PEAKY_HOME_SETTINGS && typeof window.PEAKY_HOME_SETTINGS.updateGearSummary === "function") {
       window.PEAKY_HOME_SETTINGS.updateGearSummary();
     }
+    return changed;
   }
 
   syncToolbarFromSaved(savedMapState);
@@ -1684,7 +1689,7 @@
         continue;
       }
       const site = siteBySlug.get(slug);
-      if (site) void loadViewshedForSite(site, epoch);
+      if (site) enqueueViewshedLoad(site, epoch);
     }
   }
 
@@ -1707,7 +1712,11 @@
   }
 
   function handleViewshedReady(vs, epoch) {
-    if (!vs || !vs.slug || !vs.url || !vs.coordinates) return;
+    if (vs?.slug && epoch != null && viewshedPendingEpoch.get(vs.slug) !== epoch) return;
+    if (!vs || !vs.slug || !vs.url || !vs.coordinates) {
+      if (vs?.slug) clearViewshedLoadingState(vs.slug);
+      return;
+    }
     if (viewshedPendingEpoch.get(vs.slug) !== epoch) return;
     viewshedPendingEpoch.delete(vs.slug);
     if (vs.slug === DRAFT_VIEWSHED_SLUG) {
@@ -1803,9 +1812,75 @@
   }
 
   let viewshedLoadEpoch = 0;
+  const VIEWSHED_WARM_MAX_CONCURRENT = 6;
+  const VIEWSHED_WARM_POLL_MS = 1000;
+  const VIEWSHED_WARM_POLL_MAX = 180;
+  const viewshedLoadQueue = [];
+  let viewshedLoadActive = 0;
 
   function bumpViewshedLoadEpoch() {
     viewshedLoadEpoch += 1;
+  }
+
+  function viewshedMetaUrl(siteSlug, { lat, lon } = {}) {
+    const params = viewshedSimQueryParams();
+    if (lat != null && lon != null) {
+      params.set("lat", String(lat));
+      params.set("lon", String(lon));
+      return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
+    }
+    return `/api/p/${projectSlug}/viewsheds/${siteSlug}?${params}`;
+  }
+
+  function clearViewshedLoadingState(slug) {
+    viewshedPendingEpoch.delete(slug);
+    viewshedLoading.delete(slug);
+    if (slug === DRAFT_VIEWSHED_SLUG) {
+      draftViewshedLoading = false;
+      syncCreateViewshedCheckbox();
+      syncEditViewshedCheckbox();
+    }
+    updatePinOverlays();
+    if (slug === selectedSlug) syncViewshedCheckbox();
+  }
+
+  async function pollViewshedUntilReady(slug, epoch, coords) {
+    for (let attempt = 0; attempt < VIEWSHED_WARM_POLL_MAX; attempt += 1) {
+      if (viewshedPendingEpoch.get(slug) !== epoch) return;
+      await new Promise((resolve) => setTimeout(resolve, VIEWSHED_WARM_POLL_MS));
+      if (viewshedPendingEpoch.get(slug) !== epoch) return;
+      try {
+        const resp = await fetch(viewshedMetaUrl(slug, coords || {}));
+        if (!resp.ok) continue;
+        const overlay = await resp.json();
+        if (overlay.url && overlay.coordinates) {
+          handleViewshedReady({ ...overlay, slug, status: "ready" }, epoch);
+          return;
+        }
+      } catch (_) {
+        /* retry */
+      }
+    }
+    if (viewshedPendingEpoch.get(slug) === epoch) {
+      clearViewshedLoadingState(slug);
+    }
+  }
+
+  function drainViewshedLoadQueue() {
+    while (viewshedLoadActive < VIEWSHED_WARM_MAX_CONCURRENT && viewshedLoadQueue.length > 0) {
+      const job = viewshedLoadQueue.shift();
+      if (!job || viewshedPendingEpoch.get(job.site.slug) !== job.epoch) continue;
+      viewshedLoadActive += 1;
+      void loadViewshedForSite(job.site, job.epoch).finally(() => {
+        viewshedLoadActive -= 1;
+        drainViewshedLoadQueue();
+      });
+    }
+  }
+
+  function enqueueViewshedLoad(site, epoch) {
+    viewshedLoadQueue.push({ site, epoch });
+    drainViewshedLoadQueue();
   }
 
   function scheduleViewshedLoad(site) {
@@ -1815,11 +1890,12 @@
     viewshedPendingEpoch.set(site.slug, epoch);
     updatePinOverlays();
     if (site.slug === selectedSlug) syncViewshedCheckbox();
-    void loadViewshedForSite(site, epoch);
+    enqueueViewshedLoad(site, epoch);
   }
 
   function reloadViewshedsForSimChange() {
     bumpViewshedLoadEpoch();
+    viewshedLoadQueue.length = 0;
     for (const site of sites) {
       if (!siteHidden.has(site.slug) && isViewshedVisible(site.slug)) {
         scheduleViewshedLoad(site);
@@ -2004,6 +2080,8 @@
       if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return;
       if (vs && vs.status === "ready") {
         handleViewshedReady({ ...vs, slug: DRAFT_VIEWSHED_SLUG }, epoch);
+      } else if (vs && vs.status === "queued") {
+        void pollViewshedUntilReady(DRAFT_VIEWSHED_SLUG, epoch, { lat, lon });
       }
     } catch (_) {
       if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) === epoch) {
@@ -2135,21 +2213,22 @@
       const resp = await fetch(viewshedWarmUrl(site.slug), { method: "POST" });
       if (epoch != null && viewshedPendingEpoch.get(site.slug) !== epoch) return;
       if (!resp.ok) {
-        viewshedPendingEpoch.delete(site.slug);
-        viewshedLoading.delete(site.slug);
-        updatePinOverlays();
-        if (site.slug === selectedSlug) syncViewshedCheckbox();
+        clearViewshedLoadingState(site.slug);
         return;
       }
       const vs = await resp.json();
+      if (epoch != null && viewshedPendingEpoch.get(site.slug) !== epoch) return;
       if (vs && vs.status === "ready") {
         handleViewshedReady(vs, epoch);
+      } else if (vs && vs.status === "queued") {
+        void pollViewshedUntilReady(site.slug, epoch);
+      } else {
+        clearViewshedLoadingState(site.slug);
       }
     } catch (_) {
-      viewshedPendingEpoch.delete(site.slug);
-      viewshedLoading.delete(site.slug);
-      updatePinOverlays();
-      if (site.slug === selectedSlug) syncViewshedCheckbox();
+      if (viewshedPendingEpoch.get(site.slug) === epoch) {
+        clearViewshedLoadingState(site.slug);
+      }
     }
   }
 

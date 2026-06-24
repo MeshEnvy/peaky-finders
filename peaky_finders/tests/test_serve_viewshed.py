@@ -511,7 +511,7 @@ def test_viewshed_prefetch_png_endpoint(tmp_path: Path, monkeypatch: pytest.Monk
 
 def test_resolve_serve_coverage_max_concurrent_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PEAKY_SERVE_COVERAGE_CONCURRENT", raising=False)
-    assert resolve_serve_coverage_max_concurrent() == 1
+    assert resolve_serve_coverage_max_concurrent() == 4
 
 
 def test_resolve_serve_coverage_max_concurrent_env(monkeypatch: pytest.MonkeyPatch) -> None:

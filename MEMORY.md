@@ -84,12 +84,12 @@ Progressive, on-demand shell over the **same** preset + splatter + build artifac
 | Aspect | CLI / build | Web |
 |--------|-------------|-----|
 | Scheduling | Batch (`peaky build`, DAG waves, `-j`) | Per HTTP request (user toggles map layer, opens project) |
-| Viewsheds | All sites via build graph / `run_viewshed_batch` | `POST …/viewsheds/<site>/warm` queues background work; per-site generation supersedes stale sim params; lifecycle on `GET …/events` SSE; `GET` meta/PNG read cache only; coverage serialized (`PEAKY_SERVE_COVERAGE_CONCURRENT`, default **1**) |
+| Viewsheds | All sites via build graph / `run_viewshed_batch` | `POST …/viewsheds/<site>/warm` queues background work; per-site generation supersedes stale sim params; lifecycle on `GET …/events` SSE; `GET` meta/PNG read cache only; coverage cap `PEAKY_SERVE_COVERAGE_CONCURRENT` (default **4**); preset YAML cached in-process by mtime |
 | Artifacts | `<preset>/build/…` | Same paths; serve reads cache if build already ran |
 | HTTP layer | — | Waitress WSGI: `serve_app.py` routes + `serve_cli.py` runner; logic in `serve_*.py` |
 | Site links | Build mesh `links` KML + footprint mutual coverage | On-demand splatter `link_mutual_*` via `serve_links.py` |
 
-Map UI prefs (camera, basemap, link toggles, opacity, hidden sites/goals, per-site viewshed visibility) persist in browser `localStorage` per slug. **Settings** gear modal (landing + project toolbar): global modem/environment CRUD; simulation tab edits global defaults on landing or **project** effective values on map (`GET/PATCH /api/p/<slug>/simulation` with `overrides[]` + `reset`); override fields styled warning with per-field **Reset**. Saves re-warm viewsheds via `window.PEAKY_MAP.reloadViewshedsForSimChange()`. SSE `hello` (incl. auto-reconnect) re-`POST` warms pending sites (idempotent reconcile — no server event replay). Agent rule: `.cursor/rules/serve-web-ui.mdc`; skill: `peaky-serve`.
+Map UI prefs (camera, basemap, link toggles, opacity, hidden sites/goals, per-site viewshed visibility) persist in browser `localStorage` per slug. **Settings** gear modal (landing + project toolbar): global modem/environment CRUD; simulation tab edits global defaults on landing or **project** effective values on map (`GET/PATCH /api/p/<slug>/simulation` with `overrides[]` + `reset`); override fields styled warning with per-field **Reset**. Saves re-warm viewsheds only when radius/raster actually change (`reloadViewshedsForSimChange`). Map warms viewsheds with bounded concurrency (6); queued jobs poll meta as SSE fallback. SSE `hello` (incl. auto-reconnect) re-`POST` warms pending sites (idempotent reconcile — no server event replay). Agent rule: `.cursor/rules/serve-web-ui.mdc`; skill: `peaky-serve`.
 
 ## Build DAG
 

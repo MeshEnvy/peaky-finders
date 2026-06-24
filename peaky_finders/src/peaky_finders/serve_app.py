@@ -43,6 +43,7 @@ from peaky_finders.serve_simulation import (
 )
 from peaky_finders.serve_sites import append_planned_site_to_preset, delete_site_from_preset, update_site_in_preset
 from peaky_finders.serve_events import get_serve_event_hub
+from peaky_finders.serve_preset_cache import load_serve_project_context
 from peaky_finders.serve_viewshed import (
     DRAFT_VIEWSHED_SLUG,
     ServeViewshedError,
@@ -57,8 +58,6 @@ from peaky_finders.sites_job import (
     SiteEntry,
     load_preset,
     load_preset_goals,
-    load_preset_sites,
-    preset_repeater_sites,
 )
 
 SERVE_STATIC_DIR = Path(__file__).resolve().parent / "serve_static"
@@ -155,7 +154,7 @@ def _read_serve_static(url_path: str) -> tuple[bytes, str] | None:
 
 
 def _load_project_sites(project_dir: Path) -> dict[str, SiteEntry]:
-    return preset_repeater_sites(load_preset_sites(project_dir / "config.yaml"))
+    return load_serve_project_context(project_dir).repeater_sites
 
 
 def _parse_lat_lon_query(query: str) -> tuple[float, float]:

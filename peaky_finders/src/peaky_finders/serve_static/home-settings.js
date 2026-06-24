@@ -29,13 +29,17 @@
 
   function notifyRfChange() {
     if (onProjectMap() && window.PEAKY_MAP) {
+      let simChanged = false;
       if (typeof window.PEAKY_MAP.setViewshedSimulation === "function" && state.simulation) {
-        window.PEAKY_MAP.setViewshedSimulation(
+        simChanged = window.PEAKY_MAP.setViewshedSimulation(
           state.simulation.radius_km,
           state.simulation.raster_dimension
         );
       }
-      if (typeof window.PEAKY_MAP.reloadViewshedsForSimChange === "function") {
+      if (
+        simChanged &&
+        typeof window.PEAKY_MAP.reloadViewshedsForSimChange === "function"
+      ) {
         window.PEAKY_MAP.reloadViewshedsForSimChange();
       }
     }
