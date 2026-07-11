@@ -22,6 +22,7 @@ from peaky_finders.sites_job import (
     resolved_viewshed_dir,
 )
 from peaky_finders.splat_pipeline import ensure_splat_raster_png, run_viewshed_coverage
+from peaky_finders.splat_ppm_to_png import splat_png_is_valid
 from peaky_finders.splat_polygonize import SPLAT_OUTPUT_PPM_BASENAME
 from peaky_finders.serve_viewshed_sim import ViewshedSimOverrides, viewshed_sim_query_string
 from peaky_finders.viewshed_workspace import resolved_viewshed_workdir, viewshed_workspace_digest
@@ -277,6 +278,41 @@ def _viewshed_request(
     )
 
 
+def _cached_splat_png(workdir: Path, *, expected_workspace_digest: str) -> Path | None:
+    """Return cached ``splat.png`` when digest matches and the PNG is complete."""
+    png = workdir / "splat.png"
+    if not png.is_file():
+        return None
+    if not viewshed_request_digest_matches(
+        workdir, expected_workspace_digest=expected_workspace_digest
+    ):
+        return None
+    if not splat_png_is_valid(png):
+        return None
+    return png.resolve()
+
+
+def _regenerate_splat_png_from_ppm(
+    workdir: Path,
+    *,
+    expected_workspace_digest: str,
+    site_label: str,
+    verbose: bool = False,
+) -> Path | None:
+    """Rebuild ``splat.png`` from ``output.ppm`` when coverage is already cached."""
+    ppm = workdir / SPLAT_OUTPUT_PPM_BASENAME
+    if not ppm.is_file():
+        return None
+    if not viewshed_request_digest_matches(
+        workdir, expected_workspace_digest=expected_workspace_digest
+    ):
+        return None
+    if verbose:
+        print(f"serve viewshed: raster {site_label} ({workdir.name})", flush=True)
+    ensure_splat_raster_png(site_name=site_label, data_dir=workdir)
+    return _cached_splat_png(workdir, expected_workspace_digest=expected_workspace_digest)
+
+
 def ensure_site_viewshed_png(
     project_dir: Path,
     site_slug: str,
@@ -301,39 +337,33 @@ def ensure_site_viewshed_png(
         )
 
         png = workdir / "splat.png"
-        if png.is_file() and viewshed_request_digest_matches(
-            workdir, expected_workspace_digest=digest
-        ):
-            return png.resolve()
+        cached = _cached_splat_png(workdir, expected_workspace_digest=digest)
+        if cached is not None:
+            return cached
 
-        ppm = workdir / SPLAT_OUTPUT_PPM_BASENAME
-        if ppm.is_file() and viewshed_request_digest_matches(
-            workdir, expected_workspace_digest=digest
-        ):
-            if verbose:
-                print(
-                    f"serve viewshed: raster {site_slug} ({workdir.name})",
-                    flush=True,
-                )
-            ensure_splat_raster_png(site_name=site_label, data_dir=workdir)
-            return png.resolve()
+        regenerated = _regenerate_splat_png_from_ppm(
+            workdir,
+            expected_workspace_digest=digest,
+            site_label=site_label,
+            verbose=verbose,
+        )
+        if regenerated is not None:
+            return regenerated
 
     with _coverage_slot(verbose=verbose, site_slug=site_slug):
         with _workdir_lock(workdir):
-            if png.is_file() and viewshed_request_digest_matches(
-                workdir, expected_workspace_digest=digest
-            ):
-                return png.resolve()
-            if ppm.is_file() and viewshed_request_digest_matches(
-                workdir, expected_workspace_digest=digest
-            ):
-                if verbose:
-                    print(
-                        f"serve viewshed: raster {site_slug} ({workdir.name})",
-                        flush=True,
-                    )
-                ensure_splat_raster_png(site_name=site_label, data_dir=workdir)
-                return png.resolve()
+            cached = _cached_splat_png(workdir, expected_workspace_digest=digest)
+            if cached is not None:
+                return cached
+
+            regenerated = _regenerate_splat_png_from_ppm(
+                workdir,
+                expected_workspace_digest=digest,
+                site_label=site_label,
+                verbose=verbose,
+            )
+            if regenerated is not None:
+                return regenerated
 
             if verbose:
                 print(
@@ -376,10 +406,8 @@ def site_viewshed_overlay_if_ready(
     digest = viewshed_workspace_digest(
         request=_viewshed_request(preset, site, sim_overrides=sim_overrides)
     )
-    png = workdir / "splat.png"
-    if not png.is_file() or not viewshed_request_digest_matches(
-        workdir, expected_workspace_digest=digest
-    ):
+    png = _cached_splat_png(workdir, expected_workspace_digest=digest)
+    if png is None:
         return None
 
     bounds = load_viewshed_bounds(workdir)
@@ -411,12 +439,7 @@ def read_site_viewshed_png_if_ready(
     digest = viewshed_workspace_digest(
         request=_viewshed_request(preset, site, sim_overrides=sim_overrides)
     )
-    png = workdir / "splat.png"
-    if png.is_file() and viewshed_request_digest_matches(
-        workdir, expected_workspace_digest=digest
-    ):
-        return png.resolve()
-    return None
+    return _cached_splat_png(workdir, expected_workspace_digest=digest)
 
 
 def ensure_site_viewshed_overlay(

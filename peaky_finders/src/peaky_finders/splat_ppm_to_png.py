@@ -40,6 +40,20 @@ def overlay_max_edge_from_env() -> int | None:
     return None if n < 1 else max(n, 32)
 
 
+def splat_png_is_valid(png_path: Path) -> bool:
+    """True when ``png_path`` is a complete readable PNG (not a partial write)."""
+    if not png_path.is_file():
+        return False
+    try:
+        with Image.open(png_path) as im:
+            im.verify()
+        with Image.open(png_path) as im:
+            im.load()
+        return im.size[0] >= 1 and im.size[1] >= 1
+    except Exception:
+        return False
+
+
 def write_splat_png_from_ppm(*, ppm_path: Path, png_path: Path) -> None:
     """No-RF (white SPLAT pixels) → transparent RGBA; optional downscale for Google Earth overlay limits."""
     with Image.open(ppm_path) as img:
@@ -57,4 +71,6 @@ def write_splat_png_from_ppm(*, ppm_path: Path, png_path: Path) -> None:
         if (nw, nh) != (w, h):
             overlay = overlay.resize((nw, nh), Image.Resampling.LANCZOS)
 
-    overlay.save(png_path, format="PNG", optimize=True)
+    tmp_path = png_path.with_name(f"{png_path.name}.tmp")
+    overlay.save(tmp_path, format="PNG", optimize=True)
+    tmp_path.replace(png_path)

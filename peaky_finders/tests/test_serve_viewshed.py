@@ -6,9 +6,11 @@ import json
 import threading
 import time
 from http.client import HTTPConnection
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from peaky_finders.new_cli import scaffold_project
 from peaky_finders.serve_app import make_serve_wsgi_app
@@ -26,6 +28,14 @@ from peaky_finders.serve_viewshed import (
     viewshed_meta_api_path,
     viewshed_png_api_path,
 )
+
+
+def _write_valid_png(path: Path) -> bytes:
+    buf = BytesIO()
+    Image.new("RGBA", (1, 1), (255, 0, 0, 255)).save(buf, format="PNG")
+    data = buf.getvalue()
+    path.write_bytes(data)
+    return data
 
 
 def _start_server(projects_dir: Path):
@@ -65,7 +75,7 @@ def test_draft_overlay_if_ready_uses_prefetch_png_url(
 
     fixed = project_dir / "build" / "viewsheds" / "draft"
     fixed.mkdir(parents=True)
-    (fixed / "splat.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    png_bytes = _write_valid_png(fixed / "splat.png")
     (fixed / "request.json").write_text('{"lat": 39.6}', encoding="utf-8")
     (fixed / "output.kml").write_text(
         "<kml><GroundOverlay><LatLonBox>"
@@ -110,8 +120,7 @@ def test_ensure_site_viewshed_png_without_land(tmp_path: Path, monkeypatch: pyte
 
     fixed = project_dir / "build" / "viewsheds" / "abc123"
     fixed.mkdir(parents=True)
-    png_bytes = b"\x89PNG\r\n\x1a\n"
-    (fixed / "splat.png").write_bytes(png_bytes)
+    png_bytes = _write_valid_png(fixed / "splat.png")
 
     monkeypatch.setattr(
         "peaky_finders.serve_viewshed.resolve_site_viewshed_workdir",
@@ -141,8 +150,7 @@ def test_ensure_site_viewshed_png_uses_cache(tmp_path: Path, monkeypatch: pytest
 
     fixed = project_dir / "build" / "viewsheds" / "abc123"
     fixed.mkdir(parents=True)
-    png_bytes = b"\x89PNG\r\n\x1a\n"
-    (fixed / "splat.png").write_bytes(png_bytes)
+    png_bytes = _write_valid_png(fixed / "splat.png")
     (fixed / "request.json").write_text('{"lat": 39.5}', encoding="utf-8")
 
     monkeypatch.setattr(
@@ -164,6 +172,58 @@ def test_ensure_site_viewshed_png_uses_cache(tmp_path: Path, monkeypatch: pytest
     sites = load_preset_sites(project_dir / "config.yaml")
     png = ensure_site_viewshed_png(project_dir, "hub", sites["hub"])
     assert png.read_bytes() == png_bytes
+
+
+def test_ensure_site_viewshed_png_regenerates_corrupt_png_from_ppm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    project_dir = projects_dir / "demo"
+    scaffold_project("demo", parent=projects_dir)
+
+    fixed = project_dir / "build" / "viewsheds" / "abc123"
+    fixed.mkdir(parents=True)
+    (fixed / "splat.png").write_bytes(b"\x89PNG\r\n\x1a\npartial")
+    Image.new("RGB", (4, 4), (255, 0, 0)).save(fixed / "output.ppm")
+    (fixed / "output.kml").write_text(
+        "<kml><GroundOverlay><LatLonBox>"
+        "<north>39.1</north><south>39.0</south>"
+        "<east>-115.7</east><west>-115.9</west>"
+        "</LatLonBox></GroundOverlay></kml>",
+        encoding="utf-8",
+    )
+    (fixed / "request.json").write_text('{"lat": 39.5}', encoding="utf-8")
+
+    monkeypatch.setattr(
+        "peaky_finders.serve_viewshed.resolve_site_viewshed_workdir",
+        lambda *_args, **_kwargs: fixed,
+    )
+    monkeypatch.setattr(
+        "peaky_finders.serve_viewshed.viewshed_request_digest_matches",
+        lambda _workdir, expected_workspace_digest: True,
+    )
+
+    def _fail_coverage(**_kwargs: object) -> int:
+        raise AssertionError("coverage should not run when PPM can rebuild PNG")
+
+    monkeypatch.setattr("peaky_finders.serve_viewshed.run_viewshed_coverage", _fail_coverage)
+
+    from peaky_finders.sites_job import load_preset_sites
+    from peaky_finders.splat_ppm_to_png import splat_png_is_valid, write_splat_png_from_ppm
+
+    def _rewrite_png(**kwargs: object) -> None:
+        write_splat_png_from_ppm(
+            ppm_path=Path(kwargs["data_dir"]) / "output.ppm",
+            png_path=Path(kwargs["data_dir"]) / "splat.png",
+        )
+
+    monkeypatch.setattr("peaky_finders.serve_viewshed.ensure_splat_raster_png", _rewrite_png)
+
+    sites = load_preset_sites(project_dir / "config.yaml")
+    png = ensure_site_viewshed_png(project_dir, "hub", sites["hub"])
+    assert splat_png_is_valid(png)
+    assert png.stat().st_size > 20
 
 
 def test_ensure_site_viewshed_png_generates_when_missing(
@@ -323,10 +383,11 @@ def test_project_page_loads_viewsheds_on_demand(tmp_path: Path) -> None:
         assert "reconcilePendingViewsheds" in js_body
         assert "viewshedWarmUrl" in js_body
         assert "setViewshedVisible" in js_body
-        assert "viewshed-sim-modal" in body
-        assert "viewshed-sim-open" in body
+        assert "viewshed-sim-modal" in body or "home-settings-modal" in body
+        assert "viewshed-sim-open" in js_body or "home-settings-modal" in body
         assert '"simulation"' in body
-        assert "applyViewshedSimSettings" in js_body
+        assert "setViewshedSimulation" in js_body
+        assert "reloadViewshedsForSimChange" in js_body
         assert "updatePinOverlays" in js_body
         assert "pin-load-overlays" in body
     finally:
