@@ -14,6 +14,8 @@ alwaysApply: true
 | `suggested` | Algorithm output from `peaky build --suggest` | Yes | **Yes** — re-suggest may replace |
 | `goal` | Coverage attractor (desired coverage point) | **No** | **No** |
 
+Optional `tags: [str, …]` on any site — freeform lowercase labels for serve UI filtering (not used by build/RF).
+
 - **Repeaters** (`installed` / `planned` / `suggested`) participate in build mesh/viewsheds; they are coverage **sources**.
 - **`type: goal`** entries are planner attractors — no viewshed until a repeater captures them.
 - Suggest **never relocates** `installed`, `planned`, or `goal` sites; only `type: suggested` entries are removed/replaced (`--replace-suggested`).

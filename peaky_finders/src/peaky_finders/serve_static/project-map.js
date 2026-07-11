@@ -458,15 +458,23 @@
   const entityPanel = document.getElementById("entity-panel");
   const entityPanelToggle = document.getElementById("entity-panel-toggle");
   const entityPanelSitesList = document.getElementById("entity-panel-sites-list");
+  const entityPanelTagFilters = document.getElementById("entity-panel-tag-filters");
   const entityPanelGoalsList = document.getElementById("entity-panel-goals-list");
   const entityPanelSitesPane = document.getElementById("entity-panel-sites-pane");
   const entityPanelGoalsPane = document.getElementById("entity-panel-goals-pane");
   const entityPanelAddSite = document.getElementById("entity-panel-add-site");
   const entityPanelAddGoal = document.getElementById("entity-panel-add-goal");
+  const sitePanelTags = document.getElementById("site-panel-tags");
+  const sitePanelTagsSection = document.getElementById("site-panel-tags-section");
   const siteHidden = new Set(savedMapState?.hiddenSites || []);
   const goalHidden = new Set(savedMapState?.hiddenGoals || []);
+  let activeTagFilter =
+    typeof savedMapState?.tagFilter === "string" && savedMapState.tagFilter
+      ? savedMapState.tagFilter
+      : null;
   let entityPanelOpen = false;
   let entityPanelTab = "sites";
+  let tagAddOpen = false;
 
   function ensureTerrainSource() {
     if (map.getSource(TERRAIN_SOURCE)) return;
@@ -691,8 +699,12 @@
   }
 
   function siteVisibilityFilter() {
-    if (!siteHidden.size) return null;
-    return ["!", ["in", ["get", "slug"], ["literal", [...siteHidden]]]];
+    const hidden = [];
+    for (const site of sites) {
+      if (isSiteMapHidden(site.slug)) hidden.push(site.slug);
+    }
+    if (!hidden.length) return null;
+    return ["!", ["in", ["get", "slug"], ["literal", hidden]]];
   }
 
   function goalVisibilityFilter() {
@@ -746,7 +758,7 @@
     const features = geojson.features.filter((feature) => {
       const props = feature.properties || {};
       if (isGoalSlug(props.a) || isGoalSlug(props.b)) return false;
-      if (siteHidden.has(props.a) || siteHidden.has(props.b)) return false;
+      if (isSiteMapHidden(props.a) || isSiteMapHidden(props.b)) return false;
       if (editMode && editKind === "site" && editSlug) {
         if (props.a === editSlug || props.b === editSlug) return false;
       }
@@ -760,7 +772,7 @@
     if (!geojson || !geojson.features) return geojson;
     const features = geojson.features.filter((feature) => {
       const props = feature.properties || {};
-      if (goalHidden.has(props.goal) || siteHidden.has(props.site)) return false;
+      if (goalHidden.has(props.goal) || isSiteMapHidden(props.site)) return false;
       if (editMode && editKind === "goal" && editSlug && props.goal === editSlug) return false;
       if (editMode && editKind === "site" && editSlug && props.site === editSlug) return false;
       if (linkFeatureTouchesSnapshotCoords(feature)) return false;
@@ -781,7 +793,7 @@
   function applyViewshedVisibilityForSite(slug) {
     const layerId = viewshedLayerId(slug);
     if (!map.getLayer(layerId)) return;
-    const visible = !siteHidden.has(slug) && isViewshedVisible(slug);
+    const visible = !isSiteMapHidden(slug) && isViewshedVisible(slug);
     map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
   }
 
@@ -795,12 +807,45 @@
     renderEntityPanel();
   }
 
+  function siteTags(site) {
+    return Array.isArray(site?.tags) ? site.tags.filter(Boolean) : [];
+  }
+
+  function allProjectTags() {
+    const found = new Set();
+    for (const site of sites) {
+      for (const tag of siteTags(site)) found.add(tag);
+    }
+    return [...found].sort((a, b) => a.localeCompare(b));
+  }
+
+  function sitePassesTagFilter(site) {
+    if (!activeTagFilter) return true;
+    return siteTags(site).includes(activeTagFilter);
+  }
+
+  function isSiteMapHidden(slug) {
+    if (siteHidden.has(slug)) return true;
+    const site = siteBySlug.get(slug);
+    if (!site) return true;
+    return !sitePassesTagFilter(site);
+  }
+
   function isSiteHidden(slug) {
     return siteHidden.has(slug);
   }
 
   function isGoalHidden(slug) {
     return goalHidden.has(slug);
+  }
+
+  function setActiveTagFilter(tag) {
+    activeTagFilter = tag || null;
+    if (activeTagFilter && !allProjectTags().includes(activeTagFilter)) {
+      activeTagFilter = null;
+    }
+    applyEntityVisibility();
+    scheduleSaveMapState();
   }
 
   function setSiteHidden(slug, hidden) {
@@ -885,14 +930,43 @@
     }
   }
 
+  function renderTagFilters() {
+    if (!entityPanelTagFilters) return;
+    entityPanelTagFilters.innerHTML = "";
+    const tags = allProjectTags();
+    if (activeTagFilter && !tags.includes(activeTagFilter)) {
+      activeTagFilter = null;
+    }
+    const makeBtn = (label, value) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "entity-panel__tag-filter";
+      const active = value == null ? !activeTagFilter : activeTagFilter === value;
+      if (active) btn.classList.add("entity-panel__tag-filter--active");
+      btn.textContent = label;
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+      btn.addEventListener("click", () => setActiveTagFilter(value));
+      return btn;
+    };
+    entityPanelTagFilters.appendChild(makeBtn("all", null));
+    for (const tag of tags) {
+      entityPanelTagFilters.appendChild(makeBtn(tag, tag));
+    }
+  }
+
   function renderEntityPanel() {
+    renderTagFilters();
     if (entityPanelSitesList) {
       entityPanelSitesList.innerHTML = "";
-      const sortedSites = [...sites].sort((a, b) => a.name.localeCompare(b.name));
+      const sortedSites = [...sites]
+        .filter((site) => sitePassesTagFilter(site))
+        .sort((a, b) => a.name.localeCompare(b.name));
       if (!sortedSites.length) {
         const empty = document.createElement("div");
         empty.className = "entity-panel__empty";
-        empty.textContent = "No sites yet.";
+        empty.textContent = activeTagFilter
+          ? `No sites tagged “${activeTagFilter}”.`
+          : "No sites yet.";
         entityPanelSitesList.appendChild(empty);
       }
       for (const site of sortedSites) {
@@ -928,7 +1002,10 @@
     name.textContent = site.name;
     const meta = document.createElement("div");
     meta.className = "entity-panel__meta";
-    meta.textContent = site.type || "installed";
+    const tags = siteTags(site);
+    meta.textContent = tags.length
+      ? `${site.type || "installed"} · ${tags.join(", ")}`
+      : site.type || "installed";
     main.appendChild(name);
     main.appendChild(meta);
 
@@ -1392,6 +1469,7 @@
       viewshedOpacity,
       hiddenSites: [...siteHidden],
       hiddenGoals: [...goalHidden],
+      tagFilter: activeTagFilter,
       viewshedVisible: Object.fromEntries(viewshedVisible),
     };
   }
@@ -1755,7 +1833,7 @@
     if (!pinLoadOverlays || !mapReady) return;
     const active = new Set();
     for (const site of sites) {
-      if (!viewshedLoading.has(site.slug) || siteHidden.has(site.slug)) continue;
+      if (!viewshedLoading.has(site.slug) || isSiteMapHidden(site.slug)) continue;
       active.add(site.slug);
       let el = pinSpinners.get(site.slug);
       if (!el) {
@@ -1897,7 +1975,7 @@
     bumpViewshedLoadEpoch();
     viewshedLoadQueue.length = 0;
     for (const site of sites) {
-      if (!siteHidden.has(site.slug) && isViewshedVisible(site.slug)) {
+      if (!isSiteMapHidden(site.slug) && isViewshedVisible(site.slug)) {
         scheduleViewshedLoad(site);
       } else {
         removeViewshedLayer(site.slug);
@@ -2132,7 +2210,7 @@
     const layerId = viewshedLayerId(slug);
     if (map.getLayer(layerId)) {
       applyViewshedVisibilityForSite(slug);
-    } else if (visible && !siteHidden.has(slug)) {
+    } else if (visible && !isSiteMapHidden(slug)) {
       const site = siteBySlug.get(slug);
       if (site) scheduleViewshedLoad(site);
     }
@@ -2192,7 +2270,7 @@
         },
       });
     }
-    if (!isViewshedVisible(vs.slug) || siteHidden.has(vs.slug)) {
+    if (!isViewshedVisible(vs.slug) || isSiteMapHidden(vs.slug)) {
       map.setLayoutProperty(layerId, "visibility", "none");
     } else {
       map.setLayoutProperty(layerId, "visibility", "visible");
@@ -2235,7 +2313,7 @@
   function loadAllViewsheds() {
     bumpViewshedLoadEpoch();
     for (const site of sites) {
-      if (!siteHidden.has(site.slug) && isViewshedVisible(site.slug)) {
+      if (!isSiteMapHidden(site.slug) && isViewshedVisible(site.slug)) {
         scheduleViewshedLoad(site);
       }
     }
@@ -2412,8 +2490,137 @@
     return peers.sort();
   }
 
+  function normalizeTagInput(raw) {
+    return String(raw || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  async function patchSiteTags(slug, tags) {
+    const resp = await fetch(siteDeleteUrl(slug), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags }),
+    });
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(payload.error || `Tag update failed (${resp.status})`);
+    }
+    const site = payload.site;
+    if (!site) throw new Error("Tag update returned no site");
+    applySiteRowUpdate(site);
+    return site;
+  }
+
+  function renderSiteTags(site) {
+    if (!sitePanelTags) return;
+    sitePanelTags.innerHTML = "";
+    tagAddOpen = false;
+    const tags = siteTags(site);
+    for (const tag of tags) {
+      const chip = document.createElement("span");
+      chip.className = "site-tag";
+      const label = document.createElement("span");
+      label.textContent = tag;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "site-tag__remove";
+      remove.title = `Remove ${tag}`;
+      remove.setAttribute("aria-label", `Remove tag ${tag}`);
+      remove.textContent = "×";
+      remove.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        void (async () => {
+          try {
+            const next = tags.filter((t) => t !== tag);
+            const updated = await patchSiteTags(site.slug, next);
+            if (selectedSlug === site.slug) renderSiteTags(updated);
+            applyEntityVisibility();
+          } catch (_) {
+            /* network / validation */
+          }
+        })();
+      });
+      chip.appendChild(label);
+      chip.appendChild(remove);
+      sitePanelTags.appendChild(chip);
+    }
+
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "site-tag-add";
+    addBtn.title = "Add tag";
+    addBtn.setAttribute("aria-label", "Add tag");
+    addBtn.textContent = "+";
+    addBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (tagAddOpen) return;
+      tagAddOpen = true;
+      addBtn.replaceWith(buildTagAddForm(site, tags));
+    });
+    sitePanelTags.appendChild(addBtn);
+  }
+
+  function buildTagAddForm(site, currentTags) {
+    const form = document.createElement("form");
+    form.className = "site-tag-add-form";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.setAttribute("list", "site-tag-suggestions");
+    input.placeholder = "tag";
+    input.autocomplete = "off";
+    input.maxLength = 32;
+    const list = document.createElement("datalist");
+    list.id = "site-tag-suggestions";
+    for (const tag of allProjectTags()) {
+      if (currentTags.includes(tag)) continue;
+      const opt = document.createElement("option");
+      opt.value = tag;
+      list.appendChild(opt);
+    }
+    form.appendChild(input);
+    form.appendChild(list);
+    const finish = () => {
+      tagAddOpen = false;
+      if (selectedSlug === site.slug) renderSiteTags(siteBySlug.get(site.slug) || site);
+    };
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const tag = normalizeTagInput(input.value);
+      if (!tag || currentTags.includes(tag)) {
+        finish();
+        return;
+      }
+      void (async () => {
+        try {
+          const updated = await patchSiteTags(site.slug, [...currentTags, tag]);
+          if (selectedSlug === site.slug) renderSiteTags(updated);
+          applyEntityVisibility();
+        } catch (_) {
+          finish();
+        }
+      })();
+    });
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        finish();
+      }
+    });
+    input.addEventListener("blur", () => {
+      setTimeout(() => {
+        if (tagAddOpen) finish();
+      }, 150);
+    });
+    queueMicrotask(() => input.focus());
+    return form;
+  }
+
   function renderGoalPanel(goal) {
     if (!goal) return;
+    if (sitePanelTagsSection) sitePanelTagsSection.hidden = true;
     document.getElementById("site-panel-name").textContent = goal.name;
     const badge = document.getElementById("site-panel-type");
     badge.textContent = "goal";
@@ -2454,11 +2661,13 @@
   function renderPanel(site) {
     if (!site) return;
     if (sitePanelViewshedSection) sitePanelViewshedSection.hidden = false;
+    if (sitePanelTagsSection) sitePanelTagsSection.hidden = false;
     setSectionVisible("site-panel-goal-links-section", false);
     document.getElementById("site-panel-name").textContent = site.name;
     const badge = document.getElementById("site-panel-type");
     badge.textContent = site.type;
     badge.className = `site-panel__badge site-panel__badge--${site.type}`;
+    renderSiteTags(site);
     document.getElementById("site-panel-coords").textContent =
       `${formatCoord(site.lat)}, ${formatCoord(site.lon)}`;
     const elevEl = document.getElementById("site-panel-elevation");

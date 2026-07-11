@@ -417,6 +417,7 @@ def project_html(
     </div>
     <div class="entity-panel__body">
       <div id="entity-panel-sites-pane" class="entity-panel__pane" role="tabpanel">
+        <div id="entity-panel-tag-filters" class="entity-panel__tag-filters" role="toolbar" aria-label="Site tag filters"></div>
         <div id="entity-panel-sites-list" class="entity-panel__list"></div>
         <div class="entity-panel__footer">
           <wa-button id="entity-panel-add-site" appearance="outlined" variant="brand" size="s" class="pf-stretch" type="button" title="Add site">+ Site</wa-button>
@@ -453,6 +454,10 @@ def project_html(
           </wa-button>
         </div>
         <span class="site-panel__badge" id="site-panel-type"></span>
+        <div class="site-panel__section" id="site-panel-tags-section">
+          <span class="site-panel__label">Tags</span>
+          <div class="site-tags" id="site-panel-tags"></div>
+        </div>
         <div class="site-panel__section">
           <span class="site-panel__label">Coordinates</span>
           <p class="site-panel__value" id="site-panel-coords"></p>

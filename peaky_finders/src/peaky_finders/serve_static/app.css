@@ -342,6 +342,80 @@ body.wide #map {
   color: #f59e0b;
 }
 
+.site-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.site-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.1rem 0.35rem 0.1rem 0.45rem;
+  border-radius: var(--wa-border-radius-s);
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--wa-color-text-normal);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.site-tag__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.site-tag__remove:hover {
+  background: rgba(239, 68, 68, 0.55);
+}
+
+.site-tag-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  padding: 0 0.35rem;
+  border: 1px dashed rgba(148, 163, 184, 0.55);
+  border-radius: var(--wa-border-radius-s);
+  background: transparent;
+  color: var(--wa-color-text-quiet);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  line-height: 1;
+}
+
+.site-tag-add:hover {
+  border-color: rgba(74, 108, 247, 0.55);
+  color: #8ba4ff;
+}
+
+.site-tag-add-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.site-tag-add-form input {
+  width: 7rem;
+  min-height: 1.5rem;
+  padding: 0.15rem 0.4rem;
+  font-size: var(--wa-font-size-xs);
+}
+
 .site-panel__links {
   font-size: var(--wa-font-size-s);
   margin: 0;
@@ -633,6 +707,38 @@ wa-dropdown-item.is-active::part(base) {
 
 .entity-panel__pane[hidden] {
   display: none !important;
+}
+
+.entity-panel__tag-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.55rem 0.75rem 0.35rem;
+  border-bottom: 1px solid var(--wa-color-surface-border);
+}
+
+.entity-panel__tag-filter {
+  appearance: none;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  color: var(--wa-color-text-quiet);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: lowercase;
+  cursor: pointer;
+}
+
+.entity-panel__tag-filter:hover {
+  border-color: rgba(74, 108, 247, 0.55);
+  color: #8ba4ff;
+}
+
+.entity-panel__tag-filter--active {
+  background: rgba(74, 108, 247, 0.22);
+  border-color: rgba(74, 108, 247, 0.55);
+  color: #8ba4ff;
 }
 
 .entity-panel__list {

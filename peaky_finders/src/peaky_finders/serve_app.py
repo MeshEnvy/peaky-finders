@@ -199,6 +199,7 @@ def _serialize_project_goals(goals: dict[str, SiteEntry]) -> list[dict[str, obje
             "lat": entry.lat,
             "lon": entry.lon,
             "kind": "goal",
+            "tags": list(entry.tags),
         }
         if entry.elevation_m is not None:
             row["elevation_m"] = entry.elevation_m
@@ -219,6 +220,7 @@ def _serialize_project_sites(sites: dict[str, SiteEntry]) -> list[dict[str, obje
             "lat": entry.lat,
             "lon": entry.lon,
             "type": entry.type.value,
+            "tags": list(entry.tags),
         }
         if entry.elevation_m is not None:
             row["elevation_m"] = entry.elevation_m
@@ -1263,6 +1265,16 @@ class ServeDispatcher:
                     return
             site_type = raw.get("type")
             site_type_str = str(site_type).strip() if site_type is not None else None
+            tags_raw = raw.get("tags")
+            tags_list: list[str] | None = None
+            if tags_raw is not None:
+                if not isinstance(tags_raw, list):
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": "tags must be a list of strings"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                tags_list = [str(t) for t in tags_raw]
             try:
                 updated_slug = update_site_in_preset(
                     preset_path,
@@ -1271,6 +1283,7 @@ class ServeDispatcher:
                     lat=lat,
                     lon=lon,
                     site_type=site_type_str,
+                    tags=tags_list,
                 )
                 if lat is not None and lon is not None:
                     apply_plss_from_loc_cache(preset_path, updated_slug, lat, lon)

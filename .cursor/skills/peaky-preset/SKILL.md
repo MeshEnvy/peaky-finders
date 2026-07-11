@@ -52,7 +52,7 @@ Legacy `.json` presets are rejected.
 
 ## Sites vs goals
 
-All map points under **`sites:`**. **`type: goal`** = coverage attractor (no viewshed). Other types = repeaters with viewsheds.
+All map points under **`sites:`**. **`type: goal`** = coverage attractor (no viewshed). Other types = repeaters with viewsheds. Optional **`tags: [str, …]`** (lowercase labels) for serve UI filtering.
 
 ### Site types (`SiteType`)
 

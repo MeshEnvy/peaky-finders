@@ -419,6 +419,36 @@ def _coerce_map_point_loc(v: Any) -> tuple[float, float]:
     return (float(v[0]), float(v[1]))
 
 
+_SITE_TAG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$")
+
+
+def normalize_site_tags(raw: Any) -> list[str]:
+    """Normalize site tags: lowercase, unique, stable order of first appearance."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        items: list[Any] = [raw]
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        raise ValueError("tags must be a list of strings")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        tag = str(item).strip().lower()
+        if not tag:
+            continue
+        if not _SITE_TAG_RE.fullmatch(tag):
+            raise ValueError(
+                f"invalid tag {item!r}: use lowercase letters, digits, hyphens, underscores"
+            )
+        if tag in seen:
+            continue
+        seen.add(tag)
+        out.append(tag)
+    return out
+
+
 class MapPointEntry(BaseModel):
     """Shared map-point fields for preset sites (repeaters and coverage goals)."""
 
@@ -444,6 +474,12 @@ class MapPointEntry(BaseModel):
     description: str | None = None
     plss: str | None = None
     rationale: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _coerce_tags(cls, v: Any) -> list[str]:
+        return normalize_site_tags(v)
 
 
 class SiteEntry(MapPointEntry):

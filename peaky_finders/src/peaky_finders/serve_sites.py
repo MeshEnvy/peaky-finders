@@ -8,6 +8,7 @@ from typing import Any
 from peaky_finders.sites_job import (
     SiteType,
     _slugify_files_segment,
+    normalize_site_tags,
     update_preset_yaml_tree,
 )
 
@@ -105,6 +106,7 @@ def update_site_in_preset(
     lat: float | None = None,
     lon: float | None = None,
     site_type: str | None = None,
+    tags: list[str] | None = None,
 ) -> str:
     """Update an existing site in ``sites``; return slug."""
     slug = str(site_slug).strip()
@@ -119,6 +121,9 @@ def update_site_in_preset(
     type_value: str | None = None
     if site_type is not None:
         type_value = _coerce_site_type(site_type)
+    tags_value: list[str] | None = None
+    if tags is not None:
+        tags_value = normalize_site_tags(tags)
 
     def mutator(_yaml_rt: Any, root: dict[str, Any]) -> str:
         sites_raw = root.get("sites")
@@ -133,6 +138,11 @@ def update_site_in_preset(
             ent["loc"] = [lat, lon]
         if type_value is not None:
             ent["type"] = type_value
+        if tags_value is not None:
+            if tags_value:
+                ent["tags"] = list(tags_value)
+            else:
+                ent.pop("tags", None)
         return slug
 
     return str(update_preset_yaml_tree(preset_path, mutator, validate=False))

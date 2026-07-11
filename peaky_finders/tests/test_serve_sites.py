@@ -121,3 +121,30 @@ def test_update_site_in_preset(tmp_path: Path) -> None:
     assert entry.lat == 39.61
     assert entry.lon == -119.41
     assert entry.type.value == "installed"
+
+
+def test_update_site_tags(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slug = append_planned_site_to_preset(
+        preset_path,
+        name="New Peak",
+        lat=39.6,
+        lon=-119.4,
+    )
+    update_site_in_preset(preset_path, slug, tags=["eip", "HSC", "eip"])
+    preset = load_preset(preset_path)
+    assert preset.sites[slug].tags == ["eip", "hsc"]
+    update_site_in_preset(preset_path, slug, tags=[])
+    preset = load_preset(preset_path)
+    assert preset.sites[slug].tags == []
+    assert "tags" not in preset_path.read_text()
+
+
+def test_normalize_site_tags_rejects_invalid() -> None:
+    from peaky_finders.sites_job import normalize_site_tags
+
+    with pytest.raises(ValueError, match="invalid tag"):
+        normalize_site_tags(["Bad Tag!"])
