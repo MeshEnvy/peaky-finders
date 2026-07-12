@@ -4381,7 +4381,7 @@
       terrainActive = false;
       hideTerrainOverlays();
     }
-    fitSites();
+    map.resetNorthPitch();
   }
 
   function setBasemapKey(key) {
