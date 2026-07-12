@@ -6,6 +6,8 @@ import json
 import re
 import threading
 import time
+import base64
+import binascii
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -37,7 +39,18 @@ from peaky_finders.serve.simulation import (
     patch_project_simulation,
     update_viewshed_sim_to_preset,
 )
-from peaky_finders.serve.sites import append_planned_site_to_preset, delete_site_from_preset, update_site_in_preset
+from peaky_finders.serve.sites import (
+    append_planned_site_to_preset,
+    delete_site_from_preset,
+    import_sites_to_preset,
+    update_site_in_preset,
+)
+from peaky_finders.serve.kml_import import (
+    KmlPointSite,
+    parse_kml_point_placemarks,
+    parse_kmz_point_placemarks,
+    serialize_kml_point,
+)
 from peaky_finders.serve.events import get_serve_event_hub
 from peaky_finders.serve.preset_cache import load_serve_project_context
 from peaky_finders.serve.viewshed import (
@@ -74,6 +87,12 @@ _STATIC_MIME: dict[str, str] = {
 
 _PROJECT_PATH_RE = re.compile(r"^/p/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_SITES_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/?$")
+_API_PROJECT_SITES_IMPORT_PREVIEW_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/import/preview/?$"
+)
+_API_PROJECT_SITES_IMPORT_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/import/?$"
+)
 _API_PROJECT_SITE_SLUG_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/([a-zA-Z][a-zA-Z0-9_-]*)/?$"
 )
@@ -114,6 +133,55 @@ def _parse_json_body(body: bytes) -> object:
     if not body:
         return {}
     return json.loads(body.decode("utf-8"))
+
+
+def _parse_kml_import_payload(raw: dict[str, object]) -> tuple[list[KmlPointSite], int]:
+    """Parse KML or KMZ base64 from a JSON import/preview body."""
+    kmz_b64 = raw.get("kmz_b64")
+    if kmz_b64 is not None and str(kmz_b64).strip():
+        try:
+            data = base64.b64decode(str(kmz_b64), validate=True)
+        except (ValueError, binascii.Error) as e:
+            raise ValueError(f"invalid kmz_b64: {e}") from e
+        return parse_kmz_point_placemarks(data)
+
+    kml = raw.get("kml")
+    if kml is not None and str(kml).strip():
+        return parse_kml_point_placemarks(str(kml).encode("utf-8"))
+
+    raise ValueError("kml or kmz_b64 required")
+
+
+def _coerce_import_point(item: object, *, index: int) -> KmlPointSite:
+    if not isinstance(item, dict):
+        raise ValueError(f"points[{index}] must be an object")
+    try:
+        lat = float(item["lat"])
+        lon = float(item["lon"])
+    except (KeyError, TypeError, ValueError) as e:
+        raise ValueError(f"points[{index}] requires lat and lon") from e
+    name = str(item.get("name", "")).strip() or "Unnamed site"
+    elev_raw = item.get("elevation_m")
+    elevation_m: float | None = None
+    if elev_raw is not None:
+        try:
+            elevation_m = float(elev_raw)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"points[{index}].elevation_m must be a number") from e
+    return KmlPointSite(name=name, lat=lat, lon=lon, elevation_m=elevation_m)
+
+
+def _parse_import_sites_body(raw: dict[str, object]) -> tuple[list[KmlPointSite], int]:
+    """Parse explicit import points or fall back to KML/KMZ payload."""
+    points_raw = raw.get("points")
+    if points_raw is not None:
+        if not isinstance(points_raw, list):
+            raise ValueError("points must be a list")
+        if not points_raw:
+            raise ValueError("points must not be empty")
+        sites = [_coerce_import_point(item, index=i) for i, item in enumerate(points_raw)]
+        return sites, 0
+    return _parse_kml_import_payload(raw)
 
 
 def _parse_form_body(body: bytes) -> dict[str, str]:
@@ -887,6 +955,116 @@ class ServeDispatcher:
                 sort_keys=True,
             ).encode("utf-8")
             self._send_bytes(payload, "application/json", status=200)
+            return
+
+        import_preview_match = _API_PROJECT_SITES_IMPORT_PREVIEW_RE.match(path)
+        if import_preview_match:
+            project_slug = import_preview_match.group(1)
+            project_dir = self.projects_dir / project_slug
+            preset_path = project_dir / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = _parse_json_body(body)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": f"invalid JSON: {e}"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if not isinstance(raw, dict):
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "body must be a JSON object"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            try:
+                parsed_sites, skipped = _parse_kml_import_payload(raw)
+            except ValueError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if not parsed_sites:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "no Point placemarks found in KML/KMZ"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            payload = json.dumps(
+                {
+                    "slug": project_slug,
+                    "points": [serialize_kml_point(site) for site in parsed_sites],
+                    "skipped": skipped,
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        import_match = _API_PROJECT_SITES_IMPORT_RE.match(path)
+        if import_match:
+            project_slug = import_match.group(1)
+            project_dir = self.projects_dir / project_slug
+            preset_path = project_dir / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = _parse_json_body(body)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": f"invalid JSON: {e}"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if not isinstance(raw, dict):
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "body must be a JSON object"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            tags_raw = raw.get("tags")
+            if not isinstance(tags_raw, list) or not tags_raw:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "tags must be a non-empty list of strings"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            tags_list = [str(t) for t in tags_raw]
+            try:
+                parsed_sites, skipped = _parse_import_sites_body(raw)
+                new_slugs = import_sites_to_preset(
+                    preset_path,
+                    sites=parsed_sites,
+                    tags=tags_list,
+                )
+                for slug, site in zip(new_slugs, parsed_sites, strict=True):
+                    apply_plss_from_loc_cache(preset_path, slug, site.lat, site.lon)
+                site_map = _load_project_sites(project_dir)
+                site_rows = [
+                    _serialize_project_sites({slug: site_map[slug]})[0]
+                    for slug in new_slugs
+                    if slug in site_map
+                ]
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {
+                    "slug": project_slug,
+                    "sites": site_rows,
+                    "imported": len(site_rows),
+                    "skipped": skipped,
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=201)
             return
 
         sites_match = _API_PROJECT_SITES_RE.match(path)

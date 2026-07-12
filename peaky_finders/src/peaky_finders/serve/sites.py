@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ from peaky_finders.core.preset import (
     slugify_files_segment,
     update_preset_yaml_tree,
 )
+from peaky_finders.serve.kml_import import KmlPointSite
 
 
 def unique_site_slug(existing: set[str], name: str) -> str:
@@ -70,6 +72,48 @@ def append_planned_site_to_preset(
         return site_slug
 
     return str(update_preset_yaml_tree(preset_path, mutator, validate=False))
+
+
+def import_sites_to_preset(
+    preset_path: Path,
+    *,
+    sites: Sequence[KmlPointSite],
+    tags: list[str],
+) -> list[str]:
+    """Append multiple sites under ``sites`` in one YAML write; return new slugs in order."""
+    if not sites:
+        raise ValueError("no sites to import")
+    tags_value = normalize_site_tags(tags)
+    if not tags_value:
+        raise ValueError("tags required")
+
+    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> list[str]:
+        sites_raw = root.get("sites")
+        if sites_raw is None:
+            sites_raw = {}
+            root["sites"] = sites_raw
+        if not isinstance(sites_raw, dict):
+            raise ValueError("preset sites must be a mapping")
+
+        existing = {str(k) for k in sites_raw.keys()}
+        new_slugs: list[str] = []
+        for site in sites:
+            name = validate_site_name(site.name)
+            validate_site_coords(site.lat, site.lon)
+            site_slug = unique_site_slug(existing, name)
+            existing.add(site_slug)
+            entry: dict[str, Any] = {
+                "name": name,
+                "loc": [site.lat, site.lon],
+                "tags": list(tags_value),
+            }
+            if site.elevation_m is not None:
+                entry["elevation_m"] = float(site.elevation_m)
+            sites_raw[site_slug] = entry
+            new_slugs.append(site_slug)
+        return new_slugs
+
+    return list(update_preset_yaml_tree(preset_path, mutator, validate=False))
 
 
 def _scrub_manual_links_for_site(links_raw: Any, site_slug: str) -> list[list[str]]:

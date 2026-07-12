@@ -783,3 +783,142 @@ def test_run_serve_exits_on_keyboard_interrupt(monkeypatch) -> None:
     monkeypatch.setenv("PEAKY_PROJECTS", "/tmp/peaky-test-projects")
     args = build_serve_parser().parse_args(["--port", "9090"])
     assert run_serve(args) == 0
+
+
+ONX_KML = """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Import Alpha</name>
+      <Point><coordinates>-119.4,39.6,2100</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>Import Beta</name>
+      <Point><coordinates>-119.3,39.7</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>
+"""
+
+
+def test_post_sites_import_preview(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps({"kml": ONX_KML}).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request(
+            "POST",
+            "/api/p/mesh-demo/sites/import/preview",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert len(payload["points"]) == 2
+        assert payload["points"][0]["name"] == "Import Alpha"
+        assert payload["points"][0]["elevation_m"] == 2100.0
+        preset_path = projects_dir / "mesh-demo" / "config.yaml"
+        before = preset_path.read_text()
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert before == preset_path.read_text()
+
+
+def test_post_sites_import_writes_tags(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps({"kml": ONX_KML, "tags": ["HSC", "onx"]}).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request(
+            "POST",
+            "/api/p/mesh-demo/sites/import",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 201
+        assert payload["imported"] == 2
+        assert len(payload["sites"]) == 2
+        for row in payload["sites"]:
+            assert row["tags"] == ["hsc", "onx"]
+        assert "type" not in (projects_dir / "mesh-demo" / "config.yaml").read_text()
+
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/api/p/mesh-demo/sites")
+        resp = conn.getresponse()
+        sites_payload = json.loads(resp.read().decode("utf-8"))
+        slugs = {row["slug"] for row in sites_payload["sites"]}
+        assert "import-alpha" in slugs
+        assert "import-beta" in slugs
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_sites_import_requires_tags(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps({"kml": ONX_KML}).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request(
+            "POST",
+            "/api/p/mesh-demo/sites/import",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 422
+        assert "tags" in payload["error"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_sites_import_with_points_subset(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps(
+            {
+                "tags": ["onx"],
+                "points": [
+                    {"name": "Import Alpha", "lat": 39.6, "lon": -119.4, "elevation_m": 2100},
+                ],
+            }
+        ).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request(
+            "POST",
+            "/api/p/mesh-demo/sites/import",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 201
+        assert payload["imported"] == 1
+        assert payload["sites"][0]["slug"] == "import-alpha"
+        assert payload["sites"][0]["tags"] == ["onx"]
+        assert payload["sites"][0]["elevation_m"] == 2100.0
+    finally:
+        server.shutdown()
+        server.server_close()

@@ -742,6 +742,15 @@ wa-dropdown-item.is-active::part(base) {
   padding: var(--wa-space-s);
 }
 
+.entity-panel__footer-actions {
+  display: flex;
+  gap: var(--wa-space-s);
+}
+
+.entity-panel__footer-actions .pf-stretch {
+  flex: 1 1 0;
+}
+
 .entity-panel__row {
   display: flex;
   align-items: center;
@@ -952,6 +961,191 @@ wa-dropdown-item.is-active::part(base) {
 }
 
 .add-site-tag-form input {
+  width: 100%;
+  max-width: 14rem;
+}
+
+#import-sites-modal wa-callout[hidden] {
+  display: none !important;
+}
+
+.import-sites-form {
+  gap: var(--wa-space-m);
+}
+
+.import-sites-preview-field {
+  margin-top: 0;
+}
+
+.import-sites-preview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--wa-space-s);
+  align-items: stretch;
+  padding: var(--wa-space-s);
+  border: 1px solid var(--wa-color-surface-border);
+  border-radius: var(--wa-border-radius-s);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.import-sites-preview-map-pane,
+.import-sites-preview-list-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--wa-space-xs);
+}
+
+.import-sites-preview-map-pane .pf-label,
+.import-sites-preview-list-pane .import-sites-list-header {
+  margin: 0;
+}
+
+.import-sites-preview-map {
+  width: 100%;
+  flex: 1 1 auto;
+  height: 14rem;
+  min-height: 14rem;
+  max-height: 14rem;
+  border: 1px solid var(--wa-color-surface-border);
+  border-radius: var(--wa-border-radius-s);
+  overflow: hidden;
+  background: #0a0e14;
+}
+
+.import-sites-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  min-height: 1.25rem;
+}
+
+.import-sites-filter-toggle {
+  font-size: 0.6875rem;
+  white-space: nowrap;
+}
+
+.import-sites-point-list {
+  flex: 1 1 auto;
+  height: 14rem;
+  min-height: 14rem;
+  max-height: 14rem;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--wa-color-surface-border);
+  border-radius: var(--wa-border-radius-s);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.import-sites-point-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.import-sites-point-list::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.import-sites-point-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: var(--wa-border-radius-s);
+}
+
+.import-sites-point-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.7);
+}
+
+.import-sites-point-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--wa-color-surface-border);
+  background: transparent;
+  color: inherit;
+}
+
+.import-sites-point-row:last-child {
+  border-bottom: none;
+}
+
+.import-sites-point-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.import-sites-point-row--selected {
+  background: rgba(74, 108, 247, 0.15);
+}
+
+.import-sites-point-row--ignored {
+  opacity: 0.75;
+}
+
+.import-sites-point-row__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+  text-align: left;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.import-sites-point-row__import {
+  flex: 0 0 auto;
+  font-size: 0.625rem;
+  white-space: nowrap;
+  cursor: pointer;
+  gap: 0.2rem;
+}
+
+.import-sites-point-row--duplicate .import-sites-point-row__meta {
+  color: #fbbf24;
+}
+
+.import-sites-point-row__name {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.import-sites-point-row__meta {
+  display: block;
+  font-size: 0.625rem;
+  color: var(--wa-color-neutral-500);
+  font-family: var(--pf-font-mono, ui-monospace, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.import-sites-point-list__empty {
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--wa-color-neutral-500);
+  text-align: center;
+}
+
+.import-sites-tags {
+  margin-bottom: var(--wa-space-xs);
+  min-height: 1.5rem;
+}
+
+.import-sites-tag-form {
+  display: flex;
+  width: 100%;
+}
+
+.import-sites-tag-form input {
   width: 100%;
   max-width: 14rem;
 }

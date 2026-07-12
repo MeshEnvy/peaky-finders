@@ -8,7 +8,14 @@ import pytest
 
 from rf_fixtures import MINIMAL_SIMULATION
 from peaky_finders.core.project.scaffold import scaffold_project
-from peaky_finders.serve.sites import append_planned_site_to_preset, delete_site_from_preset, unique_site_slug, update_site_in_preset
+from peaky_finders.serve.sites import (
+    append_planned_site_to_preset,
+    delete_site_from_preset,
+    import_sites_to_preset,
+    unique_site_slug,
+    update_site_in_preset,
+)
+from peaky_finders.serve.kml_import import KmlPointSite
 from peaky_finders.core.preset import load_preset, write_preset_document
 
 
@@ -198,3 +205,37 @@ def test_normalize_site_tags_rejects_invalid() -> None:
 
     with pytest.raises(ValueError, match="invalid tag"):
         normalize_site_tags(["Bad Tag!"])
+
+
+def test_import_sites_to_preset(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slugs = import_sites_to_preset(
+        preset_path,
+        sites=[
+            KmlPointSite(name="Alpha Peak", lat=39.6, lon=-119.4, elevation_m=2100.0),
+            KmlPointSite(name="Alpha Peak", lat=39.7, lon=-119.3),
+        ],
+        tags=["hsc", "onx"],
+    )
+    assert slugs == ["alpha-peak", "alpha-peak-2"]
+    preset = load_preset(preset_path)
+    assert preset.sites["alpha-peak"].tags == ["hsc", "onx"]
+    assert preset.sites["alpha-peak"].elevation_m == 2100.0
+    assert preset.sites["alpha-peak-2"].tags == ["hsc", "onx"]
+    assert "type" not in preset_path.read_text()
+
+
+def test_import_sites_to_preset_requires_tags(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    with pytest.raises(ValueError, match="tags required"):
+        import_sites_to_preset(
+            preset_path,
+            sites=[KmlPointSite(name="Alpha", lat=39.6, lon=-119.4)],
+            tags=[],
+        )

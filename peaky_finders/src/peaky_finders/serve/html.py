@@ -412,7 +412,10 @@ def project_html(
         <div id="entity-panel-tag-filters" class="entity-panel__tag-filters" role="toolbar" aria-label="Site tags"></div>
         <div id="entity-panel-sites-list" class="entity-panel__list"></div>
         <div class="entity-panel__footer">
-          <wa-button id="entity-panel-add-site" appearance="outlined" variant="brand" size="s" class="pf-stretch" type="button" title="Add site">+ Site</wa-button>
+          <div class="entity-panel__footer-actions">
+            <wa-button id="entity-panel-import-sites" appearance="outlined" size="s" class="pf-stretch" type="button" title="Import sites from KML">Import</wa-button>
+            <wa-button id="entity-panel-add-site" appearance="outlined" variant="brand" size="s" class="pf-stretch" type="button" title="Add site">+ Site</wa-button>
+          </div>
         </div>
       </div>
     </div>
@@ -601,6 +604,44 @@ def project_html(
   </div>
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
   <wa-button slot="footer" id="add-site-save" variant="brand" size="s" type="button">Add site</wa-button>
+</wa-dialog>
+<wa-dialog id="import-sites-modal" label="Import sites from KML" style="--width: 42rem" with-footer light-dismiss>
+  <wa-callout id="import-sites-error" variant="danger" hidden></wa-callout>
+  <div class="pf-form-grid import-sites-form">
+    <div class="pf-form-field pf-form-field--full">
+      <label for="import-sites-file" class="pf-label">KML or KMZ file</label>
+      <input id="import-sites-file" type="file" accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz">
+      <p class="wa-caption pf-muted" id="import-sites-status">Choose a file with Point placemarks.</p>
+    </div>
+    <div class="pf-form-field pf-form-field--full import-sites-preview-field" id="import-sites-preview-field" hidden>
+      <div class="import-sites-preview-grid">
+        <div class="import-sites-preview-map-pane">
+          <span class="pf-label">Map</span>
+          <div id="import-sites-preview-map" class="import-sites-preview-map" aria-label="Import preview map"></div>
+        </div>
+        <div class="import-sites-preview-list-pane">
+          <div class="import-sites-list-header">
+            <span class="wa-caption pf-muted" id="import-sites-list-count"></span>
+            <label class="pf-check import-sites-filter-toggle">
+              <input type="checkbox" id="import-sites-filter-visible" checked>
+              <span>Visible in map</span>
+            </label>
+          </div>
+          <div id="import-sites-point-list" class="import-sites-point-list" role="list" aria-label="Import points"></div>
+        </div>
+      </div>
+    </div>
+    <div class="pf-form-field pf-form-field--full">
+      <span class="pf-label" id="import-sites-tags-label">Tags</span>
+      <div class="site-tags import-sites-tags" id="import-sites-tags" role="group" aria-labelledby="import-sites-tags-label"></div>
+      <form class="site-tag-add-form import-sites-tag-form" id="import-sites-tag-form">
+        <input id="import-sites-tag-input" type="text" list="import-sites-tag-suggestions" placeholder="add tag" autocomplete="off" maxlength="32" aria-label="Add tag">
+        <datalist id="import-sites-tag-suggestions"></datalist>
+      </form>
+    </div>
+  </div>
+  <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
+  <wa-button slot="footer" id="import-sites-save" variant="brand" size="s" type="button" disabled>Import</wa-button>
 </wa-dialog>
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" crossorigin=""></script>
 <script>window.PEAKY_PROJECT = {peaky_config};</script>

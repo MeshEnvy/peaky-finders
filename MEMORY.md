@@ -56,7 +56,13 @@ On-demand cache under `<project>/.peaky/cache/viewsheds/` and `.peaky/cache/plss
 
 Global defaults: `$PEAKY_HOME/config.yaml`, `modems.yaml`, `environments.yaml`. Project: `$PEAKY_HOME/projects/<slug>/config.yaml`.
 
-Map UI state (sites panel open/closed, viewport, basemap, filters) persists in `localStorage` per project (`peaky.map.v1.<slug>`).
+Sites panel: **+ Site** (manual add) and **Import** (KML/KMZ Point placemarks). Open/closed state persists per project in `localStorage` (`peaky.map.v1.<slug>`). Import flow: file → `POST …/sites/import/preview` → in-modal MapLibre preview + scrollable point list with per-row **Import** toggle; points within **100 m** of an existing site default skipped (gray on map); optional **Visible in map only** filter → tags → `POST …/sites/import` with filtered `points[]` (`serve/kml_import.py`, `import_sites_to_preset`).
+
+| Sites API | Role |
+|-----------|------|
+| `GET/POST/PATCH/DELETE /api/p/<slug>/sites` | List / add / edit / delete |
+| `POST …/sites/import/preview` | Parse KML/KMZ; return `{points, skipped}` |
+| `POST …/sites/import` | Write sites with shared `tags` |
 
 ## Repo layout
 

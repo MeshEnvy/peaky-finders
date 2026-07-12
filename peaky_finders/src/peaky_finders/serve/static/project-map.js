@@ -404,6 +404,7 @@
   const entityPanelSitesList = document.getElementById("entity-panel-sites-list");
   const entityPanelTagFilters = document.getElementById("entity-panel-tag-filters");
   const entityPanelAddSite = document.getElementById("entity-panel-add-site");
+  const entityPanelImportSites = document.getElementById("entity-panel-import-sites");
   const sitePanelTags = document.getElementById("site-panel-tags");
   const sitePanelTagsSection = document.getElementById("site-panel-tags-section");
   const addSiteModal = document.getElementById("add-site-modal");
@@ -415,6 +416,37 @@
   const addSiteTagSuggestions = document.getElementById("add-site-tag-suggestions");
   const addSiteError = document.getElementById("add-site-error");
   const addSiteSave = document.getElementById("add-site-save");
+  const importSitesModal = document.getElementById("import-sites-modal");
+  const importSitesFile = document.getElementById("import-sites-file");
+  const importSitesStatus = document.getElementById("import-sites-status");
+  const importSitesPreviewField = document.getElementById("import-sites-preview-field");
+  const importSitesPreviewMapEl = document.getElementById("import-sites-preview-map");
+  const importSitesTagsEl = document.getElementById("import-sites-tags");
+  const importSitesTagForm = document.getElementById("import-sites-tag-form");
+  const importSitesTagInput = document.getElementById("import-sites-tag-input");
+  const importSitesTagSuggestions = document.getElementById("import-sites-tag-suggestions");
+  const importSitesError = document.getElementById("import-sites-error");
+  const importSitesSave = document.getElementById("import-sites-save");
+  const importSitesListCount = document.getElementById("import-sites-list-count");
+  const importSitesFilterVisible = document.getElementById("import-sites-filter-visible");
+  const importSitesPointList = document.getElementById("import-sites-point-list");
+  const IMPORT_DEDUPE_METERS = 100;
+  const IMPORT_PREVIEW_CIRCLE_PAINT = {
+    "circle-radius": 6,
+    "circle-color": ["case", ["get", "ignored"], "#94a3b8", "#4a6cf7"],
+    "circle-stroke-width": 1.5,
+    "circle-stroke-color": "#ffffff",
+    "circle-opacity": ["case", ["get", "ignored"], 0.55, 1],
+  };
+  const IMPORT_PREVIEW_LABEL_PAINT = {
+    "text-color": ["case", ["get", "ignored"], "#94a3b8", "#e8eaed"],
+    "text-halo-color": "#1a1a1a",
+    "text-halo-width": 2,
+    "text-opacity": ["case", ["get", "ignored"], 0.7, 1],
+  };
+  const IMPORT_PREVIEW_SOURCE = "import-preview-points";
+  const IMPORT_PREVIEW_LAYER = "import-preview-points-layer";
+  const IMPORT_PREVIEW_LABEL_LAYER = "import-preview-points-labels";
   const siteHidden = new Set(savedMapState?.hiddenSites || []);
   const activeTagFilters = new Set(
     Array.isArray(savedMapState?.tagFilters)
@@ -424,6 +456,13 @@
   let entityPanelOpen = savedMapState?.entityPanelOpen === true;
   let tagAddOpen = false;
   let addSiteDraftTags = [];
+  let importDraftTags = [];
+  let importPreviewPoints = [];
+  let importPreviewPayload = null;
+  let importPreviewMap = null;
+  let importPreviewBusy = false;
+  let importFilterByViewport = true;
+  let importSelectedPointIndex = -1;
 
   function ensureTerrainSource() {
     if (map.getSource(TERRAIN_SOURCE)) return;
@@ -471,6 +510,24 @@
 
   function sitesApiUrl() {
     return `/api/p/${projectSlug}/sites`;
+  }
+
+  function sitesImportPreviewApiUrl() {
+    return `/api/p/${projectSlug}/sites/import/preview`;
+  }
+
+  function sitesImportApiUrl() {
+    return `/api/p/${projectSlug}/sites/import`;
+  }
+
+  function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
   }
 
   function slugifyName(name) {
@@ -2288,6 +2345,551 @@
     }
   }
 
+  function setImportSitesError(message) {
+    if (!importSitesError) return;
+    if (message) {
+      importSitesError.textContent = message;
+      importSitesError.hidden = false;
+    } else {
+      importSitesError.textContent = "";
+      importSitesError.hidden = true;
+    }
+  }
+
+  function haversineMeters(lat1, lon1, lat2, lon2) {
+    const earthRadiusM = 6371000;
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * earthRadiusM * Math.asin(Math.sqrt(a));
+  }
+
+  function annotateImportPoints(points) {
+    return points.map((point) => {
+      let nearest = null;
+      let nearestDist = Infinity;
+      for (const site of sites) {
+        const dist = haversineMeters(point.lat, point.lon, site.lat, site.lon);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = site;
+        }
+      }
+      const duplicate = nearest !== null && nearestDist <= IMPORT_DEDUPE_METERS;
+      return {
+        name: point.name,
+        lat: point.lat,
+        lon: point.lon,
+        elevation_m: point.elevation_m ?? null,
+        ignored: duplicate,
+        duplicate,
+        duplicateDistM: duplicate ? Math.round(nearestDist) : null,
+        duplicateSlug: duplicate ? nearest.slug : null,
+        duplicateName: duplicate ? nearest.name : null,
+      };
+    });
+  }
+
+  function importablePreviewPoints() {
+    return importPreviewPoints.filter((point) => !point.ignored);
+  }
+
+  function pendingImportTagInput() {
+    if (!importSitesTagInput) return "";
+    return normalizeTagInput(importSitesTagInput.value);
+  }
+
+  function effectiveImportDraftTags() {
+    const tags = [...importDraftTags];
+    const pending = pendingImportTagInput();
+    if (pending && !tags.includes(pending)) tags.push(pending);
+    return tags;
+  }
+
+  function refreshImportPreviewMapData() {
+    if (!importPreviewMap || !importPreviewPoints.length) return;
+    const source = importPreviewMap.getSource(IMPORT_PREVIEW_SOURCE);
+    if (source) source.setData(importPreviewGeoJson(importPreviewPoints));
+  }
+
+  function setImportPointIgnored(index, ignored) {
+    const point = importPreviewPoints[index];
+    if (!point) return;
+    importPreviewPoints[index] = { ...point, ignored: !!ignored };
+    refreshImportPreviewMapData();
+    renderImportPointList();
+    syncImportSaveButton();
+  }
+
+  function syncImportSaveButton() {
+    if (!importSitesSave) return;
+    const ready =
+      importablePreviewPoints().length > 0 &&
+      effectiveImportDraftTags().length > 0 &&
+      !!importPreviewPayload &&
+      !importPreviewBusy;
+    importSitesSave.disabled = !ready;
+  }
+
+  function renderImportSiteTags() {
+    if (!importSitesTagsEl) return;
+    importSitesTagsEl.innerHTML = "";
+    const known = allProjectTags();
+    const selected = new Set(importDraftTags);
+    const shown = new Set([...known, ...importDraftTags]);
+    for (const tag of [...shown].sort((a, b) => a.localeCompare(b))) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = selected.has(tag) ? "site-tag site-tag--toggle is-selected" : "site-tag site-tag--toggle";
+      chip.textContent = tag;
+      chip.setAttribute("aria-pressed", selected.has(tag) ? "true" : "false");
+      chip.title = selected.has(tag) ? `Remove tag ${tag}` : `Add tag ${tag}`;
+      chip.addEventListener("click", () => {
+        if (selected.has(tag)) {
+          importDraftTags = importDraftTags.filter((t) => t !== tag);
+        } else {
+          importDraftTags = [...importDraftTags, tag];
+        }
+        renderImportSiteTags();
+        syncImportSiteTagSuggestions();
+        syncImportSaveButton();
+      });
+      importSitesTagsEl.appendChild(chip);
+    }
+  }
+
+  function syncImportSiteTagSuggestions() {
+    if (!importSitesTagSuggestions) return;
+    importSitesTagSuggestions.innerHTML = "";
+    const selected = new Set(importDraftTags);
+    for (const tag of allProjectTags()) {
+      if (selected.has(tag)) continue;
+      const opt = document.createElement("option");
+      opt.value = tag;
+      importSitesTagSuggestions.appendChild(opt);
+    }
+  }
+
+  function destroyImportPreviewMap() {
+    if (importPreviewMap) {
+      importPreviewMap.remove();
+      importPreviewMap = null;
+    }
+  }
+
+  function importPointVisibleInMap(point) {
+    if (!importPreviewMap || !point) return true;
+    const bounds = importPreviewMap.getBounds();
+    return bounds.contains([point.lon, point.lat]);
+  }
+
+  function syncImportListCount(shown, total) {
+    if (!importSitesListCount) return;
+    if (!total) {
+      importSitesListCount.textContent = "";
+      return;
+    }
+    const toImport = importPreviewPoints.filter((point) => !point.ignored).length;
+    let text = "";
+    if (importFilterByViewport && shown < total) {
+      text = `${shown} of ${total} visible`;
+    } else {
+      text = `${total} point${total === 1 ? "" : "s"}`;
+    }
+    if (toImport < total) {
+      text += ` · ${toImport} to import`;
+    }
+    importSitesListCount.textContent = text;
+  }
+
+  function renderImportPointList() {
+    if (!importSitesPointList) return;
+    importSitesPointList.innerHTML = "";
+    const total = importPreviewPoints.length;
+    if (!total) {
+      syncImportListCount(0, 0);
+      return;
+    }
+
+    let shown = 0;
+    for (let index = 0; index < importPreviewPoints.length; index++) {
+      const point = importPreviewPoints[index];
+      if (importFilterByViewport && importPreviewMap && !importPointVisibleInMap(point)) {
+        continue;
+      }
+      shown += 1;
+      const row = document.createElement("div");
+      row.className = "import-sites-point-row";
+      row.setAttribute("role", "listitem");
+      if (index === importSelectedPointIndex) {
+        row.classList.add("import-sites-point-row--selected");
+      }
+      if (point.ignored) {
+        row.classList.add("import-sites-point-row--ignored");
+      }
+      if (point.duplicate) {
+        row.classList.add("import-sites-point-row--duplicate");
+      }
+
+      const main = document.createElement("button");
+      main.type = "button";
+      main.className = "import-sites-point-row__main";
+      const name = document.createElement("span");
+      name.className = "import-sites-point-row__name";
+      name.textContent = point.name || `Point ${index + 1}`;
+      const meta = document.createElement("span");
+      meta.className = "import-sites-point-row__meta";
+      let metaText = `${formatCoord(point.lat)}, ${formatCoord(point.lon)}`;
+      if (point.duplicate && point.duplicateName) {
+        metaText += ` · near ${point.duplicateName} (${point.duplicateDistM} m)`;
+      }
+      meta.textContent = metaText;
+      main.appendChild(name);
+      main.appendChild(meta);
+      main.addEventListener("click", () => {
+        focusImportPreviewPoint(index);
+      });
+
+      const importLabel = document.createElement("label");
+      importLabel.className = "import-sites-point-row__import pf-check";
+      const importCheck = document.createElement("input");
+      importCheck.type = "checkbox";
+      importCheck.checked = !point.ignored;
+      importCheck.setAttribute("aria-label", `Import ${point.name || `point ${index + 1}`}`);
+      importCheck.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+      });
+      importCheck.addEventListener("change", () => {
+        setImportPointIgnored(index, !importCheck.checked);
+      });
+      importLabel.appendChild(importCheck);
+      importLabel.appendChild(document.createTextNode("Import"));
+
+      row.appendChild(main);
+      row.appendChild(importLabel);
+      importSitesPointList.appendChild(row);
+    }
+
+    if (!shown) {
+      const empty = document.createElement("p");
+      empty.className = "import-sites-point-list__empty";
+      empty.textContent = importFilterByViewport
+        ? "No points in the current map view — pan or zoom out."
+        : "No points to show.";
+      importSitesPointList.appendChild(empty);
+    }
+    syncImportListCount(shown, total);
+  }
+
+  function focusImportPreviewPoint(index) {
+    const point = importPreviewPoints[index];
+    if (!point || !importPreviewMap) return;
+    importSelectedPointIndex = index;
+    importPreviewMap.flyTo({
+      center: [point.lon, point.lat],
+      zoom: Math.max(importPreviewMap.getZoom(), 12),
+      duration: 400,
+    });
+    renderImportPointList();
+  }
+
+  function onImportPreviewMapMoveEnd() {
+    if (importFilterByViewport) renderImportPointList();
+  }
+
+  function ensureImportPreviewMapHandlers() {
+    if (!importPreviewMap) return;
+    importPreviewMap.off("moveend", onImportPreviewMapMoveEnd);
+    importPreviewMap.on("moveend", onImportPreviewMapMoveEnd);
+  }
+
+  function importPreviewGeoJson(points) {
+    return {
+      type: "FeatureCollection",
+      features: points.map((point, index) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [point.lon, point.lat] },
+        properties: {
+          name: point.name || `Point ${index + 1}`,
+          ignored: !!point.ignored,
+          index,
+        },
+      })),
+    };
+  }
+
+  function fitImportPreviewBounds(points) {
+    if (!importPreviewMap || !points.length) return;
+    if (points.length === 1) {
+      const point = points[0];
+      importPreviewMap.jumpTo({
+        center: [point.lon, point.lat],
+        zoom: 11,
+      });
+      return;
+    }
+    const bounds = new maplibregl.LngLatBounds();
+    for (const point of points) bounds.extend([point.lon, point.lat]);
+    importPreviewMap.fitBounds(bounds, { padding: 36, maxZoom: 12, duration: 0 });
+  }
+
+  function renderImportPreview(points) {
+    importPreviewPoints = annotateImportPoints(Array.isArray(points) ? points : []);
+    importSelectedPointIndex = -1;
+    if (!importPreviewPoints.length) {
+      if (importSitesPreviewField) importSitesPreviewField.hidden = true;
+      destroyImportPreviewMap();
+      renderImportPointList();
+      syncImportSaveButton();
+      return;
+    }
+    if (importSitesPreviewField) importSitesPreviewField.hidden = false;
+    if (!importSitesPreviewMapEl) return;
+
+    const geojson = importPreviewGeoJson(importPreviewPoints);
+    const applyData = () => {
+      if (!importPreviewMap) return;
+      const source = importPreviewMap.getSource(IMPORT_PREVIEW_SOURCE);
+      if (source) {
+        source.setData(geojson);
+      } else {
+        importPreviewMap.addSource(IMPORT_PREVIEW_SOURCE, { type: "geojson", data: geojson });
+      }
+      if (!importPreviewMap.getLayer(IMPORT_PREVIEW_LAYER)) {
+        importPreviewMap.addLayer({
+          id: IMPORT_PREVIEW_LAYER,
+          type: "circle",
+          source: IMPORT_PREVIEW_SOURCE,
+          paint: IMPORT_PREVIEW_CIRCLE_PAINT,
+        });
+      }
+      if (!importPreviewMap.getLayer(IMPORT_PREVIEW_LABEL_LAYER)) {
+        importPreviewMap.addLayer({
+          id: IMPORT_PREVIEW_LABEL_LAYER,
+          type: "symbol",
+          source: IMPORT_PREVIEW_SOURCE,
+          layout: {
+            "text-field": ["get", "name"],
+            "text-size": 11,
+            "text-offset": [0, -1.4],
+            "text-anchor": "bottom",
+            "text-font": MAP_LABEL_FONT,
+            "text-allow-overlap": true,
+          },
+          paint: IMPORT_PREVIEW_LABEL_PAINT,
+        });
+      }
+      importPreviewMap.resize();
+      fitImportPreviewBounds(importPreviewPoints);
+      ensureImportPreviewMapHandlers();
+      renderImportPointList();
+    };
+
+    if (!importPreviewMap) {
+      importPreviewMap = new maplibregl.Map({
+        container: importSitesPreviewMapEl,
+        style: basemapStyle(currentBasemapKey),
+        attributionControl: false,
+        dragRotate: false,
+        pitchWithRotate: false,
+        interactive: true,
+      });
+      importPreviewMap.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+      if (importPreviewMap.loaded()) {
+        applyData();
+      } else {
+        importPreviewMap.once("load", applyData);
+      }
+    } else {
+      applyData();
+    }
+    syncImportSaveButton();
+  }
+
+  function resetImportSitesModal() {
+    importDraftTags = ["imported"];
+    importPreviewPoints = [];
+    importPreviewPayload = null;
+    importPreviewBusy = false;
+    importFilterByViewport = true;
+    importSelectedPointIndex = -1;
+    if (importSitesFile) importSitesFile.value = "";
+    if (importSitesTagInput) importSitesTagInput.value = "";
+    if (importSitesFilterVisible) importSitesFilterVisible.checked = true;
+    if (importSitesStatus) {
+      importSitesStatus.textContent = "Choose a file with Point placemarks.";
+    }
+    if (importSitesPreviewField) importSitesPreviewField.hidden = true;
+    destroyImportPreviewMap();
+    renderImportPointList();
+    setImportSitesError("");
+    renderImportSiteTags();
+    syncImportSiteTagSuggestions();
+    syncImportSaveButton();
+  }
+
+  async function previewImportFile(file) {
+    if (!file) return;
+    const name = String(file.name || "").toLowerCase();
+    const isKmz = name.endsWith(".kmz");
+    const isKml = name.endsWith(".kml");
+    if (!isKml && !isKmz) {
+      setImportSitesError("Choose a .kml or .kmz file.");
+      renderImportPreview([]);
+      return;
+    }
+
+    importPreviewBusy = true;
+    setImportSitesError("");
+    if (importSitesStatus) importSitesStatus.textContent = `Parsing ${file.name}…`;
+    syncImportSaveButton();
+
+    try {
+      let body;
+      if (isKmz) {
+        const buffer = await file.arrayBuffer();
+        body = { kmz_b64: arrayBufferToBase64(buffer) };
+      } else {
+        body = { kml: await file.text() };
+      }
+      const resp = await fetch(sitesImportPreviewApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setImportSitesError(payload.error || `Preview failed (${resp.status})`);
+        importPreviewPayload = null;
+        renderImportPreview([]);
+        if (importSitesStatus) importSitesStatus.textContent = "No points found.";
+        return;
+      }
+      importPreviewPayload = body;
+      const points = Array.isArray(payload.points) ? payload.points : [];
+      const skipped = Number(payload.skipped) || 0;
+      if (importSitesStatus) {
+        const skippedNote = skipped > 0 ? ` (${skipped} placemark(s) skipped)` : "";
+        importSitesStatus.textContent = `${points.length} point(s) ready from ${file.name}${skippedNote}`;
+      }
+      renderImportPreview(points);
+      const dupes = importPreviewPoints.filter((point) => point.duplicate && point.ignored).length;
+      if (importSitesStatus && dupes > 0) {
+        importSitesStatus.textContent += ` · ${dupes} near existing site(s), unchecked`;
+      }
+    } catch (_) {
+      setImportSitesError("Could not reach server.");
+      importPreviewPayload = null;
+      renderImportPreview([]);
+      if (importSitesStatus) importSitesStatus.textContent = "Preview failed.";
+    } finally {
+      importPreviewBusy = false;
+      syncImportSaveButton();
+    }
+  }
+
+  async function openImportSitesModal() {
+    if (!importSitesModal) return;
+    setAddPlacementMode(null);
+    setEntityPanelOpen(true);
+    resetImportSitesModal();
+    await customElements.whenDefined("wa-dialog");
+    importSitesModal.open = true;
+    requestAnimationFrame(() => {
+      importSitesFile?.focus();
+    });
+  }
+
+  function closeImportSitesModal() {
+    if (!importSitesModal) return;
+    importSitesModal.open = false;
+  }
+
+  function addImportDraftTagFromInput() {
+    if (!importSitesTagInput) return;
+    const tag = normalizeTagInput(importSitesTagInput.value);
+    importSitesTagInput.value = "";
+    if (!tag) return;
+    if (!importDraftTags.includes(tag)) {
+      importDraftTags = [...importDraftTags, tag];
+      renderImportSiteTags();
+      syncImportSiteTagSuggestions();
+      syncImportSaveButton();
+    }
+  }
+
+  async function saveImportSitesModal() {
+    addImportDraftTagFromInput();
+    const pointsToImport = importablePreviewPoints();
+    const tags = effectiveImportDraftTags();
+    if (!tags.length || !pointsToImport.length) {
+      setImportSitesError("Choose at least one point to import and at least one tag.");
+      return;
+    }
+    setImportSitesError("");
+    if (importSitesSave) importSitesSave.disabled = true;
+    try {
+      const body = {
+        tags,
+        points: pointsToImport.map((point) => {
+          const row = {
+            name: point.name,
+            lat: point.lat,
+            lon: point.lon,
+          };
+          if (point.elevation_m != null) row.elevation_m = point.elevation_m;
+          return row;
+        }),
+      };
+      const resp = await fetch(sitesImportApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setImportSitesError(payload.error || `Import failed (${resp.status})`);
+        return;
+      }
+      const imported = Array.isArray(payload.sites) ? payload.sites : [];
+      if (!imported.length) {
+        setImportSitesError("Import returned no sites.");
+        return;
+      }
+      const importedTags = [...tags];
+      closeImportSitesModal();
+      for (const site of imported) {
+        registerSite(site);
+      }
+      const firstTag = importedTags[0];
+      if (firstTag) {
+        activeTagFilters.clear();
+        activeTagFilters.add(firstTag);
+        pruneActiveTagFilters();
+        renderEntityPanel();
+      }
+      if (mapReady && imported.length) {
+        const bounds = new maplibregl.LngLatBounds();
+        for (const site of imported) bounds.extend([site.lon, site.lat]);
+        if (imported.length === 1) {
+          const site = imported[0];
+          map.flyTo({ center: [site.lon, site.lat], zoom: Math.max(map.getZoom(), 11) });
+        } else {
+          map.fitBounds(bounds, { padding: 80, maxZoom: 12, duration: 800 });
+        }
+      }
+      scheduleSaveMapState();
+      if (imported[0]?.slug) selectSite(imported[0].slug);
+    } catch (_) {
+      setImportSitesError("Could not reach server.");
+    } finally {
+      syncImportSaveButton();
+    }
+  }
+
   async function patchSiteTags(slug, tags) {
     const resp = await fetch(siteDeleteUrl(slug), {
       method: "PATCH",
@@ -2376,22 +2978,25 @@
       tagAddOpen = false;
       if (selectedSlug === site.slug) renderSiteTags(siteBySlug.get(site.slug) || site);
     };
-    form.addEventListener("submit", (ev) => {
-      ev.preventDefault();
+    const commitPendingTag = async () => {
+      if (!tagAddOpen) return;
       const tag = normalizeTagInput(input.value);
+      tagAddOpen = false;
       if (!tag || currentTags.includes(tag)) {
-        finish();
+        if (selectedSlug === site.slug) renderSiteTags(siteBySlug.get(site.slug) || site);
         return;
       }
-      void (async () => {
-        try {
-          const updated = await patchSiteTags(site.slug, [...currentTags, tag]);
-          if (selectedSlug === site.slug) renderSiteTags(updated);
-          applyEntityVisibility();
-        } catch (_) {
-          finish();
-        }
-      })();
+      try {
+        const updated = await patchSiteTags(site.slug, [...currentTags, tag]);
+        if (selectedSlug === site.slug) renderSiteTags(updated);
+        applyEntityVisibility();
+      } catch (_) {
+        if (selectedSlug === site.slug) renderSiteTags(siteBySlug.get(site.slug) || site);
+      }
+    };
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      void commitPendingTag();
     });
     input.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") {
@@ -2401,7 +3006,7 @@
     });
     input.addEventListener("blur", () => {
       setTimeout(() => {
-        if (tagAddOpen) finish();
+        void commitPendingTag();
       }, 150);
     });
     queueMicrotask(() => input.focus());
@@ -3420,6 +4025,51 @@
   if (entityPanelAddSite) {
     entityPanelAddSite.addEventListener("click", () => {
       void openAddSiteModal();
+    });
+  }
+  if (entityPanelImportSites) {
+    entityPanelImportSites.addEventListener("click", () => {
+      void openImportSitesModal();
+    });
+  }
+  if (importSitesFile) {
+    importSitesFile.addEventListener("change", () => {
+      const file = importSitesFile.files && importSitesFile.files[0];
+      if (file) void previewImportFile(file);
+    });
+  }
+  if (importSitesSave) {
+    importSitesSave.addEventListener("click", () => {
+      void saveImportSitesModal();
+    });
+  }
+  if (importSitesTagForm) {
+    importSitesTagForm.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      addImportDraftTagFromInput();
+    });
+  }
+  if (importSitesTagInput) {
+    importSitesTagInput.addEventListener("input", () => {
+      syncImportSaveButton();
+    });
+  }
+  if (importSitesFilterVisible) {
+    importSitesFilterVisible.addEventListener("change", () => {
+      importFilterByViewport = !!importSitesFilterVisible.checked;
+      renderImportPointList();
+    });
+  }
+  if (importSitesModal) {
+    importSitesModal.addEventListener("wa-after-show", () => {
+      if (importPreviewMap) {
+        requestAnimationFrame(() => {
+          importPreviewMap.resize();
+        });
+      }
+    });
+    importSitesModal.addEventListener("wa-after-hide", () => {
+      resetImportSitesModal();
     });
   }
   if (addSiteSave) {
