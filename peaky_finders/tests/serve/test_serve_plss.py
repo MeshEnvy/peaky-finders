@@ -13,13 +13,13 @@ from peaky_finders.serve.plss import (
     apply_plss_from_loc_cache,
     ensure_plss_for_coords,
 )
-from peaky_finders.core.preset import load_preset_sites, resolved_preset_build_dir
+from peaky_finders.core.preset import load_preset_sites, resolved_preset_cache_dir
 
 
 def test_ensure_plss_for_coords_cache_hit(tmp_path: Path) -> None:
     project_dir = tmp_path / "demo"
     scaffold_project("demo", parent=tmp_path, here=False)
-    cache_base = resolved_preset_build_dir(project_dir / "config.yaml")
+    cache_base = resolved_preset_cache_dir(project_dir / "config.yaml")
     lat, lon = 39.6, -119.4
     write_plss_loc_cache(
         cache_base,
@@ -45,7 +45,7 @@ def test_ensure_plss_for_coords_network_miss(tmp_path: Path, monkeypatch: pytest
     result = ensure_plss_for_coords(project_dir, lat, lon)
 
     assert result["plss"] == "NV210300N0230E0SN360ASENW"
-    cache_base = resolved_preset_build_dir(project_dir / "config.yaml")
+    cache_base = resolved_preset_cache_dir(project_dir / "config.yaml")
     cached = read_plss_loc_cache(cache_base)
     assert cached[loc_stamp(lat, lon)]["plss"] == "NV210300N0230E0SN360ASENW"
 
@@ -54,7 +54,7 @@ def test_apply_plss_from_loc_cache_writes_yaml(tmp_path: Path) -> None:
     project_dir = tmp_path / "demo"
     scaffold_project("demo", parent=tmp_path, here=False)
     preset_path = project_dir / "config.yaml"
-    cache_base = resolved_preset_build_dir(preset_path)
+    cache_base = resolved_preset_cache_dir(preset_path)
     lat, lon = 39.6, -119.4
     write_plss_loc_cache(
         cache_base,

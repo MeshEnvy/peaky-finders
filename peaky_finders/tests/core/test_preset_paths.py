@@ -11,7 +11,7 @@ from peaky_finders.core.preset import (
     peaky_projects_dir,
     peaky_share_dir,
     resolve_preset_yaml_arg,
-    resolved_preset_build_dir,
+    resolved_preset_cache_dir,
     resolved_preset_slug,
     resolved_viewshed_root,
 )
@@ -65,11 +65,11 @@ def test_resolved_preset_slug_for_project_config(peaky_test_home: Path) -> None:
     assert resolved_preset_slug(sample) == "sample"
 
 
-def test_resolved_preset_build_dir(peaky_test_home: Path) -> None:
+def test_resolved_preset_cache_dir(peaky_test_home: Path) -> None:
     sample = peaky_test_home / "projects" / "sample" / "config.yaml"
-    assert resolved_preset_build_dir(sample) == (sample.parent / "build").resolve()
+    assert resolved_preset_cache_dir(sample) == (sample.parent / ".peaky" / "cache").resolve()
 
 
 def test_resolved_viewshed_root(peaky_test_home: Path) -> None:
     sample = peaky_test_home / "projects" / "sample" / "config.yaml"
-    assert resolved_viewshed_root(sample) == (sample.parent / "build" / "viewsheds").resolve()
+    assert resolved_viewshed_root(sample) == (sample.parent / ".peaky" / "cache" / "viewsheds").resolve()

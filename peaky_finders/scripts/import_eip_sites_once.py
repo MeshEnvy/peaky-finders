@@ -33,8 +33,11 @@ import geopandas as gpd
 import pyogrio
 from shapely import contains_xy, make_valid, unary_union
 
-from peaky_finders.bundle_build import openfilegdb_dataset_path
-from peaky_finders.sites_job import SiteType, _slugify_files_segment, update_preset_yaml_tree
+from peaky_finders.core.preset import (
+    normalize_site_tags,
+    slugify_files_segment,
+    update_preset_yaml_tree,
+)
 
 KML_NS = "http://www.opengis.net/kml/2.2"
 KML = f"{{{KML_NS}}}"
@@ -120,8 +123,7 @@ def _float_or_none(raw: str | None) -> float | None:
 
 
 def _load_nevada_boundary_polygon(gdb_path: Path, *, layer: str) -> Any:
-    with openfilegdb_dataset_path(gdb_path) as ds:
-        raw = pyogrio.read_dataframe(ds, layer=layer)
+    raw = pyogrio.read_dataframe(str(gdb_path), layer=layer)
     gdf = gpd.GeoDataFrame(raw, geometry="geometry", crs=raw.crs)
     if gdf.empty:
         raise ValueError(f"empty boundary layer {layer!r} in {gdb_path}")
@@ -145,7 +147,7 @@ def _site_slug(site: EipSite, existing: set[str]) -> str:
     if asset:
         base = f"eip-{asset}"
     else:
-        base = f"eip-{_slugify_files_segment(site.site_name)}"
+        base = f"eip-{slugify_files_segment(site.site_name)}"
     slug = base
     n = 2
     while slug in existing:
@@ -162,7 +164,7 @@ def _display_name(site: EipSite) -> str:
     return name
 
 
-def _site_payload(site: EipSite, *, site_type: SiteType) -> dict[str, Any]:
+def _site_payload(site: EipSite, *, tags: list[str]) -> dict[str, Any]:
     parts = [p for p in (site.street_address, site.city, site.state_code) if p]
     address = ", ".join(parts)
     rationale_bits = ["EIP site list import"]
@@ -177,9 +179,9 @@ def _site_payload(site: EipSite, *, site_type: SiteType) -> dict[str, Any]:
         rationale_bits.append(tower)
 
     body: dict[str, Any] = {
-        "type": site_type.value,
         "name": _display_name(site),
         "loc": [round(site.lat, 6), round(site.lon, 6)],
+        "tags": list(tags),
         "rationale": "; ".join(rationale_bits),
     }
     if site.ground_elevation_m is not None:
@@ -241,11 +243,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Polygon layer name inside the boundary GDB",
     )
     parser.add_argument(
-        "--type",
-        dest="site_type",
-        choices=[t.value for t in SiteType if t != SiteType.SUGGESTED and t != SiteType.GOAL],
-        default=SiteType.INSTALLED.value,
-        help="Preset site type for imported entries (default: installed)",
+        "--tag",
+        dest="site_tags",
+        action="append",
+        default=["installed"],
+        help="Preset site tag(s) for imported entries (repeatable; default: installed)",
     )
     parser.add_argument(
         "--apply",
@@ -258,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     kmz_path = args.kmz.expanduser().resolve()
     preset_path = args.preset.expanduser().resolve()
     gdb_path = args.boundary_gdb.expanduser().resolve()
-    site_type = SiteType(args.site_type)
+    site_tags = normalize_site_tags(args.site_tags)
 
     prefix = "import_eip:"
     t0 = time.monotonic()
@@ -283,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     entries: list[tuple[str, dict[str, Any]]] = []
     for i, site in enumerate(sorted(inside, key=lambda s: (s.site_name.lower(), s.asset_id)), start=1):
         slug = _site_slug(site, existing_slugs)
-        body = _site_payload(site, site_type=site_type)
+        body = _site_payload(site, tags=site_tags)
         entries.append((slug, body))
         if args.verbose:
             print(

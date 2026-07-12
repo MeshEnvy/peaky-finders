@@ -334,6 +334,8 @@
   let pendingCreateLon = null;
   let draftMarker = null;
   let siteLinksPayload = null;
+  // Gate bulk viewshed warms until first links response settles (ready/error/timeout).
+  let initialViewshedsStarted = false;
   const viewshedVisible = new Map();
   if (savedMapState?.viewshedVisible && typeof savedMapState.viewshedVisible === "object") {
     for (const [slug, visible] of Object.entries(savedMapState.viewshedVisible)) {
@@ -680,6 +682,21 @@
     map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
   }
 
+  /** Warm a viewshed that was skipped while the site was hidden/filtered. */
+  function ensureViewshedLoadedForSlug(slug) {
+    if (isSiteMapHidden(slug) || !isViewshedVisible(slug)) return;
+    if (map.getLayer(viewshedLayerId(slug))) return;
+    if (viewshedLoading.has(slug) || viewshedPendingEpoch.has(slug)) return;
+    const site = siteBySlug.get(slug);
+    if (site) scheduleViewshedLoad(site);
+  }
+
+  function ensureViewshedsForNewlyVisibleSites() {
+    for (const site of sites) {
+      ensureViewshedLoadedForSlug(site.slug);
+    }
+  }
+
   function applyEntityVisibility() {
     applySiteLayerFilters();
     for (const site of sites) {
@@ -736,6 +753,7 @@
     else activeTagFilters.add(value);
     pruneActiveTagFilters();
     applyEntityVisibility();
+    ensureViewshedsForNewlyVisibleSites();
     scheduleSaveMapState();
   }
 
@@ -743,6 +761,7 @@
     if (hidden) siteHidden.add(slug);
     else siteHidden.delete(slug);
     applyEntityVisibility();
+    if (!hidden) ensureViewshedLoadedForSlug(slug);
     scheduleSaveMapState();
   }
 
@@ -1289,14 +1308,21 @@
   async function loadSiteLinks() {
     try {
       const resp = await fetch(linksApiUrl());
-      if (!resp.ok) return;
+      if (!resp.ok) {
+        flushDeferredViewshedLoads();
+        return;
+      }
       const payload = await resp.json();
       applySiteLinksPayload(payload);
       if (payload && payload.status === "pending") {
+        // Let link warm own GDAL/footprint I/O before flooding viewshed PNG warms.
         void fetch(linksWarmApiUrl(), { method: "POST" });
+        setTimeout(() => flushDeferredViewshedLoads(), 120000);
+      } else {
+        flushDeferredViewshedLoads();
       }
     } catch (_) {
-      /* links optional */
+      flushDeferredViewshedLoads();
     }
   }
 
@@ -1493,7 +1519,13 @@
     serveEventsSource.addEventListener("links", (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        if (data && data.status === "ready") applySiteLinksPayload(data);
+        if (!data) return;
+        if (data.status === "ready") {
+          applySiteLinksPayload(data);
+          flushDeferredViewshedLoads();
+        } else if (data.status === "error") {
+          flushDeferredViewshedLoads();
+        }
       } catch (_) {
         /* ignore malformed SSE payload */
       }
@@ -1893,12 +1925,10 @@
 
   function setViewshedVisible(slug, visible) {
     viewshedVisible.set(slug, visible);
-    const layerId = viewshedLayerId(slug);
-    if (map.getLayer(layerId)) {
+    if (map.getLayer(viewshedLayerId(slug))) {
       applyViewshedVisibilityForSite(slug);
-    } else if (visible && !isSiteMapHidden(slug)) {
-      const site = siteBySlug.get(slug);
-      if (site) scheduleViewshedLoad(site);
+    } else if (visible) {
+      ensureViewshedLoadedForSlug(slug);
     }
     syncViewshedUiForSlug(slug);
     if (slug === DRAFT_VIEWSHED_SLUG) {
@@ -2003,6 +2033,12 @@
         scheduleViewshedLoad(site);
       }
     }
+  }
+
+  function flushDeferredViewshedLoads() {
+    if (initialViewshedsStarted) return;
+    initialViewshedsStarted = true;
+    loadAllViewsheds();
   }
 
 
@@ -3246,8 +3282,8 @@
     addSiteLayers();
     wireMapInteractions();
     connectProjectEvents();
+    // Links first: cold warm re-reads many GPKGs; defer bulk viewshed warms until ready.
     void loadSiteLinks();
-    loadAllViewsheds();
     renderEntityPanel();
     applyEntityVisibility();
     syncBasemapMenu();

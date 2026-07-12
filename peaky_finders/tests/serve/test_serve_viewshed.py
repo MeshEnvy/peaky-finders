@@ -379,6 +379,8 @@ def test_project_page_loads_viewsheds_on_demand(tmp_path: Path) -> None:
         assert "reconcilePendingViewsheds" in js_body
         assert "viewshedWarmUrl" in js_body
         assert "setViewshedVisible" in js_body
+        assert "ensureViewshedLoadedForSlug" in js_body
+        assert "flushDeferredViewshedLoads" in js_body
         assert "viewshed-sim-modal" in body or "home-settings-modal" in body
         assert "viewshed-sim-open" in js_body or "home-settings-modal" in body
         assert '"simulation"' in body

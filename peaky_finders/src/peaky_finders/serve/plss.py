@@ -12,7 +12,7 @@ from peaky_finders.core.plss.fetch import (
     read_plss_loc_cache,
     write_plss_loc_cache,
 )
-from peaky_finders.core.preset import resolved_preset_build_dir
+from peaky_finders.core.preset import resolved_preset_cache_dir
 
 
 class ServePlssError(Exception):
@@ -20,7 +20,7 @@ class ServePlssError(Exception):
 
 
 def _cache_base(project_dir: Path) -> Path:
-    return resolved_preset_build_dir(project_dir / "config.yaml")
+    return resolved_preset_cache_dir(project_dir / "config.yaml")
 
 
 def ensure_plss_for_coords(
@@ -30,7 +30,7 @@ def ensure_plss_for_coords(
     *,
     verbose: bool = False,
 ) -> dict[str, str]:
-    """Resolve PLSS for coordinates, using ``build/plss/by_loc.json`` when possible."""
+    """Resolve PLSS for coordinates, using ``.peaky/cache/plss/by_loc.json`` when possible."""
     if not (-90.0 <= lat <= 90.0):
         raise ServePlssError(f"lat out of bounds: {lat}")
     if not (-180.0 <= lon <= 180.0):
@@ -67,7 +67,7 @@ def apply_plss_from_loc_cache(
     lon: float,
 ) -> str | None:
     """Write cached PLSS onto a preset site/goal when the loc cache has a resolved entry."""
-    cache_base = resolved_preset_build_dir(preset_path)
+    cache_base = resolved_preset_cache_dir(preset_path)
     loc_cache = read_plss_loc_cache(cache_base)
     cached = loc_cache.get(loc_stamp(lat, lon))
     if cached is None or not loc_plss_resolved(cached):

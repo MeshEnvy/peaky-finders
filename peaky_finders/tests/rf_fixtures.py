@@ -45,12 +45,12 @@ MINIMAL_SPLATTER_SIMULATION: dict[str, Any] = {
 
 
 def goal_site(name: str, loc: tuple[float, float], *, slug: str | None = None) -> dict[str, object]:
-    """YAML-shaped ``type: goal`` site entry for tests."""
+    """YAML-shaped site entry with cosmetic ``goal`` tag for legacy suggest tests."""
     _ = slug
-    return {"type": "goal", "name": name, "loc": list(loc)}
+    return {"name": name, "loc": list(loc), "tags": ["goal"]}
 
 
 def make_goal_entry(name: str, loc: tuple[float, float]) -> "SiteEntry":
-    from peaky_finders.sites_job import SiteEntry, SiteType
+    from peaky_finders.core.preset import SiteEntry
 
-    return SiteEntry(type=SiteType.GOAL, name=name, loc=loc)
+    return SiteEntry(name=name, loc=loc, tags=["goal"])

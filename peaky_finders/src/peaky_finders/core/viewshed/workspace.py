@@ -1,4 +1,4 @@
-"""Filesystem layout for SPLAT workspaces (preset ``build/viewsheds/`` subtrees)."""
+"""Filesystem layout for SPLAT workspaces (``.peaky/cache/viewsheds/`` subtrees)."""
 
 from __future__ import annotations
 

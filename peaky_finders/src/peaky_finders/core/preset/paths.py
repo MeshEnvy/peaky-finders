@@ -83,15 +83,15 @@ def require_cwd_config_yaml(*, cwd: Path | None = None) -> Path:
     return path
 
 
-def resolved_preset_build_dir(preset_path: Path) -> Path:
-    """Per-preset build outputs root: ``<preset-dir>/build``."""
+def resolved_preset_cache_dir(preset_path: Path) -> Path:
+    """Per-preset serve runtime cache: ``<preset-dir>/.peaky/cache``."""
     p = Path(preset_path).expanduser().resolve()
-    return (p.parent / "build").resolve()
+    return (p.parent / ".peaky" / "cache").resolve()
 
 
 def resolved_viewshed_root(preset_path: Path) -> Path:
-    """Per-preset viewshed workspace root: ``<preset-dir>/build/viewsheds``."""
-    return resolved_preset_build_dir(preset_path) / "viewsheds"
+    """Per-preset viewshed workspace root: ``<preset-dir>/.peaky/cache/viewsheds``."""
+    return resolved_preset_cache_dir(preset_path) / "viewsheds"
 
 
 def resolved_preset_slug(preset_path: Path) -> str:

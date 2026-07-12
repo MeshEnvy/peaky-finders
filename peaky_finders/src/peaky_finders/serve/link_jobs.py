@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -48,7 +49,8 @@ def _read_existing_footprints(
     if not slugs:
         return footprints
 
-    workers = min(len(slugs), resolve_serve_coverage_max_concurrent())
+    # Disk reads are I/O-bound; do not cap at coverage-generation concurrency.
+    workers = min(len(slugs), max(8, (os.cpu_count() or 4) * 2))
     if verbose:
         print(
             f"link jobs: read {len(slugs)} existing footprint(s), workers={workers}",

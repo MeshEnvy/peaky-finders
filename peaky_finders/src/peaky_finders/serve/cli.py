@@ -30,7 +30,7 @@ SERVE_THREADS = 8
 
 
 def resolve_serve_peaky_home() -> Path:
-    """Runtime home for ``peaky serve`` (same resolution as :func:`sites_job.peaky_home`)."""
+    """Runtime home for ``peaky serve`` (same resolution as :func:`core.preset.peaky_home`)."""
     return resolve_runtime_peaky_home()
 
 
@@ -84,7 +84,7 @@ def build_serve_parser() -> argparse.ArgumentParser:
 
 
 def resolve_serve_reload_roots() -> list[Path]:
-    """Source trees polled for ``--reload`` (package ``*.py`` + ``serve_static/``)."""
+    """Source trees polled for ``--reload`` (package ``*.py`` + ``serve/static/``)."""
     roots = [Path(peaky_finders.__file__).resolve().parent]
     static_root = SERVE_STATIC_DIR.resolve()
     if static_root.is_dir():

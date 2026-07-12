@@ -15,7 +15,8 @@ dist/
 *.kmz
 share
 build
-# Runtime home: track global YAML + public sample project only (not data/build/cache)
+.peaky
+# Runtime home: track global YAML + public sample project only (not data/.peaky/cache)
 peaky_home/**
 !peaky_home/*.yaml
 !peaky_home/projects/

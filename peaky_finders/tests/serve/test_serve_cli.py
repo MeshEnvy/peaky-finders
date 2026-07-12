@@ -30,7 +30,7 @@ from peaky_finders.serve.cli import (
     resolve_serve_request_log,
     run_serve,
 )
-from peaky_finders.core.preset import SiteEntry, resolved_preset_build_dir
+from peaky_finders.core.preset import SiteEntry, resolved_preset_cache_dir
 
 
 def _start_server(projects_dir: Path):
@@ -578,7 +578,7 @@ def test_post_project_site_applies_cached_plss(tmp_path: Path) -> None:
     project_dir = scaffold_project("mesh-demo", parent=projects_dir)
     preset_path = project_dir / "config.yaml"
     lat, lon = 39.6, -119.4
-    cache_base = resolved_preset_build_dir(preset_path)
+    cache_base = resolved_preset_cache_dir(preset_path)
     write_plss_loc_cache(
         cache_base,
         {loc_stamp(lat, lon): {"plss": "NV210300N0230E0SN360ASENW"}},

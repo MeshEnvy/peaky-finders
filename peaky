@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dev-only: build/run peaky:dev (test, serve, build, …) with live peaky_finders mount.
+# Dev-only: build/run peaky:dev (serve, test) with live peaky_finders mount.
 set -euo pipefail
 
 _script="$0"
