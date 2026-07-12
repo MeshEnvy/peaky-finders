@@ -7,7 +7,7 @@ alwaysApply: true
 
 ## One `sites:` map
 
-Each entry: `name`, `loc: [lat, lon]`, optional `tags: [str, …]`, optional metadata (`elevation_m`, `plss`, …).
+Each entry: `name`, `loc: [lat, lon]`, optional `tags: [str, …]`, optional metadata (`height_m`, `plss`, …).
 
 - **No `type` field** — load rejects `sites.*.type` (“use tags”).
 - **No goals** — no separate attractor type; all sites participate in viewsheds and P2P links.

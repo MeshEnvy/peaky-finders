@@ -7,7 +7,7 @@ from pathlib import Path
 
 from peaky_finders.core.rf.models import SplatCoverageRequest
 from peaky_finders.core.rf.mapping import preset_to_request
-from peaky_finders.core.preset.model import Preset
+from peaky_finders.core.preset.model import Preset, SiteEntry
 from peaky_finders.core.viewshed.input_hash import splat_input_sha256
 
 
@@ -44,7 +44,8 @@ def resolved_viewshed_workdir_for_coords(
     viewshed_root: Path,
     lat: float,
     lon: float,
+    site: SiteEntry | None = None,
 ) -> Path:
-    req = preset_to_request(preset, float(lat), float(lon))
+    req = preset_to_request(preset, float(lat), float(lon), site=site)
     digest = viewshed_workspace_digest(request=req)
     return resolved_viewshed_workdir(digest=digest, viewshed_root=viewshed_root)

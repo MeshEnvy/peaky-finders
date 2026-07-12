@@ -13,9 +13,10 @@ from peaky_finders.core.rf.mapping import (
     reliability_margin_db,
     resolved_environment,
     resolved_modem,
+    resolved_site_tx_height_m,
 )
 from peaky_finders.core.home.profiles import load_modem_presets_catalog
-from peaky_finders.core.preset import CoverageProvider, Preset, SimulationConfig
+from peaky_finders.core.preset import CoverageProvider, Preset, SimulationConfig, SiteEntry
 from rf_fixtures import FIXTURE_MODEM, TEST_ENVIRONMENT_PRESET, TEST_MODEM_PRESET
 
 
@@ -127,6 +128,23 @@ def test_preset_to_request_maps_raster_dimension() -> None:
     preset = _minimal_preset(simulation=_minimal_simulation(raster_dimension=2048))
     req = preset_to_request(preset, 39.0, -119.0)
     assert req.raster_dimension == 2048
+
+
+def test_resolved_site_tx_height_m_uses_override_or_default() -> None:
+    preset = _minimal_preset()
+    site = SiteEntry(name="Tower", loc=(39.0, -119.0), height_m=25.0)
+    assert resolved_site_tx_height_m(preset, site) == 25.0
+    default_site = SiteEntry(name="Handheld", loc=(39.0, -119.0))
+    assert resolved_site_tx_height_m(preset, default_site) == 2.0
+
+
+def test_preset_to_request_uses_site_tx_height_override() -> None:
+    preset = _minimal_preset()
+    site = SiteEntry(name="Tower", loc=(39.0, -119.0), height_m=30.0)
+    req = preset_to_request(preset, 39.0, -119.0, site=site)
+    assert req.tx_height == 30.0
+    req_default = preset_to_request(preset, 39.0, -119.0)
+    assert req_default.tx_height == 2.0
 
 
 def test_radius_km_over_100_rejected() -> None:

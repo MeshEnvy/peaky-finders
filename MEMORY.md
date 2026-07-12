@@ -21,7 +21,10 @@ Living snapshot of **current** architecture and repo state. **Agents: read this 
 
 ## Domain model: sites
 
-All map points under **`sites:`** (slug → `name`, `loc: [lat, lon]`, optional `tags`, `elevation_m`, …).
+All map points under **`sites:`** (slug → `name`, `loc: [lat, lon]`, optional `tags`, `height_m`, …).
+
+- **`height_m`** — optional antenna AGL (m); overrides `simulation.transmitter.height_m` for that site's viewshed TX height.
+- **`elevation_m`** — removed; terrain at `loc` comes from Skadi DEM in splatter.
 
 - **No `type` field** — rejected on load (`sites.<slug>.type is removed; use tags`).
 - **No goals / repeaters split** — every site gets viewsheds and P2P link checks.

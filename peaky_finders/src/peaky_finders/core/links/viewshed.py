@@ -87,6 +87,7 @@ def site_viewshed_workdir(
         viewshed_root=viewshed_root,
         lat=float(site.lat),
         lon=float(site.lon),
+        site=site,
     )
 
 

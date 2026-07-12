@@ -270,6 +270,7 @@ def _viewshed_request(
         preset,
         float(site.lat),
         float(site.lon),
+        site=site,
         radius_km=ov.radius_km,
         raster_dimension=ov.raster_dimension,
     )

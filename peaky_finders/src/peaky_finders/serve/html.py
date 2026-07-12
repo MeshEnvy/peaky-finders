@@ -467,8 +467,8 @@ def project_html(
             </div>
           </div>
           <div class="site-panel__fact">
-            <span class="site-panel__label">Elevation</span>
-            <p class="site-panel__value" id="site-panel-elevation"></p>
+            <span class="site-panel__label">Antenna height</span>
+            <p class="site-panel__value" id="site-panel-height"></p>
           </div>
         </div>
         <div class="site-panel__section" id="site-panel-plss-section" hidden>
@@ -534,6 +534,11 @@ def project_html(
             </div>
           </div>
           <ul class="edit-coord-history" id="site-panel-edit-coord-history" hidden></ul>
+        </div>
+        <div class="site-panel__section">
+          <label class="site-panel__label" for="site-panel-edit-height">Antenna height (m)</label>
+          <input id="site-panel-edit-height" type="number" step="0.1" min="1" class="pf-mono" inputmode="decimal" autocomplete="off" placeholder="">
+          <p class="site-panel__value pf-muted pf-small" id="site-panel-edit-height-hint"></p>
         </div>
         <div class="site-panel__section" id="site-panel-edit-plss-section" hidden>
           <span class="site-panel__label">PLSS</span>

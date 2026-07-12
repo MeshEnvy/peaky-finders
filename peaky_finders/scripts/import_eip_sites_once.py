@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""One-time import of EIP KMZ tower sites into a preset ``config.yaml``.
+"""One-time import of EIP tower sites into a preset ``config.yaml``.
+
+Supports legacy EIP KMZ (SimpleData fields) and ``EIP-NV.kml`` (asset id + point Z).
 
 Filters placemarks to those inside the Nevada state boundary GDB layer, then
 appends new ``sites:`` entries (skips slugs that already exist).
@@ -44,6 +46,9 @@ KML = f"{{{KML_NS}}}"
 EIP_NAME_SUFFIX = " {EIP}"
 
 
+EIP_DEFAULT_HEIGHT_M = 25.0
+
+
 @dataclass(frozen=True)
 class EipSite:
     site_name: str
@@ -53,7 +58,6 @@ class EipSite:
     state_code: str
     tower_type: str
     tower_height: str
-    ground_elevation_m: float | None
     development_stage: str
     street_address: str
     city: str
@@ -104,13 +108,67 @@ def _parse_kmz(kmz_path: Path) -> list[EipSite]:
                 state_code=data.get("State_Province_Code", "").strip(),
                 tower_type=data.get("Tower_Type", "").strip(),
                 tower_height=data.get("Tower_Height", "").strip(),
-                ground_elevation_m=_float_or_none(data.get("Ground_Elevation")),
                 development_stage=data.get("Development_Stage", "").strip(),
                 street_address=data.get("Street_Address", "").strip(),
                 city=data.get("City", "").strip(),
             )
         )
     return out
+
+
+def _parse_kml(kml_path: Path) -> list[EipSite]:
+    root = ET.parse(kml_path).getroot()
+    out: list[EipSite] = []
+    for pm in root.iter(f"{KML}Placemark"):
+        asset_id = (pm.findtext(f"{KML}name") or "").strip()
+        lat = lon = None
+        coords = pm.find(f".//{KML}Point/{KML}coordinates")
+        if coords is not None and coords.text:
+            parts = [p.strip() for p in coords.text.split(",")]
+            if len(parts) >= 2:
+                lon = float(parts[0])
+                lat = float(parts[1])
+        if lat is None or lon is None:
+            continue
+        out.append(
+            EipSite(
+                site_name=asset_id or "EIP site",
+                asset_id=asset_id,
+                lat=float(lat),
+                lon=float(lon),
+                state_code="NV",
+                tower_type="",
+                tower_height="",
+                development_stage="",
+                street_address="",
+                city="",
+            )
+        )
+    return out
+
+
+def _parse_eip_source(path: Path) -> list[EipSite]:
+    path = path.expanduser().resolve()
+    if path.suffix.lower() == ".kmz":
+        return _parse_kmz(path)
+    if path.suffix.lower() == ".kml":
+        return _parse_kml(path)
+    raise ValueError(f"unsupported EIP source (expected .kml or .kmz): {path}")
+
+
+def _tower_height_m(raw: str) -> float | None:
+    match = re.search(r"([\d.]+)", raw or "")
+    if not match:
+        return None
+    feet = float(match.group(1))
+    if feet < 1.0:
+        return None
+    return round(feet * 0.3048, 1)
+
+
+def _resolved_antenna_height_m(site: EipSite) -> float:
+    parsed = _tower_height_m(site.tower_height)
+    return parsed if parsed is not None else EIP_DEFAULT_HEIGHT_M
 
 
 def _float_or_none(raw: str | None) -> float | None:
@@ -184,8 +242,7 @@ def _site_payload(site: EipSite, *, tags: list[str]) -> dict[str, Any]:
         "tags": list(tags),
         "rationale": "; ".join(rationale_bits),
     }
-    if site.ground_elevation_m is not None:
-        body["elevation_m"] = round(site.ground_elevation_m, 1)
+    body["height_m"] = _resolved_antenna_height_m(site)
     if address:
         body["description"] = address
     return body
@@ -228,8 +285,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--kmz",
         type=Path,
-        default=project_dir / "data" / "EIP Site List_Coal Creek_3_31_26 v2.csv.kmz",
-        help="Source KMZ with EIP placemarks",
+        default=project_dir / "data" / "EIP-NV.kml",
+        help="Source KML/KMZ with EIP placemarks (default: EIP-NV.kml)",
     )
     parser.add_argument(
         "--boundary-gdb",
@@ -257,17 +314,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verbose", action="store_true", help="Log per-site progress")
     args = parser.parse_args(argv)
 
-    kmz_path = args.kmz.expanduser().resolve()
+    source_path = args.kmz.expanduser().resolve()
     preset_path = args.preset.expanduser().resolve()
     gdb_path = args.boundary_gdb.expanduser().resolve()
     site_tags = normalize_site_tags(args.site_tags)
 
     prefix = "import_eip:"
     t0 = time.monotonic()
-    print(f"{prefix} start: kmz={kmz_path.name}, preset={preset_path}", flush=True)
+    print(f"{prefix} start: source={source_path.name}, preset={preset_path}", flush=True)
 
-    all_sites = _parse_kmz(kmz_path)
-    print(f"{prefix} parsed {len(all_sites)} placemark(s) from KMZ", flush=True)
+    all_sites = _parse_eip_source(source_path)
+    print(f"{prefix} parsed {len(all_sites)} placemark(s) from {source_path.suffix}", flush=True)
 
     print(
         f"{prefix} loading boundary {gdb_path.name} / {args.boundary_layer!r}",

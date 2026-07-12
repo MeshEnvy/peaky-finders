@@ -423,15 +423,22 @@ def test_serialize_project_sites_includes_metadata() -> None:
         "peak": SiteEntry(
             name="Peak",
             loc=(39.5, -119.5),
-            elevation_m=1713.0,
             plss="NV210300N0230E0SN360ASENW",
             description="Approved site",
         ),
     }
     row = _serialize_project_sites(sites)[0]
-    assert row["elevation_m"] == 1713.0
     assert row["plss"] == "NV210300N0230E0SN360ASENW"
     assert row["description"] == "Approved site"
+    assert "elevation_m" not in row
+
+
+def test_serialize_project_sites_includes_height_m() -> None:
+    sites = {
+        "tower": SiteEntry(name="Tower", loc=(39.5, -119.5), height_m=25.0),
+    }
+    row = _serialize_project_sites(sites)[0]
+    assert row["height_m"] == 25.0
 
 
 def test_api_project_sites_json_with_metadata(tmp_path: Path) -> None:
@@ -444,7 +451,6 @@ def test_api_project_sites_json_with_metadata(tmp_path: Path) -> None:
         raw.replace(
             "hub:\n    name: Hub\n    loc: [39.5, -119.5]",
             "peak:\n    name: Peak\n    loc: [39.5, -119.5]\n"
-            "    elevation_m: 1713.0\n"
             "    plss: NV210300N0230E0SN360ASENW\n"
             "    description: Approved site",
             1,
@@ -460,7 +466,7 @@ def test_api_project_sites_json_with_metadata(tmp_path: Path) -> None:
         payload = json.loads(resp.read().decode("utf-8"))
         assert resp.status == 200
         site = payload["sites"][0]
-        assert site["elevation_m"] == 1713.0
+        assert "elevation_m" not in site
         assert site["plss"] == "NV210300N0230E0SN360ASENW"
         assert site["description"] == "Approved site"
     finally:
@@ -822,7 +828,7 @@ def test_post_sites_import_preview(tmp_path: Path) -> None:
         assert resp.status == 200
         assert len(payload["points"]) == 2
         assert payload["points"][0]["name"] == "Import Alpha"
-        assert payload["points"][0]["elevation_m"] == 2100.0
+        assert "elevation_m" not in payload["points"][0]
         preset_path = projects_dir / "mesh-demo" / "config.yaml"
         before = preset_path.read_text()
     finally:
@@ -902,7 +908,7 @@ def test_post_sites_import_with_points_subset(tmp_path: Path) -> None:
             {
                 "tags": ["onx"],
                 "points": [
-                    {"name": "Import Alpha", "lat": 39.6, "lon": -119.4, "elevation_m": 2100},
+                    {"name": "Import Alpha", "lat": 39.6, "lon": -119.4},
                 ],
             }
         ).encode("utf-8")
@@ -919,7 +925,7 @@ def test_post_sites_import_with_points_subset(tmp_path: Path) -> None:
         assert payload["imported"] == 1
         assert payload["sites"][0]["slug"] == "import-alpha"
         assert payload["sites"][0]["tags"] == ["onx"]
-        assert payload["sites"][0]["elevation_m"] == 2100.0
+        assert "elevation_m" not in payload["sites"][0]
     finally:
         server.shutdown()
         server.server_close()

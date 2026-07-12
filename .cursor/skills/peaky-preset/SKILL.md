@@ -22,7 +22,7 @@ Read [MEMORY.md](../../MEMORY.md) first.
 |---------|---------|
 | `simulation` | `modem` / `environment` names, `radius_km`, `raster_dimension`, chains |
 | `display` | Viewshed colormap / transparency |
-| `sites` | `name`, `loc`, optional `tags`, metadata — **no `type`** |
+| `sites` | `name`, `loc`, optional `tags`, `height_m`, metadata — **no `type`** |
 | `links` | Manual pairs `[[a, b], …]` |
 
 `load_preset` deep-merges global ← project. Writes prune keys equal to defaults.

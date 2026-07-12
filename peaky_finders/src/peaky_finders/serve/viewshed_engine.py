@@ -43,6 +43,7 @@ def site_footprint_digest(
         preset,
         float(site.lat),
         float(site.lon),
+        site=site,
         radius_km=ov.radius_km,
         raster_dimension=ov.raster_dimension,
     )
@@ -155,6 +156,7 @@ class ViewshedEngine:
             viewshed_root=viewshed_root,
             lat=float(site.lat),
             lon=float(site.lon),
+            site=site,
         )
         fp = load_viewshed_footprint(workdir, preset=preset, verbose=verbose, ensure=False)
         self._store_result(key, fp)
@@ -189,6 +191,7 @@ class ViewshedEngine:
                 viewshed_root=viewshed_root,
                 lat=float(site.lat),
                 lon=float(site.lon),
+                site=site,
             )
             return load_viewshed_footprint(workdir, preset=preset, verbose=verbose)
 

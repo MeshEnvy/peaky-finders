@@ -13,6 +13,8 @@ from peaky_finders.core.preset import (
 )
 from peaky_finders.serve.kml_import import KmlPointSite
 
+_UNSET: object = object()
+
 
 def unique_site_slug(existing: set[str], name: str) -> str:
     """Derive a unique site key from *name* (same rules as list-import in ``coerce_preset_sites``)."""
@@ -39,6 +41,14 @@ def validate_site_coords(lat: float, lon: float) -> None:
         raise ValueError(f"lon out of bounds: {lon}")
 
 
+def validate_site_height(height_m: float | None) -> None:
+    if height_m is None:
+        return
+    h = float(height_m)
+    if h < 1.0:
+        raise ValueError("height_m must be >= 1")
+
+
 def append_planned_site_to_preset(
     preset_path: Path,
     *,
@@ -46,10 +56,12 @@ def append_planned_site_to_preset(
     lat: float,
     lon: float,
     tags: list[str] | None = None,
+    height_m: float | None = None,
 ) -> str:
     """Append a site under ``sites``; return the new slug."""
     name = validate_site_name(name)
     validate_site_coords(lat, lon)
+    validate_site_height(height_m)
     tags_value = normalize_site_tags(tags) if tags is not None else []
 
     def mutator(_yaml_rt: Any, root: dict[str, Any]) -> str:
@@ -68,6 +80,8 @@ def append_planned_site_to_preset(
         }
         if tags_value:
             entry["tags"] = list(tags_value)
+        if height_m is not None:
+            entry["height_m"] = float(height_m)
         sites_raw[site_slug] = entry
         return site_slug
 
@@ -107,8 +121,6 @@ def import_sites_to_preset(
                 "loc": [site.lat, site.lon],
                 "tags": list(tags_value),
             }
-            if site.elevation_m is not None:
-                entry["elevation_m"] = float(site.elevation_m)
             sites_raw[site_slug] = entry
             new_slugs.append(site_slug)
         return new_slugs
@@ -139,6 +151,7 @@ def update_site_in_preset(
     lat: float | None = None,
     lon: float | None = None,
     tags: list[str] | None = None,
+    height_m: float | None | object = _UNSET,
 ) -> str:
     """Update an existing site in ``sites``; return slug."""
     slug = str(site_slug).strip()
@@ -153,6 +166,8 @@ def update_site_in_preset(
     tags_value: list[str] | None = None
     if tags is not None:
         tags_value = normalize_site_tags(tags)
+    if height_m is not _UNSET and height_m is not None:
+        validate_site_height(float(height_m))
 
     def mutator(_yaml_rt: Any, root: dict[str, Any]) -> str:
         sites_raw = root.get("sites")
@@ -172,6 +187,11 @@ def update_site_in_preset(
                 ent["tags"] = list(tags_value)
             else:
                 ent.pop("tags", None)
+        if height_m is not _UNSET:
+            if height_m is None:
+                ent.pop("height_m", None)
+            else:
+                ent["height_m"] = float(height_m)
         return slug
 
     return str(update_preset_yaml_tree(preset_path, mutator, validate=False))

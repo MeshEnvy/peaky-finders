@@ -153,7 +153,7 @@ class MapPointEntry(BaseModel):
 
     name: str
     loc: tuple[float, float]
-    elevation_m: float | None = None
+    height_m: float | None = Field(default=None, ge=1)
     description: str | None = None
     plss: str | None = None
     tags: list[str] = Field(default_factory=list)
@@ -184,6 +184,8 @@ class SiteEntry(MapPointEntry):
 def _reject_site_type_field(site: Mapping[str, Any], slug: str) -> None:
     if "type" in site:
         raise ValueError(f"sites.{slug}.type is removed; use tags")
+    if "elevation_m" in site:
+        raise ValueError(f"sites.{slug}.elevation_m is removed; terrain comes from DEM at loc")
 
 
 def _coerce_link_pair(item: Any, *, index: int) -> tuple[str, str]:

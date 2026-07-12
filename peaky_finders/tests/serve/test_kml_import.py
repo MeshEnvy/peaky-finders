@@ -48,7 +48,6 @@ def test_parse_kml_point_placemarks_onx_shape() -> None:
     assert sites[0].name == "Bald Mountain {HSC}"
     assert sites[0].lat == pytest.approx(38.78424)
     assert sites[0].lon == pytest.approx(-118.83434)
-    assert sites[0].elevation_m == pytest.approx(2800.800049)
     assert sites[1].name == "Stillwater {HSC}"
 
 
@@ -77,7 +76,7 @@ def test_serialize_kml_point() -> None:
     assert row["name"] == "Bald Mountain {HSC}"
     assert row["lat"] == pytest.approx(38.78424)
     assert row["lon"] == pytest.approx(-118.83434)
-    assert row["elevation_m"] == pytest.approx(2800.800049)
+    assert "elevation_m" not in row
 
 
 def test_parse_nevada_onx_fixture_if_present() -> None:

@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from peaky_finders.core.rf.models import LoRaModemParams, RadioClimate, SplatCoverageRequest
 from peaky_finders.core.home.profiles import load_environment_presets_catalog, load_modem_presets_catalog
 from peaky_finders.core.preset import Preset, SimulationConfig
+from peaky_finders.core.preset.model import SiteEntry
 
 _CLIMATES: frozenset[str] = frozenset(
     {
@@ -210,11 +211,20 @@ def modem_decode_threshold_dbm(modem: dict[str, Any]) -> float:
     return _lora_sensitivity_dbm(modem) + impl
 
 
+def resolved_site_tx_height_m(preset: Preset, site: SiteEntry) -> float:
+    """Antenna AGL for *site* viewshed TX: per-site override or simulation transmitter default."""
+    if site.height_m is not None:
+        return max(1.0, float(site.height_m))
+    tx = _sim(preset).transmitter
+    return max(1.0, _f(tx["height_m"]))
+
+
 def preset_to_request(
     preset: Preset,
     lat: float,
     lon: float,
     *,
+    site: SiteEntry | None = None,
     radius_km: float | None = None,
     raster_dimension: int | None = None,
 ) -> SplatCoverageRequest:
@@ -256,10 +266,12 @@ def preset_to_request(
         sensitivity_dbm=None if sens_raw is None else _f(sens_raw),
     )
 
+    tx_height = resolved_site_tx_height_m(preset, site) if site is not None else max(1.0, _f(tx["height_m"]))
+
     return SplatCoverageRequest(
         lat=lat,
         lon=lon,
-        tx_height=max(1.0, _f(tx["height_m"])),
+        tx_height=tx_height,
         tx_power=tx_power_dbm,
         tx_gain=_f(tx["gain_dbi"]),
         frequency_mhz=_preset_frequency_mhz(preset),

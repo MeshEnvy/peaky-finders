@@ -16,7 +16,6 @@ class KmlPointSite:
     name: str
     lat: float
     lon: float
-    elevation_m: float | None = None
 
 
 def _placemark_name(pm: ET.Element) -> str:
@@ -26,7 +25,7 @@ def _placemark_name(pm: ET.Element) -> str:
     return "Unnamed site"
 
 
-def _parse_point_coordinates(coords_text: str) -> tuple[float, float, float | None] | None:
+def _parse_point_coordinates(coords_text: str) -> tuple[float, float] | None:
     text = str(coords_text or "").strip()
     if not text:
         return None
@@ -37,12 +36,11 @@ def _parse_point_coordinates(coords_text: str) -> tuple[float, float, float | No
     try:
         lon = float(parts[0])
         lat = float(parts[1])
-        elev = float(parts[2]) if len(parts) >= 3 and parts[2] else None
     except ValueError:
         return None
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
         return None
-    return lat, lon, elev
+    return lat, lon
 
 
 def _parse_placemark_point(pm: ET.Element) -> KmlPointSite | None:
@@ -52,8 +50,8 @@ def _parse_placemark_point(pm: ET.Element) -> KmlPointSite | None:
     parsed = _parse_point_coordinates(coords_el.text)
     if parsed is None:
         return None
-    lat, lon, elev = parsed
-    return KmlPointSite(name=_placemark_name(pm), lat=lat, lon=lon, elevation_m=elev)
+    lat, lon = parsed
+    return KmlPointSite(name=_placemark_name(pm), lat=lat, lon=lon)
 
 
 def parse_kml_point_placemarks(data: bytes) -> tuple[list[KmlPointSite], int]:
@@ -88,11 +86,8 @@ def parse_kmz_point_placemarks(data: bytes) -> tuple[list[KmlPointSite], int]:
 
 
 def serialize_kml_point(site: KmlPointSite) -> dict[str, object]:
-    row: dict[str, object] = {
+    return {
         "name": site.name,
         "lat": site.lat,
         "lon": site.lon,
     }
-    if site.elevation_m is not None:
-        row["elevation_m"] = site.elevation_m
-    return row

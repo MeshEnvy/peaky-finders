@@ -190,6 +190,22 @@ def test_links_cache_survives_site_rename(tmp_path: Path) -> None:
     )
 
 
+def test_links_fingerprint_changes_when_site_height_changes(tmp_path: Path) -> None:
+    from peaky_finders.core.preset import load_preset_for_coverage
+    from peaky_finders.serve.links import links_input_fingerprint
+    from peaky_finders.serve.sites import update_site_in_preset
+
+    project_dir = _write_links_project(tmp_path / "sample")
+    sites = load_preset_sites(project_dir / "config.yaml")
+    preset = load_preset_for_coverage(project_dir / "config.yaml")
+    before = links_input_fingerprint(sites, preset=preset)
+
+    update_site_in_preset(project_dir / "config.yaml", "hub", height_m=25.0)
+    sites_after = load_preset_sites(project_dir / "config.yaml")
+    after = links_input_fingerprint(sites_after, preset=preset)
+    assert before != after
+
+
 def test_warm_links_returns_cache_without_rerun(tmp_path: Path) -> None:
     from peaky_finders.serve.link_jobs import reset_link_jobs_for_tests, warm_project_site_links
     from peaky_finders.serve.links import store_project_site_links_cache

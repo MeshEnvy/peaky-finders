@@ -22,6 +22,7 @@ from peaky_finders.core.preset import (
     SiteEntry,
     load_preset_for_coverage,
 )
+from peaky_finders.core.rf.mapping import resolved_site_tx_height_m
 from peaky_finders.serve.viewshed_engine import get_viewshed_engine
 from peaky_finders.serve.viewshed_sim import ViewshedSimOverrides
 
@@ -66,7 +67,12 @@ def links_input_fingerprint(
     sim = preset.simulation
     site_rows = tuple(
         sorted(
-            (str(slug), round(float(site.lat), 7), round(float(site.lon), 7))
+            (
+                str(slug),
+                round(float(site.lat), 7),
+                round(float(site.lon), 7),
+                round(resolved_site_tx_height_m(preset, site), 3),
+            )
             for slug, site in sites.items()
         )
     )

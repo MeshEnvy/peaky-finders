@@ -198,6 +198,7 @@
   let viewshedOpacity = savedMapState?.viewshedOpacity ?? VIEWSHED_OPACITY_DEFAULT;
   const defaultRadiusKm = Number(simDefaults.radius_km) || 60;
   const defaultRasterDimension = Number(simDefaults.raster_dimension) || 500;
+  const defaultTxHeightM = Number(simDefaults.transmitter?.height_m) || 2;
   let viewshedRadiusKm = defaultRadiusKm;
   let viewshedRasterDimension = defaultRasterDimension;
   viewshedRadiusKm = Math.max(
@@ -396,6 +397,8 @@
   const sitePanelEditSlug = document.getElementById("site-panel-edit-slug");
   const sitePanelEditLat = document.getElementById("site-panel-edit-lat");
   const sitePanelEditLon = document.getElementById("site-panel-edit-lon");
+  const sitePanelEditHeight = document.getElementById("site-panel-edit-height");
+  const sitePanelEditHeightHint = document.getElementById("site-panel-edit-height-hint");
   const sitePanelEditCopyCoords = document.getElementById("site-panel-edit-copy-coords");
   const sitePanelCopyCoords = document.getElementById("site-panel-copy-coords");
   const sitePanelCopyPlss = document.getElementById("site-panel-copy-plss");
@@ -1604,9 +1607,24 @@
     addEditHistoryLinksLayer({ type: "FeatureCollection", features });
   }
 
-  function formatElevationM(elevationM) {
-    if (elevationM == null || !Number.isFinite(Number(elevationM))) return null;
-    return `${Math.round(Number(elevationM)).toLocaleString()} m`;
+  function formatAntennaHeightM(heightM) {
+    if (heightM == null || !Number.isFinite(Number(heightM))) return null;
+    return `${Number(heightM).toLocaleString(undefined, { maximumFractionDigits: 1 })} m`;
+  }
+
+  function resolvedSiteHeightM(site) {
+    if (site?.height_m != null && Number.isFinite(Number(site.height_m))) {
+      return Number(site.height_m);
+    }
+    return defaultTxHeightM;
+  }
+
+  function syncEditHeightHint() {
+    if (!sitePanelEditHeightHint) return;
+    sitePanelEditHeightHint.textContent = `Leave blank for project default (${defaultTxHeightM} m)`;
+    if (sitePanelEditHeight) {
+      sitePanelEditHeight.placeholder = String(defaultTxHeightM);
+    }
   }
 
   function linkDistanceKmBetween(slugA, slugB) {
@@ -2868,7 +2886,6 @@
         name: point.name,
         lat: point.lat,
         lon: point.lon,
-        elevation_m: point.elevation_m ?? null,
         ignored: duplicate,
         duplicate,
         duplicateDistM: duplicate ? Math.round(nearestDist) : null,
@@ -3352,7 +3369,6 @@
             lat: point.lat,
             lon: point.lon,
           };
-          if (point.elevation_m != null) row.elevation_m = point.elevation_m;
           return row;
         }),
       };
@@ -3534,14 +3550,16 @@
     renderSiteTags(site);
     document.getElementById("site-panel-coords").textContent =
       `${formatCoord(site.lat)}, ${formatCoord(site.lon)}`;
-    const elevEl = document.getElementById("site-panel-elevation");
-    const elevText = formatElevationM(site.elevation_m);
-    if (elevText) {
-      elevEl.textContent = elevText;
-      elevEl.classList.remove("text-muted");
-    } else {
-      elevEl.textContent = "—";
-      elevEl.classList.add("text-muted");
+    const heightEl = document.getElementById("site-panel-height");
+    if (heightEl) {
+      const explicit = formatAntennaHeightM(site.height_m);
+      if (explicit) {
+        heightEl.textContent = explicit;
+        heightEl.classList.remove("text-muted");
+      } else {
+        heightEl.textContent = `default (${defaultTxHeightM} m)`;
+        heightEl.classList.add("text-muted");
+      }
     }
     const plss = site.plss || "";
     setSectionVisible("site-panel-plss-section", !!plss);
@@ -4132,6 +4150,13 @@
     sitePanelEditName.value = entity.name;
     sitePanelEditLat.value = formatCoord(entity.lat);
     sitePanelEditLon.value = formatCoord(entity.lon);
+    if (sitePanelEditHeight) {
+      sitePanelEditHeight.value =
+        entity.height_m != null && Number.isFinite(Number(entity.height_m))
+          ? String(entity.height_m)
+          : "";
+    }
+    syncEditHeightHint();
     if (sitePanelEditViewshedSection) {
       sitePanelEditViewshedSection.hidden = !editShowsSitePreview();
     }
@@ -4190,6 +4215,20 @@
       lat: coords.lat,
       lon: coords.lon,
     };
+    if (sitePanelEditHeight) {
+      const rawHeight = sitePanelEditHeight.value.trim();
+      if (rawHeight) {
+        const heightM = Number(rawHeight);
+        if (!Number.isFinite(heightM) || heightM < 1) {
+          setEditError("Antenna height must be at least 1 m.");
+          sitePanelEditSave.disabled = false;
+          return;
+        }
+        body.height_m = heightM;
+      } else {
+        body.height_m = null;
+      }
+    }
     try {
       const resp = await fetch(apiUrl, {
         method: "PATCH",

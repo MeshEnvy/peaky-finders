@@ -165,14 +165,9 @@ def _coerce_import_point(item: object, *, index: int) -> KmlPointSite:
     except (KeyError, TypeError, ValueError) as e:
         raise ValueError(f"points[{index}] requires lat and lon") from e
     name = str(item.get("name", "")).strip() or "Unnamed site"
-    elev_raw = item.get("elevation_m")
-    elevation_m: float | None = None
-    if elev_raw is not None:
-        try:
-            elevation_m = float(elev_raw)
-        except (TypeError, ValueError) as e:
-            raise ValueError(f"points[{index}].elevation_m must be a number") from e
-    return KmlPointSite(name=name, lat=lat, lon=lon, elevation_m=elevation_m)
+    if item.get("elevation_m") is not None:
+        raise ValueError(f"points[{index}].elevation_m is removed")
+    return KmlPointSite(name=name, lat=lat, lon=lon)
 
 
 def _parse_import_sites_body(raw: dict[str, object]) -> tuple[list[KmlPointSite], int]:
@@ -236,6 +231,7 @@ def _parse_viewshed_sim_query(query: str) -> ViewshedSimOverrides:
 
 def _serialize_serve_simulation(preset: Preset) -> dict[str, object]:
     sim = preset.simulation
+    tx = sim.transmitter if isinstance(sim.transmitter, dict) else {}
     return {
         "radius_km": float(sim.radius_km),
         "raster_dimension": int(sim.raster_dimension),
@@ -243,6 +239,9 @@ def _serialize_serve_simulation(preset: Preset) -> dict[str, object]:
         "radius_km_max": 100,
         "raster_dimension_min": 128,
         "raster_dimension_max": 4096,
+        "transmitter": {
+            "height_m": float(tx.get("height_m", 2.0) or 2.0),
+        },
     }
 
 
@@ -256,8 +255,8 @@ def _serialize_project_sites(sites: dict[str, SiteEntry]) -> list[dict[str, obje
             "lon": entry.lon,
             "tags": list(entry.tags),
         }
-        if entry.elevation_m is not None:
-            row["elevation_m"] = entry.elevation_m
+        if entry.height_m is not None:
+            row["height_m"] = entry.height_m
         for key in ("description", "plss"):
             val = getattr(entry, key)
             if val and str(val).strip():
@@ -1388,6 +1387,20 @@ class ServeDispatcher:
                     self._send_bytes(payload, "application/json", status=422)
                     return
                 tags_list = [str(t) for t in tags_raw]
+            height_kw: dict[str, object] = {}
+            if "height_m" in raw:
+                height_raw = raw.get("height_m")
+                if height_raw is None:
+                    height_kw["height_m"] = None
+                else:
+                    try:
+                        height_kw["height_m"] = float(height_raw)
+                    except (TypeError, ValueError) as e:
+                        payload = json.dumps(
+                            {"slug": project_slug, "error": f"height_m must be a number: {e}"}
+                        ).encode("utf-8")
+                        self._send_bytes(payload, "application/json", status=422)
+                        return
             try:
                 updated_slug = update_site_in_preset(
                     preset_path,
@@ -1396,6 +1409,7 @@ class ServeDispatcher:
                     lat=lat,
                     lon=lon,
                     tags=tags_list,
+                    **height_kw,
                 )
                 if lat is not None and lon is not None:
                     apply_plss_from_loc_cache(preset_path, updated_slug, lat, lon)

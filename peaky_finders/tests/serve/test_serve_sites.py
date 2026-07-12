@@ -149,6 +149,26 @@ def test_update_site_in_preset(tmp_path: Path) -> None:
     assert entry.tags == ["installed"]
 
 
+def test_update_site_height_m(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slug = append_planned_site_to_preset(
+        preset_path,
+        name="Tower Peak",
+        lat=39.6,
+        lon=-119.4,
+    )
+    update_site_in_preset(preset_path, slug, height_m=25.0)
+    preset = load_preset(preset_path)
+    assert preset.sites[slug].height_m == 25.0
+    update_site_in_preset(preset_path, slug, height_m=None)
+    preset = load_preset(preset_path)
+    assert preset.sites[slug].height_m is None
+    assert "height_m" not in preset_path.read_text()
+
+
 def test_update_site_tags(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
@@ -185,6 +205,22 @@ def test_update_site_rejects_type_key(tmp_path: Path) -> None:
         update_site_in_preset(preset_path, "peak", name="Renamed")
 
 
+def test_load_preset_rejects_elevation_m(tmp_path: Path) -> None:
+    preset_path = tmp_path / "config.yaml"
+    write_preset_document(
+        preset_path,
+        {
+            "simulation": dict(MINIMAL_SIMULATION),
+            "display": {"colormap": "rainbow", "min_dbm": -130.0, "max_dbm": -80.0},
+            "sites": {
+                "peak": {"name": "Peak", "loc": [39.6, -119.4], "elevation_m": 1713.0},
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="elevation_m is removed"):
+        load_preset(preset_path)
+
+
 def test_load_preset_rejects_type_key(tmp_path: Path) -> None:
     preset_path = tmp_path / "config.yaml"
     write_preset_document(
@@ -216,7 +252,7 @@ def test_import_sites_to_preset(tmp_path: Path) -> None:
     slugs = import_sites_to_preset(
         preset_path,
         sites=[
-            KmlPointSite(name="Alpha Peak", lat=39.6, lon=-119.4, elevation_m=2100.0),
+            KmlPointSite(name="Alpha Peak", lat=39.6, lon=-119.4),
             KmlPointSite(name="Alpha Peak", lat=39.7, lon=-119.3),
         ],
         tags=["hsc", "onx"],
@@ -224,7 +260,6 @@ def test_import_sites_to_preset(tmp_path: Path) -> None:
     assert slugs == ["alpha-peak", "alpha-peak-2"]
     preset = load_preset(preset_path)
     assert preset.sites["alpha-peak"].tags == ["hsc", "onx"]
-    assert preset.sites["alpha-peak"].elevation_m == 2100.0
     assert preset.sites["alpha-peak-2"].tags == ["hsc", "onx"]
     assert "type" not in preset_path.read_text()
 
