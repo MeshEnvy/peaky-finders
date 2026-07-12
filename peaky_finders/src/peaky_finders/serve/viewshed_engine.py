@@ -72,10 +72,23 @@ class ViewshedEngine:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._inflight: dict[str, _InflightFootprint] = {}
+        # Persist successful footprint reads across warm passes (Nevada: ~100 GPKGs).
+        self._results: dict[str, BaseGeometry] = {}
 
     def reset_for_tests(self) -> None:
         with self._lock:
             self._inflight.clear()
+            self._results.clear()
+
+    def _cached_result(self, key: str) -> BaseGeometry | None:
+        with self._lock:
+            return self._results.get(key)
+
+    def _store_result(self, key: str, result: BaseGeometry | None) -> None:
+        if result is None:
+            return
+        with self._lock:
+            self._results[key] = result
 
     def _ensure(
         self,
@@ -84,6 +97,10 @@ class ViewshedEngine:
         *,
         verbose: bool = False,
     ) -> BaseGeometry | None:
+        cached = self._cached_result(key)
+        if cached is not None:
+            return cached
+
         with self._lock:
             existing = self._inflight.get(key)
             if existing is not None:
@@ -104,6 +121,7 @@ class ViewshedEngine:
             if verbose:
                 print(f"viewshed engine: ensure footprint {key.rsplit(':', 1)[-1]}", flush=True)
             job.result = runner()
+            self._store_result(key, job.result)
         except BaseException as exc:
             job.error = exc
             raise
@@ -113,6 +131,34 @@ class ViewshedEngine:
                 if self._inflight.get(key) is job:
                     del self._inflight[key]
         return job.result
+
+    def read_site_footprint(
+        self,
+        project_dir: Path,
+        preset: Preset,
+        site: SiteEntry,
+        *,
+        sim: ViewshedSimOverrides | None = None,
+        verbose: bool = False,
+    ) -> BaseGeometry | None:
+        """Return an existing footprint from memory or disk — never generate coverage."""
+        sim = sim or ViewshedSimOverrides()
+        digest = site_footprint_digest(preset, site, sim=sim)
+        key = footprint_cache_key(project_dir, digest)
+        cached = self._cached_result(key)
+        if cached is not None:
+            return cached
+        preset_path = Path(project_dir).expanduser().resolve() / "config.yaml"
+        viewshed_root = resolved_viewshed_root(preset_path)
+        workdir = resolved_viewshed_workdir_for_coords(
+            preset=preset,
+            viewshed_root=viewshed_root,
+            lat=float(site.lat),
+            lon=float(site.lon),
+        )
+        fp = load_viewshed_footprint(workdir, preset=preset, verbose=verbose, ensure=False)
+        self._store_result(key, fp)
+        return fp
 
     def ensure_site_footprint(
         self,

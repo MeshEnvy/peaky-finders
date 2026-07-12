@@ -1302,6 +1302,17 @@
 
   function applySiteLinksPayload(payload) {
     if (!payload) return;
+    // Keep showing a ready mesh while a re-warm is pending (e.g. rename bumps
+    // config mtime but not link geometry). Empty pending payloads used to wipe
+    // all RF lines until the slow warm finished.
+    if (
+      payload.status === "pending" &&
+      siteLinksPayload &&
+      siteLinksPayload.status === "ready" &&
+      siteLinksPayload.geojson
+    ) {
+      return;
+    }
     siteLinksPayload = payload;
     if (payload.geojson) addSiteLinksLayer(payload.geojson);
     if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));

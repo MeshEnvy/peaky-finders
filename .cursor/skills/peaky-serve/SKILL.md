@@ -42,11 +42,15 @@ API: `GET /api/p/<slug>/events` (SSE hub); `POST /api/p/<slug>/viewsheds/<site>/
 
 ## Site links pattern
 
-1. Load preset; union preset `links` (manual) with splatter pairwise RF checks.
-2. Reuse `site_suggestions/rf_link.py` (`splatter_session`, `mutual_hop_viable`, `mutual_hop_batch`).
-3. Prefilter pairs beyond `simulation.radius_km`; preload DEM tiles once per request.
+1. Load preset; union preset `links` (manual) with viewshed mutual coverage.
+2. `GET /links` returns warm cache when link fingerprint matches (site coords +
+   sim radius/raster/modem/env/antenna heights + manual pairs) — **not** raw
+   `config.yaml` mtime (renames/tags must not clear the mesh).
+3. Cache miss → fast manual-only `pending` payload (no GPKG I/O on request thread)
+   + background `warm_project_site_links` (parallel footprint read → SSE `ready`).
+4. UI keeps the last ready GeoJSON while `pending` so lines do not flash away.
 
-API: `GET /api/p/<slug>/links` (linked pairs + GeoJSON lines), `GET /api/p/<slug>/links/<a>/<b>` (`{linked, manual}`).
+API: `GET /api/p/<slug>/links`, `POST …/links/warm`, `GET …/links/<a>/<b>`.
 
 ## Adding a feature
 

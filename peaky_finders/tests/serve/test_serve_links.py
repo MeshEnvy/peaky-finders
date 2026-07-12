@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import json
-import shutil
 import threading
 from http.client import HTTPConnection
 from pathlib import Path
 from unittest.mock import patch
 
 from shapely.geometry import box
-
-from fixture_paths import SAMPLE_PROJECT_CONFIG
 
 from peaky_finders.serve.links import (
     canonical_site_pair,
@@ -23,6 +20,43 @@ from peaky_finders.serve.app import make_serve_wsgi_app
 from peaky_finders.core.preset import load_preset_sites
 
 _COVERING_FP = box(-120.0, 39.0, -119.0, 41.0)
+
+_LINKS_PROJECT_YAML = """
+simulation:
+  provider: splatter
+  radius_km: 100.0
+  modem: fixture-modem
+  environment: fixture-desert
+  transmitter: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
+  receiver: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
+display:
+  colormap: plasma
+  min_dbm: -130.0
+  max_dbm: -80.0
+sites:
+  hub:
+    name: Hub Site
+    loc: [40.42619, -119.5]
+  peer-a:
+    name: Peer A
+    loc: [39.90951, -119.4]
+  peer-b:
+    name: Peer B
+    loc: [39.91342, -119.3]
+  peer-c:
+    name: Peer C
+    loc: [40.40376, -119.6]
+links:
+  - [hub, peer-a]
+  - [hub, peer-b]
+  - [hub, peer-c]
+""".strip()
+
+
+def _write_links_project(project_dir: Path) -> Path:
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "config.yaml").write_text(_LINKS_PROJECT_YAML + "\n", encoding="utf-8")
+    return project_dir
 
 
 def _start_server(projects_dir: Path):
@@ -41,8 +75,7 @@ def test_canonical_site_pair_orders_slugs() -> None:
 
 
 def test_evaluate_site_pair_manual_link_skips_viewshed(tmp_path: Path) -> None:
-    project_dir = tmp_path / "sample"
-    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    project_dir = _write_links_project(tmp_path / "sample")
     sites = load_preset_sites(project_dir / "config.yaml")
 
     with patch("peaky_finders.serve.links.get_viewshed_engine") as mock_engine:
@@ -89,8 +122,7 @@ links: []
 
 
 def test_load_project_site_links_minimal_preset(tmp_path: Path) -> None:
-    project_dir = tmp_path / "sample"
-    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    project_dir = _write_links_project(tmp_path / "sample")
     sites = load_preset_sites(project_dir / "config.yaml")
 
     with patch("peaky_finders.serve.links.load_site_viewshed_footprint") as mock_fp:
@@ -110,8 +142,7 @@ def test_load_project_site_links_minimal_preset(tmp_path: Path) -> None:
 def test_load_project_site_links_uses_warm_cache(tmp_path: Path) -> None:
     from peaky_finders.serve.links import store_project_site_links_cache
 
-    project_dir = tmp_path / "sample"
-    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    project_dir = _write_links_project(tmp_path / "sample")
     sites = load_preset_sites(project_dir / "config.yaml")
     ready = {
         "status": "ready",
@@ -127,10 +158,65 @@ def test_load_project_site_links_uses_warm_cache(tmp_path: Path) -> None:
     mock_compute.assert_not_called()
 
 
+def test_links_cache_survives_site_rename(tmp_path: Path) -> None:
+    """Display-only YAML edits (name) must not invalidate the warm links cache."""
+    from peaky_finders.core.preset import load_preset_for_coverage
+    from peaky_finders.serve.links import links_input_fingerprint, store_project_site_links_cache
+    from peaky_finders.serve.sites import update_site_in_preset
+
+    project_dir = _write_links_project(tmp_path / "sample")
+    sites = load_preset_sites(project_dir / "config.yaml")
+    ready = {
+        "status": "ready",
+        "links": [{"a": "hub", "b": "peer-a", "linked": True, "manual": False}],
+        "geojson": {"type": "FeatureCollection", "features": []},
+    }
+    store_project_site_links_cache(project_dir, sites, ready)
+
+    update_site_in_preset(project_dir / "config.yaml", "hub", name="Hub Renamed")
+    sites_after = load_preset_sites(project_dir / "config.yaml")
+    assert sites_after["hub"].name == "Hub Renamed"
+    assert float(sites_after["hub"].lat) == float(sites["hub"].lat)
+    assert float(sites_after["hub"].lon) == float(sites["hub"].lon)
+
+    with patch("peaky_finders.serve.links.compute_project_site_links") as mock_compute:
+        payload = load_project_site_links(project_dir, sites_after)
+
+    assert payload == ready
+    mock_compute.assert_not_called()
+    preset = load_preset_for_coverage(project_dir / "config.yaml")
+    assert links_input_fingerprint(sites, preset=preset) == links_input_fingerprint(
+        sites_after, preset=preset
+    )
+
+
+def test_warm_links_returns_cache_without_rerun(tmp_path: Path) -> None:
+    from peaky_finders.serve.link_jobs import reset_link_jobs_for_tests, warm_project_site_links
+    from peaky_finders.serve.links import store_project_site_links_cache
+
+    reset_link_jobs_for_tests()
+    project_dir = _write_links_project(tmp_path / "sample")
+    sites = load_preset_sites(project_dir / "config.yaml")
+    ready = {
+        "status": "ready",
+        "links": [{"a": "hub", "b": "peer-a", "linked": True, "manual": False}],
+        "geojson": {"type": "FeatureCollection", "features": []},
+    }
+    store_project_site_links_cache(project_dir, sites, ready)
+
+    with patch("peaky_finders.serve.link_jobs._read_existing_footprints") as mock_read:
+        result = warm_project_site_links("sample", project_dir, sites)
+
+    assert result["status"] == "ready"
+    assert result["links"] == ready["links"]
+    mock_read.assert_not_called()
+    reset_link_jobs_for_tests()
+
+
 def test_api_project_links_manual(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
-    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, projects_dir / "sample")
+    _write_links_project(projects_dir / "sample")
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
@@ -152,7 +238,7 @@ def test_api_project_links_manual(tmp_path: Path) -> None:
 def test_api_project_link_pair_manual(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
-    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, projects_dir / "sample")
+    _write_links_project(projects_dir / "sample")
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
@@ -185,8 +271,7 @@ def _mock_engine(*, site_fp=_COVERING_FP, coords_fp=_COVERING_FP):
 
 
 def test_load_coords_site_links_viewshed_batch(tmp_path: Path) -> None:
-    project_dir = tmp_path / "sample"
-    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    project_dir = _write_links_project(tmp_path / "sample")
     sites = load_preset_sites(project_dir / "config.yaml")
     lat = float(next(iter(sites.values())).lat)
     lon = float(next(iter(sites.values())).lon)
@@ -204,8 +289,7 @@ def test_load_coords_site_links_viewshed_batch(tmp_path: Path) -> None:
 
 
 def test_load_coords_site_links_exclude_edited_site(tmp_path: Path) -> None:
-    project_dir = tmp_path / "sample"
-    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, project_dir)
+    project_dir = _write_links_project(tmp_path / "sample")
     sites = load_preset_sites(project_dir / "config.yaml")
     hub = sites["hub"]
     lat = float(hub.lat)
@@ -231,7 +315,7 @@ def test_load_coords_site_links_exclude_edited_site(tmp_path: Path) -> None:
 def test_api_sites_prefetch_exclude_site(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
-    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, projects_dir / "sample")
+    _write_links_project(projects_dir / "sample")
 
     server, host, port, _thread = _start_server(projects_dir)
     try:
@@ -273,7 +357,7 @@ def test_api_sites_prefetch_exclude_site(tmp_path: Path) -> None:
 def test_project_page_includes_site_links_toggle(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
-    shutil.copytree(SAMPLE_PROJECT_CONFIG.parent, projects_dir / "sample")
+    _write_links_project(projects_dir / "sample")
 
     server, host, port, _thread = _start_server(projects_dir)
     try:

@@ -28,7 +28,9 @@ from peaky_finders.serve.viewshed_sim import ViewshedSimOverrides
 _links_eval_lock = threading.Lock()
 
 # Ready payloads from background warm — GET must stay fast (no GPKG I/O).
-_links_payload_cache: dict[str, tuple[float, frozenset[str], dict[str, object]]] = {}
+# Keyed by link-relevant fingerprint (coords / sim / manual pairs), not config mtime —
+# renaming a site must not drop the mesh until a needless re-warm finishes.
+_links_payload_cache: dict[str, tuple[object, dict[str, object]]] = {}
 _links_payload_cache_lock = threading.Lock()
 
 
@@ -52,21 +54,52 @@ def _project_cache_key(project_dir: Path) -> str:
     return str(Path(project_dir).expanduser().resolve())
 
 
-def _config_mtime(project_dir: Path) -> float:
-    try:
-        return (Path(project_dir) / "config.yaml").stat().st_mtime
-    except OSError:
-        return 0.0
+def links_input_fingerprint(
+    sites: Mapping[str, SiteEntry],
+    *,
+    preset: Preset,
+) -> tuple[object, ...]:
+    """Stable key for when RF/manual link geometry can change.
+
+    Ignores display-only preset edits (site name, tags, comments).
+    """
+    sim = preset.simulation
+    site_rows = tuple(
+        sorted(
+            (str(slug), round(float(site.lat), 7), round(float(site.lon), 7))
+            for slug, site in sites.items()
+        )
+    )
+    manual = tuple(sorted(_manual_link_pairs(preset)))
+    modem = sim.modem if isinstance(sim.modem, str) else repr(sim.modem)
+    environment = (
+        sim.environment if isinstance(sim.environment, str) else repr(sim.environment)
+    )
+    tx = sim.transmitter if isinstance(sim.transmitter, dict) else {}
+    rx = sim.receiver if isinstance(sim.receiver, dict) else {}
+    return (
+        float(sim.radius_km),
+        int(sim.raster_dimension),
+        str(modem or ""),
+        str(environment or ""),
+        float(tx.get("height_m", 0.0) or 0.0),
+        float(rx.get("height_m", 0.0) or 0.0),
+        site_rows,
+        manual,
+    )
 
 
 def store_project_site_links_cache(
     project_dir: Path,
     sites: Mapping[str, SiteEntry],
     payload: dict[str, object],
+    *,
+    preset: Preset | None = None,
 ) -> None:
     """Remember a warm-computed links payload for fast GET responses."""
+    preset = preset or _load_links_preset(project_dir)
     key = _project_cache_key(project_dir)
-    entry = (_config_mtime(project_dir), frozenset(sites.keys()), payload)
+    entry = (links_input_fingerprint(sites, preset=preset), payload)
     with _links_payload_cache_lock:
         _links_payload_cache[key] = entry
 
@@ -79,20 +112,32 @@ def reset_project_site_links_cache_for_tests() -> None:
 def _cached_project_site_links(
     project_dir: Path,
     sites: Mapping[str, SiteEntry],
+    *,
+    preset: Preset | None = None,
 ) -> dict[str, object] | None:
+    preset = preset or _load_links_preset(project_dir)
     key = _project_cache_key(project_dir)
-    mtime = _config_mtime(project_dir)
-    site_keys = frozenset(sites.keys())
+    fingerprint = links_input_fingerprint(sites, preset=preset)
     with _links_payload_cache_lock:
         hit = _links_payload_cache.get(key)
         if hit is None:
             return None
-        cached_mtime, cached_sites, payload = hit
-        if cached_mtime != mtime or cached_sites != site_keys:
+        cached_fp, payload = hit
+        if cached_fp != fingerprint:
             return None
         if payload.get("status") != "ready":
             return None
         return payload
+
+
+def get_cached_project_site_links(
+    project_dir: Path,
+    sites: Mapping[str, SiteEntry],
+    *,
+    preset: Preset | None = None,
+) -> dict[str, object] | None:
+    """Return warm-cached ready payload when link inputs are unchanged."""
+    return _cached_project_site_links(project_dir, sites, preset=preset)
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -188,8 +233,14 @@ def compute_project_site_links(
     *,
     preset: Preset | None = None,
     footprints: Mapping[str, BaseGeometry | None] | None = None,
+    analysis_complete: bool = False,
 ) -> dict[str, object]:
-    """Build link records from preset manual pairs and viewshed footprints."""
+    """Build link records from preset manual pairs and viewshed footprints.
+
+    When *analysis_complete* is true (warm finished a footprint pass), status is
+    ``ready`` even if some sites still lack footprints — missing sites simply
+    contribute no RF edges until their viewsheds exist.
+    """
     preset = preset or _load_links_preset(project_dir)
     manual_pairs = _manual_link_pairs(preset)
     slug_list = sorted(sites.keys())
@@ -246,7 +297,10 @@ def compute_project_site_links(
         )
 
     records.sort(key=lambda row: (str(row["a"]), str(row["b"])))
-    status = "ready" if _viewshed_footprints_complete(fp, sites) else "pending"
+    if analysis_complete:
+        status = "ready"
+    else:
+        status = "ready" if _viewshed_footprints_complete(fp, sites) else "pending"
     return {
         "status": status,
         "links": records,
@@ -267,12 +321,14 @@ def load_project_site_links(
     filled by ``warm_project_site_links`` + SSE.
     """
     del verbose
-    cached = _cached_project_site_links(project_dir, sites)
+    preset = _load_links_preset(project_dir)
+    cached = _cached_project_site_links(project_dir, sites, preset=preset)
     if cached is not None:
         return cached
     return compute_project_site_links(
         project_dir,
         sites,
+        preset=preset,
         footprints={slug: None for slug in sites},
     )
 
