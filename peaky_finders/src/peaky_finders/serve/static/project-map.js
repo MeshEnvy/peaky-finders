@@ -830,12 +830,6 @@
     return Array.isArray(site?.tags) ? site.tags.filter(Boolean) : [];
   }
 
-  function siteMetaTags(site) {
-    const tags = siteTags(site);
-    if (!activeTagFilters.size) return tags;
-    return tags.filter((tag) => !activeTagFilters.has(tag));
-  }
-
   function allProjectTags() {
     const found = new Set();
     for (const site of sites) {
@@ -1300,13 +1294,14 @@
     name.className = "entity-panel__name";
     name.textContent = site.name;
     main.appendChild(name);
-    const extraTags = siteMetaTags(site);
-    if (extraTags.length) {
+    const tags = siteTags(site);
+    if (tags.length) {
       const meta = document.createElement("div");
       meta.className = "entity-panel__meta";
-      for (const tag of extraTags) {
+      for (const tag of tags) {
         const pill = document.createElement("span");
         pill.className = "entity-panel__meta-tag";
+        if (activeTagFilters.has(tag)) pill.classList.add("entity-panel__meta-tag--active");
         pill.textContent = tag;
         meta.appendChild(pill);
       }
