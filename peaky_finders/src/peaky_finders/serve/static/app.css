@@ -879,10 +879,20 @@ wa-dropdown-item.is-active::part(base) {
 .entity-panel__tag-filters {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.3rem;
   padding: 0.55rem 0.75rem 0.4rem;
   border-bottom: 1px solid var(--wa-color-surface-border);
   flex-shrink: 0;
+}
+
+.entity-panel__tag-filter-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin-right: 0.15rem;
+  padding-right: 0.45rem;
+  border-right: 1px solid rgba(148, 163, 184, 0.25);
 }
 
 .entity-panel__tag-filter {

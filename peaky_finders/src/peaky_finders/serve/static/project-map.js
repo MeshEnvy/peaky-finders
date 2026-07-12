@@ -473,6 +473,7 @@
       ? savedMapState.tagFilters.filter((tag) => typeof tag === "string" && tag.trim())
       : [],
   );
+  let tagFilterMode = savedMapState?.tagFilterMode === "or" ? "or" : "and";
   let entityPanelOpen = savedMapState?.entityPanelOpen === true;
   let entityPanelFilterByViewport = savedMapState?.filterByViewport === true;
   let tagAddOpen = false;
@@ -846,10 +847,28 @@
   function sitePassesTagFilter(site) {
     if (activeTagFilters.size === 0) return true;
     const tags = siteTags(site);
-    for (const tag of activeTagFilters) {
-      if (tags.includes(tag)) return true;
+    if (tagFilterMode === "or") {
+      for (const tag of activeTagFilters) {
+        if (tags.includes(tag)) return true;
+      }
+      return false;
     }
-    return false;
+    for (const tag of activeTagFilters) {
+      if (!tags.includes(tag)) return false;
+    }
+    return true;
+  }
+
+  function tagFilterScopePhrase() {
+    if (activeTagFilters.size < 2) return "matching selected tags";
+    return tagFilterMode === "or" ? "matching any selected tag" : "matching all selected tags";
+  }
+
+  function tagFilterEmptyMessage(inView) {
+    const prefix = inView ? "No sites in view " : "No sites ";
+    if (activeTagFilters.size < 2) return `${prefix}match the selected tags.`;
+    if (tagFilterMode === "or") return `${prefix}match any selected tag.`;
+    return `${prefix}have all selected tags.`;
   }
 
   function siteVisibleInMap(site) {
@@ -884,6 +903,15 @@
     pruneActiveTagFilters();
     applyEntityVisibility();
     ensureViewshedsForNewlyVisibleSites();
+    scheduleSaveMapState();
+  }
+
+  function setTagFilterMode(mode) {
+    const next = mode === "or" ? "or" : "and";
+    if (tagFilterMode === next) return;
+    tagFilterMode = next;
+    applyEntityVisibility();
+    renderEntityPanel();
     scheduleSaveMapState();
   }
 
@@ -948,6 +976,28 @@
       return;
     }
     entityPanelTagFilters.hidden = false;
+    if (activeTagFilters.size >= 2) {
+      const modeGroup = document.createElement("div");
+      modeGroup.className = "entity-panel__tag-filter-mode";
+      modeGroup.setAttribute("role", "group");
+      modeGroup.setAttribute("aria-label", "Tag filter mode");
+      for (const [mode, label] of [
+        ["and", "all"],
+        ["or", "any"],
+      ]) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "entity-panel__tag-filter";
+        const active = tagFilterMode === mode;
+        if (active) btn.classList.add("entity-panel__tag-filter--active");
+        btn.textContent = label;
+        btn.setAttribute("aria-pressed", active ? "true" : "false");
+        btn.title = mode === "and" ? "Match all selected tags" : "Match any selected tag";
+        btn.addEventListener("click", () => setTagFilterMode(mode));
+        modeGroup.appendChild(btn);
+      }
+      entityPanelTagFilters.appendChild(modeGroup);
+    }
     for (const tag of tags) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -977,13 +1027,12 @@
   function entityPanelEmptyMessage(tagFilteredCount) {
     if (!sites.length) return "No sites yet.";
     if (entityPanelFilterByViewport && activeTagFilters.size) {
-      if (!tagFilteredCount) return "No sites match the selected tags.";
-      return "No sites in view match the selected tags.";
+      return tagFilterEmptyMessage(tagFilteredCount > 0);
     }
     if (entityPanelFilterByViewport) {
       return "No sites in the current map view — pan or zoom out.";
     }
-    return "No sites match the selected tags.";
+    return tagFilterEmptyMessage(false);
   }
 
   function renderEntityPanel() {
@@ -1096,7 +1145,7 @@
     }
     const count = bulkTagTargetSlugs.length;
     const scopeParts = [];
-    if (activeTagFilters.size) scopeParts.push("matching selected tags");
+    if (activeTagFilters.size) scopeParts.push(tagFilterScopePhrase());
     if (entityPanelFilterByViewport) scopeParts.push("in the current map view");
     const scope = scopeParts.length ? ` ${scopeParts.join(" and ")}` : "";
     bulkTagStatus.textContent =
@@ -1695,6 +1744,7 @@
       viewshedOpacity,
       hiddenSites: [...siteHidden],
       tagFilters: [...activeTagFilters].sort((a, b) => a.localeCompare(b)),
+      tagFilterMode,
       filterByViewport: entityPanelFilterByViewport,
       viewshedVisible: Object.fromEntries(viewshedVisible),
       entityPanelOpen,
