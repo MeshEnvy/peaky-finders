@@ -709,6 +709,10 @@
     }
     syncEntityPanelToggles();
     scheduleSaveMapState();
+    if (mapReady) {
+      map.resize();
+      updatePinOverlays();
+    }
   }
 
   setEntityPanelOpen(entityPanelOpen);

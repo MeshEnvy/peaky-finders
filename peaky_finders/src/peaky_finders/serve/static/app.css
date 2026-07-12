@@ -223,8 +223,6 @@ body.wide .project-toolbar {
 body.wide #map {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
   transition: left 0.2s ease-out, right 0.2s ease-out;
 }
 
