@@ -481,6 +481,8 @@
   let importDraftTags = [];
   let importPreviewPoints = [];
   let importPreviewPayload = null;
+  let importPreviewFileName = "";
+  let importPreviewSkipped = 0;
   let importPreviewMap = null;
   let importPreviewBusy = false;
   let importFilterByViewport = true;
@@ -2985,6 +2987,18 @@
     importSitesListCount.textContent = text;
   }
 
+  function syncImportPreviewStatus() {
+    if (!importSitesStatus || !importPreviewFileName || !importPreviewPoints.length) return;
+    const skippedNote =
+      importPreviewSkipped > 0 ? ` (${importPreviewSkipped} placemark(s) skipped)` : "";
+    let text = `${importPreviewPoints.length} point(s) ready from ${importPreviewFileName}${skippedNote}`;
+    const dupes = importPreviewPoints.filter((point) => point.duplicate && point.ignored).length;
+    if (dupes > 0) {
+      text += ` · ${dupes} near existing site(s), unchecked`;
+    }
+    importSitesStatus.textContent = text;
+  }
+
   function renderImportPointList() {
     if (!importSitesPointList) return;
     const listScrollTop = importSitesPointList.scrollTop;
@@ -3064,6 +3078,7 @@
     }
     syncImportListCount(shown, total);
     importSitesPointList.scrollTop = listScrollTop;
+    syncImportPreviewStatus();
   }
 
   function focusImportPreviewPoint(index) {
@@ -3195,6 +3210,8 @@
     importDraftTags = ["imported"];
     importPreviewPoints = [];
     importPreviewPayload = null;
+    importPreviewFileName = "";
+    importPreviewSkipped = 0;
     importPreviewBusy = false;
     importFilterByViewport = true;
     importSelectedPointIndex = -1;
@@ -3252,16 +3269,10 @@
       }
       importPreviewPayload = body;
       const points = Array.isArray(payload.points) ? payload.points : [];
-      const skipped = Number(payload.skipped) || 0;
-      if (importSitesStatus) {
-        const skippedNote = skipped > 0 ? ` (${skipped} placemark(s) skipped)` : "";
-        importSitesStatus.textContent = `${points.length} point(s) ready from ${file.name}${skippedNote}`;
-      }
+      importPreviewFileName = file.name;
+      importPreviewSkipped = Number(payload.skipped) || 0;
       renderImportPreview(points);
-      const dupes = importPreviewPoints.filter((point) => point.duplicate && point.ignored).length;
-      if (importSitesStatus && dupes > 0) {
-        importSitesStatus.textContent += ` · ${dupes} near existing site(s), unchecked`;
-      }
+      syncImportPreviewStatus();
     } catch (_) {
       setImportSitesError("Could not reach server.");
       importPreviewPayload = null;
