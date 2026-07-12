@@ -974,28 +974,28 @@
       return;
     }
     entityPanelTagFilters.hidden = false;
-    if (activeTagFilters.size >= 2) {
-      const modeGroup = document.createElement("div");
-      modeGroup.className = "entity-panel__tag-filter-mode";
-      modeGroup.setAttribute("role", "group");
-      modeGroup.setAttribute("aria-label", "Tag filter mode");
-      for (const [mode, label] of [
-        ["and", "all"],
-        ["or", "any"],
-      ]) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "entity-panel__tag-filter";
-        const active = tagFilterMode === mode;
-        if (active) btn.classList.add("entity-panel__tag-filter--active");
-        btn.textContent = label;
-        btn.setAttribute("aria-pressed", active ? "true" : "false");
-        btn.title = mode === "and" ? "Match all selected tags" : "Match any selected tag";
-        btn.addEventListener("click", () => setTagFilterMode(mode));
-        modeGroup.appendChild(btn);
-      }
-      entityPanelTagFilters.appendChild(modeGroup);
+
+    const modeGroup = document.createElement("div");
+    modeGroup.className = "entity-panel__tag-filter-mode";
+    modeGroup.setAttribute("role", "group");
+    modeGroup.setAttribute("aria-label", "Tag filter mode");
+    for (const [mode, label] of [
+      ["and", "intersect"],
+      ["or", "union"],
+    ]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "entity-panel__tag-filter";
+      const active = tagFilterMode === mode;
+      if (active) btn.classList.add("entity-panel__tag-filter--active");
+      btn.textContent = label;
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+      btn.title = mode === "and" ? "Match all selected tags (intersect)" : "Match any selected tag (union)";
+      btn.addEventListener("click", () => setTagFilterMode(mode));
+      modeGroup.appendChild(btn);
     }
+    entityPanelTagFilters.appendChild(modeGroup);
+
     for (const tag of tags) {
       const btn = document.createElement("button");
       btn.type = "button";
