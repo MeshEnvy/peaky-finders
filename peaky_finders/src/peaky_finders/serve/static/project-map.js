@@ -2987,6 +2987,7 @@
 
   function renderImportPointList() {
     if (!importSitesPointList) return;
+    const listScrollTop = importSitesPointList.scrollTop;
     importSitesPointList.innerHTML = "";
     const total = importPreviewPoints.length;
     if (!total) {
@@ -3062,6 +3063,7 @@
       importSitesPointList.appendChild(empty);
     }
     syncImportListCount(shown, total);
+    importSitesPointList.scrollTop = listScrollTop;
   }
 
   function focusImportPreviewPoint(index) {
