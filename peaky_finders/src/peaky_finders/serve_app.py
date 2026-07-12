@@ -1088,12 +1088,24 @@ class ServeDispatcher:
                 ).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=422)
                 return
+            tags_raw = raw.get("tags")
+            if tags_raw is None:
+                tags: list[str] | None = None
+            elif isinstance(tags_raw, list):
+                tags = [str(t) for t in tags_raw]
+            else:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "tags must be a list of strings"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
             try:
                 site_slug = append_planned_site_to_preset(
                     preset_path,
                     name=name,
                     lat=lat,
                     lon=lon,
+                    tags=tags,
                 )
                 apply_plss_from_loc_cache(preset_path, site_slug, lat, lon)
                 site_map = _load_project_sites(project_dir)

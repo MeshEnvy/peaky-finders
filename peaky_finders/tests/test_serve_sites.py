@@ -39,6 +39,25 @@ def test_append_planned_site_to_preset(tmp_path: Path) -> None:
     assert entry.type.value == "planned"
     assert entry.lat == 39.6
     assert entry.lon == -119.4
+    assert entry.tags == []
+
+
+def test_append_planned_site_with_tags(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slug = append_planned_site_to_preset(
+        preset_path,
+        name="Tagged Peak",
+        lat=40.1,
+        lon=-119.2,
+        tags=["EIP", "slpt", "eip"],
+    )
+    assert slug == "tagged-peak"
+    preset = load_preset(preset_path)
+    entry = preset.sites["tagged-peak"]
+    assert entry.tags == ["eip", "slpt"]
 
 
 def test_append_planned_site_rejects_empty_name(tmp_path: Path) -> None:

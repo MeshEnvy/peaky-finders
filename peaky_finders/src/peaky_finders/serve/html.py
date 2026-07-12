@@ -578,6 +578,30 @@ def project_html(
   </aside>
 </div>
 {home_settings_modal_html(on_project_map=True)}
+<wa-dialog id="add-site-modal" label="Add site" style="--width: 28rem" with-footer light-dismiss>
+  <wa-callout id="add-site-error" variant="danger" hidden></wa-callout>
+  <div class="pf-form-grid add-site-form">
+    <div class="pf-form-field">
+      <label for="add-site-name" class="pf-label">Name</label>
+      <input id="add-site-name" type="text" required autocomplete="off" autofocus>
+    </div>
+    <div class="pf-form-field">
+      <span class="pf-label" id="add-site-tags-label">Tags</span>
+      <div class="site-tags add-site-tags" id="add-site-tags" role="group" aria-labelledby="add-site-tags-label"></div>
+      <form class="site-tag-add-form add-site-tag-form" id="add-site-tag-form">
+        <input id="add-site-tag-input" type="text" list="add-site-tag-suggestions" placeholder="add tag" autocomplete="off" maxlength="32" aria-label="Add tag">
+        <datalist id="add-site-tag-suggestions"></datalist>
+      </form>
+    </div>
+    <div class="pf-form-field">
+      <label for="add-site-coords" class="pf-label">Coordinates</label>
+      <input id="add-site-coords" type="text" class="pf-mono" inputmode="decimal" autocomplete="off" placeholder="40.65495, -119.35161" spellcheck="false">
+      <p class="wa-caption pf-muted">Paste lat, lng — e.g. <span class="pf-mono">40.65495, -119.35161</span></p>
+    </div>
+  </div>
+  <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
+  <wa-button slot="footer" id="add-site-save" variant="brand" size="s" type="button">Add site</wa-button>
+</wa-dialog>
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" crossorigin=""></script>
 <script>window.PEAKY_PROJECT = {peaky_config};</script>
 <script src="/static/home-settings.js"></script>

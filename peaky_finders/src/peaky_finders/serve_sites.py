@@ -44,10 +44,12 @@ def append_planned_site_to_preset(
     name: str,
     lat: float,
     lon: float,
+    tags: list[str] | None = None,
 ) -> str:
     """Append a ``type: planned`` site under ``sites``; return the new slug."""
     name = validate_site_name(name)
     validate_site_coords(lat, lon)
+    tags_value = normalize_site_tags(tags) if tags is not None else []
 
     def mutator(_yaml_rt: Any, root: dict[str, Any]) -> str:
         sites_raw = root.get("sites")
@@ -59,11 +61,14 @@ def append_planned_site_to_preset(
 
         existing = {str(k) for k in sites_raw.keys()}
         site_slug = unique_site_slug(existing, name)
-        sites_raw[site_slug] = {
+        entry: dict[str, Any] = {
             "type": SiteType.PLANNED.value,
             "name": name,
             "loc": [lat, lon],
         }
+        if tags_value:
+            entry["tags"] = list(tags_value)
+        sites_raw[site_slug] = entry
         return site_slug
 
     # Sites-only edit — do not require unrelated sections (e.g. suggest goals with site-slug

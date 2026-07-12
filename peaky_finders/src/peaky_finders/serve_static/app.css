@@ -942,3 +942,44 @@ wa-dropdown-item.is-active::part(base) {
 #home-settings-modal wa-callout[hidden] {
   display: none !important;
 }
+
+#add-site-modal wa-callout[hidden] {
+  display: none !important;
+}
+
+.add-site-form {
+  gap: var(--wa-space-m);
+}
+
+.add-site-tags {
+  margin-bottom: var(--wa-space-xs);
+  min-height: 1.5rem;
+}
+
+.add-site-tag-form {
+  display: flex;
+  width: 100%;
+}
+
+.add-site-tag-form input {
+  width: 100%;
+  max-width: 14rem;
+}
+
+.site-tag--toggle {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  cursor: pointer;
+  padding: 0.15rem 0.5rem;
+}
+
+.site-tag--toggle:hover {
+  border-color: rgba(74, 108, 247, 0.55);
+  color: #8ba4ff;
+}
+
+.site-tag--toggle.is-selected {
+  background: rgba(74, 108, 247, 0.22);
+  border-color: rgba(74, 108, 247, 0.55);
+  color: #c7d2fe;
+}

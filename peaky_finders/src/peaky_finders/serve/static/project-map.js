@@ -404,6 +404,15 @@
   const entityPanelAddSite = document.getElementById("entity-panel-add-site");
   const sitePanelTags = document.getElementById("site-panel-tags");
   const sitePanelTagsSection = document.getElementById("site-panel-tags-section");
+  const addSiteModal = document.getElementById("add-site-modal");
+  const addSiteName = document.getElementById("add-site-name");
+  const addSiteCoords = document.getElementById("add-site-coords");
+  const addSiteTagsEl = document.getElementById("add-site-tags");
+  const addSiteTagForm = document.getElementById("add-site-tag-form");
+  const addSiteTagInput = document.getElementById("add-site-tag-input");
+  const addSiteTagSuggestions = document.getElementById("add-site-tag-suggestions");
+  const addSiteError = document.getElementById("add-site-error");
+  const addSiteSave = document.getElementById("add-site-save");
   const siteHidden = new Set(savedMapState?.hiddenSites || []);
   const activeTagFilters = new Set(
     Array.isArray(savedMapState?.tagFilters)
@@ -412,6 +421,7 @@
   );
   let entityPanelOpen = false;
   let tagAddOpen = false;
+  let addSiteDraftTags = [];
 
   function ensureTerrainSource() {
     if (map.getSource(TERRAIN_SOURCE)) return;
@@ -2081,6 +2091,152 @@
       .replace(/^-+|-+$/g, "");
   }
 
+  function setAddSiteError(message) {
+    if (!addSiteError) return;
+    if (message) {
+      addSiteError.textContent = message;
+      addSiteError.hidden = false;
+    } else {
+      addSiteError.textContent = "";
+      addSiteError.hidden = true;
+    }
+  }
+
+  function renderAddSiteTags() {
+    if (!addSiteTagsEl) return;
+    addSiteTagsEl.innerHTML = "";
+    const known = allProjectTags();
+    const selected = new Set(addSiteDraftTags);
+    const shown = new Set([...known, ...addSiteDraftTags]);
+    for (const tag of [...shown].sort((a, b) => a.localeCompare(b))) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = selected.has(tag) ? "site-tag site-tag--toggle is-selected" : "site-tag site-tag--toggle";
+      chip.textContent = tag;
+      chip.setAttribute("aria-pressed", selected.has(tag) ? "true" : "false");
+      chip.title = selected.has(tag) ? `Remove tag ${tag}` : `Add tag ${tag}`;
+      chip.addEventListener("click", () => {
+        if (selected.has(tag)) {
+          addSiteDraftTags = addSiteDraftTags.filter((t) => t !== tag);
+        } else {
+          addSiteDraftTags = [...addSiteDraftTags, tag];
+        }
+        renderAddSiteTags();
+        syncAddSiteTagSuggestions();
+      });
+      addSiteTagsEl.appendChild(chip);
+    }
+  }
+
+  function syncAddSiteTagSuggestions() {
+    if (!addSiteTagSuggestions) return;
+    addSiteTagSuggestions.innerHTML = "";
+    const selected = new Set(addSiteDraftTags);
+    for (const tag of allProjectTags()) {
+      if (selected.has(tag)) continue;
+      const opt = document.createElement("option");
+      opt.value = tag;
+      addSiteTagSuggestions.appendChild(opt);
+    }
+  }
+
+  function resetAddSiteModal() {
+    addSiteDraftTags = [];
+    if (addSiteName) addSiteName.value = "";
+    if (addSiteCoords) addSiteCoords.value = "";
+    if (addSiteTagInput) addSiteTagInput.value = "";
+    setAddSiteError("");
+    renderAddSiteTags();
+    syncAddSiteTagSuggestions();
+  }
+
+  async function openAddSiteModal() {
+    if (!addSiteModal) return;
+    setAddPlacementMode(null);
+    setEntityPanelOpen(true);
+    resetAddSiteModal();
+    await customElements.whenDefined("wa-dialog");
+    addSiteModal.open = true;
+    requestAnimationFrame(() => {
+      addSiteName?.focus();
+    });
+  }
+
+  function closeAddSiteModal() {
+    if (!addSiteModal) return;
+    addSiteModal.open = false;
+  }
+
+  function addDraftTagFromInput() {
+    if (!addSiteTagInput) return;
+    const tag = normalizeTagInput(addSiteTagInput.value);
+    addSiteTagInput.value = "";
+    if (!tag) return;
+    if (!addSiteDraftTags.includes(tag)) {
+      addSiteDraftTags = [...addSiteDraftTags, tag];
+      renderAddSiteTags();
+      syncAddSiteTagSuggestions();
+    }
+  }
+
+  async function saveAddSiteModal() {
+    const name = (addSiteName?.value || "").trim();
+    if (!name) {
+      setAddSiteError("Name is required.");
+      addSiteName?.focus();
+      return;
+    }
+    const pair = parseCoordPairFromText(addSiteCoords?.value || "");
+    if (!pair) {
+      setAddSiteError("Coordinates required — paste lat, lng like 40.65495, -119.35161.");
+      addSiteCoords?.focus();
+      return;
+    }
+    if (pair.lat < -90 || pair.lat > 90 || pair.lon < -180 || pair.lon > 180) {
+      setAddSiteError("Coordinates out of range.");
+      addSiteCoords?.focus();
+      return;
+    }
+    setAddSiteError("");
+    if (addSiteSave) addSiteSave.disabled = true;
+    try {
+      const body = {
+        name,
+        lat: pair.lat,
+        lon: pair.lon,
+      };
+      if (addSiteDraftTags.length) body.tags = [...addSiteDraftTags];
+      const resp = await fetch(sitesApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setAddSiteError(payload.error || `Save failed (${resp.status})`);
+        return;
+      }
+      const site = payload.site;
+      if (!site || !site.slug) {
+        setAddSiteError("Unexpected server response.");
+        return;
+      }
+      closeAddSiteModal();
+      registerSite(site);
+      viewshedVisible.set(site.slug, true);
+      scheduleViewshedLoad(site);
+      void loadSiteLinks();
+      if (mapReady) {
+        map.flyTo({ center: [site.lon, site.lat], zoom: Math.max(map.getZoom(), 11) });
+      }
+      selectSite(site.slug);
+    } catch (_) {
+      setAddSiteError("Could not reach server.");
+    } finally {
+      if (addSiteSave) addSiteSave.disabled = false;
+    }
+  }
+
   async function patchSiteTags(slug, tags) {
     const resp = await fetch(siteDeleteUrl(slug), {
       method: "PATCH",
@@ -3212,8 +3368,42 @@
   }
   if (entityPanelAddSite) {
     entityPanelAddSite.addEventListener("click", () => {
-      setEntityPanelOpen(true);
-      setAddPlacementMode(addPlacementMode === "site" ? null : "site");
+      void openAddSiteModal();
+    });
+  }
+  if (addSiteSave) {
+    addSiteSave.addEventListener("click", () => {
+      void saveAddSiteModal();
+    });
+  }
+  if (addSiteTagForm) {
+    addSiteTagForm.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      addDraftTagFromInput();
+    });
+  }
+  if (addSiteCoords) {
+    addSiteCoords.addEventListener("paste", (ev) => {
+      const text = ev.clipboardData?.getData("text") || "";
+      const pair = parseCoordPairFromText(text);
+      if (!pair) return;
+      ev.preventDefault();
+      addSiteCoords.value = `${formatCoord(pair.lat)}, ${formatCoord(pair.lon)}`;
+      setAddSiteError("");
+    });
+    addSiteCoords.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        void saveAddSiteModal();
+      }
+    });
+  }
+  if (addSiteName) {
+    addSiteName.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        addSiteCoords?.focus();
+      }
     });
   }
   sitePanelViewshed.addEventListener("change", (ev) => {

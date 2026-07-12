@@ -499,6 +499,7 @@ def test_post_project_site_creates_planned_site(tmp_path: Path) -> None:
         assert payload["site"]["type"] == "planned"
         assert payload["site"]["lat"] == 39.6
         assert payload["site"]["lon"] == -119.4
+        assert payload["site"].get("tags") in (None, [])
 
         conn = HTTPConnection(host, port, timeout=2)
         conn.request("GET", "/api/p/mesh-demo/sites")
@@ -507,6 +508,40 @@ def test_post_project_site_creates_planned_site(tmp_path: Path) -> None:
         slugs = {row["slug"] for row in sites_payload["sites"]}
         assert "ridge-top" in slugs
         assert "hub" in slugs
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_project_site_with_tags(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps(
+            {
+                "name": "Tagged Ridge",
+                "lat": 40.65495,
+                "lon": -119.35161,
+                "tags": ["EIP", "slpt"],
+            }
+        ).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=2)
+        conn.request(
+            "POST",
+            "/api/p/mesh-demo/sites",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 201
+        assert payload["site"]["slug"] == "tagged-ridge"
+        assert payload["site"]["tags"] == ["eip", "slpt"]
+        assert payload["site"]["lat"] == 40.65495
+        assert payload["site"]["lon"] == -119.35161
     finally:
         server.shutdown()
         server.server_close()
@@ -704,6 +739,8 @@ def test_project_page_includes_add_controls(tmp_path: Path) -> None:
         assert 'id="entity-panel-toggle"' in body
         assert 'id="entity-panel-add-site"' in body
         assert 'id="entity-panel-add-goal"' in body
+        assert 'id="add-site-modal"' in body
+        assert 'id="add-site-coords"' in body
         assert 'id="site-panel-create"' in body
         assert 'id="site-panel-create-viewshed"' in body
         assert 'id="site-panel-slug-preview"' in body
