@@ -410,6 +410,13 @@ def project_html(
     <div class="entity-panel__body">
       <div id="entity-panel-sites-pane" class="entity-panel__pane" role="tabpanel">
         <div id="entity-panel-tag-filters" class="entity-panel__tag-filters" role="toolbar" aria-label="Site tags"></div>
+        <div class="entity-panel__list-header">
+          <span class="wa-caption pf-muted" id="entity-panel-sites-count"></span>
+          <label class="pf-check entity-panel__viewport-filter">
+            <input type="checkbox" id="entity-panel-filter-visible">
+            <span>Visible in map</span>
+          </label>
+        </div>
         <div id="entity-panel-sites-list" class="entity-panel__list"></div>
         <div class="entity-panel__footer">
           <div class="entity-panel__footer-actions">

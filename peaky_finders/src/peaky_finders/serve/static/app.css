@@ -731,6 +731,20 @@ wa-dropdown-item.is-active::part(base) {
   color: #8ba4ff;
 }
 
+.entity-panel__list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem 0.15rem;
+  min-height: 1.25rem;
+}
+
+.entity-panel__viewport-filter {
+  font-size: 0.6875rem;
+  white-space: nowrap;
+}
+
 .entity-panel__list {
   flex: 1 1 auto;
   overflow-y: auto;

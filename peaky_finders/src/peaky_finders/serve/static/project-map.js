@@ -403,6 +403,8 @@
   const entityPanelToggle = document.getElementById("entity-panel-toggle");
   const entityPanelSitesList = document.getElementById("entity-panel-sites-list");
   const entityPanelTagFilters = document.getElementById("entity-panel-tag-filters");
+  const entityPanelSitesCount = document.getElementById("entity-panel-sites-count");
+  const entityPanelFilterVisible = document.getElementById("entity-panel-filter-visible");
   const entityPanelAddSite = document.getElementById("entity-panel-add-site");
   const entityPanelImportSites = document.getElementById("entity-panel-import-sites");
   const sitePanelTags = document.getElementById("site-panel-tags");
@@ -454,6 +456,7 @@
       : [],
   );
   let entityPanelOpen = savedMapState?.entityPanelOpen === true;
+  let entityPanelFilterByViewport = savedMapState?.filterByViewport === true;
   let tagAddOpen = false;
   let addSiteDraftTags = [];
   let importDraftTags = [];
@@ -787,6 +790,11 @@
     return false;
   }
 
+  function siteVisibleInMap(site) {
+    if (!mapReady || !site) return true;
+    return map.getBounds().contains([site.lon, site.lat]);
+  }
+
   function isSiteMapHidden(slug) {
     if (siteHidden.has(slug)) return true;
     const site = siteBySlug.get(slug);
@@ -891,25 +899,57 @@
     }
   }
 
+  function syncEntityPanelSitesCount(shown, total) {
+    if (!entityPanelSitesCount) return;
+    if (!total) {
+      entityPanelSitesCount.textContent = "";
+      return;
+    }
+    if (entityPanelFilterByViewport && shown < total) {
+      entityPanelSitesCount.textContent = `${shown} of ${total} visible`;
+    } else {
+      entityPanelSitesCount.textContent = `${total} site${total === 1 ? "" : "s"}`;
+    }
+  }
+
+  function entityPanelEmptyMessage(tagFilteredCount) {
+    if (!sites.length) return "No sites yet.";
+    if (entityPanelFilterByViewport && activeTagFilters.size) {
+      if (!tagFilteredCount) return "No sites match the selected tags.";
+      return "No sites in view match the selected tags.";
+    }
+    if (entityPanelFilterByViewport) {
+      return "No sites in the current map view — pan or zoom out.";
+    }
+    return "No sites match the selected tags.";
+  }
+
   function renderEntityPanel() {
     renderTagFilters();
+    if (entityPanelFilterVisible) {
+      entityPanelFilterVisible.checked = entityPanelFilterByViewport;
+    }
     if (entityPanelSitesList) {
       entityPanelSitesList.innerHTML = "";
-      const sortedSites = [...sites]
-        .filter((site) => sitePassesTagFilter(site))
+      const tagFiltered = sites.filter((site) => sitePassesTagFilter(site));
+      const sortedSites = tagFiltered
+        .filter((site) => !entityPanelFilterByViewport || siteVisibleInMap(site))
         .sort((a, b) => a.name.localeCompare(b.name));
+      syncEntityPanelSitesCount(sortedSites.length, tagFiltered.length);
       if (!sortedSites.length) {
         const empty = document.createElement("div");
         empty.className = "entity-panel__empty";
-        empty.textContent = activeTagFilters.size
-          ? "No sites match the selected tags."
-          : "No sites yet.";
+        empty.textContent = entityPanelEmptyMessage(tagFiltered.length);
         entityPanelSitesList.appendChild(empty);
       }
       for (const site of sortedSites) {
         entityPanelSitesList.appendChild(buildSiteEntityRow(site));
       }
     }
+  }
+
+  function onMapMoveEndForEntityPanel() {
+    if (entityPanelFilterByViewport) renderEntityPanel();
   }
 
   function buildSiteEntityRow(site) {
@@ -1302,6 +1342,7 @@
       viewshedOpacity,
       hiddenSites: [...siteHidden],
       tagFilters: [...activeTagFilters].sort((a, b) => a.localeCompare(b)),
+      filterByViewport: entityPanelFilterByViewport,
       viewshedVisible: Object.fromEntries(viewshedVisible),
       entityPanelOpen,
     };
@@ -3911,6 +3952,7 @@
     scheduleSaveMapState();
   });
   map.on("moveend", scheduleSaveMapState);
+  map.on("moveend", onMapMoveEndForEntityPanel);
   map.on("rotateend", scheduleSaveMapState);
   map.on("move", updatePinOverlays);
   map.on("resize", updatePinOverlays);
@@ -4015,6 +4057,13 @@
       } else {
         setEntityPanelOpen(true);
       }
+    });
+  }
+  if (entityPanelFilterVisible) {
+    entityPanelFilterVisible.addEventListener("change", () => {
+      entityPanelFilterByViewport = !!entityPanelFilterVisible.checked;
+      renderEntityPanel();
+      scheduleSaveMapState();
     });
   }
   if (mapToolSites) {

@@ -717,6 +717,7 @@ def test_project_page_includes_add_controls(tmp_path: Path) -> None:
         assert 'id="entity-panel"' in body
         assert 'id="entity-panel-toggle"' in body
         assert 'id="entity-panel-add-site"' in body
+        assert 'id="entity-panel-filter-visible"' in body
         assert 'id="add-site-modal"' in body
         assert 'id="add-site-coords"' in body
         assert 'id="site-panel-create"' in body
