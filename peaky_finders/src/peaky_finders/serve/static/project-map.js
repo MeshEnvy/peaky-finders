@@ -485,6 +485,7 @@
   let importPreviewBusy = false;
   let importFilterByViewport = true;
   let importSelectedPointIndex = -1;
+  let bulkTagModalOpen = false;
   let bulkTagTargetSlugs = [];
   let bulkTagInitialCounts = new Map();
   let bulkTagPending = new Map();
@@ -553,6 +554,20 @@
     return sites
       .filter((site) => sitePassesTagFilter(site))
       .filter((site) => !entityPanelFilterByViewport || siteVisibleInMap(site));
+  }
+
+  function sidebarSiteSlugs() {
+    if (!entityPanelSitesList) {
+      return entityPanelSites().map((site) => site.slug);
+    }
+    return [...entityPanelSitesList.querySelectorAll(".entity-panel__row[data-site-slug]")]
+      .map((row) => row.dataset.siteSlug)
+      .filter(Boolean);
+  }
+
+  function sidebarListedSites() {
+    const listed = new Set(sidebarSiteSlugs());
+    return entityPanelSites().filter((site) => listed.has(site.slug));
   }
 
   function renderTagToggleChips(container, draftTags, knownTags, onChange) {
@@ -1054,7 +1069,7 @@
         entityPanelSitesList.appendChild(buildSiteEntityRow(site));
       }
     }
-    if (bulkTagModal?.open) syncBulkTagModalStatus();
+    if (bulkTagModalOpen) syncBulkTagModalStatus();
   }
 
   function onMapMoveEndForEntityPanel() {
@@ -1063,7 +1078,7 @@
 
   function syncBulkTagButton() {
     if (!entityPanelBulkTag) return;
-    const count = entityPanelSites().length;
+    const count = sidebarSiteSlugs().length;
     entityPanelBulkTag.disabled = !mapReady || count === 0;
   }
 
@@ -1126,9 +1141,10 @@
 
   function syncBulkTagModalStatus({ resetPending = false } = {}) {
     if (!bulkTagStatus) return;
-    bulkTagTargetSlugs = entityPanelSites().map((site) => site.slug);
+    const listedSites = sidebarListedSites();
+    bulkTagTargetSlugs = listedSites.map((site) => site.slug);
     const counts = new Map();
-    for (const site of entityPanelSites()) {
+    for (const site of listedSites) {
       for (const tag of siteTags(site)) {
         counts.set(tag, (counts.get(tag) || 0) + 1);
       }
@@ -1224,13 +1240,15 @@
   async function openBulkTagModal() {
     if (!bulkTagModal) return;
     setBulkTagError("");
+    await customElements.whenDefined("wa-dialog");
     syncBulkTagModalStatus({ resetPending: true });
     bulkTagModal.open = true;
   }
 
   async function saveBulkTagModal() {
     addBulkTagFromInput();
-    const slugs = [...bulkTagTargetSlugs];
+    syncBulkTagModalStatus();
+    const slugs = sidebarSiteSlugs();
     const { addTags, removeTags } = computeBulkTagOps();
     if (!slugs.length || (!addTags.length && !removeTags.length)) {
       setBulkTagError("Change at least one tag.");
@@ -4527,6 +4545,15 @@
     bulkTagAddForm.addEventListener("submit", (ev) => {
       ev.preventDefault();
       addBulkTagFromInput();
+    });
+  }
+  if (bulkTagModal) {
+    bulkTagModal.addEventListener("wa-after-show", () => {
+      bulkTagModalOpen = true;
+    });
+    bulkTagModal.addEventListener("wa-after-hide", () => {
+      bulkTagModalOpen = false;
+      setBulkTagError("");
     });
   }
   if (bulkTagAddInput) {

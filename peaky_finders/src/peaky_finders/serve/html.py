@@ -413,7 +413,7 @@ def project_html(
         <div class="entity-panel__list-header">
           <span class="wa-caption pf-muted entity-panel__list-count" id="entity-panel-sites-count"></span>
           <div class="entity-panel__list-toolbar">
-            <wa-button id="entity-panel-bulk-tag" appearance="outlined" size="s" type="button" title="Add or remove tags on sites in the current map view" disabled>Tag in view</wa-button>
+            <wa-button id="entity-panel-bulk-tag" appearance="outlined" size="s" type="button" title="Add or remove tags on sites listed in the sidebar" disabled>Bulk tag</wa-button>
             <label class="entity-panel__viewport-filter" title="Show only sites in the current map view">
               <input type="checkbox" id="entity-panel-filter-visible">
               <span>In view</span>
@@ -668,7 +668,7 @@ def project_html(
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
   <wa-button slot="footer" id="import-sites-save" variant="brand" size="s" type="button" disabled>Import</wa-button>
 </wa-dialog>
-<wa-dialog id="bulk-tag-modal" label="Tag sites in view" style="--width: 28rem" with-footer light-dismiss>
+<wa-dialog id="bulk-tag-modal" label="Bulk tag sidebar sites" style="--width: 28rem" with-footer light-dismiss>
   <wa-callout id="bulk-tag-error" variant="danger" hidden></wa-callout>
   <p class="wa-caption pf-muted" id="bulk-tag-status"></p>
   <div class="pf-form-field pf-form-field--full bulk-tag-form">
