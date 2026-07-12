@@ -884,9 +884,22 @@
     return `${prefix}have all selected tags.`;
   }
 
+  function coordVisibleInMapViewport(mapInstance, lon, lat) {
+    if (!mapInstance || lon == null || lat == null) return true;
+    const projected = mapInstance.project([lon, lat]);
+    if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y))
+      return false;
+    const canvas = mapInstance.getCanvas();
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    return (
+      projected.x >= 0 && projected.x <= w && projected.y >= 0 && projected.y <= h
+    );
+  }
+
   function siteVisibleInMap(site) {
     if (!mapReady || !site) return true;
-    return map.getBounds().contains([site.lon, site.lat]);
+    return coordVisibleInMapViewport(map, site.lon, site.lat);
   }
 
   function isSiteMapHidden(slug) {
@@ -2950,8 +2963,7 @@
 
   function importPointVisibleInMap(point) {
     if (!importPreviewMap || !point) return true;
-    const bounds = importPreviewMap.getBounds();
-    return bounds.contains([point.lon, point.lat]);
+    return coordVisibleInMapViewport(importPreviewMap, point.lon, point.lat);
   }
 
   function syncImportListCount(shown, total) {
