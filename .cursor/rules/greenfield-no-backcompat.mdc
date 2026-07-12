@@ -17,7 +17,7 @@ This repo is **greenfield**. **Optimize for the cleanest present design** — no
 ## Do this
 
 - Rename/remove APIs, preset fields, CLI flags, and artifact paths when the new shape is clearer.
-- Update all callers, tests, `projects/nevada/config.yaml`, and **MEMORY.md** in the same change set.
+- Update all callers, tests, `peaky_home/projects/sample/config.yaml`, and **MEMORY.md** in the same change set.
 - Choose the bolder refactor when it eliminates branches, adapters, or "temporary" shims.
 
 ## Avoid (unless user explicitly requests a narrow exception)

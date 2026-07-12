@@ -30,7 +30,7 @@ When two designs compete, pick the **simpler present** and break callers — doc
 | RF engine | `splatter` submodule (PyO3 Fresnel/FSPL) |
 | Build | Incremental preset DAG (`peaky build`) |
 | Dev/test | Docker — `./peaky` (`test`, `serve`, `build`, …) |
-| Reference preset | `peaky_home/projects/nevada/config.yaml` |
+| Reference preset | `peaky_home/projects/sample/config.yaml` |
 
 ## Domain model: sites vs goals
 
@@ -59,7 +59,7 @@ Run from a project directory containing `config.yaml`:
 
 ```bash
 ../../peaky new my-region       # scaffold projects/my-region/ (from repo root)
-cd projects/nevada
+cd peaky_home/projects/sample
 ../../peaky build              # incremental DAG (bundle → viewsheds → mesh → KMZ)
 ../../peaky build --suggest    # site solver → append to preset YAML
 ../../peaky bundle clip aoi …  # granular Make-style targets
@@ -119,6 +119,8 @@ Outputs under `<preset-dir>/build/` (clips, bundle, viewsheds, mesh, aggregate K
 | Global defaults | `$PEAKY_HOME/config.yaml` | `simulation`, `display`, `mesh`, `suggest` — seeded from bundled templates on first CLI/serve start |
 | Project | `$PEAKY_HOME/projects/<slug>/config.yaml` | **Overrides** + always-local `land`, `sites`, `links` |
 
+**Git:** only `peaky_home/projects/sample/config.yaml` is committed; other project presets are local (`.gitignore`). Real site coords/names stay out of the repo.
+
 Load: `deep_merge($PEAKY_HOME/config.yaml ← project)`. Writes (`update_preset_yaml_tree`, serve PATCH): mutate project file, validate merged preset, **prune** keys equal to defaults. `load_preset` / `resolve_preset_raw` return the merged effective config. `ensure_peaky_home()` seeds missing `config.yaml`, `modems.yaml`, `environments.yaml`.
 
 **Global RF catalogs** (not per project): `$PEAKY_HOME/modems.yaml` (`modem_presets:`) and `$PEAKY_HOME/environments.yaml` (`environment_presets:`). Project preset selects `simulation.modem` / `simulation.environment` by name. Build simulation stamp fingerprints **resolved** merged simulation + catalog fingerprint.
@@ -147,7 +149,7 @@ peaky_home/        # Dev runtime home (`PEAKY_HOME` via `./peaky`; gitignored ex
   modems.yaml      # RF modem catalog
   environments.yaml
   projects/
-    nevada/        # Reference project
+    sample/        # Committed reference (fictional sites)
 docker/            # Entrypoint script
 Dockerfile         # dev + latest targets (GDAL, Poetry, splatter)
 peaky              # Dev Docker runner (`test`, `serve`, `build`, …)

@@ -13,10 +13,10 @@ Read [MEMORY.md](../../MEMORY.md) first. Greenfield: break preset schema cleanly
 ## Layout
 
 - Global defaults: `$PEAKY_HOME/config.yaml` (bundled template; see `peaky_preset_defaults.py`, `ensure_peaky_home()`)
-- Reference project: `peaky_home/projects/nevada/config.yaml` (overrides + `land` / `sites` / `links` only)
+- Reference project: `peaky_home/projects/sample/config.yaml` (public fictional sites + `links`)
 - Global RF catalogs: `$PEAKY_HOME/modems.yaml`, `$PEAKY_HOME/environments.yaml` (see `peaky_profiles.py`)
 - Run CLI from project dir: `require_cwd_config_yaml()` → `./config.yaml`
-- Resolve by slug: `resolve_preset_yaml_arg("nevada")` → `projects/nevada/config.yaml`
+- Resolve by slug: `resolve_preset_yaml_arg("sample")` → `projects/sample/config.yaml`
 
 ## Global preset defaults (`peaky_preset_defaults.py`)
 
@@ -94,5 +94,5 @@ Never bypass with direct `yaml.dump`.
 ## Extending schema
 
 1. Add field to Pydantic model in `sites_job.py`
-2. Document in reference `projects/nevada/config.yaml` with `#` rationale
+2. Document in reference `peaky_home/projects/sample/config.yaml` with `#` rationale
 3. Update MEMORY.md in same change set

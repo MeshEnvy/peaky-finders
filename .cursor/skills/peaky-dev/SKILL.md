@@ -15,9 +15,8 @@ Read [MEMORY.md](../../MEMORY.md) for env vars.
 From a **project directory** (contains `config.yaml`):
 
 ```bash
-cd peaky_home/projects/nevada
-../../../peaky build
-../../../peaky build --verbose -j 4
+cd peaky_home/projects/sample
+../../../peaky serve
 ```
 
 `./peaky` mounts `<repo>/peaky_home` → `/.peaky` (`PEAKY_HOME`), `$PWD` as `/project`, bind-mounts `peaky_finders/`, runs the Python CLI inside `peaky:dev`.

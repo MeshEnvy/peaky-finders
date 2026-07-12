@@ -31,9 +31,8 @@ Rule: `sites-and-goals`. Detail: MEMORY § Domain model, skill `peaky-preset`.
 ## Workflow
 
 ```bash
-cd projects/nevada
-../../peaky build           # full incremental DAG
-../../peaky build --suggest   # site solver → preset YAML
+cd peaky_home/projects/sample
+../../../peaky serve
 ```
 
 Granular subcommands (`bundle`, `mesh`, `viewshed`, `kmz`, `stamp`, `inspect`) debug single targets without running the full graph.
