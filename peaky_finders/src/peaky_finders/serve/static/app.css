@@ -216,6 +216,8 @@ body.wide .project-toolbar {
   flex: 1 1 0;
   min-height: 0;
   border-top: 1px solid var(--wa-color-surface-border);
+  --pf-entity-panel-width: 20rem;
+  --pf-site-panel-inset: calc(20rem + 0.75rem);
 }
 
 body.wide #map {
@@ -223,6 +225,15 @@ body.wide #map {
   inset: 0;
   width: 100%;
   height: 100%;
+  transition: left 0.2s ease-out, right 0.2s ease-out;
+}
+
+.map-shell.entity-panel-open #map {
+  left: var(--pf-entity-panel-width);
+}
+
+.map-shell.site-panel-open #map {
+  right: var(--pf-site-panel-inset);
 }
 
 .pin-load-overlays {
@@ -231,6 +242,15 @@ body.wide #map {
   pointer-events: none;
   z-index: 3;
   overflow: hidden;
+  transition: left 0.2s ease-out, right 0.2s ease-out;
+}
+
+.map-shell.entity-panel-open .pin-load-overlays {
+  left: var(--pf-entity-panel-width);
+}
+
+.map-shell.site-panel-open .pin-load-overlays {
+  right: var(--pf-site-panel-inset);
 }
 
 .pin-load-spinner {

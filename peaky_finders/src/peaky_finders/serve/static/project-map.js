@@ -306,6 +306,14 @@
   });
   const navControl = new maplibregl.NavigationControl({ visualizePitch: true });
   map.addControl(navControl, "top-right");
+  const mapContainer = document.getElementById("map");
+  if (mapContainer && typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => {
+      if (!mapReady) return;
+      map.resize();
+      updatePinOverlays();
+    }).observe(mapContainer);
+  }
   const mapToolbarRefs = installMapToolbar(navControl._container);
   const mapBasemapMenu = mapToolbarRefs.mapBasemapMenu;
   const mapToolSites = mapToolbarRefs.mapToolSites;
@@ -677,6 +685,12 @@
       const active = entityPanelOpen;
       mapToolSites.classList.toggle("active", active);
       mapToolSites.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+  }
+
+  function syncMapViewport() {
+    if (mapShell) {
+      mapShell.classList.toggle("site-panel-open", sitePanel && !sitePanel.hidden);
     }
   }
 
@@ -1326,6 +1340,7 @@
       .setLngLat([lon, lat])
       .addTo(map);
     sitePanel.hidden = false;
+    syncMapViewport();
     showPanelCreate();
     viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
     syncCreateViewshedCheckbox();
@@ -1601,10 +1616,12 @@
     setCreateError("");
     if (selectedSlug) {
       sitePanel.hidden = false;
+      syncMapViewport();
       showPanelView();
       renderPanel(siteBySlug.get(selectedSlug));
     } else {
       sitePanel.hidden = true;
+      syncMapViewport();
       sitePanelView.hidden = false;
       sitePanelCreate.hidden = true;
     }
@@ -4031,6 +4048,7 @@
     refreshFilteredLinks();
     syncEditMapShell();
     sitePanel.hidden = false;
+    syncMapViewport();
     showPanelView();
     if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));
   }
@@ -4161,6 +4179,7 @@
     if (editMode) cancelEdit();
     selectedSlug = slug;
     sitePanel.hidden = false;
+    syncMapViewport();
     showPanelView();
     renderPanel(site);
     updateSelectedLayer();
@@ -4179,6 +4198,7 @@
     }
     selectedSlug = null;
     sitePanel.hidden = true;
+    syncMapViewport();
     updateSelectedLayer();
   }
 
@@ -4270,6 +4290,8 @@
 
   map.on("load", () => {
     mapReady = true;
+    syncMapViewport();
+    map.resize();
     addSiteLayers();
     wireMapInteractions();
     connectProjectEvents();
