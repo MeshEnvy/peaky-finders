@@ -860,8 +860,9 @@ wa-dropdown-item.is-active::part(base) {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-  padding: 0.55rem 0.75rem 0.35rem;
+  padding: 0.55rem 0.75rem 0.4rem;
   border-bottom: 1px solid var(--wa-color-surface-border);
+  flex-shrink: 0;
 }
 
 .entity-panel__tag-filter {
@@ -890,11 +891,59 @@ wa-dropdown-item.is-active::part(base) {
 
 .entity-panel__list-header {
   display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--wa-color-surface-border);
+  flex-shrink: 0;
+}
+
+.entity-panel__list-count {
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.entity-panel__list-toolbar {
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.35rem;
-  padding: 0.35rem 0.75rem 0.15rem;
-  min-height: 1.25rem;
+  min-width: 0;
+}
+
+.entity-panel__list-toolbar wa-button {
+  flex-shrink: 0;
+}
+
+.bulk-tag-form {
+  margin-top: 0.25rem;
+}
+
+.bulk-tag-tags {
+  margin-bottom: 0.35rem;
+}
+
+.bulk-tag-add-form input {
+  width: 100%;
+  max-width: 14rem;
+}
+
+/* wa-callout[hidden] still paints its chrome unless display is forced off */
+wa-dialog wa-callout[hidden] {
+  display: none !important;
+}
+
+.site-tag--toggle.is-partial {
+  background: rgba(74, 108, 247, 0.12);
+  border-color: rgba(74, 108, 247, 0.45);
+  border-style: dashed;
+  color: #a5b4fc;
+}
+
+.site-tag__partial-icon {
+  font-size: 0.65rem;
+  line-height: 1;
+  opacity: 0.9;
 }
 
 .entity-panel__viewport-filter {

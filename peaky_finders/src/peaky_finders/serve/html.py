@@ -411,11 +411,14 @@ def project_html(
       <div id="entity-panel-sites-pane" class="entity-panel__pane" role="tabpanel">
         <div id="entity-panel-tag-filters" class="entity-panel__tag-filters" role="toolbar" aria-label="Site tags"></div>
         <div class="entity-panel__list-header">
-          <span class="wa-caption pf-muted" id="entity-panel-sites-count"></span>
-          <label class="entity-panel__viewport-filter" title="Show only sites in the current map view">
-            <input type="checkbox" id="entity-panel-filter-visible">
-            <span>In view</span>
-          </label>
+          <span class="wa-caption pf-muted entity-panel__list-count" id="entity-panel-sites-count"></span>
+          <div class="entity-panel__list-toolbar">
+            <wa-button id="entity-panel-bulk-tag" appearance="outlined" size="s" type="button" title="Add or remove tags on sites in the current map view" disabled>Tag in view</wa-button>
+            <label class="entity-panel__viewport-filter" title="Show only sites in the current map view">
+              <input type="checkbox" id="entity-panel-filter-visible">
+              <span>In view</span>
+            </label>
+          </div>
         </div>
         <div id="entity-panel-sites-list" class="entity-panel__list"></div>
         <div class="entity-panel__footer">
@@ -664,6 +667,20 @@ def project_html(
   </div>
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
   <wa-button slot="footer" id="import-sites-save" variant="brand" size="s" type="button" disabled>Import</wa-button>
+</wa-dialog>
+<wa-dialog id="bulk-tag-modal" label="Tag sites in view" style="--width: 28rem" with-footer light-dismiss>
+  <wa-callout id="bulk-tag-error" variant="danger" hidden></wa-callout>
+  <p class="wa-caption pf-muted" id="bulk-tag-status"></p>
+  <div class="pf-form-field pf-form-field--full bulk-tag-form">
+    <span class="pf-label" id="bulk-tag-tags-label">Tags</span>
+    <div class="site-tags bulk-tag-tags" id="bulk-tag-tags" role="group" aria-labelledby="bulk-tag-tags-label"></div>
+    <form class="site-tag-add-form bulk-tag-add-form" id="bulk-tag-add-form">
+      <input id="bulk-tag-add-input" type="text" list="bulk-tag-add-suggestions" placeholder="add tag" autocomplete="off" maxlength="32" aria-label="Add tag">
+      <datalist id="bulk-tag-add-suggestions"></datalist>
+    </form>
+  </div>
+  <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
+  <wa-button slot="footer" id="bulk-tag-save" variant="brand" size="s" type="button" disabled>Apply</wa-button>
 </wa-dialog>
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" crossorigin=""></script>
 <script>window.PEAKY_PROJECT = {peaky_config};</script>

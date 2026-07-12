@@ -10,6 +10,7 @@ from rf_fixtures import MINIMAL_SIMULATION
 from peaky_finders.core.project.scaffold import scaffold_project
 from peaky_finders.serve.sites import (
     append_planned_site_to_preset,
+    bulk_merge_site_tags_in_preset,
     delete_site_from_preset,
     import_sites_to_preset,
     unique_site_slug,
@@ -238,4 +239,105 @@ def test_import_sites_to_preset_requires_tags(tmp_path: Path) -> None:
             preset_path,
             sites=[KmlPointSite(name="Alpha", lat=39.6, lon=-119.4)],
             tags=[],
+        )
+
+
+def _seed_tagged_sites(preset_path: Path) -> tuple[str, str]:
+    slug_a = append_planned_site_to_preset(
+        preset_path,
+        name="Alpha Peak",
+        lat=39.6,
+        lon=-119.4,
+        tags=["hsc"],
+    )
+    slug_b = append_planned_site_to_preset(
+        preset_path,
+        name="Beta Peak",
+        lat=39.7,
+        lon=-119.3,
+    )
+    return slug_a, slug_b
+
+
+def test_bulk_merge_site_tags_add_only(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slug_a, slug_b = _seed_tagged_sites(preset_path)
+    updated = bulk_merge_site_tags_in_preset(
+        preset_path,
+        slugs=[slug_a, slug_b],
+        add_tags=["onx", "planned"],
+    )
+    assert updated == [slug_a, slug_b]
+    preset = load_preset(preset_path)
+    assert preset.sites[slug_a].tags == ["hsc", "onx", "planned"]
+    assert preset.sites[slug_b].tags == ["onx", "planned"]
+
+
+def test_bulk_merge_site_tags_add_and_remove(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slug_a, slug_b = _seed_tagged_sites(preset_path)
+    update_site_in_preset(preset_path, slug_b, tags=["hsc", "onx"])
+    bulk_merge_site_tags_in_preset(
+        preset_path,
+        slugs=[slug_a, slug_b],
+        add_tags=["planned"],
+        remove_tags=["hsc"],
+    )
+    preset = load_preset(preset_path)
+    assert preset.sites[slug_a].tags == ["planned"]
+    assert preset.sites[slug_b].tags == ["onx", "planned"]
+
+
+def test_bulk_merge_site_tags_remove_last_drops_key(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slug_a, _slug_b = _seed_tagged_sites(preset_path)
+    bulk_merge_site_tags_in_preset(
+        preset_path,
+        slugs=[slug_a],
+        remove_tags=["hsc"],
+    )
+    preset = load_preset(preset_path)
+    assert preset.sites[slug_a].tags == []
+    assert "tags:" not in preset_path.read_text()
+
+
+def test_bulk_merge_site_tags_rejects_empty_slugs(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    with pytest.raises(ValueError, match="slugs must be a non-empty list"):
+        bulk_merge_site_tags_in_preset(preset_path, slugs=[], add_tags=["onx"])
+
+
+def test_bulk_merge_site_tags_requires_ops(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slug_a, _slug_b = _seed_tagged_sites(preset_path)
+    with pytest.raises(ValueError, match="add_tags or remove_tags required"):
+        bulk_merge_site_tags_in_preset(preset_path, slugs=[slug_a])
+
+
+def test_bulk_merge_site_tags_unknown_slug(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slug_a, _slug_b = _seed_tagged_sites(preset_path)
+    with pytest.raises(ValueError, match="not found"):
+        bulk_merge_site_tags_in_preset(
+            preset_path,
+            slugs=[slug_a, "missing"],
+            add_tags=["onx"],
         )

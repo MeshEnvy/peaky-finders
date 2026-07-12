@@ -54,6 +54,7 @@ CDN / hosted project: [webawesome.com](https://webawesome.com) (autoloader line)
 | Layers | Component styles in `@layer wa-component`; unlayered app CSS wins ties |
 | JS readiness | `await customElements.whenDefined('wa-button')` or `allDefined()` from `webawesome.js` |
 | Lit updates | After property changes, `await element.updateComplete` before reading reflected attrs |
+| Error callouts | `wa-callout[hidden]` does not suppress layout/paint — pair with `display: none !important` in app CSS |
 
 ## Shoelace migration (2.x → Web Awesome 3)
 

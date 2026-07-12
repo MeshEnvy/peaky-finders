@@ -177,6 +177,52 @@ def update_site_in_preset(
     return str(update_preset_yaml_tree(preset_path, mutator, validate=False))
 
 
+def bulk_merge_site_tags_in_preset(
+    preset_path: Path,
+    *,
+    slugs: Sequence[str],
+    add_tags: list[str] | None = None,
+    remove_tags: list[str] | None = None,
+) -> list[str]:
+    """Merge tags on multiple existing sites in one YAML write; return slugs in request order."""
+    slug_list = [str(s).strip() for s in slugs]
+    if not slug_list or not any(slug_list):
+        raise ValueError("slugs must be a non-empty list")
+    add_value = normalize_site_tags(add_tags) if add_tags is not None else []
+    remove_value = normalize_site_tags(remove_tags) if remove_tags is not None else []
+    if not add_value and not remove_value:
+        raise ValueError("add_tags or remove_tags required")
+    add_set = set(add_value)
+    remove_set = set(remove_value)
+
+    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> list[str]:
+        sites_raw = root.get("sites")
+        if not isinstance(sites_raw, dict):
+            raise ValueError("preset sites must be a mapping")
+        updated: list[str] = []
+        for slug in slug_list:
+            if not slug:
+                raise ValueError("slug must not be empty")
+            if slug not in sites_raw:
+                raise ValueError(f"site not found: {slug!r}")
+            ent = sites_raw[slug]
+            if not isinstance(ent, dict):
+                raise ValueError(f"site entry must be a mapping: {slug!r}")
+            if "type" in ent:
+                raise ValueError(f"sites.{slug}.type is removed; use tags")
+            current = set(normalize_site_tags(ent.get("tags")))
+            current |= add_set
+            current -= remove_set
+            if current:
+                ent["tags"] = sorted(current)
+            else:
+                ent.pop("tags", None)
+            updated.append(slug)
+        return updated
+
+    return list(update_preset_yaml_tree(preset_path, mutator, validate=False))
+
+
 def delete_site_from_preset(preset_path: Path, site_slug: str) -> str:
     """Remove a site from ``sites`` and scrub manual ``links`` pairs; return deleted slug."""
     slug = str(site_slug).strip()

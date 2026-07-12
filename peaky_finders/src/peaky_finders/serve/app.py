@@ -41,6 +41,7 @@ from peaky_finders.serve.simulation import (
 )
 from peaky_finders.serve.sites import (
     append_planned_site_to_preset,
+    bulk_merge_site_tags_in_preset,
     delete_site_from_preset,
     import_sites_to_preset,
     update_site_in_preset,
@@ -92,6 +93,9 @@ _API_PROJECT_SITES_IMPORT_PREVIEW_RE = re.compile(
 )
 _API_PROJECT_SITES_IMPORT_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/import/?$"
+)
+_API_PROJECT_SITES_TAGS_BULK_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/tags/bulk/?$"
 )
 _API_PROJECT_SITE_SLUG_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/([a-zA-Z][a-zA-Z0-9_-]*)/?$"
@@ -996,6 +1000,88 @@ class ServeDispatcher:
                     "slug": project_slug,
                     "points": [serialize_kml_point(site) for site in parsed_sites],
                     "skipped": skipped,
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        tags_bulk_match = _API_PROJECT_SITES_TAGS_BULK_RE.match(path)
+        if tags_bulk_match:
+            project_slug = tags_bulk_match.group(1)
+            project_dir = self.projects_dir / project_slug
+            preset_path = project_dir / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = _parse_json_body(body)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": f"invalid JSON: {e}"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if not isinstance(raw, dict):
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "body must be a JSON object"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            slugs_raw = raw.get("slugs")
+            if not isinstance(slugs_raw, list) or not slugs_raw:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "slugs must be a non-empty list of strings"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            slugs_list = [str(s) for s in slugs_raw]
+            add_tags_raw = raw.get("add_tags")
+            remove_tags_raw = raw.get("remove_tags")
+            add_tags_list: list[str] | None = None
+            remove_tags_list: list[str] | None = None
+            if add_tags_raw is not None:
+                if not isinstance(add_tags_raw, list):
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": "add_tags must be a list of strings"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                add_tags_list = [str(t) for t in add_tags_raw]
+            if remove_tags_raw is not None:
+                if not isinstance(remove_tags_raw, list):
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": "remove_tags must be a list of strings"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                remove_tags_list = [str(t) for t in remove_tags_raw]
+            try:
+                updated_slugs = bulk_merge_site_tags_in_preset(
+                    preset_path,
+                    slugs=slugs_list,
+                    add_tags=add_tags_list,
+                    remove_tags=remove_tags_list,
+                )
+                site_map = _load_project_sites(project_dir)
+                site_rows = [
+                    _serialize_project_sites({slug: site_map[slug]})[0]
+                    for slug in updated_slugs
+                    if slug in site_map
+                ]
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {
+                    "slug": project_slug,
+                    "sites": site_rows,
+                    "updated": len(site_rows),
                 },
                 sort_keys=True,
             ).encode("utf-8")

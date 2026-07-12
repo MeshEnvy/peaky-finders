@@ -406,6 +406,7 @@
   const entityPanelTagFilters = document.getElementById("entity-panel-tag-filters");
   const entityPanelSitesCount = document.getElementById("entity-panel-sites-count");
   const entityPanelFilterVisible = document.getElementById("entity-panel-filter-visible");
+  const entityPanelBulkTag = document.getElementById("entity-panel-bulk-tag");
   const entityPanelAddSite = document.getElementById("entity-panel-add-site");
   const entityPanelImportSites = document.getElementById("entity-panel-import-sites");
   const sitePanelTags = document.getElementById("site-panel-tags");
@@ -433,6 +434,14 @@
   const importSitesListCount = document.getElementById("import-sites-list-count");
   const importSitesFilterVisible = document.getElementById("import-sites-filter-visible");
   const importSitesPointList = document.getElementById("import-sites-point-list");
+  const bulkTagModal = document.getElementById("bulk-tag-modal");
+  const bulkTagError = document.getElementById("bulk-tag-error");
+  const bulkTagStatus = document.getElementById("bulk-tag-status");
+  const bulkTagTagsEl = document.getElementById("bulk-tag-tags");
+  const bulkTagAddForm = document.getElementById("bulk-tag-add-form");
+  const bulkTagAddInput = document.getElementById("bulk-tag-add-input");
+  const bulkTagAddSuggestions = document.getElementById("bulk-tag-add-suggestions");
+  const bulkTagSave = document.getElementById("bulk-tag-save");
   const IMPORT_DEDUPE_METERS = 100;
   const IMPORT_PREVIEW_CIRCLE_PAINT = {
     "circle-radius": 6,
@@ -467,6 +476,9 @@
   let importPreviewBusy = false;
   let importFilterByViewport = true;
   let importSelectedPointIndex = -1;
+  let bulkTagTargetSlugs = [];
+  let bulkTagInitialCounts = new Map();
+  let bulkTagPending = new Map();
 
   function ensureTerrainSource() {
     if (map.getSource(TERRAIN_SOURCE)) return;
@@ -522,6 +534,34 @@
 
   function sitesImportApiUrl() {
     return `/api/p/${projectSlug}/sites/import`;
+  }
+
+  function sitesTagsBulkApiUrl() {
+    return `/api/p/${projectSlug}/sites/tags/bulk`;
+  }
+
+  function sitesInMapViewport() {
+    if (!mapReady) return [];
+    return sites.filter((site) => siteVisibleInMap(site));
+  }
+
+  function renderTagToggleChips(container, draftTags, knownTags, onChange) {
+    if (!container) return;
+    container.innerHTML = "";
+    const selected = new Set(draftTags);
+    const shown = new Set([...knownTags, ...draftTags]);
+    for (const tag of [...shown].sort((a, b) => a.localeCompare(b))) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = selected.has(tag) ? "site-tag site-tag--toggle is-selected" : "site-tag site-tag--toggle";
+      chip.textContent = tag;
+      chip.setAttribute("aria-pressed", selected.has(tag) ? "true" : "false");
+      chip.title = selected.has(tag) ? `Remove tag ${tag}` : `Add tag ${tag}`;
+      chip.addEventListener("click", () => {
+        onChange(tag, selected.has(tag));
+      });
+      container.appendChild(chip);
+    }
   }
 
   function arrayBufferToBase64(buffer) {
@@ -933,6 +973,7 @@
 
   function renderEntityPanel() {
     renderTagFilters();
+    syncBulkTagButton();
     if (entityPanelFilterVisible) {
       entityPanelFilterVisible.checked = entityPanelFilterByViewport;
     }
@@ -957,6 +998,206 @@
 
   function onMapMoveEndForEntityPanel() {
     if (entityPanelFilterByViewport) renderEntityPanel();
+    if (bulkTagModal?.open) syncBulkTagModalStatus();
+  }
+
+  function syncBulkTagButton() {
+    if (!entityPanelBulkTag) return;
+    const count = sitesInMapViewport().length;
+    entityPanelBulkTag.disabled = !mapReady || count === 0;
+  }
+
+  function bulkTagListTags() {
+    const found = new Set([
+      ...allProjectTags(),
+      ...bulkTagInitialCounts.keys(),
+      ...bulkTagPending.keys(),
+    ]);
+    return [...found].sort((a, b) => a.localeCompare(b));
+  }
+
+  function bulkTagVisualState(tag) {
+    const total = bulkTagTargetSlugs.length;
+    if (!total) return "none";
+    const pending = bulkTagPending.get(tag);
+    if (pending === "all") return "full";
+    if (pending === "none") return "none";
+    const count = bulkTagInitialCounts.get(tag) || 0;
+    if (count === 0) return "none";
+    if (count >= total) return "full";
+    return "partial";
+  }
+
+  function toggleBulkTag(tag) {
+    const state = bulkTagVisualState(tag);
+    if (state === "full") bulkTagPending.set(tag, "none");
+    else bulkTagPending.set(tag, "all");
+    renderBulkTagTags();
+    syncBulkTagSaveButton();
+  }
+
+  function computeBulkTagOps() {
+    const total = bulkTagTargetSlugs.length;
+    const addTags = [];
+    const removeTags = [];
+    for (const [tag, pending] of bulkTagPending) {
+      const count = bulkTagInitialCounts.get(tag) || 0;
+      if (pending === "all" && count < total) addTags.push(tag);
+      if (pending === "none" && count > 0) removeTags.push(tag);
+    }
+    return { addTags, removeTags };
+  }
+
+  function bulkTagHasChanges() {
+    const { addTags, removeTags } = computeBulkTagOps();
+    return addTags.length > 0 || removeTags.length > 0;
+  }
+
+  function setBulkTagError(message) {
+    if (!bulkTagError) return;
+    if (message) {
+      bulkTagError.textContent = message;
+      bulkTagError.hidden = false;
+    } else {
+      bulkTagError.textContent = "";
+      bulkTagError.hidden = true;
+    }
+  }
+
+  function syncBulkTagModalStatus({ resetPending = false } = {}) {
+    if (!bulkTagStatus) return;
+    bulkTagTargetSlugs = sitesInMapViewport().map((site) => site.slug);
+    const counts = new Map();
+    for (const site of sitesInMapViewport()) {
+      for (const tag of siteTags(site)) {
+        counts.set(tag, (counts.get(tag) || 0) + 1);
+      }
+    }
+    bulkTagInitialCounts = counts;
+    if (resetPending) {
+      bulkTagPending = new Map();
+    } else {
+      for (const tag of bulkTagPending.keys()) {
+        if (!bulkTagListTags().includes(tag)) bulkTagPending.delete(tag);
+      }
+    }
+    const count = bulkTagTargetSlugs.length;
+    bulkTagStatus.textContent =
+      count === 1
+        ? "Apply to 1 site in the current map view"
+        : `Apply to ${count} sites in the current map view`;
+    renderBulkTagTags();
+    syncBulkTagAddSuggestions();
+    syncBulkTagSaveButton();
+  }
+
+  function renderBulkTagTags() {
+    if (!bulkTagTagsEl) return;
+    bulkTagTagsEl.innerHTML = "";
+    for (const tag of bulkTagListTags()) {
+      const state = bulkTagVisualState(tag);
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "site-tag site-tag--toggle";
+      if (state === "full") chip.classList.add("is-selected");
+      if (state === "partial") chip.classList.add("is-partial");
+      if (state === "partial") {
+        const icon = document.createElement("span");
+        icon.className = "site-tag__partial-icon";
+        icon.setAttribute("aria-hidden", "true");
+        icon.textContent = "◐";
+        chip.appendChild(icon);
+      }
+      const label = document.createElement("span");
+      label.textContent = tag;
+      chip.appendChild(label);
+      chip.setAttribute(
+        "aria-pressed",
+        state === "full" ? "true" : state === "partial" ? "mixed" : "false",
+      );
+      chip.title =
+        state === "full"
+          ? `Remove ${tag} from all sites in view`
+          : `Add ${tag} to all sites in view`;
+      chip.addEventListener("click", () => toggleBulkTag(tag));
+      bulkTagTagsEl.appendChild(chip);
+    }
+  }
+
+  function syncBulkTagAddSuggestions() {
+    if (!bulkTagAddSuggestions) return;
+    bulkTagAddSuggestions.innerHTML = "";
+    for (const tag of allProjectTags()) {
+      const opt = document.createElement("option");
+      opt.value = tag;
+      bulkTagAddSuggestions.appendChild(opt);
+    }
+  }
+
+  function syncBulkTagSaveButton() {
+    if (!bulkTagSave) return;
+    bulkTagSave.disabled = !bulkTagTargetSlugs.length || !bulkTagHasChanges();
+  }
+
+  function addBulkTagFromInput() {
+    if (!bulkTagAddInput) return;
+    const tag = normalizeTagInput(bulkTagAddInput.value);
+    bulkTagAddInput.value = "";
+    if (!tag) return;
+    if (!bulkTagInitialCounts.has(tag)) bulkTagInitialCounts.set(tag, 0);
+    bulkTagPending.set(tag, "all");
+    renderBulkTagTags();
+    syncBulkTagSaveButton();
+  }
+
+  function closeBulkTagModal() {
+    if (!bulkTagModal) return;
+    bulkTagModal.open = false;
+  }
+
+  async function openBulkTagModal() {
+    if (!bulkTagModal) return;
+    setBulkTagError("");
+    syncBulkTagModalStatus({ resetPending: true });
+    bulkTagModal.open = true;
+  }
+
+  async function saveBulkTagModal() {
+    addBulkTagFromInput();
+    const slugs = [...bulkTagTargetSlugs];
+    const { addTags, removeTags } = computeBulkTagOps();
+    if (!slugs.length || (!addTags.length && !removeTags.length)) {
+      setBulkTagError("Change at least one tag.");
+      return;
+    }
+    setBulkTagError("");
+    if (bulkTagSave) bulkTagSave.disabled = true;
+    try {
+      const body = { slugs };
+      if (addTags.length) body.add_tags = addTags;
+      if (removeTags.length) body.remove_tags = removeTags;
+      const resp = await fetch(sitesTagsBulkApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setBulkTagError(payload.error || `Tag update failed (${resp.status})`);
+        return;
+      }
+      const updated = Array.isArray(payload.sites) ? payload.sites : [];
+      closeBulkTagModal();
+      for (const site of updated) {
+        applySiteRowUpdate(site);
+      }
+      applyEntityVisibility();
+      scheduleSaveMapState();
+    } catch (_) {
+      setBulkTagError("Could not reach server.");
+    } finally {
+      syncBulkTagSaveButton();
+    }
   }
 
   function makeEntityPanelActionBtn({ icon, label, active, danger, disabled, extraClass, onClick }) {
@@ -4194,6 +4435,27 @@
   if (entityPanelImportSites) {
     entityPanelImportSites.addEventListener("click", () => {
       void openImportSitesModal();
+    });
+  }
+  if (entityPanelBulkTag) {
+    entityPanelBulkTag.addEventListener("click", () => {
+      void openBulkTagModal();
+    });
+  }
+  if (bulkTagSave) {
+    bulkTagSave.addEventListener("click", () => {
+      void saveBulkTagModal();
+    });
+  }
+  if (bulkTagAddForm) {
+    bulkTagAddForm.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      addBulkTagFromInput();
+    });
+  }
+  if (bulkTagAddInput) {
+    bulkTagAddInput.addEventListener("input", () => {
+      syncBulkTagSaveButton();
     });
   }
   if (importSitesFile) {
