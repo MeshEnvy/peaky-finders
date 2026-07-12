@@ -630,7 +630,7 @@ def project_html(
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
   <wa-button slot="footer" id="add-site-save" variant="brand" size="s" type="button">Add site</wa-button>
 </wa-dialog>
-<wa-dialog id="import-sites-modal" label="Import sites from KML" style="--width: 42rem" with-footer light-dismiss>
+<wa-dialog id="import-sites-modal" label="Import sites from KML" style="--width: 46rem" with-footer light-dismiss>
   <wa-callout id="import-sites-error" variant="danger" hidden></wa-callout>
   <div class="pf-form-grid import-sites-form">
     <div class="pf-form-field pf-form-field--full">
@@ -645,12 +645,19 @@ def project_html(
           <div id="import-sites-preview-map" class="import-sites-preview-map" aria-label="Import preview map"></div>
         </div>
         <div class="import-sites-preview-list-pane">
+          <span class="pf-label">Points</span>
           <div class="import-sites-list-header">
-            <span class="wa-caption pf-muted" id="import-sites-list-count"></span>
-            <label class="pf-check import-sites-filter-toggle">
-              <input type="checkbox" id="import-sites-filter-visible" checked>
-              <span>Visible in map</span>
-            </label>
+            <span class="wa-caption pf-muted import-sites-list-count" id="import-sites-list-count"></span>
+            <div class="import-sites-list-toolbar">
+              <div class="import-sites-list-bulk">
+                <wa-button id="import-sites-select-all" appearance="plain" size="s" type="button" title="Mark all points for import" disabled>Select all</wa-button>
+                <wa-button id="import-sites-clear-all" appearance="plain" size="s" type="button" title="Skip all points" disabled>Clear all</wa-button>
+              </div>
+              <label class="pf-check import-sites-filter-toggle" title="Show only points in the current map view">
+                <input type="checkbox" id="import-sites-filter-visible" checked>
+                <span>In view</span>
+              </label>
+            </div>
           </div>
           <div id="import-sites-point-list" class="import-sites-point-list" role="list" aria-label="Import points"></div>
         </div>

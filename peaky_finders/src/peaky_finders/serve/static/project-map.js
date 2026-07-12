@@ -440,6 +440,8 @@
   const importSitesError = document.getElementById("import-sites-error");
   const importSitesSave = document.getElementById("import-sites-save");
   const importSitesListCount = document.getElementById("import-sites-list-count");
+  const importSitesSelectAll = document.getElementById("import-sites-select-all");
+  const importSitesClearAll = document.getElementById("import-sites-clear-all");
   const importSitesFilterVisible = document.getElementById("import-sites-filter-visible");
   const importSitesPointList = document.getElementById("import-sites-point-list");
   const bulkTagModal = document.getElementById("bulk-tag-modal");
@@ -2907,6 +2909,20 @@
     syncImportSaveButton();
   }
 
+  function setAllImportPointsIgnored(ignored) {
+    if (!importPreviewPoints.length) return;
+    importPreviewPoints = importPreviewPoints.map((point) => ({ ...point, ignored: !!ignored }));
+    refreshImportPreviewMapData();
+    renderImportPointList();
+    syncImportSaveButton();
+  }
+
+  function syncImportBulkActions() {
+    const enabled = importPreviewPoints.length > 0 && !importPreviewBusy;
+    if (importSitesSelectAll) importSitesSelectAll.disabled = !enabled;
+    if (importSitesClearAll) importSitesClearAll.disabled = !enabled;
+  }
+
   function syncImportSaveButton() {
     if (!importSitesSave) return;
     const ready =
@@ -3006,6 +3022,7 @@
     const total = importPreviewPoints.length;
     if (!total) {
       syncImportListCount(0, 0);
+      syncImportBulkActions();
       return;
     }
 
@@ -3061,7 +3078,6 @@
         setImportPointIgnored(index, !importCheck.checked);
       });
       importLabel.appendChild(importCheck);
-      importLabel.appendChild(document.createTextNode("Import"));
 
       row.appendChild(main);
       row.appendChild(importLabel);
@@ -3079,6 +3095,7 @@
     syncImportListCount(shown, total);
     importSitesPointList.scrollTop = listScrollTop;
     syncImportPreviewStatus();
+    syncImportBulkActions();
   }
 
   function focusImportPreviewPoint(index) {
@@ -3245,6 +3262,7 @@
     setImportSitesError("");
     if (importSitesStatus) importSitesStatus.textContent = `Parsing ${file.name}…`;
     syncImportSaveButton();
+    syncImportBulkActions();
 
     try {
       let body;
@@ -3281,6 +3299,7 @@
     } finally {
       importPreviewBusy = false;
       syncImportSaveButton();
+      syncImportBulkActions();
     }
   }
 
@@ -4612,6 +4631,16 @@
     importSitesFilterVisible.addEventListener("change", () => {
       importFilterByViewport = !!importSitesFilterVisible.checked;
       renderImportPointList();
+    });
+  }
+  if (importSitesSelectAll) {
+    importSitesSelectAll.addEventListener("click", () => {
+      setAllImportPointsIgnored(false);
+    });
+  }
+  if (importSitesClearAll) {
+    importSitesClearAll.addEventListener("click", () => {
+      setAllImportPointsIgnored(true);
     });
   }
   if (importSitesModal) {
