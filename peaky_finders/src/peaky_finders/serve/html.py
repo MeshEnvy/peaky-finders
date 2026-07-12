@@ -412,9 +412,9 @@ def project_html(
         <div id="entity-panel-tag-filters" class="entity-panel__tag-filters" role="toolbar" aria-label="Site tags"></div>
         <div class="entity-panel__list-header">
           <span class="wa-caption pf-muted" id="entity-panel-sites-count"></span>
-          <label class="pf-check entity-panel__viewport-filter">
+          <label class="entity-panel__viewport-filter" title="Show only sites in the current map view">
             <input type="checkbox" id="entity-panel-filter-visible">
-            <span>Visible in map</span>
+            <span>In view</span>
           </label>
         </div>
         <div id="entity-panel-sites-list" class="entity-panel__list"></div>
@@ -453,13 +453,20 @@ def project_html(
           <span class="site-panel__label">Tags</span>
           <div class="site-tags" id="site-panel-tags"></div>
         </div>
-        <div class="site-panel__section">
-          <span class="site-panel__label">Coordinates</span>
-          <p class="site-panel__value" id="site-panel-coords"></p>
-        </div>
-        <div class="site-panel__section">
-          <span class="site-panel__label">Elevation</span>
-          <p class="site-panel__value" id="site-panel-elevation"></p>
+        <div class="site-panel__facts">
+          <div class="site-panel__fact site-panel__fact--wide">
+            <span class="site-panel__label">Coordinates</span>
+            <div class="pf-copy-row">
+              <p class="site-panel__value pf-mono" id="site-panel-coords"></p>
+              <wa-button id="site-panel-copy-coords" appearance="outlined" size="s" class="coord-action-btn" type="button" title="Copy lat, lon">
+                <wa-icon name="copy" label="Copy coordinates"></wa-icon>
+              </wa-button>
+            </div>
+          </div>
+          <div class="site-panel__fact">
+            <span class="site-panel__label">Elevation</span>
+            <p class="site-panel__value" id="site-panel-elevation"></p>
+          </div>
         </div>
         <div class="site-panel__section" id="site-panel-plss-section" hidden>
           <span class="site-panel__label">PLSS</span>
@@ -475,16 +482,20 @@ def project_html(
           <p class="site-panel__value" id="site-panel-desc"></p>
         </div>
         <div class="site-panel__section" id="site-panel-links-section" hidden>
-          <span class="site-panel__label">Linked sites</span>
-          <ul class="site-panel__links" id="site-panel-links"></ul>
+          <span class="site-panel__label" id="site-panel-links-label">Links</span>
+          <div class="site-panel__link-list" id="site-panel-links"></div>
         </div>
-        <label class="site-panel__viewshed pf-check" id="site-panel-viewshed-section">
-          <input type="checkbox" id="site-panel-viewshed" checked>
-          <span>Show viewshed</span>
+        <div class="site-panel__footer" id="site-panel-footer">
+          <button
+            type="button"
+            id="site-panel-viewshed-toggle"
+            class="site-panel__action site-panel__viewshed-toggle"
+            title="Viewshed coverage"
+            aria-label="Viewshed coverage"
+            aria-pressed="true"
+          ></button>
           <span class="site-panel__viewshed-hint pf-muted" id="site-panel-viewshed-hint"></span>
-        </label>
-        <div class="site-panel__actions">
-          <wa-button id="site-panel-edit-open" appearance="outlined" variant="brand" size="s" class="pf-stretch" type="button">Edit</wa-button>
+          <wa-button id="site-panel-edit-open" appearance="outlined" variant="brand" size="s" type="button">Edit</wa-button>
         </div>
       </div>
       <div id="site-panel-edit" hidden>
@@ -500,20 +511,24 @@ def project_html(
         </div>
         <div class="site-panel__section">
           <span class="site-panel__label">Slug</span>
-          <p class="site-panel__value pf-mono pf-muted" id="site-panel-edit-slug"></p>
+          <p class="site-panel__slug pf-mono" id="site-panel-edit-slug"></p>
         </div>
         <div class="site-panel__section">
-          <span class="site-panel__label">Coordinates</span>
-          <div class="coord-input-row">
-            <label class="pf-label" for="site-panel-edit-lat">Lat</label>
-            <input id="site-panel-edit-lat" type="text" class="pf-mono coord-field" inputmode="decimal" autocomplete="off">
+          <div class="site-panel__coords-head">
+            <span class="site-panel__label">Coordinates</span>
             <wa-button id="site-panel-edit-copy-coords" appearance="outlined" size="s" class="coord-action-btn" type="button" title="Copy lat, lon">
               <wa-icon name="copy" label="Copy coordinates"></wa-icon>
             </wa-button>
           </div>
-          <div class="coord-input-row">
-            <label class="pf-label" for="site-panel-edit-lon">Lon</label>
-            <input id="site-panel-edit-lon" type="text" class="pf-mono coord-field" inputmode="decimal" autocomplete="off">
+          <div class="site-panel__coords-grid">
+            <div>
+              <label class="pf-label" for="site-panel-edit-lat">Latitude</label>
+              <input id="site-panel-edit-lat" type="text" class="pf-mono" inputmode="decimal" autocomplete="off">
+            </div>
+            <div>
+              <label class="pf-label" for="site-panel-edit-lon">Longitude</label>
+              <input id="site-panel-edit-lon" type="text" class="pf-mono" inputmode="decimal" autocomplete="off">
+            </div>
           </div>
           <ul class="edit-coord-history" id="site-panel-edit-coord-history" hidden></ul>
         </div>
@@ -532,7 +547,7 @@ def project_html(
         </div>
         <label class="site-panel__viewshed pf-check" id="site-panel-edit-viewshed-section">
           <input type="checkbox" id="site-panel-edit-viewshed" checked>
-          <span>Show viewshed preview</span>
+          <span>Preview viewshed</span>
           <span class="site-panel__viewshed-hint pf-muted" id="site-panel-edit-viewshed-hint"></span>
         </label>
         <wa-callout id="site-panel-edit-error" variant="danger" hidden></wa-callout>
