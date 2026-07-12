@@ -1,0 +1,7 @@
+# Peaky project preset — overrides ``$PEAKY_HOME/config.yaml`` defaults.
+sites:
+  hub:
+    name: Hub
+    loc: [39.5, -119.5]
+
+links: []
