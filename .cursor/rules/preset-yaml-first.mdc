@@ -1,34 +1,24 @@
 ---
-description: Prefer preset YAML (projects/<slug>/config.yaml) for tunables; avoid hard-coding or CLI-only parameters
+description: Prefer preset YAML (projects/<slug>/config.yaml) for tunables
 alwaysApply: true
 ---
 
 # Preset YAML first
 
-Tunable **run configuration** for Peaky lives in **one preset file per project** — `projects/<slug>/config.yaml` loaded by `load_preset` / `Preset` in `sites_job.py` (RF blocks, `simulation`, `display`, `bundle` AOI/include/exclude, `sites`, etc.). **`peaky_home/projects/sample/config.yaml` is the committed reference shape** (real projects stay local/gitignored). Legacy `.json` job presets are not supported.
+Tunable configuration lives in **`projects/<slug>/config.yaml`**, loaded by `core/preset` (`load_preset`, `Preset`). Global defaults merge from `$PEAKY_HOME/config.yaml`. Reference shape: `peaky_home/projects/sample/config.yaml`.
 
-Use `write_preset_document` / `dump_preset_yaml_document` when authoring writes; tooling that edits PLSS strings uses ruamel round-trip load/dump via `read_preset_yaml_tree` so `#` comments are preserved where possible.
+Use `update_preset_yaml_tree` / `write_preset_document` for writes; `read_preset_yaml_tree` preserves `#` comments.
 
-## Do this
+## Do
 
-- **Add or change parameters in the preset YAML** (and extend the `Preset` model / parsing if the schema needs new fields).
-- **Treat ``cd projects/<slug> && peaky build`` as the primary interface**: values should make sense when read from the file alone — reproducible, reviewable, diffable (with `#` rationale where helpful).
-- **Use CLI flags** for true one-off workflow controls (e.g. caps, parallelism, “which phase”, local paths), not as the main place to store RF, sites, or bundle definitions.
+- Add tunables to preset YAML and extend `core/preset/model.py` when needed.
+- Keep RF, sites, and simulation in the file — reproducible and diffable.
 
 ## Avoid
 
-- **Hard-coding** region-specific constants, default site lists, or bundle layer paths in Python when they belong in preset `bundle` / `sites`.
-- **Growing the CLI** with switches that duplicate preset fields “for convenience” instead of editing the YAML (or adding a well-justified override with a narrow purpose).
-
-## Quick examples
+- Hard-coding region-specific site lists or RF constants in Python.
+- Duplicating preset fields in CLI flags (serve-only product has minimal CLI).
 
 ```python
-# ❌ BAD — Nevada-only paths or RF numbers baked into module defaults
-DEFAULT_AOI = "aoi/State_of_Nevada_…"
-POWER_W = 0.1
-
-# ✅ GOOD — read from ``Preset`` / job YAML; code stays generic
-job = load_preset(job_path)
+job = load_preset(job_path)  # core.preset
 ```
-
-When in doubt, **put the knob in the preset** and keep code generic; reserve CLI for orchestration and rare overrides.

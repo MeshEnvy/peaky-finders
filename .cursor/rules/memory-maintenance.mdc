@@ -22,8 +22,8 @@ Update MEMORY.md in the **same commit/PR** when you change anything in the table
 |------|----------|
 | Preset schema | `Preset` fields, `config.yaml` sections, sites vs goals vocabulary |
 | Build DAG | New targets, executor nodes, staleness keys |
-| Artifact layout | Paths under `<preset>/build/`, `resolved_*` helpers |
-| CLI surface | `peaky_cli` subcommands, flags, defaults |
+| Artifact layout | Paths under `<preset>/.peaky/cache/`, `resolved_*` helpers |
+| CLI surface | `serve/cli.py` flags, defaults |
 | Web UI (`serve`) | Routes, on-demand APIs, progressive features over shared pipeline |
 | External HTTP | New backends, pool defaults |
 | Dev contract | `./peaky` (`test`, `serve`, `build`, …), Docker, env vars |

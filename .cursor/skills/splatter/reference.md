@@ -26,7 +26,7 @@ Preset mapping folds `environment.coverage_pessimism_db` into `modem.implementat
 ## Workspace layout
 
 ```
-<preset>/build/viewsheds/
+<preset>/.peaky/cache/viewsheds/
   request.json          # batch: JSON array of all workspace requests
   <64-char-hex-digest>/
     request.json        # single-site propagation object

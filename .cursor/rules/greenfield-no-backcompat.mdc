@@ -12,7 +12,7 @@ This repo is **greenfield**. **Optimize for the cleanest present design** — no
 - **Breaking changes are welcome** when they remove complexity, dead paths, or awkward APIs.
 - **Delete** old code, flags, and formats — do not wrap, alias, or deprecate them.
 - **One way** to do each thing; no dual code paths for old vs new shapes.
-- **Invalidate caches** (`projects/<slug>/build/`, Skadi mirror, stamp files) when layout or digests change — users re-run `peaky build --force`.
+- **Invalidate caches** (`projects/<slug>/.peaky/cache/`, Skadi mirror) when layout or digests change.
 
 ## Do this
 

@@ -40,7 +40,7 @@ Limits (enforced in Rust + Python normalize): `radius` ≤ 100 km, `raster_dimen
 
 `splat_input_sha256` fingerprints normalized propagation params (terrain excluded). Used for:
 
-- `<preset>/build/viewsheds/<digest>/` workspace dirs (`viewshed_workspace.py`)
+- `<preset>/.peaky/cache/viewsheds/<digest>/` workspace dirs (`core/viewshed/workspace.py`)
 - Build staleness / manifest `splat_input_sha256`
 - Golden contract: `splatter/tests/fixtures/splat_request_hash_fixture.json`
 
@@ -135,6 +135,6 @@ CLI smoke: `splatter/test-los.sh` (Docker, needs workspace with `request.json`).
 ## Additional resources
 
 - Request fields, CLI flags, schema-bump checklist: [reference.md](reference.md)
-- Peaky build/viewshed DAG: skill `peaky-build`
+- Peaky serve on-demand viewsheds: skill `peaky-serve`
 - Preset RF catalogs: skill `peaky-preset`
 - Dev Docker / `SPLAT_CACHE`: skill `peaky-dev`
