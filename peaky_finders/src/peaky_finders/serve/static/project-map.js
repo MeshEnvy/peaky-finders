@@ -548,9 +548,10 @@
     return `/api/p/${projectSlug}/sites/tags/bulk`;
   }
 
-  function sitesInMapViewport() {
-    if (!mapReady) return [];
-    return sites.filter((site) => siteVisibleInMap(site));
+  function entityPanelSites() {
+    return sites
+      .filter((site) => sitePassesTagFilter(site))
+      .filter((site) => !entityPanelFilterByViewport || siteVisibleInMap(site));
   }
 
   function renderTagToggleChips(container, draftTags, knownTags, onChange) {
@@ -994,9 +995,7 @@
     if (entityPanelSitesList) {
       entityPanelSitesList.innerHTML = "";
       const tagFiltered = sites.filter((site) => sitePassesTagFilter(site));
-      const sortedSites = tagFiltered
-        .filter((site) => !entityPanelFilterByViewport || siteVisibleInMap(site))
-        .sort((a, b) => a.name.localeCompare(b.name));
+      const sortedSites = entityPanelSites().sort((a, b) => a.name.localeCompare(b.name));
       syncEntityPanelSitesCount(sortedSites.length, tagFiltered.length);
       if (!sortedSites.length) {
         const empty = document.createElement("div");
@@ -1008,16 +1007,16 @@
         entityPanelSitesList.appendChild(buildSiteEntityRow(site));
       }
     }
+    if (bulkTagModal?.open) syncBulkTagModalStatus();
   }
 
   function onMapMoveEndForEntityPanel() {
     if (entityPanelFilterByViewport) renderEntityPanel();
-    if (bulkTagModal?.open) syncBulkTagModalStatus();
   }
 
   function syncBulkTagButton() {
     if (!entityPanelBulkTag) return;
-    const count = sitesInMapViewport().length;
+    const count = entityPanelSites().length;
     entityPanelBulkTag.disabled = !mapReady || count === 0;
   }
 
@@ -1080,9 +1079,9 @@
 
   function syncBulkTagModalStatus({ resetPending = false } = {}) {
     if (!bulkTagStatus) return;
-    bulkTagTargetSlugs = sitesInMapViewport().map((site) => site.slug);
+    bulkTagTargetSlugs = entityPanelSites().map((site) => site.slug);
     const counts = new Map();
-    for (const site of sitesInMapViewport()) {
+    for (const site of entityPanelSites()) {
       for (const tag of siteTags(site)) {
         counts.set(tag, (counts.get(tag) || 0) + 1);
       }
@@ -1096,10 +1095,16 @@
       }
     }
     const count = bulkTagTargetSlugs.length;
+    const scopeParts = [];
+    if (activeTagFilters.size) scopeParts.push("matching selected tags");
+    if (entityPanelFilterByViewport) scopeParts.push("in the current map view");
+    const scope = scopeParts.length ? ` ${scopeParts.join(" and ")}` : "";
     bulkTagStatus.textContent =
-      count === 1
-        ? "Apply to 1 site in the current map view"
-        : `Apply to ${count} sites in the current map view`;
+      count === 0
+        ? "No sites match the current sidebar filters."
+        : count === 1
+          ? `Apply to 1 site${scope}`
+          : `Apply to ${count} sites${scope}`;
     renderBulkTagTags();
     syncBulkTagAddSuggestions();
     syncBulkTagSaveButton();
