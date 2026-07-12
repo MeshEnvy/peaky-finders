@@ -56,6 +56,8 @@ On-demand cache under `<project>/.peaky/cache/viewsheds/` and `.peaky/cache/plss
 
 Global defaults: `$PEAKY_HOME/config.yaml`, `modems.yaml`, `environments.yaml`. Project: `$PEAKY_HOME/projects/<slug>/config.yaml`.
 
+Map UI state (sites panel open/closed, viewport, basemap, filters) persists in `localStorage` per project (`peaky.map.v1.<slug>`).
+
 ## Repo layout
 
 ```

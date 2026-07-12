@@ -421,7 +421,7 @@
       ? savedMapState.tagFilters.filter((tag) => typeof tag === "string" && tag.trim())
       : [],
   );
-  let entityPanelOpen = false;
+  let entityPanelOpen = savedMapState?.entityPanelOpen === true;
   let tagAddOpen = false;
   let addSiteDraftTags = [];
 
@@ -591,7 +591,10 @@
       );
     }
     syncEntityPanelToggles();
+    scheduleSaveMapState();
   }
+
+  setEntityPanelOpen(entityPanelOpen);
 
   function toggleEntityPanel() {
     setEntityPanelOpen(!entityPanelOpen);
@@ -1243,6 +1246,7 @@
       hiddenSites: [...siteHidden],
       tagFilters: [...activeTagFilters].sort((a, b) => a.localeCompare(b)),
       viewshedVisible: Object.fromEntries(viewshedVisible),
+      entityPanelOpen,
     };
   }
 
