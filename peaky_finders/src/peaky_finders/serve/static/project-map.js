@@ -538,6 +538,12 @@
       landVisible.set(key, !!visible);
     }
   }
+  const landLabelsVisible = new Map();
+  if (savedMapState?.landLabelsVisible && typeof savedMapState.landLabelsVisible === "object") {
+    for (const [key, visible] of Object.entries(savedMapState.landLabelsVisible)) {
+      landLabelsVisible.set(key, !!visible);
+    }
+  }
   let importLandPreviewLayers = [];
   let importLandPreviewPath = "";
   let importLandPreviewMap = null;
@@ -2386,6 +2392,25 @@
     landVisible.set(landLayerKey(sourceId, layer), !!visible);
     scheduleSaveMapState();
     syncLandMapLayerVisibility(sourceId, layer);
+    syncLandMapLabelLayer(sourceId, layer);
+  }
+
+  function landLayerHasLabels(sourceId, layer) {
+    const spec = resolveLandLayerSpec(sourceId, layer);
+    return !!spec?.labelField;
+  }
+
+  function isLandLayerLabelsVisible(sourceId, layer) {
+    if (!landLayerHasLabels(sourceId, layer)) return false;
+    const key = landLayerKey(sourceId, layer);
+    if (!landLabelsVisible.has(key)) return true;
+    return landLabelsVisible.get(key) === true;
+  }
+
+  function setLandLayerLabelsVisible(sourceId, layer, visible) {
+    landLabelsVisible.set(landLayerKey(sourceId, layer), !!visible);
+    scheduleSaveMapState();
+    syncLandMapLabelLayer(sourceId, layer);
   }
 
   function landLayerRows() {
@@ -2465,11 +2490,12 @@
 
   function syncLandMapLabelLayer(sourceId, layerKey) {
     if (!mapReady) return;
-    const spec = resolveLandLayerSpec(sourceId, layerKey);
     const sourceMapId = landMapSourceId(sourceId, layerKey);
     const labelsId = `${sourceMapId}-labels`;
-    const vis = isLandLayerVisible(sourceId, layerKey) ? "visible" : "none";
-    syncGeoJsonLabelLayer(map, sourceMapId, labelsId, !!spec?.labelField, vis);
+    const layerVisible = isLandLayerVisible(sourceId, layerKey);
+    const labelsVisible = layerVisible && isLandLayerLabelsVisible(sourceId, layerKey);
+    const vis = labelsVisible ? "visible" : "none";
+    syncGeoJsonLabelLayer(map, sourceMapId, labelsId, landLayerHasLabels(sourceId, layerKey), vis);
   }
 
   function syncLandMapLayerVisibility(sourceId, layer) {
@@ -2477,11 +2503,9 @@
     const sourceMapId = landMapSourceId(sourceId, layer);
     const fillId = `${sourceMapId}-fill`;
     const lineId = `${sourceMapId}-line`;
-    const labelsId = `${sourceMapId}-labels`;
     const vis = isLandLayerVisible(sourceId, layer) ? "visible" : "none";
     if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
     if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
-    if (map.getLayer(labelsId)) map.setLayoutProperty(labelsId, "visibility", vis);
   }
 
   function applyLandMapLayerStyle(sourceId, layerKey) {
@@ -2604,6 +2628,22 @@
     });
   }
 
+  function buildLandLayerLabelBtn(sourceId, layerKey) {
+    const layerVisible = isLandLayerVisible(sourceId, layerKey);
+    const labelsVisible = isLandLayerLabelsVisible(sourceId, layerKey);
+    return makeEntityPanelActionBtn({
+      icon: "font",
+      label: labelsVisible ? "Hide labels" : "Show labels",
+      active: labelsVisible,
+      disabled: !layerVisible,
+      extraClass: "entity-panel__land-label-toggle",
+      onClick: () => {
+        setLandLayerLabelsVisible(sourceId, layerKey, !isLandLayerLabelsVisible(sourceId, layerKey));
+        renderLandPanel();
+      },
+    });
+  }
+
   function buildLandSourceActionBtns(sourceId) {
     const editBtn = makeEntityPanelActionBtn({
       icon: "pen",
@@ -2694,6 +2734,9 @@
     const controls = document.createElement("div");
     controls.className = "entity-panel__controls";
     controls.appendChild(buildLandLayerEyeBtn(row.sourceId, row.layerKey));
+    if (row.spec.labelField) {
+      controls.appendChild(buildLandLayerLabelBtn(row.sourceId, row.layerKey));
+    }
     if (showSourceActions) {
       for (const btn of buildLandSourceActionBtns(row.sourceId)) controls.appendChild(btn);
     }
@@ -2731,6 +2774,7 @@
           const spec = normalizeRegisteredLayer(rawLayer);
           removeLandMapLayer(sourceId, spec.key);
           landVisible.delete(landLayerKey(sourceId, spec.key));
+          landLabelsVisible.delete(landLayerKey(sourceId, spec.key));
           landLayerGeoJsonCache.delete(landLayerCacheKey(sourceId, spec.key));
           landLayerGeoJsonInflight.delete(landLayerCacheKey(sourceId, spec.key));
         }
@@ -3698,6 +3742,7 @@
         if (!newKeys.has(key)) {
           removeLandMapLayer(editLandSourceId, key);
           landVisible.delete(landLayerKey(editLandSourceId, key));
+          landLabelsVisible.delete(landLayerKey(editLandSourceId, key));
         }
       }
       await reloadLandSources();
@@ -3731,6 +3776,7 @@
       entityPanelOpen,
       entityPanelTab,
       landVisible: Object.fromEntries(landVisible),
+      landLabelsVisible: Object.fromEntries(landLabelsVisible),
     };
   }
 
