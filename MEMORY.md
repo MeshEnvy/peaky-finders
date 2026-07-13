@@ -50,16 +50,18 @@ Progressive shell over **`core/`** + **`serve/`** — not a batch build product.
 | Layer | Modules |
 |-------|---------|
 | CLI / WSGI | `serve/cli.py`, `serve/app.py` |
-| Preset | `core/preset/` — slim YAML (simulation, display, sites, links) |
+| Preset | `core/preset/` — slim YAML (simulation, display, sites, links, land) |
 | RF / viewshed | `core/rf/`, `core/viewshed/`, splatter |
 | Links | `core/links/` — mutual footprint + RF |
 | UI assets | `serve/static/` (`project-map.js`, …) |
 
-On-demand cache under `<project>/.peaky/cache/viewsheds/` and `.peaky/cache/plss/`.
+On-demand cache under `<project>/.peaky/cache/viewsheds/`, `.peaky/cache/plss/`, and `.peaky/cache/land/`.
 
 Global defaults: `$PEAKY_HOME/config.yaml`, `modems.yaml`, `environments.yaml`. Project: `$PEAKY_HOME/projects/<slug>/config.yaml`.
 
-Sites panel: **+ Site** (manual add) and **Import** (KML/KMZ Point placemarks). **Bulk tag** adds/removes tags on sites currently listed in the sidebar (`POST …/sites/tags/bulk`); scope follows sidebar filters (**In view**, tag intersect/union). Open/closed state persists per project in `localStorage` (`peaky.map.v1.<slug>`). Sidebar **In view** toggle filters the site list to sites whose coords project inside the map canvas (client-side `map.project`, not geographic bounds — accurate with pitch; persists in map state). Row actions: eye (site visibility), droplet (viewshed), trash (delete). Multi-select tag filters with **intersect/union** mode (default **intersect** = AND); site rows always show all tags, with active filter tags highlighted. Import flow: file → `POST …/sites/import/preview` → in-modal MapLibre preview + scrollable point list with per-row **Import** toggle, **Select all** / **Clear all**, and **In view** filter; points within **100 m** of an existing site default skipped (gray on map); tags → `POST …/sites/import` with filtered `points[]` (`serve/kml_import.py`, `import_sites_to_preset`).
+Entity sidebar: **Sites | Land** tabs (`entityPanelTab` in `localStorage`). Sites panel: **+ Site** (manual add) and **Import** (KML/KMZ Point placemarks). **Bulk tag** adds/removes tags on sites currently listed in the sidebar (`POST …/sites/tags/bulk`); scope follows sidebar filters (**In view**, tag intersect/union). Open/closed state persists per project in `localStorage` (`peaky.map.v1.<slug>`). Sidebar **In view** toggle filters the site list to sites whose coords project inside the map canvas (client-side `map.project`, not geographic bounds — accurate with pitch; persists in map state). Row actions: eye (site visibility), droplet (viewshed), trash (delete). Multi-select tag filters with **intersect/union** mode (default **intersect** = AND); site rows always show all tags, with active filter tags highlighted. Import flow: file → `POST …/sites/import/preview` → in-modal MapLibre preview + scrollable point list with per-row **Import** toggle, **Select all** / **Clear all**, and **In view** filter; points within **100 m** of an existing site default skipped (gray on map); tags → `POST …/sites/import` with filtered `points[]` (`serve/kml_import.py`, `import_sites_to_preset`).
+
+Land panel (v1): informational GDB overlays from `projects/<slug>/data/**/*.gdb` — no upload, no AOI/include/exclude/eligible pipeline. **Import** opens modal to pick a GDB under `data/`, preview layers (`pyogrio`), select layers with per-layer **color/opacity** (default `#4a6cf7` @ 48%) → registers `land.sources` + `layer_styles` in preset. Per-layer eye toggles main-map GeoJSON overlays (`landVisible` in map state). Edit/delete sources via row actions. GeoJSON cache builds lazily on first `GET …/land/sources/<id>/layers/<layer>/geojson` (`serve/land.py`, `serve/land_import.py`).
 
 | Sites API | Role |
 |-----------|------|
@@ -67,6 +69,17 @@ Sites panel: **+ Site** (manual add) and **Import** (KML/KMZ Point placemarks). 
 | `POST …/sites/tags/bulk` | Merge tags on existing sites (`slugs`, `add_tags`, `remove_tags`) |
 | `POST …/sites/import/preview` | Parse KML/KMZ; return `{points, skipped}` |
 | `POST …/sites/import` | Write sites with shared `tags` |
+
+| Land API | Role |
+|----------|------|
+| `GET /api/p/<slug>/land` | List registered sources + layers |
+| `GET …/land/data-gdbs` | GDB paths under `data/` |
+| `POST …/land/import/preview` | Layer list + bbox for modal (`path`) |
+| `POST …/land/import` | Register source (`path`, `layers`, optional `label`/`id`) |
+| `PATCH …/land/sources/<id>` | Update `layers` / `label` |
+| `DELETE …/land/sources/<id>` | Remove source + invalidate cache dir |
+| `GET …/land/preview/geojson` | Modal preview outline (`path`, `layer`) |
+| `GET …/land/sources/<id>/layers/<layer>/geojson` | Cached WGS84 FeatureCollection |
 
 ## Repo layout
 
@@ -91,9 +104,9 @@ peaky_home/      # PEAKY_HOME (sample preset committed)
 ## Removed (do not reintroduce)
 
 - Batch CLI: `build`, `bundle`, `mesh`, `viewshed`, `kmz`, `stamp`, `inspect`
-- Build DAG, bundle clips, eligible land pipeline, aggregate KMZ
+- Build DAG, bundle clips, **eligible land pipeline** (AOI ∩ include − exclude), aggregate KMZ
 - `site_suggestions/`, `peaky build --suggest`, corridor / mesh-backbone planner
-- `sites_job.py` fat preset (`land`, `mesh`, `suggest`, `SiteType`)
+- `sites_job.py` fat preset (`mesh`, `suggest`, `SiteType`)
 - Goals API / UI, site `type` field
 
 ## Agent context
