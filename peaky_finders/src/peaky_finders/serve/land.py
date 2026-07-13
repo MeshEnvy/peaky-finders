@@ -8,17 +8,22 @@ import shutil
 from pathlib import Path
 from typing import Any, Mapping
 
-import pyogrio
-
 from peaky_finders.core.preset import (
+    LandLayerEntry,
     LandLayerStyle,
     LandSourceEntry,
+    land_layer_key,
     load_preset,
     resolved_preset_cache_dir,
     slugify_files_segment,
     update_preset_yaml_tree,
 )
-from peaky_finders.serve.land_import import gdf_to_feature_collection_geojson, resolve_land_gdb_path
+from peaky_finders.serve.land_import import (
+    land_layer_entry_digest,
+    layer_entry_geojson,
+    read_land_layer_gdf,
+    resolve_land_gdb_path,
+)
 
 _GEOJSON_SIMPLIFY_TOLERANCE_DEG = 0.0001
 
@@ -41,14 +46,8 @@ def unique_source_id(existing: set[str], stem: str) -> str:
     return f"{slug}-{n}"
 
 
-def _source_digest(gdb_path: Path, layer: str) -> str:
-    stat = gdb_path.stat()
-    payload = f"{gdb_path}|{layer}|{stat.st_mtime_ns}|{stat.st_size}"
-    return hashlib.sha256(payload.encode()).hexdigest()[:16]
-
-
-def _layer_cache_path(cache_root: Path, source_id: str, layer: str) -> Path:
-    safe_layer = slugify_files_segment(layer) or "layer"
+def _layer_cache_path(cache_root: Path, source_id: str, layer_key: str) -> Path:
+    safe_layer = slugify_files_segment(layer_key) or "layer"
     return cache_root / source_id / f"{safe_layer}.geojson"
 
 
@@ -75,6 +74,38 @@ def _write_manifest(cache_root: Path, manifest: dict[str, Any]) -> None:
     )
 
 
+def _serialize_layer_style(style: LandLayerStyle | dict[str, LandLayerStyle] | None) -> Any:
+    if style is None:
+        return None
+    if isinstance(style, LandLayerStyle):
+        return {"color": style.color, "opacity": style.opacity}
+    return {
+        key: {"color": val.color, "opacity": val.opacity}
+        for key, val in sorted(style.items())
+    }
+
+
+def serialize_land_layer(entry: LandLayerEntry) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "name": entry.name,
+        "key": entry.layer_key(),
+    }
+    if entry.id:
+        row["id"] = entry.id
+    if entry.include:
+        row["include"] = [{"field": f.field, "values": list(f.values)} for f in entry.include]
+    if entry.exclude:
+        row["exclude"] = [{"field": f.field, "values": list(f.values)} for f in entry.exclude]
+    if entry.label_field:
+        row["labelField"] = entry.label_field
+    if entry.style_field:
+        row["styleField"] = entry.style_field
+    style_payload = _serialize_layer_style(entry.style)
+    if style_payload is not None:
+        row["style"] = style_payload
+    return row
+
+
 def serialize_land_sources(preset_path: Path) -> list[dict[str, Any]]:
     job = load_preset(preset_path)
     rows: list[dict[str, Any]] = []
@@ -84,18 +115,11 @@ def serialize_land_sources(preset_path: Path) -> list[dict[str, Any]]:
 
 
 def serialize_land_source(source_id: str, entry: LandSourceEntry) -> dict[str, Any]:
-    layer_styles: dict[str, dict[str, Any]] = {}
-    for layer_name, style in sorted(entry.layer_styles.items()):
-        layer_styles[layer_name] = {
-            "color": style.color,
-            "opacity": style.opacity,
-        }
     return {
         "id": source_id,
         "path": entry.path,
         "label": entry.label or source_id,
-        "layers": list(entry.layers),
-        "layerStyles": layer_styles,
+        "layers": [serialize_land_layer(layer) for layer in entry.layers],
     }
 
 
@@ -103,19 +127,63 @@ def list_land_payload(preset_path: Path) -> dict[str, Any]:
     return {"sources": serialize_land_sources(preset_path)}
 
 
+def _layer_entry_to_yaml(layer: LandLayerEntry) -> dict[str, Any]:
+    row: dict[str, Any] = {"name": layer.name}
+    if layer.id:
+        row["id"] = layer.id
+    if layer.include:
+        row["include"] = [{"field": f.field, "values": list(f.values)} for f in layer.include]
+    if layer.exclude:
+        row["exclude"] = [{"field": f.field, "values": list(f.values)} for f in layer.exclude]
+    if layer.label_field:
+        row["label_field"] = layer.label_field
+    if layer.style_field:
+        row["style_field"] = layer.style_field
+    if layer.style is not None:
+        if isinstance(layer.style, LandLayerStyle):
+            row["style"] = layer.style.model_dump()
+        else:
+            row["style"] = {k: v.model_dump() for k, v in sorted(layer.style.items())}
+    return row
+
+
+def _normalize_layer_entries(layers: list[LandLayerEntry | str | dict[str, Any]]) -> list[LandLayerEntry]:
+    if not isinstance(layers, list) or not layers:
+        raise ValueError("layers must be a non-empty list")
+    out: list[LandLayerEntry] = []
+    seen: set[str] = set()
+    for item in layers:
+        if isinstance(item, str):
+            entry = LandLayerEntry(name=item.strip())
+        elif isinstance(item, LandLayerEntry):
+            entry = item
+        elif isinstance(item, dict):
+            entry = LandLayerEntry.model_validate(item)
+        else:
+            raise ValueError("each layer must be a string or layer object")
+        key = entry.layer_key()
+        if key in seen:
+            raise ValueError(f"duplicate land layer key: {key}")
+        seen.add(key)
+        out.append(entry)
+    return out
+
+
+def parse_land_layer_entries(raw_layers: Any) -> list[LandLayerEntry]:
+    return _normalize_layer_entries(raw_layers)
+
+
 def add_land_source(
     preset_path: Path,
     *,
     path: str,
-    layers: list[str],
+    layers: list[LandLayerEntry],
     label: str | None = None,
     source_id: str | None = None,
-    layer_styles: dict[str, LandLayerStyle] | None = None,
 ) -> dict[str, Any]:
     project_dir = preset_path.parent
     resolve_land_gdb_path(project_dir, path)
-    layer_names = _normalize_layer_names(layers)
-    styles = _normalize_layer_styles(layer_names, layer_styles)
+    layer_entries = _normalize_layer_entries(layers)
     gdb_stem = Path(path).stem
 
     def mutator(_yaml_rt: Any, root: dict[str, Any]) -> dict[str, Any]:
@@ -137,14 +205,10 @@ def add_land_source(
 
         entry: dict[str, Any] = {
             "path": path.strip().replace("\\", "/"),
-            "layers": layer_names,
+            "layers": [_layer_entry_to_yaml(layer) for layer in layer_entries],
         }
         if label and str(label).strip():
             entry["label"] = str(label).strip()
-        if styles:
-            entry["layer_styles"] = {
-                layer: style.model_dump() for layer, style in sorted(styles.items())
-            }
         sources_raw[sid] = entry
         return serialize_land_source(sid, LandSourceEntry.model_validate(entry))
 
@@ -155,9 +219,8 @@ def patch_land_source(
     preset_path: Path,
     source_id: str,
     *,
-    layers: list[str] | None = None,
+    layers: list[LandLayerEntry] | None = None,
     label: str | None = None,
-    layer_styles: dict[str, LandLayerStyle] | None = None,
 ) -> dict[str, Any]:
     sid = str(source_id).strip()
     if not sid:
@@ -179,30 +242,14 @@ def patch_land_source(
         resolve_land_gdb_path(project_dir, path)
 
         if layers is not None:
-            entry_raw["layers"] = _normalize_layer_names(layers)
-            styles_raw = entry_raw.get("layer_styles")
-            if isinstance(styles_raw, dict):
-                allowed = set(entry_raw["layers"])
-                pruned = {str(k): v for k, v in styles_raw.items() if str(k) in allowed}
-                if pruned:
-                    entry_raw["layer_styles"] = pruned
-                elif "layer_styles" in entry_raw:
-                    del entry_raw["layer_styles"]
+            layer_entries = _normalize_layer_entries(layers)
+            entry_raw["layers"] = [_layer_entry_to_yaml(layer) for layer in layer_entries]
         if label is not None:
             trimmed = str(label).strip()
             if trimmed:
                 entry_raw["label"] = trimmed
             elif "label" in entry_raw:
                 del entry_raw["label"]
-        if layer_styles is not None:
-            layer_names = _normalize_layer_names(entry_raw.get("layers") or [])
-            styles = _normalize_layer_styles(layer_names, layer_styles)
-            if styles:
-                entry_raw["layer_styles"] = {
-                    layer: style.model_dump() for layer, style in sorted(styles.items())
-                }
-            elif "layer_styles" in entry_raw:
-                del entry_raw["layer_styles"]
 
         validated = LandSourceEntry.model_validate(entry_raw)
         _invalidate_removed_layer_caches(preset_path, sid, validated.layers)
@@ -241,73 +288,52 @@ def delete_land_source(preset_path: Path, source_id: str) -> None:
     _write_manifest(resolved_land_cache_dir(preset_path), manifest)
 
 
-def _normalize_layer_names(layers: list[str]) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in layers:
-        name = str(item).strip()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        out.append(name)
-    if not out:
-        raise ValueError("layers must contain at least one layer name")
-    return out
-
-
-def _normalize_layer_styles(
-    layer_names: list[str],
-    layer_styles: dict[str, LandLayerStyle] | Mapping[str, Any] | None,
-) -> dict[str, LandLayerStyle]:
-    if not layer_styles:
-        return {}
-    allowed = set(layer_names)
-    out: dict[str, LandLayerStyle] = {}
-    for key, raw in layer_styles.items():
-        name = str(key).strip()
-        if not name or name not in allowed:
-            continue
-        if isinstance(raw, LandLayerStyle):
-            out[name] = raw
-        else:
-            out[name] = LandLayerStyle.model_validate(raw)
-    return out
-
-
-def _invalidate_removed_layer_caches(preset_path: Path, source_id: str, layers: list[str]) -> None:
+def _invalidate_removed_layer_caches(
+    preset_path: Path,
+    source_id: str,
+    layers: list[LandLayerEntry],
+) -> None:
     cache_root = resolved_land_cache_dir(preset_path) / source_id
     if not cache_root.is_dir():
         return
-    keep = {slugify_files_segment(name) or "layer" for name in layers}
+    keep = {layer.layer_key() for layer in layers}
     for path in cache_root.glob("*.geojson"):
         if path.stem not in keep:
             path.unlink(missing_ok=True)
 
 
+def _layer_digest(gdb_path: Path, layer: LandLayerEntry) -> str:
+    stat = gdb_path.stat()
+    spec = land_layer_entry_digest(layer)
+    payload = f"{gdb_path}|{layer.name}|{spec}|{stat.st_mtime_ns}|{stat.st_size}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
 def ensure_layer_geojson(
     preset_path: Path,
     source_id: str,
-    layer: str,
+    layer_key: str,
 ) -> tuple[Path, list[float]]:
-    """Build or reuse cached GeoJSON; return path and WGS84 bbox [minx, miny, maxx, maxy]."""
+    """Build or reuse cached GeoJSON; return path and WGS84 bbox."""
     sid = str(source_id).strip()
-    layer_name = str(layer).strip()
-    if not sid or not layer_name:
-        raise ValueError("source id and layer are required")
+    key = str(layer_key).strip()
+    if not sid or not key:
+        raise ValueError("source id and layer key are required")
 
     job = load_preset(preset_path)
-    entry = job.land.sources.get(sid)
-    if entry is None:
+    source = job.land.sources.get(sid)
+    if source is None:
         raise ValueError(f"unknown land source: {sid}")
-    if layer_name not in entry.layers:
-        raise ValueError(f"layer {layer_name!r} not registered on source {sid!r}")
+    layer_entry = source.layer_by_key(key)
+    if layer_entry is None:
+        raise ValueError(f"layer key {key!r} not registered on source {sid!r}")
 
     project_dir = preset_path.parent
-    gdb_path = resolve_land_gdb_path(project_dir, entry.path)
+    gdb_path = resolve_land_gdb_path(project_dir, source.path)
     cache_root = resolved_land_cache_dir(preset_path)
-    out_path = _layer_cache_path(cache_root, sid, layer_name)
-    digest = _source_digest(gdb_path, layer_name)
-    manifest_key = f"{sid}/{slugify_files_segment(layer_name) or 'layer'}"
+    out_path = _layer_cache_path(cache_root, sid, key)
+    digest = _layer_digest(gdb_path, layer_entry)
+    manifest_key = f"{sid}/{slugify_files_segment(key) or 'layer'}"
     manifest = _read_manifest(cache_root)
     cached = manifest.get(manifest_key)
     if (
@@ -319,19 +345,16 @@ def ensure_layer_geojson(
         if isinstance(bbox, list) and len(bbox) == 4:
             return out_path, [float(x) for x in bbox]
 
-    gdf = pyogrio.read_dataframe(gdb_path, layer=layer_name, read_geometry=True)
+    gdf = read_land_layer_gdf(gdb_path, layer_entry)
     if gdf.empty:
         geojson = {"type": "FeatureCollection", "features": []}
         bbox = [0.0, 0.0, 0.0, 0.0]
     else:
-        if gdf.crs is None:
-            gdf = gdf.set_crs("EPSG:4326")
-        else:
-            gdf = gdf.to_crs("EPSG:4326")
         minx, miny, maxx, maxy = gdf.total_bounds
         bbox = [float(minx), float(miny), float(maxx), float(maxy)]
-        geojson = gdf_to_feature_collection_geojson(
-            gdf,
+        geojson = layer_entry_geojson(
+            gdb_path,
+            layer_entry,
             simplify_tolerance_deg=_GEOJSON_SIMPLIFY_TOLERANCE_DEG,
         )
 
@@ -341,13 +364,25 @@ def ensure_layer_geojson(
         "digest": digest,
         "bbox": bbox,
         "source_id": sid,
-        "layer": layer_name,
-        "path": entry.path,
+        "layer_key": key,
+        "layer": layer_entry.name,
+        "path": source.path,
     }
     _write_manifest(cache_root, manifest)
     return out_path, bbox
 
 
-def read_layer_geojson_bytes(preset_path: Path, source_id: str, layer: str) -> bytes:
-    path, _bbox = ensure_layer_geojson(preset_path, source_id, layer)
+def read_layer_geojson_bytes(preset_path: Path, source_id: str, layer_key: str) -> bytes:
+    path, _bbox = ensure_layer_geojson(preset_path, source_id, layer_key)
     return path.read_bytes()
+
+
+def parse_land_layer_entries(raw_layers: Any) -> list[LandLayerEntry]:
+    return _normalize_layer_entries(raw_layers)
+
+
+def resolve_layer_entry_from_source(source: LandSourceEntry, layer_key: str) -> LandLayerEntry:
+    entry = source.layer_by_key(layer_key)
+    if entry is None:
+        raise ValueError(f"unknown layer key: {layer_key}")
+    return entry

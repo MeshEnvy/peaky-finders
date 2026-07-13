@@ -201,15 +201,164 @@ class LandLayerStyle(BaseModel):
         return f"#{hex_part.lower()}"
 
 
+class LandAttributeFilter(BaseModel):
+    """Include or exclude rows where *field* matches any of *values*."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    field: str
+    values: list[str] = Field(min_length=1)
+
+    @field_validator("field", mode="before")
+    @classmethod
+    def _normalize_field(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("land attribute filter field is required")
+        return s
+
+    @field_validator("values", mode="before")
+    @classmethod
+    def _normalize_values(cls, v: Any) -> list[str]:
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("land attribute filter values must be a non-empty list")
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            s = str(item).strip()
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            out.append(s)
+        if not out:
+            raise ValueError("land attribute filter values must be a non-empty list")
+        return out
+
+
+def _coerce_land_attribute_filters(v: Any) -> list[Any]:
+    if v is None:
+        return []
+    if not isinstance(v, (list, tuple)):
+        raise ValueError("include/exclude must be a list of attribute filters")
+    out: list[Any] = []
+    for item in v:
+        if isinstance(item, LandAttributeFilter):
+            out.append(item.model_dump(mode="python"))
+        elif isinstance(item, dict):
+            raw = dict(item)
+            if "field" not in raw and "name" in raw:
+                raw["field"] = raw.pop("name")
+            if "values" not in raw and "value" in raw:
+                raw["values"] = [raw.pop("value")]
+            out.append(raw)
+        else:
+            raise ValueError("each attribute filter must be an object with field and values")
+    return out
+
+
+class LandLayerEntry(BaseModel):
+    """One GDB layer with optional attribute filters and style mapping."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    name: str
+    id: str | None = None
+    include: list[LandAttributeFilter] = Field(default_factory=list)
+    exclude: list[LandAttributeFilter] = Field(default_factory=list)
+    label_field: str | None = Field(default=None, alias="labelField")
+    style_field: str | None = Field(default=None, alias="styleField")
+    style: LandLayerStyle | dict[str, LandLayerStyle] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_layer_entry_keys(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw = dict(data)
+        if "labelField" in raw and "label_field" not in raw:
+            raw["label_field"] = raw.pop("labelField")
+        if "styleField" in raw and "style_field" not in raw:
+            raw["style_field"] = raw.pop("styleField")
+        return raw
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _normalize_name(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("land layer name is required")
+        return s
+
+    @field_validator("id", "label_field", "style_field", mode="before")
+    @classmethod
+    def _normalize_optional_str(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    @field_validator("include", "exclude", mode="before")
+    @classmethod
+    def _coerce_filters(cls, v: Any) -> list[Any]:
+        return _coerce_land_attribute_filters(v)
+
+    @field_validator("style", mode="before")
+    @classmethod
+    def _coerce_style(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, LandLayerStyle):
+            return v
+        if isinstance(v, dict):
+            if "color" in v or "opacity" in v:
+                return LandLayerStyle.model_validate(v).model_dump(mode="python")
+            out: dict[str, Any] = {}
+            for key, raw in v.items():
+                k = str(key).strip()
+                if not k:
+                    continue
+                out[k] = (
+                    raw.model_dump(mode="python")
+                    if isinstance(raw, LandLayerStyle)
+                    else LandLayerStyle.model_validate(raw).model_dump(mode="python")
+                )
+            if not out:
+                return None
+            return out
+        raise ValueError("land layer style must be a color object or mapping of value to color")
+
+    def layer_key(self) -> str:
+        if self.id:
+            return slugify_files_segment(self.id) or slugify_files_segment(self.name) or "layer"
+        return slugify_files_segment(self.name) or "layer"
+
+    def flat_style(self) -> LandLayerStyle:
+        if isinstance(self.style, LandLayerStyle):
+            return self.style
+        if isinstance(self.style, dict) and self.style:
+            return next(iter(self.style.values()))
+        return LandLayerStyle()
+
+    def style_for_value(self, value: str | None) -> LandLayerStyle:
+        if isinstance(self.style, dict) and value is not None:
+            key = str(value).strip()
+            if key in self.style:
+                return self.style[key]
+        return self.flat_style()
+
+
+def land_layer_key(entry: LandLayerEntry) -> str:
+    return entry.layer_key()
+
+
 class LandSourceEntry(BaseModel):
-    """One registered GDB under ``land.sources`` with selected layer names."""
+    """One registered GDB under ``land.sources`` with selected layer entries."""
 
     model_config = ConfigDict(extra="ignore")
 
     path: str
-    layers: list[str] = Field(min_length=1)
+    layers: list[LandLayerEntry] = Field(min_length=1)
     label: str | None = None
-    layer_styles: dict[str, LandLayerStyle] = Field(default_factory=dict)
 
     @field_validator("path", mode="before")
     @classmethod
@@ -221,45 +370,65 @@ class LandSourceEntry(BaseModel):
 
     @field_validator("layers", mode="before")
     @classmethod
-    def _normalize_layers(cls, v: Any) -> list[str]:
+    def _normalize_layers(cls, v: Any) -> list[Any]:
         if not isinstance(v, (list, tuple)):
-            raise ValueError("land source layers must be a list of layer names")
-        out: list[str] = []
-        seen: set[str] = set()
+            raise ValueError("land source layers must be a list")
+        out: list[Any] = []
+        seen_keys: set[str] = set()
         for item in v:
-            name = str(item).strip()
-            if not name:
-                continue
-            if name in seen:
-                continue
-            seen.add(name)
-            out.append(name)
+            if isinstance(item, str):
+                name = item.strip()
+                if not name:
+                    continue
+                item = {"name": name}
+            elif isinstance(item, LandLayerEntry):
+                item = item.model_dump(mode="python")
+            elif not isinstance(item, dict):
+                raise ValueError("each land layer must be a string name or layer object")
+            else:
+                item = dict(item)
+
+            entry = LandLayerEntry.model_validate(item)
+            key = entry.layer_key()
+            if key in seen_keys:
+                raise ValueError(f"duplicate land layer key: {key}")
+            seen_keys.add(key)
+            out.append(entry.model_dump(mode="python"))
+
         if not out:
-            raise ValueError("land source layers must contain at least one layer name")
+            raise ValueError("land source layers must contain at least one layer")
         return out
 
-    @field_validator("layer_styles", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _normalize_layer_styles(cls, v: Any) -> dict[str, Any]:
-        if v is None:
-            return {}
-        if not isinstance(v, dict):
-            raise ValueError("land source layer_styles must be a mapping of layer name to style")
-        out: dict[str, Any] = {}
-        for key, raw in v.items():
-            name = str(key).strip()
-            if not name:
-                continue
-            out[name] = raw
-        return out
+    def _drop_legacy_layer_styles(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw = dict(data)
+        layers = raw.get("layers")
+        styles = raw.get("layer_styles")
+        if isinstance(layers, list) and isinstance(styles, dict):
+            merged: list[Any] = []
+            for item in layers:
+                if isinstance(item, str):
+                    name = item.strip()
+                    entry: dict[str, Any] = {"name": name}
+                    if name in styles:
+                        entry["style"] = styles[name]
+                    merged.append(entry)
+                else:
+                    merged.append(item)
+            raw["layers"] = merged
+        if "layer_styles" in raw:
+            del raw["layer_styles"]
+        return raw
 
-    @model_validator(mode="after")
-    def _layer_styles_keys_match_layers(self) -> LandSourceEntry:
-        unknown = sorted(set(self.layer_styles) - set(self.layers))
-        if unknown:
-            names = ", ".join(unknown)
-            raise ValueError(f"land source layer_styles keys must be registered layers: {names}")
-        return self
+    def layer_by_key(self, layer_key: str) -> LandLayerEntry | None:
+        key = str(layer_key).strip()
+        for layer in self.layers:
+            if layer.layer_key() == key:
+                return layer
+        return None
 
 
 class LandConfig(BaseModel):
