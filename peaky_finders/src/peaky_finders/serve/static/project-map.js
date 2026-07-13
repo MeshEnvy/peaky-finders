@@ -2823,9 +2823,9 @@
 
   async function refreshLandMapLayers() {
     landLayerOrder = currentLandLayerOrder();
-    for (const row of landLayerRows()) {
-      await ensureLandMapLayer(row.sourceId, row.layerKey);
-    }
+    await Promise.all(
+      landLayerRows().map((row) => ensureLandMapLayer(row.sourceId, row.layerKey)),
+    );
     syncLandMapLayerOrder();
   }
 
