@@ -181,6 +181,95 @@ class SiteEntry(MapPointEntry):
     """One site in a preset ``sites`` map."""
 
 
+class LandLayerStyle(BaseModel):
+    """Per-layer map paint for a registered GDB layer."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    color: str = "#4a6cf7"
+    opacity: float = Field(default=0.48, ge=0.0, le=1.0)
+
+    @field_validator("color", mode="before")
+    @classmethod
+    def _normalize_color(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s.startswith("#"):
+            s = f"#{s}"
+        hex_part = s[1:]
+        if len(hex_part) != 6 or any(c not in "0123456789abcdefABCDEF" for c in hex_part):
+            raise ValueError("land layer color must be a 6-digit hex color, e.g. #4a6cf7")
+        return f"#{hex_part.lower()}"
+
+
+class LandSourceEntry(BaseModel):
+    """One registered GDB under ``land.sources`` with selected layer names."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    path: str
+    layers: list[str] = Field(min_length=1)
+    label: str | None = None
+    layer_styles: dict[str, LandLayerStyle] = Field(default_factory=dict)
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _normalize_path(cls, v: Any) -> str:
+        s = str(v or "").strip().replace("\\", "/")
+        if not s:
+            raise ValueError("land source path is required")
+        return s
+
+    @field_validator("layers", mode="before")
+    @classmethod
+    def _normalize_layers(cls, v: Any) -> list[str]:
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("land source layers must be a list of layer names")
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            name = str(item).strip()
+            if not name:
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+        if not out:
+            raise ValueError("land source layers must contain at least one layer name")
+        return out
+
+    @field_validator("layer_styles", mode="before")
+    @classmethod
+    def _normalize_layer_styles(cls, v: Any) -> dict[str, Any]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("land source layer_styles must be a mapping of layer name to style")
+        out: dict[str, Any] = {}
+        for key, raw in v.items():
+            name = str(key).strip()
+            if not name:
+                continue
+            out[name] = raw
+        return out
+
+    @model_validator(mode="after")
+    def _layer_styles_keys_match_layers(self) -> LandSourceEntry:
+        unknown = sorted(set(self.layer_styles) - set(self.layers))
+        if unknown:
+            names = ", ".join(unknown)
+            raise ValueError(f"land source layer_styles keys must be registered layers: {names}")
+        return self
+
+
+class LandConfig(BaseModel):
+    """Informational GDB overlays registered from ``projects/<slug>/data/``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    sources: dict[str, LandSourceEntry] = Field(default_factory=dict)
+
+
 def _reject_site_type_field(site: Mapping[str, Any], slug: str) -> None:
     if "type" in site:
         raise ValueError(f"sites.{slug}.type is removed; use tags")
@@ -210,7 +299,7 @@ def _reject_legacy_site_sees(raw: Mapping[str, Any]) -> None:
 
 
 def _reject_removed_preset_sections(raw: Mapping[str, Any]) -> None:
-    for key in ("land", "mesh", "suggest", "goals"):
+    for key in ("mesh", "suggest", "goals"):
         if raw.get(key) is not None:
             raise ValueError(f"top-level {key}: is removed in serve-only presets")
 
@@ -242,12 +331,13 @@ def slugify_files_segment(site_name: str) -> str:
 
 
 class Preset(BaseModel):
-    """One YAML preset: simulation RF, display, sites, and manual links."""
+    """One YAML preset: simulation RF, display, sites, links, and optional land overlays."""
 
     simulation: SimulationConfig
     display: DisplayConfig
     sites: dict[str, SiteEntry]
     links: list[tuple[str, str]] = Field(default_factory=list)
+    land: LandConfig = Field(default_factory=LandConfig)
 
     @field_validator("links", mode="before")
     @classmethod

@@ -15,7 +15,7 @@ from peaky_finders.core.preset.paths import peaky_home
 from peaky_finders.core.preset.io import yaml_plain_preset_value
 
 CONFIG_FILENAME = "config.yaml"
-_PROJECT_ONLY_KEYS = frozenset({"sites", "links"})
+_PROJECT_ONLY_KEYS = frozenset({"sites", "links", "land"})
 
 
 def peaky_home_config_path() -> Path:
@@ -62,7 +62,7 @@ def prune_project_preset_dict(
     project: Mapping[str, Any],
     defaults: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Drop keys equal to *defaults*; keep ``sites`` / ``links`` verbatim."""
+    """Drop keys equal to *defaults*; keep ``sites`` / ``links`` / ``land`` verbatim."""
     out: dict[str, Any] = {}
     for key, val in project.items():
         if key in _PROJECT_ONLY_KEYS:
