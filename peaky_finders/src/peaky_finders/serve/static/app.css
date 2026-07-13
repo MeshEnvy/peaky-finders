@@ -904,6 +904,16 @@ wa-dropdown-item.is-active::part(base) {
   margin: 0;
 }
 
+.import-land-preview-map-wrap .maplibregl-spinner,
+#import-land-preview-map .maplibregl-spinner,
+#edit-land-preview-map .maplibregl-spinner {
+  display: none !important;
+}
+
+.import-land-preview-loading {
+  display: none !important;
+}
+
 .import-land-layer-row--loading .import-land-layer-label {
   opacity: 0.65;
 }
@@ -916,6 +926,134 @@ wa-dropdown-item.is-active::part(base) {
   border-top-color: #4a6cf7;
   border-radius: 50%;
   animation: pin-load-spin 0.7s linear infinite;
+  flex: 0 0 auto;
+}
+
+.import-land-attrs-toggle {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--wa-border-radius-s);
+  border: 1px solid var(--wa-color-surface-border);
+  background: var(--wa-color-surface-raised);
+  color: var(--wa-color-text-normal);
+  cursor: pointer;
+}
+
+.import-land-layer-attrs {
+  flex: 1 1 100%;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.5rem 0.55rem;
+  border-radius: var(--wa-border-radius-s);
+  border: 1px solid var(--wa-color-surface-border);
+  background: rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.import-land-attrs-section-title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--wa-color-text-quiet);
+}
+
+.import-land-attrs-fields {
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.import-land-attrs-select {
+  width: 100%;
+  max-width: 14rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: var(--wa-border-radius-s);
+  border: 1px solid var(--wa-color-surface-border);
+  background: var(--wa-color-surface-raised);
+  color: var(--wa-color-text-normal);
+  font-size: 0.8125rem;
+}
+
+.import-land-attrs-values {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-height: 8rem;
+  overflow: auto;
+  padding: 0.15rem 0;
+}
+
+.import-land-attrs-value-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8125rem;
+}
+
+.import-land-attrs-value-row--read-only {
+  cursor: default;
+  padding: 0.1rem 0;
+  color: var(--wa-color-text-normal);
+}
+
+.import-land-attrs-value-row:not(.import-land-attrs-value-row--read-only) {
+  cursor: pointer;
+}
+
+.import-land-attrs-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.import-land-attrs-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8125rem;
+}
+
+.import-land-attrs-colors-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.import-land-attrs-color-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.import-land-attrs-color-label {
+  flex: 0 0 3rem;
+  font-size: 0.75rem;
+  font-family: var(--wa-font-family-mono, monospace);
+}
+
+.entity-panel__land-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.45rem;
+  margin-top: 0.2rem;
+}
+
+.entity-panel__land-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  color: var(--wa-color-text-quiet);
+}
+
+.entity-panel__land-legend-swatch {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
   flex: 0 0 auto;
 }
 

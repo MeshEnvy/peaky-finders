@@ -543,6 +543,8 @@
   let importLandPreviewMap = null;
   let importLandPreviewBusy = false;
   let importLandLayerStyles = new Map();
+  let importLandLayerConfigs = new Map();
+  let editLandLayerConfigs = new Map();
   let editLandSourceId = "";
   let editLandPreviewLayers = [];
   let editLandPreviewPath = "";
@@ -1899,12 +1901,184 @@
     return promise;
   }
 
-  async function fetchLandPreviewGeoJson(path, layer) {
+  function landFieldsApiUrl(path, layer) {
+    const params = new URLSearchParams({ path, layer });
+    return `/api/p/${projectSlug}/land/import/preview/fields?${params}`;
+  }
+
+  function landValuesApiUrl(path, layer, field) {
+    const params = new URLSearchParams({ path, layer, field });
+    return `/api/p/${projectSlug}/land/import/preview/values?${params}`;
+  }
+
+  function landPreviewGeoJsonPostUrl() {
+    return `/api/p/${projectSlug}/land/preview/geojson`;
+  }
+
+  function defaultLandLayerConfig() {
+    return {
+      labelField: "",
+      attrsOpen: false,
+      fields: null,
+      fieldsLoading: false,
+    };
+  }
+
+  function ensureLandLayerConfig(configs, layerName) {
+    if (!configs.has(layerName)) configs.set(layerName, defaultLandLayerConfig());
+    return configs.get(layerName);
+  }
+
+  function normalizeRegisteredLayer(layer) {
+    if (typeof layer === "string") {
+      const name = layer;
+      return {
+        name,
+        key: landLayerSlug(name),
+        style: null,
+        styleField: null,
+        labelField: null,
+        include: [],
+        exclude: [],
+      };
+    }
+    const name = layer.name;
+    return {
+      name,
+      key: layer.key || landLayerSlug(name),
+      style: layer.style || null,
+      styleField: layer.styleField || layer.style_field || null,
+      labelField: layer.labelField || layer.label_field || null,
+      include: Array.isArray(layer.include) ? layer.include : [],
+      exclude: Array.isArray(layer.exclude) ? layer.exclude : [],
+    };
+  }
+
+  function landLayerDisplayName(spec) {
+    const parts = [spec.name];
+    const includeValues = (spec.include || [])
+      .flatMap((filt) => (Array.isArray(filt.values) ? filt.values : []))
+      .filter(Boolean);
+    if (includeValues.length) parts.push(`(${includeValues.join(", ")})`);
+    return parts.join(" ");
+  }
+
+  function styleMapFromLayerSpec(spec) {
+    if (!spec?.style) return null;
+    if (spec.styleField && typeof spec.style === "object" && !("color" in spec.style)) {
+      return spec.style;
+    }
+    return null;
+  }
+
+  function flatStyleFromLayerSpec(spec) {
+    if (!spec?.style) return defaultLandLayerStyle();
+    if (typeof spec.style === "object" && "color" in spec.style) {
+      return normalizeLandLayerStyle(spec.style);
+    }
+    if (spec.styleField && typeof spec.style === "object") {
+      const first = Object.values(spec.style)[0];
+      return normalizeLandLayerStyle(first);
+    }
+    return defaultLandLayerStyle();
+  }
+
+  function buildStyleMatchExpression(styleMap, prop, fallback) {
+    const normalized = normalizeLandLayerStyle(fallback);
+    const expr = ["match", ["get", prop]];
+    for (const [key, rawStyle] of Object.entries(styleMap || {})) {
+      const style = normalizeLandLayerStyle(rawStyle);
+      expr.push(String(key), style.color);
+    }
+    expr.push(normalized.color);
+    return expr;
+  }
+
+  function buildOpacityMatchExpression(styleMap, prop, fallback) {
+    const normalized = normalizeLandLayerStyle(fallback);
+    const expr = ["match", ["get", prop]];
+    for (const [key, rawStyle] of Object.entries(styleMap || {})) {
+      const style = normalizeLandLayerStyle(rawStyle);
+      expr.push(String(key), style.opacity);
+    }
+    expr.push(normalized.opacity);
+    return expr;
+  }
+
+  function layerConfigToPayload(name, layerStyles, layerConfigs) {
+    const config = layerConfigs.get(name) || defaultLandLayerConfig();
+    const row = { name };
+    if (config.labelField) row.labelField = config.labelField;
+    if (layerStyles.has(name)) {
+      row.style = normalizeLandLayerStyle(layerStyles.get(name));
+    }
+    return row;
+  }
+
+  function landColumnSortKey(name) {
+    const upper = String(name).toUpperCase();
+    if (upper === "NAME") return "0";
+    if (upper === "ABBR") return "1";
+    return `9${upper}`;
+  }
+
+  function configFromRegisteredLayer(layer) {
+    const spec = normalizeRegisteredLayer(layer);
+    return {
+      labelField: spec.labelField || "",
+      attrsOpen: false,
+      fields: null,
+      fieldsLoading: false,
+    };
+  }
+
+  function collectSelectedLayerPayloads(listEl, layerStyles, layerConfigs) {
+    return collectSelectedLandLayers(listEl).map((name) =>
+      layerConfigToPayload(name, layerStyles, layerConfigs),
+    );
+  }
+
+  async function fetchLandLayerFields(path, layer) {
+    const resp = await fetch(landFieldsApiUrl(path, layer));
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(payload.error || `Fields failed (${resp.status})`);
+    return payload;
+  }
+
+  async function fetchLandFieldValues(path, layer, field) {
+    const resp = await fetch(landValuesApiUrl(path, layer, field));
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(payload.error || `Values failed (${resp.status})`);
+    return payload;
+  }
+
+  async function fetchLandPreviewGeoJson(path, layer, layerConfig) {
+    const cacheKey = `${landPreviewCacheKey(path, layer)}|${JSON.stringify(layerConfig || {})}`;
     return fetchCachedGeoJson(
       landPreviewGeoJsonCache,
       landPreviewGeoJsonInflight,
-      landPreviewCacheKey(path, layer),
+      cacheKey,
       async () => {
+        if (layerConfig && (layerConfig.include?.length || layerConfig.styleField || layerConfig.labelField)) {
+          const body = {
+            path,
+            layer,
+            include: layerConfig.include,
+            exclude: layerConfig.exclude,
+            labelField: layerConfig.labelField || undefined,
+            styleField: layerConfig.styleField || undefined,
+          };
+          const resp = await fetch(landPreviewGeoJsonPostUrl(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const payload = await resp.json().catch(() => ({}));
+          if (!resp.ok || !payload.geojson) {
+            throw new Error(payload.error || `Preview failed (${resp.status})`);
+          }
+          return payload.geojson;
+        }
         const resp = await fetch(landPreviewGeoJsonUrl(path, layer));
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok || !payload.geojson) {
@@ -2016,19 +2190,23 @@
     return { color, opacity };
   }
 
-  function resolveLandLayerStyle(sourceId, layer) {
+  function resolveLandLayerStyle(sourceId, layerKey) {
     const source = landSources.find((s) => s.id === sourceId);
-    const styles = source?.layerStyles || source?.layer_styles || {};
-    return normalizeLandLayerStyle(styles[layer]);
+    if (!source || !Array.isArray(source.layers)) return defaultLandLayerStyle();
+    const spec = source.layers
+      .map((layer) => normalizeRegisteredLayer(layer))
+      .find((layer) => layer.key === layerKey);
+    return flatStyleFromLayerSpec(spec);
   }
 
-  function landLayerStylePayload(layerStyles, layerNames) {
-    const out = {};
-    for (const layer of layerNames) {
-      const style = normalizeLandLayerStyle(layerStyles.get(layer));
-      out[layer] = style;
-    }
-    return out;
+  function resolveLandLayerSpec(sourceId, layerKey) {
+    const source = landSources.find((s) => s.id === sourceId);
+    if (!source || !Array.isArray(source.layers)) return null;
+    return (
+      source.layers
+        .map((layer) => normalizeRegisteredLayer(layer))
+        .find((layer) => layer.key === layerKey) || null
+    );
   }
 
   function landPreviewSourceId(prefix, layerName) {
@@ -2068,19 +2246,21 @@
     const rows = [];
     for (const source of landSources) {
       const layers = Array.isArray(source.layers) ? source.layers : [];
-      for (const layer of layers) {
+      for (const rawLayer of layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
         rows.push({
           sourceId: source.id,
           label: source.label || source.id,
           path: source.path,
-          layer,
+          layerKey: spec.key,
+          spec,
         });
       }
     }
     return rows.sort((a, b) => {
       const byLabel = String(a.label).localeCompare(String(b.label));
       if (byLabel !== 0) return byLabel;
-      return String(a.layer).localeCompare(String(b.layer));
+      return String(a.layerKey).localeCompare(String(b.layerKey));
     });
   }
 
@@ -2104,59 +2284,129 @@
     scheduleSaveMapState();
   }
 
+  function syncGeoJsonLabelLayer(mapInstance, sourceId, labelsId, showLabels, visibility) {
+    if (!mapInstance) return;
+    const vis = visibility === "none" ? "none" : "visible";
+    if (!showLabels) {
+      if (mapInstance.getLayer(labelsId)) mapInstance.removeLayer(labelsId);
+      return;
+    }
+    if (!mapInstance.getSource(sourceId)) return;
+    if (!mapInstance.getLayer(labelsId)) {
+      mapInstance.addLayer({
+        id: labelsId,
+        type: "symbol",
+        source: sourceId,
+        filter: ["all", ["has", "label"], ["!=", ["get", "label"], ""]],
+        layout: {
+          "text-field": ["get", "label"],
+          "text-size": 11,
+          "text-font": MAP_LABEL_FONT,
+          "text-allow-overlap": true,
+          "text-max-width": 14,
+          visibility: vis,
+        },
+        paint: {
+          "text-color": "#f0f4ff",
+          "text-halo-color": "#141820",
+          "text-halo-width": 1.5,
+        },
+      });
+    } else {
+      mapInstance.setLayoutProperty(labelsId, "visibility", vis);
+    }
+  }
+
+  function syncLandMapLabelLayer(sourceId, layerKey) {
+    if (!mapReady) return;
+    const spec = resolveLandLayerSpec(sourceId, layerKey);
+    const sourceMapId = landMapSourceId(sourceId, layerKey);
+    const labelsId = `${sourceMapId}-labels`;
+    const vis = isLandLayerVisible(sourceId, layerKey) ? "visible" : "none";
+    syncGeoJsonLabelLayer(map, sourceMapId, labelsId, !!spec?.labelField, vis);
+  }
+
   function syncLandMapLayerVisibility(sourceId, layer) {
     if (!mapReady) return;
     const sourceMapId = landMapSourceId(sourceId, layer);
     const fillId = `${sourceMapId}-fill`;
     const lineId = `${sourceMapId}-line`;
+    const labelsId = `${sourceMapId}-labels`;
     const vis = isLandLayerVisible(sourceId, layer) ? "visible" : "none";
     if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
     if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
+    if (map.getLayer(labelsId)) map.setLayoutProperty(labelsId, "visibility", vis);
   }
 
-  function applyLandMapLayerStyle(sourceId, layer) {
+  function applyLandMapLayerStyle(sourceId, layerKey) {
     if (!mapReady) return;
-    const sourceMapId = landMapSourceId(sourceId, layer);
+    const sourceMapId = landMapSourceId(sourceId, layerKey);
     const fillId = `${sourceMapId}-fill`;
     const lineId = `${sourceMapId}-line`;
-    const style = resolveLandLayerStyle(sourceId, layer);
-    const lineColor = landLineColorFromFill(style.color);
+    const spec = resolveLandLayerSpec(sourceId, layerKey);
+    const styleMap = styleMapFromLayerSpec(spec);
+    const fallback = flatStyleFromLayerSpec(spec);
+    const lineFallback = landLineColorFromFill(fallback.color);
     if (map.getLayer(fillId)) {
-      map.setPaintProperty(fillId, "fill-color", style.color);
-      map.setPaintProperty(fillId, "fill-opacity", style.opacity);
-      map.setPaintProperty(fillId, "fill-outline-color", lineColor);
+      if (spec?.styleField && styleMap) {
+        map.setPaintProperty(
+          fillId,
+          "fill-color",
+          buildStyleMatchExpression(styleMap, "style_key", fallback),
+        );
+        map.setPaintProperty(
+          fillId,
+          "fill-opacity",
+          buildOpacityMatchExpression(styleMap, "style_key", fallback),
+        );
+      } else {
+        map.setPaintProperty(fillId, "fill-color", fallback.color);
+        map.setPaintProperty(fillId, "fill-opacity", fallback.opacity);
+      }
+      map.setPaintProperty(fillId, "fill-outline-color", lineFallback);
     }
     if (map.getLayer(lineId)) {
-      map.setPaintProperty(lineId, "line-color", lineColor);
+      map.setPaintProperty(lineId, "line-color", lineFallback);
       map.setPaintProperty(lineId, "line-width", LAND_LINE_WIDTH);
     }
   }
 
-  async function ensureLandMapLayer(sourceId, layer) {
+  async function ensureLandMapLayer(sourceId, layerKey) {
     if (!mapReady) return;
-    const sourceMapId = landMapSourceId(sourceId, layer);
+    const sourceMapId = landMapSourceId(sourceId, layerKey);
     const fillId = `${sourceMapId}-fill`;
     const lineId = `${sourceMapId}-line`;
-    const style = resolveLandLayerStyle(sourceId, layer);
-    const lineColor = landLineColorFromFill(style.color);
+    const spec = resolveLandLayerSpec(sourceId, layerKey);
+    const styleMap = styleMapFromLayerSpec(spec);
+    const fallback = flatStyleFromLayerSpec(spec);
+    const lineColor = landLineColorFromFill(fallback.color);
+    const fillPaint =
+      spec?.styleField && styleMap
+        ? {
+            "fill-color": buildStyleMatchExpression(styleMap, "style_key", fallback),
+            "fill-opacity": buildOpacityMatchExpression(styleMap, "style_key", fallback),
+            "fill-outline-color": lineColor,
+          }
+        : {
+            "fill-color": fallback.color,
+            "fill-opacity": fallback.opacity,
+            "fill-outline-color": lineColor,
+          };
     if (map.getSource(sourceMapId)) {
-      applyLandMapLayerStyle(sourceId, layer);
-      syncLandMapLayerVisibility(sourceId, layer);
+      applyLandMapLayerStyle(sourceId, layerKey);
+      syncLandMapLayerVisibility(sourceId, layerKey);
+      syncLandMapLabelLayer(sourceId, layerKey);
       return;
     }
     try {
-      const geojson = await fetchLandLayerGeoJson(sourceId, layer);
+      const geojson = await fetchLandLayerGeoJson(sourceId, layerKey);
       map.addSource(sourceMapId, { type: "geojson", data: geojson });
       map.addLayer({
         id: fillId,
         type: "fill",
         source: sourceMapId,
-        paint: {
-          "fill-color": style.color,
-          "fill-opacity": style.opacity,
-          "fill-outline-color": lineColor,
-        },
-        layout: { visibility: isLandLayerVisible(sourceId, layer) ? "visible" : "none" },
+        paint: fillPaint,
+        layout: { visibility: isLandLayerVisible(sourceId, layerKey) ? "visible" : "none" },
       });
       map.addLayer({
         id: lineId,
@@ -2166,8 +2416,9 @@
           "line-color": lineColor,
           "line-width": LAND_LINE_WIDTH,
         },
-        layout: { visibility: isLandLayerVisible(sourceId, layer) ? "visible" : "none" },
+        layout: { visibility: isLandLayerVisible(sourceId, layerKey) ? "visible" : "none" },
       });
+      syncLandMapLabelLayer(sourceId, layerKey);
       raiseSiteLayers();
     } catch (_) {
       /* network */
@@ -2179,6 +2430,8 @@
     const sourceMapId = landMapSourceId(sourceId, layer);
     const fillId = `${sourceMapId}-fill`;
     const lineId = `${sourceMapId}-line`;
+    const labelsId = `${sourceMapId}-labels`;
+    if (map.getLayer(labelsId)) map.removeLayer(labelsId);
     if (map.getLayer(lineId)) map.removeLayer(lineId);
     if (map.getLayer(fillId)) map.removeLayer(fillId);
     if (map.getSource(sourceMapId)) map.removeSource(sourceMapId);
@@ -2186,7 +2439,7 @@
 
   async function refreshLandMapLayers() {
     for (const row of landLayerRows()) {
-      await ensureLandMapLayer(row.sourceId, row.layer);
+      await ensureLandMapLayer(row.sourceId, row.layerKey);
     }
   }
 
@@ -2248,12 +2501,12 @@
   function buildLandEntityRow(row) {
     const el = document.createElement("div");
     el.className = "entity-panel__row entity-panel__row--land";
-    el.dataset.landKey = landLayerKey(row.sourceId, row.layer);
+    el.dataset.landKey = landLayerKey(row.sourceId, row.layerKey);
     const main = document.createElement("div");
     main.className = "entity-panel__main";
     const name = document.createElement("div");
     name.className = "entity-panel__name";
-    name.textContent = row.layer;
+    name.textContent = `${row.label} · ${landLayerDisplayName(row.spec)}`;
     const meta = document.createElement("div");
     meta.className = "entity-panel__meta pf-muted";
     meta.textContent = row.path;
@@ -2265,13 +2518,13 @@
     eye.type = "button";
     eye.className = "entity-panel__action";
     eye.title = "Toggle visibility";
-    const visible = isLandLayerVisible(row.sourceId, row.layer);
+    const visible = isLandLayerVisible(row.sourceId, row.layerKey);
     eye.innerHTML = mapToolIcon(visible ? "eye" : "eye-slash", "Visibility");
     eye.addEventListener("click", () => {
-      const next = !isLandLayerVisible(row.sourceId, row.layer);
-      setLandLayerVisible(row.sourceId, row.layer, next);
+      const next = !isLandLayerVisible(row.sourceId, row.layerKey);
+      setLandLayerVisible(row.sourceId, row.layerKey, next);
       eye.innerHTML = mapToolIcon(next ? "eye" : "eye-slash", "Visibility");
-      if (next) void ensureLandMapLayer(row.sourceId, row.layer);
+      if (next) void ensureLandMapLayer(row.sourceId, row.layerKey);
     });
     controls.appendChild(eye);
     el.appendChild(main);
@@ -2303,11 +2556,12 @@
       }
       const source = landSources.find((s) => s.id === sourceId);
       if (source && Array.isArray(source.layers)) {
-        for (const layer of source.layers) {
-          removeLandMapLayer(sourceId, layer);
-          landVisible.delete(landLayerKey(sourceId, layer));
-          landLayerGeoJsonCache.delete(landLayerCacheKey(sourceId, layer));
-          landLayerGeoJsonInflight.delete(landLayerCacheKey(sourceId, layer));
+        for (const rawLayer of source.layers) {
+          const spec = normalizeRegisteredLayer(rawLayer);
+          removeLandMapLayer(sourceId, spec.key);
+          landVisible.delete(landLayerKey(sourceId, spec.key));
+          landLayerGeoJsonCache.delete(landLayerCacheKey(sourceId, spec.key));
+          landLayerGeoJsonInflight.delete(landLayerCacheKey(sourceId, spec.key));
         }
       }
       landSources = landSources.filter((s) => s.id !== sourceId);
@@ -2374,10 +2628,24 @@
 
   function whenPreviewMapReady(previewMap) {
     if (!previewMap) return Promise.resolve();
-    if (previewMap.loaded()) return Promise.resolve();
+    if (previewMap.isStyleLoaded()) return Promise.resolve();
     return new Promise((resolve) => {
-      previewMap.once("load", resolve);
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      previewMap.once("load", finish);
+      previewMap.once("error", finish);
+      window.setTimeout(finish, 8000);
     });
+  }
+
+  function resetLandPreviewMapLoading(mapEl) {
+    if (!mapEl) return;
+    landPreviewLoadingCounts.set(mapEl, 0);
+    setLandPreviewMapLoading(mapEl, false);
   }
 
   function fitPreviewMapToBboxes(previewMap, bboxes) {
@@ -2405,16 +2673,122 @@
     return layerStyles.get(layerName);
   }
 
+  function buildLandLayerAttrPanel(layerName, gdbPath, config, onLabelFieldChange) {
+    const panel = document.createElement("div");
+    panel.className = "import-land-layer-attrs";
+    panel.hidden = !config.attrsOpen;
+
+    const labelTitle = document.createElement("div");
+    labelTitle.className = "import-land-attrs-section-title";
+    labelTitle.textContent = "Label field";
+
+    const labelSelect = document.createElement("select");
+    labelSelect.className = "import-land-attrs-select";
+    labelSelect.innerHTML = '<option value="">None</option>';
+
+    const valuesEl = document.createElement("div");
+    valuesEl.className = "import-land-attrs-values";
+
+    function populateLabelSelect() {
+      const fields = config.fields || [];
+      const prev = labelSelect.value || config.labelField;
+      labelSelect.innerHTML = '<option value="">None</option>';
+      for (const field of fields
+        .slice()
+        .sort((a, b) => landColumnSortKey(a.name).localeCompare(landColumnSortKey(b.name)))) {
+        const opt = document.createElement("option");
+        opt.value = field.name;
+        opt.textContent = field.name;
+        labelSelect.appendChild(opt);
+      }
+      if (prev && [...labelSelect.options].some((opt) => opt.value === prev)) {
+        labelSelect.value = prev;
+      }
+    }
+
+    async function loadLabelValues() {
+      if (!config.labelField) {
+        valuesEl.innerHTML = "";
+        return;
+      }
+      valuesEl.innerHTML = '<span class="wa-caption pf-muted">Loading…</span>';
+      try {
+        const payload = await fetchLandFieldValues(gdbPath, layerName, config.labelField);
+        const rows = Array.isArray(payload.values) ? payload.values : [];
+        valuesEl.innerHTML = "";
+        if (!rows.length) {
+          valuesEl.innerHTML = '<span class="wa-caption pf-muted">No values</span>';
+          return;
+        }
+        for (const row of rows) {
+          const item = document.createElement("div");
+          item.className = "import-land-attrs-value-row import-land-attrs-value-row--read-only";
+          item.textContent = `${row.value} (${row.count})`;
+          valuesEl.appendChild(item);
+        }
+      } catch (_) {
+        valuesEl.innerHTML = '<span class="wa-caption pf-muted">Could not load values</span>';
+      }
+    }
+
+    async function ensureFields() {
+      if (config.fields) {
+        populateLabelSelect();
+        return;
+      }
+      if (config.fieldsLoading) return;
+      config.fieldsLoading = true;
+      labelSelect.disabled = true;
+      try {
+        const payload = await fetchLandLayerFields(gdbPath, layerName);
+        config.fields = Array.isArray(payload.fields) ? payload.fields : [];
+        populateLabelSelect();
+      } catch (_) {
+        labelSelect.innerHTML = '<option value="">Could not load fields</option>';
+      } finally {
+        config.fieldsLoading = false;
+        labelSelect.disabled = false;
+      }
+    }
+
+    labelSelect.addEventListener("change", () => {
+      config.labelField = labelSelect.value;
+      void loadLabelValues();
+      if (onLabelFieldChange) onLabelFieldChange(layerName);
+    });
+
+    panel.appendChild(labelTitle);
+    panel.appendChild(labelSelect);
+    panel.appendChild(valuesEl);
+
+    void ensureFields().then(() => {
+      if (config.labelField) void loadLabelValues();
+    });
+
+    return panel;
+  }
+
   function renderLandLayerChecklist(
     listEl,
     layers,
-    { selected, layerStyles, onToggle, onStyleChange, countEl },
+    {
+      selected,
+      layerStyles,
+      layerConfigs,
+      gdbPath,
+      onToggle,
+      onStyleChange,
+      onLabelFieldChange,
+      countEl,
+    },
   ) {
     if (!listEl) return;
     listEl.innerHTML = "";
     const selectedSet = selected instanceof Set ? selected : new Set(selected || []);
     for (const layer of layers) {
       ensureLandLayerStyleState(layerStyles, layer.name);
+      ensureLandLayerConfig(layerConfigs, layer.name);
+      const config = layerConfigs.get(layer.name);
       const row = document.createElement("div");
       row.className = "import-sites-point-row import-land-layer-row";
       if (selectedSet.has(layer.name)) row.classList.add("import-land-layer-row--selected");
@@ -2426,6 +2800,11 @@
       checkbox.addEventListener("change", () => {
         onToggle(layer.name, checkbox.checked);
         row.classList.toggle("import-land-layer-row--selected", checkbox.checked);
+        attrsToggle.hidden = !checkbox.checked;
+        if (!checkbox.checked) {
+          config.attrsOpen = false;
+          attrsPanel.hidden = true;
+        }
       });
 
       const text = document.createElement("span");
@@ -2470,9 +2849,24 @@
       styleWrap.appendChild(opacityInput);
       styleWrap.appendChild(opacityLabel);
 
+      const attrsToggle = document.createElement("button");
+      attrsToggle.type = "button";
+      attrsToggle.className = "import-land-attrs-toggle";
+      attrsToggle.textContent = "Attributes";
+      attrsToggle.hidden = !checkbox.checked;
+
+      const attrsPanel = buildLandLayerAttrPanel(layer.name, gdbPath, config, onLabelFieldChange);
+
+      attrsToggle.addEventListener("click", () => {
+        config.attrsOpen = !config.attrsOpen;
+        attrsPanel.hidden = !config.attrsOpen;
+      });
+
       row.appendChild(checkbox);
       row.appendChild(text);
       row.appendChild(styleWrap);
+      row.appendChild(attrsToggle);
+      row.appendChild(attrsPanel);
       listEl.appendChild(row);
     }
     if (countEl) {
@@ -2522,19 +2916,42 @@
     }
   }
 
-  function applyLandPreviewMapData(previewMap, sourceName, fillId, lineId, data, style) {
+  function landPreviewLabelsLayerId(sourceName) {
+    return `${sourceName}-labels`;
+  }
+
+  function syncLandPreviewLabelLayer(previewMap, sourceName, showLabels) {
+    syncGeoJsonLabelLayer(
+      previewMap,
+      sourceName,
+      landPreviewLabelsLayerId(sourceName),
+      showLabels,
+      "visible",
+    );
+  }
+
+  function applyLandPreviewMapData(previewMap, sourceName, fillId, lineId, data, style, config) {
     if (!previewMap) return Promise.resolve();
     const apply = () => {
-      if (!previewMap.getSource(sourceName)) {
-        previewMap.addSource(sourceName, { type: "geojson", data });
-        for (const spec of landPreviewLayerSpecs(sourceName, fillId, lineId, style)) {
-          if (!previewMap.getLayer(spec.id)) previewMap.addLayer(spec);
+      try {
+        if (!previewMap.getSource(sourceName)) {
+          previewMap.addSource(sourceName, { type: "geojson", data });
+          for (const spec of landPreviewLayerSpecs(sourceName, fillId, lineId, style)) {
+            if (!previewMap.getLayer(spec.id)) previewMap.addLayer(spec);
+          }
+        } else {
+          previewMap.getSource(sourceName).setData(data);
         }
-      } else {
-        previewMap.getSource(sourceName).setData(data);
+        applyLandPreviewLayerStyle(previewMap, sourceName, fillId, lineId, style);
+        syncLandPreviewLabelLayer(previewMap, sourceName, !!config?.labelField);
+      } catch (_) {
+        /* style/source race */
       }
-      applyLandPreviewLayerStyle(previewMap, sourceName, fillId, lineId, style);
     };
+    if (previewMap.isStyleLoaded()) {
+      apply();
+      return Promise.resolve();
+    }
     return whenPreviewMapReady(previewMap).then(apply);
   }
 
@@ -2543,6 +2960,8 @@
     const sourceName = landPreviewSourceId(prefix, layerName);
     const fillId = `${sourceName}-fill`;
     const lineId = `${sourceName}-line`;
+    const labelsId = landPreviewLabelsLayerId(sourceName);
+    if (previewMap.getLayer(labelsId)) previewMap.removeLayer(labelsId);
     if (previewMap.getLayer(lineId)) previewMap.removeLayer(lineId);
     if (previewMap.getLayer(fillId)) previewMap.removeLayer(fillId);
     if (previewMap.getSource(sourceName)) previewMap.removeSource(sourceName);
@@ -2556,6 +2975,40 @@
     }
   }
 
+  async function refreshLandPreviewLayerConfig(
+    previewMap,
+    path,
+    layerName,
+    sourceIdPrefix,
+    layerStyles,
+    layerConfigs,
+  ) {
+    if (!previewMap || !path || !layerName) return;
+    const config = layerConfigs?.get(layerName) || defaultLandLayerConfig();
+    const prefix = landPreviewMapPrefix(sourceIdPrefix);
+    const sourceName = landPreviewSourceId(prefix, layerName);
+    const fillId = `${sourceName}-fill`;
+    const lineId = `${sourceName}-line`;
+    const style = normalizeLandLayerStyle(layerStyles.get(layerName));
+    await whenPreviewMapReady(previewMap);
+    try {
+      const geojson = await fetchLandPreviewGeoJson(
+        path,
+        layerName,
+        config.labelField ? config : null,
+      );
+      if (previewMap.getSource(sourceName)) {
+        previewMap.getSource(sourceName).setData(geojson);
+        applyLandPreviewLayerStyle(previewMap, sourceName, fillId, lineId, style);
+        syncLandPreviewLabelLayer(previewMap, sourceName, !!config.labelField);
+      } else {
+        await applyLandPreviewMapData(previewMap, sourceName, fillId, lineId, geojson, style, config);
+      }
+    } catch (_) {
+      /* skip */
+    }
+  }
+
   async function showLandPreviewLayer(
     previewMap,
     mapEl,
@@ -2564,37 +3017,46 @@
     layerName,
     sourceIdPrefix,
     layerStyles,
+    layerConfigs,
     layerMetaList,
   ) {
     if (!previewMap || !path || !layerName) return;
+    const config = layerConfigs?.get(layerName) || defaultLandLayerConfig();
     const prefix = landPreviewMapPrefix(sourceIdPrefix);
     const sourceName = landPreviewSourceId(prefix, layerName);
     const fillId = `${sourceName}-fill`;
     const lineId = `${sourceName}-line`;
     const style = normalizeLandLayerStyle(layerStyles.get(layerName));
     await whenPreviewMapReady(previewMap);
-    if (previewMap.getSource(sourceName)) {
+    const hasSource = !!previewMap.getSource(sourceName);
+    if (hasSource && !config.labelField) {
       applyLandPreviewLayerStyle(previewMap, sourceName, fillId, lineId, style);
+      syncLandPreviewLabelLayer(previewMap, sourceName, false);
       return;
     }
-    setLandLayerRowLoading(listEl, layerName, true);
-    beginLandPreviewMapFetch(mapEl);
+    if (!hasSource) setLandLayerRowLoading(listEl, layerName, true);
     try {
-      const geojson = await fetchLandPreviewGeoJson(path, layerName);
-      await applyLandPreviewMapData(previewMap, sourceName, fillId, lineId, geojson, style);
+      const geojson = await fetchLandPreviewGeoJson(
+        path,
+        layerName,
+        config.labelField ? config : null,
+      );
+      await applyLandPreviewMapData(previewMap, sourceName, fillId, lineId, geojson, style, config);
       const layerMeta = layerMetaList.find((layer) => layer.name === layerName);
       if (layerMeta?.bbox) fitPreviewMapToBboxes(previewMap, [layerMeta.bbox]);
     } catch (_) {
       /* skip layer */
     } finally {
-      setLandLayerRowLoading(listEl, layerName, false);
-      endLandPreviewMapFetch(mapEl);
+      if (!hasSource) setLandLayerRowLoading(listEl, layerName, false);
+      resetLandPreviewMapLoading(mapEl);
     }
   }
 
-  function hideLandPreviewLayer(previewMap, sourceIdPrefix, layerName) {
+  function hideLandPreviewLayer(previewMap, sourceIdPrefix, layerName, mapEl, listEl) {
     if (!previewMap || !layerName) return;
     removeLandPreviewLayer(previewMap, landPreviewMapPrefix(sourceIdPrefix), layerName);
+    setLandLayerRowLoading(listEl, layerName, false);
+    resetLandPreviewMapLoading(mapEl);
   }
 
   async function updateLandPreviewLayerStyle(previewMap, layerName, sourceIdPrefix, layerStyles) {
@@ -2615,6 +3077,7 @@
     selectedNames,
     sourceIdPrefix,
     layerStyles,
+    layerConfigs,
     allLayerNames,
     layerMetaList,
   ) {
@@ -2634,6 +3097,7 @@
           layerName,
           sourceIdPrefix,
           layerStyles,
+          layerConfigs,
           layerMetaList,
         );
         const layerMeta = layerMetaList.find((layer) => layer.name === layerName);
@@ -2649,9 +3113,9 @@
     importLandPreviewPath = "";
     importLandPreviewBusy = false;
     importLandLayerStyles = new Map();
+    importLandLayerConfigs = new Map();
     if (importLandPreviewMapEl) {
-      landPreviewLoadingCounts.delete(importLandPreviewMapEl);
-      setLandPreviewMapLoading(importLandPreviewMapEl, false);
+      resetLandPreviewMapLoading(importLandPreviewMapEl);
     }
     if (importLandGdb) importLandGdb.value = "";
     if (importLandLabel) importLandLabel.value = "";
@@ -2721,14 +3185,21 @@
       importLandPreviewPath = path;
       importLandPreviewLayers = Array.isArray(payload.layers) ? payload.layers : [];
       importLandLayerStyles = new Map();
+      importLandLayerConfigs = new Map();
       if (importLandPreviewField) importLandPreviewField.hidden = false;
       if (importLandStatus) {
         importLandStatus.textContent = `${importLandPreviewLayers.length} layer(s) in ${path}`;
       }
       const selected = new Set();
+      if (importLandPreviewLayers.length === 1) {
+        selected.add(importLandPreviewLayers[0].name);
+      }
+      importLandPreviewMap = ensureLandPreviewMap(importLandPreviewMapEl, importLandPreviewMap);
       renderLandLayerChecklist(importLandLayerList, importLandPreviewLayers, {
         selected,
         layerStyles: importLandLayerStyles,
+        layerConfigs: importLandLayerConfigs,
+        gdbPath: importLandPreviewPath,
         countEl: importLandListCount,
         onToggle: (name, checked) => {
           if (checked) selected.add(name);
@@ -2746,10 +3217,17 @@
               name,
               "import",
               importLandLayerStyles,
+              importLandLayerConfigs,
               importLandPreviewLayers,
             );
           } else {
-            hideLandPreviewLayer(importLandPreviewMap, "import", name);
+            hideLandPreviewLayer(
+              importLandPreviewMap,
+              "import",
+              name,
+              importLandPreviewMapEl,
+              importLandLayerList,
+            );
           }
         },
         onStyleChange: (name) => {
@@ -2757,11 +3235,36 @@
             void updateLandPreviewLayerStyle(importLandPreviewMap, name, "import", importLandLayerStyles);
           }
         },
+        onLabelFieldChange: (name) => {
+          if (!selected.has(name)) return;
+          void refreshLandPreviewLayerConfig(
+            importLandPreviewMap,
+            importLandPreviewPath,
+            name,
+            "import",
+            importLandLayerStyles,
+            importLandLayerConfigs,
+          );
+        },
       });
-      importLandPreviewMap = ensureLandPreviewMap(importLandPreviewMapEl, importLandPreviewMap);
-      if (importLandSave) importLandSave.disabled = true;
+      if (importLandSave) importLandSave.disabled = selected.size === 0;
       if (importLandSelectAll) importLandSelectAll.disabled = importLandPreviewLayers.length === 0;
       if (importLandClearAll) importLandClearAll.disabled = importLandPreviewLayers.length === 0;
+      await whenPreviewMapReady(importLandPreviewMap);
+      requestAnimationFrame(() => importLandPreviewMap?.resize());
+      for (const name of selected) {
+        await showLandPreviewLayer(
+          importLandPreviewMap,
+          importLandPreviewMapEl,
+          importLandLayerList,
+          importLandPreviewPath,
+          name,
+          "import",
+          importLandLayerStyles,
+          importLandLayerConfigs,
+          importLandPreviewLayers,
+        );
+      }
       fitPreviewMapToBboxes(
         importLandPreviewMap,
         importLandPreviewLayers.map((layer) => layer.bbox).filter(Boolean),
@@ -2804,8 +3307,11 @@
     try {
       const body = {
         path: importLandPreviewPath,
-        layers: selected,
-        layer_styles: landLayerStylePayload(importLandLayerStyles, selected),
+        layers: collectSelectedLayerPayloads(
+          importLandLayerList,
+          importLandLayerStyles,
+          importLandLayerConfigs,
+        ),
       };
       if (importLandLabel?.value.trim()) body.label = importLandLabel.value.trim();
       const resp = await fetch(landImportApiUrl(), {
@@ -2822,9 +3328,10 @@
       await reloadLandSources();
       const source = payload.source;
       if (source?.id && Array.isArray(source.layers)) {
-        for (const layer of source.layers) {
-          setLandLayerVisible(source.id, layer, true);
-          await ensureLandMapLayer(source.id, layer);
+        for (const rawLayer of source.layers) {
+          const spec = normalizeRegisteredLayer(rawLayer);
+          setLandLayerVisible(source.id, spec.key, true);
+          await ensureLandMapLayer(source.id, spec.key);
         }
       }
     } catch (_) {
@@ -2856,12 +3363,16 @@
       }
       editLandPreviewLayers = Array.isArray(payload.layers) ? payload.layers : [];
       editLandLayerStyles = new Map();
-      const sourceStyles = source.layerStyles || source.layer_styles || {};
-      const allLayerNames = editLandPreviewLayers.map((layer) => layer.name);
-      for (const layer of editLandPreviewLayers) {
-        ensureLandLayerStyleState(editLandLayerStyles, layer.name, sourceStyles[layer.name]);
+      editLandLayerConfigs = new Map();
+      const registeredByName = new Map();
+      for (const rawLayer of source.layers || []) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        registeredByName.set(spec.name, rawLayer);
+        editLandLayerConfigs.set(spec.name, configFromRegisteredLayer(rawLayer));
+        ensureLandLayerStyleState(editLandLayerStyles, spec.name, flatStyleFromLayerSpec(spec));
       }
-      const selected = new Set(Array.isArray(source.layers) ? source.layers : []);
+      const allLayerNames = editLandPreviewLayers.map((layer) => layer.name);
+      const selected = new Set([...registeredByName.keys()]);
       const refreshEditPreview = () => {
         void syncLandPreviewMap(
           editLandPreviewMap,
@@ -2871,6 +3382,7 @@
           selected,
           "edit",
           editLandLayerStyles,
+          editLandLayerConfigs,
           allLayerNames,
           editLandPreviewLayers,
         );
@@ -2878,6 +3390,8 @@
       renderLandLayerChecklist(editLandLayerList, editLandPreviewLayers, {
         selected,
         layerStyles: editLandLayerStyles,
+        layerConfigs: editLandLayerConfigs,
+        gdbPath: editLandPreviewPath,
         countEl: editLandListCount,
         onToggle: (name, checked) => {
           if (checked) selected.add(name);
@@ -2895,16 +3409,34 @@
               name,
               "edit",
               editLandLayerStyles,
+              editLandLayerConfigs,
               editLandPreviewLayers,
             );
           } else {
-            hideLandPreviewLayer(editLandPreviewMap, "edit", name);
+            hideLandPreviewLayer(
+              editLandPreviewMap,
+              "edit",
+              name,
+              editLandPreviewMapEl,
+              editLandLayerList,
+            );
           }
         },
         onStyleChange: (name) => {
           if (selected.has(name)) {
             void updateLandPreviewLayerStyle(editLandPreviewMap, name, "edit", editLandLayerStyles);
           }
+        },
+        onLabelFieldChange: (name) => {
+          if (!selected.has(name)) return;
+          void refreshLandPreviewLayerConfig(
+            editLandPreviewMap,
+            editLandPreviewPath,
+            name,
+            "edit",
+            editLandLayerStyles,
+            editLandLayerConfigs,
+          );
         },
       });
       editLandPreviewMap = ensureLandPreviewMap(editLandPreviewMapEl, editLandPreviewMap);
@@ -2928,12 +3460,17 @@
     setEditLandError("");
     if (editLandSave) editLandSave.disabled = true;
     const prevSource = landSources.find((s) => s.id === editLandSourceId);
-    const prevLayers = new Set(Array.isArray(prevSource?.layers) ? prevSource.layers : []);
+    const prevKeys = new Set(
+      (prevSource?.layers || []).map((layer) => normalizeRegisteredLayer(layer).key),
+    );
     try {
       const body = {
-        layers: selected,
+        layers: collectSelectedLayerPayloads(
+          editLandLayerList,
+          editLandLayerStyles,
+          editLandLayerConfigs,
+        ),
         label: editLandLabel?.value.trim() || editLandSourceId,
-        layer_styles: landLayerStylePayload(editLandLayerStyles, selected),
       };
       const resp = await fetch(landSourceApiUrl(editLandSourceId), {
         method: "PATCH",
@@ -2946,18 +3483,20 @@
         return;
       }
       if (editLandModal) editLandModal.open = false;
-      for (const layer of prevLayers) {
-        if (!selected.includes(layer)) {
-          removeLandMapLayer(editLandSourceId, layer);
-          landVisible.delete(landLayerKey(editLandSourceId, layer));
+      const updated = payload.source || landSources.find((s) => s.id === editLandSourceId);
+      const newKeys = new Set(
+        (updated?.layers || []).map((layer) => normalizeRegisteredLayer(layer).key),
+      );
+      for (const key of prevKeys) {
+        if (!newKeys.has(key)) {
+          removeLandMapLayer(editLandSourceId, key);
+          landVisible.delete(landLayerKey(editLandSourceId, key));
         }
       }
       await reloadLandSources();
-      for (const layer of selected) {
-        if (!prevLayers.has(layer)) {
-          setLandLayerVisible(editLandSourceId, layer, true);
-        }
-        await ensureLandMapLayer(editLandSourceId, layer);
+      for (const key of newKeys) {
+        if (!prevKeys.has(key)) setLandLayerVisible(editLandSourceId, key, true);
+        await ensureLandMapLayer(editLandSourceId, key);
       }
     } catch (_) {
       setEditLandError("Could not reach server.");
@@ -5825,7 +6364,9 @@
   if (importLandSelectAll) {
     importLandSelectAll.addEventListener("click", () => {
       if (!importLandLayerList) return;
-      for (const input of importLandLayerList.querySelectorAll('input[type="checkbox"]')) {
+      for (const input of importLandLayerList.querySelectorAll(
+        'input[type="checkbox"][data-layer-name]',
+      )) {
         input.checked = true;
         input.dispatchEvent(new Event("change"));
       }
@@ -5834,7 +6375,9 @@
   if (importLandClearAll) {
     importLandClearAll.addEventListener("click", () => {
       if (!importLandLayerList) return;
-      for (const input of importLandLayerList.querySelectorAll('input[type="checkbox"]')) {
+      for (const input of importLandLayerList.querySelectorAll(
+        'input[type="checkbox"][data-layer-name]',
+      )) {
         input.checked = false;
         input.dispatchEvent(new Event("change"));
       }
@@ -5856,7 +6399,9 @@
   if (editLandSelectAll) {
     editLandSelectAll.addEventListener("click", () => {
       if (!editLandLayerList) return;
-      for (const input of editLandLayerList.querySelectorAll('input[type="checkbox"]')) {
+      for (const input of editLandLayerList.querySelectorAll(
+        'input[type="checkbox"][data-layer-name]',
+      )) {
         input.checked = true;
         input.dispatchEvent(new Event("change"));
       }
@@ -5865,7 +6410,9 @@
   if (editLandClearAll) {
     editLandClearAll.addEventListener("click", () => {
       if (!editLandLayerList) return;
-      for (const input of editLandLayerList.querySelectorAll('input[type="checkbox"]')) {
+      for (const input of editLandLayerList.querySelectorAll(
+        'input[type="checkbox"][data-layer-name]',
+      )) {
         input.checked = false;
         input.dispatchEvent(new Event("change"));
       }
@@ -5887,6 +6434,7 @@
       editLandPreviewLayers = [];
       editLandPreviewPath = "";
       editLandLayerStyles = new Map();
+      editLandLayerConfigs = new Map();
       if (editLandLayerList) editLandLayerList.innerHTML = "";
       setEditLandError("");
     });
