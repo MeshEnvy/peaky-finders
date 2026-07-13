@@ -1969,6 +1969,107 @@
     return parts.join(" ");
   }
 
+  function landPathBasename(path) {
+    let raw = path;
+    if (Array.isArray(raw)) raw = raw.join("/");
+    raw = String(raw ?? "").trim().replace(/^data\//, "");
+    const base = raw.split("/").pop() || raw;
+    return base.replace(/\.gdb$/i, "");
+  }
+
+  function humanizeLandText(text) {
+    return (
+      String(text)
+        .replace(/[_-]+-?\d{10,}$/, "")
+        .replace(/[_-]+$/g, "")
+        .replace(/_/g, " ")
+        .replace(/\s+/g, " ")
+        .trim() || String(text)
+    );
+  }
+
+  function friendlyLandLayerName(name) {
+    return humanizeLandText(String(name).replace(/^BLM[_\s-]+/i, ""));
+  }
+
+  function friendlyLandSourceTitle(source) {
+    const explicit = String(source.label || "").trim();
+    if (explicit && explicit !== source.id) return explicit;
+    return humanizeLandText(landPathBasename(source.path));
+  }
+
+  function landSourceDisplayTitles(sources) {
+    const titles = new Map();
+    const groups = new Map();
+    for (const source of sources) {
+      const title = friendlyLandSourceTitle(source);
+      titles.set(source.id, title);
+      if (!groups.has(title)) groups.set(title, []);
+      groups.get(title).push(source.id);
+    }
+    for (const ids of groups.values()) {
+      if (ids.length <= 1) continue;
+      ids.forEach((id, idx) => {
+        const suffix = id.match(/-(\d+)$/);
+        const base = titles.get(id);
+        titles.set(id, suffix ? `${base} (${suffix[1]})` : `${base} (${idx + 1})`);
+      });
+    }
+    return titles;
+  }
+
+  function appendLandLayerMeta(parent, spec) {
+    const meta = document.createElement("div");
+    meta.className = "entity-panel__meta";
+    let hasMeta = false;
+
+    for (const filt of spec.include || []) {
+      const field = filt.field || "";
+      for (const value of filt.values || []) {
+        if (!value) continue;
+        const pill = document.createElement("span");
+        pill.className = "entity-panel__meta-tag entity-panel__meta-tag--active";
+        pill.textContent = field ? `${field}: ${value}` : String(value);
+        meta.appendChild(pill);
+        hasMeta = true;
+      }
+    }
+
+    for (const filt of spec.exclude || []) {
+      const field = filt.field || "";
+      for (const value of filt.values || []) {
+        if (!value) continue;
+        const pill = document.createElement("span");
+        pill.className = "entity-panel__meta-tag entity-panel__meta-tag--exclude";
+        pill.textContent = field ? `−${field}: ${value}` : `−${value}`;
+        meta.appendChild(pill);
+        hasMeta = true;
+      }
+    }
+
+    const styleMap = styleMapFromLayerSpec(spec);
+    if (styleMap && Object.keys(styleMap).length) {
+      const legend = document.createElement("div");
+      legend.className = "entity-panel__land-legend";
+      for (const [key, rawStyle] of Object.entries(styleMap)) {
+        const style = normalizeLandLayerStyle(rawStyle);
+        const chip = document.createElement("span");
+        chip.className = "entity-panel__land-legend-chip";
+        const swatch = document.createElement("span");
+        swatch.className = "entity-panel__land-legend-swatch";
+        swatch.style.backgroundColor = style.color;
+        swatch.style.opacity = String(style.opacity);
+        chip.appendChild(swatch);
+        chip.append(String(key));
+        legend.appendChild(chip);
+      }
+      meta.appendChild(legend);
+      hasMeta = true;
+    }
+
+    if (hasMeta) parent.appendChild(meta);
+  }
+
   function styleMapFromLayerSpec(spec) {
     if (!spec?.style) return null;
     if (spec.styleField && typeof spec.style === "object" && !("color" in spec.style)) {
@@ -2488,6 +2589,40 @@
     }
   }
 
+  function buildLandLayerEyeBtn(sourceId, layerKey) {
+    const visible = isLandLayerVisible(sourceId, layerKey);
+    return makeEntityPanelActionBtn({
+      icon: visible ? "eye" : "eye-slash",
+      label: visible ? "Hide layer on map" : "Show layer on map",
+      active: visible,
+      onClick: () => {
+        const next = !isLandLayerVisible(sourceId, layerKey);
+        setLandLayerVisible(sourceId, layerKey, next);
+        renderLandPanel();
+        if (next) void ensureLandMapLayer(sourceId, layerKey);
+      },
+    });
+  }
+
+  function buildLandSourceActionBtns(sourceId) {
+    const editBtn = makeEntityPanelActionBtn({
+      icon: "pen",
+      label: "Edit layers",
+      onClick: () => {
+        void openEditLandModal(sourceId);
+      },
+    });
+    const deleteBtn = makeEntityPanelActionBtn({
+      icon: "trash",
+      label: "Remove source",
+      danger: true,
+      onClick: () => {
+        void deleteLandSource(sourceId);
+      },
+    });
+    return [editBtn, deleteBtn];
+  }
+
   function renderLandPanel() {
     if (!entityPanelLandList) return;
     const rows = landLayerRows();
@@ -2503,75 +2638,66 @@
       entityPanelLandList.appendChild(empty);
       return;
     }
+    const displayTitles = landSourceDisplayTitles(landSources);
     const bySource = new Map();
     for (const row of rows) {
       if (!bySource.has(row.sourceId)) bySource.set(row.sourceId, []);
       bySource.get(row.sourceId).push(row);
     }
     for (const [sourceId, sourceRows] of bySource) {
+      const sourceTitle = displayTitles.get(sourceId) || sourceRows[0].label;
+      if (sourceRows.length === 1) {
+        entityPanelLandList.appendChild(
+          buildLandEntityRow(sourceRows[0], { title: sourceTitle, showSourceActions: true }),
+        );
+        continue;
+      }
       const header = document.createElement("div");
       header.className = "entity-panel__land-source";
       const title = document.createElement("div");
       title.className = "entity-panel__land-source-title";
-      title.textContent = sourceRows[0].label;
+      title.textContent = sourceTitle;
       const actions = document.createElement("div");
       actions.className = "entity-panel__land-source-actions";
-      const editBtn = document.createElement("button");
-      editBtn.type = "button";
-      editBtn.className = "entity-panel__action";
-      editBtn.title = "Edit layers";
-      editBtn.innerHTML = mapToolIcon("pen", "Edit");
-      editBtn.addEventListener("click", () => {
-        void openEditLandModal(sourceId);
-      });
-      const deleteBtn = document.createElement("button");
-      deleteBtn.type = "button";
-      deleteBtn.className = "entity-panel__action";
-      deleteBtn.title = "Remove source";
-      deleteBtn.innerHTML = mapToolIcon("trash", "Delete");
-      deleteBtn.addEventListener("click", () => {
-        void deleteLandSource(sourceId);
-      });
-      actions.appendChild(editBtn);
-      actions.appendChild(deleteBtn);
+      for (const btn of buildLandSourceActionBtns(sourceId)) actions.appendChild(btn);
       header.appendChild(title);
       header.appendChild(actions);
       entityPanelLandList.appendChild(header);
       for (const row of sourceRows) {
-        entityPanelLandList.appendChild(buildLandEntityRow(row));
+        entityPanelLandList.appendChild(
+          buildLandEntityRow(row, {
+            title: friendlyLandLayerName(row.spec.name),
+            nested: true,
+          }),
+        );
       }
     }
   }
 
-  function buildLandEntityRow(row) {
+  function buildLandEntityRow(row, { title, showSourceActions = false, nested = false } = {}) {
     const el = document.createElement("div");
     el.className = "entity-panel__row entity-panel__row--land";
+    if (showSourceActions) el.classList.add("entity-panel__row--land-source");
+    if (nested) el.classList.add("entity-panel__row--land-nested");
     el.dataset.landKey = landLayerKey(row.sourceId, row.layerKey);
+    const visible = isLandLayerVisible(row.sourceId, row.layerKey);
+    if (!visible) el.classList.add("entity-panel__row--hidden");
+
     const main = document.createElement("div");
     main.className = "entity-panel__main";
     const name = document.createElement("div");
     name.className = "entity-panel__name";
-    name.textContent = `${row.label} · ${landLayerDisplayName(row.spec)}`;
-    const meta = document.createElement("div");
-    meta.className = "entity-panel__meta pf-muted";
-    meta.textContent = row.path;
+    name.textContent = title || friendlyLandLayerName(row.spec.name);
     main.appendChild(name);
-    main.appendChild(meta);
+    appendLandLayerMeta(main, row.spec);
+
     const controls = document.createElement("div");
     controls.className = "entity-panel__controls";
-    const eye = document.createElement("button");
-    eye.type = "button";
-    eye.className = "entity-panel__action";
-    eye.title = "Toggle visibility";
-    const visible = isLandLayerVisible(row.sourceId, row.layerKey);
-    eye.innerHTML = mapToolIcon(visible ? "eye" : "eye-slash", "Visibility");
-    eye.addEventListener("click", () => {
-      const next = !isLandLayerVisible(row.sourceId, row.layerKey);
-      setLandLayerVisible(row.sourceId, row.layerKey, next);
-      eye.innerHTML = mapToolIcon(next ? "eye" : "eye-slash", "Visibility");
-      if (next) void ensureLandMapLayer(row.sourceId, row.layerKey);
-    });
-    controls.appendChild(eye);
+    controls.appendChild(buildLandLayerEyeBtn(row.sourceId, row.layerKey));
+    if (showSourceActions) {
+      for (const btn of buildLandSourceActionBtns(row.sourceId)) controls.appendChild(btn);
+    }
+
     el.appendChild(main);
     el.appendChild(controls);
     return el;

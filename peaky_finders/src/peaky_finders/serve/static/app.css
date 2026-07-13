@@ -1047,7 +1047,8 @@ wa-dropdown-item.is-active::part(base) {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem 0.45rem;
-  margin-top: 0.2rem;
+  margin-top: 0;
+  width: 100%;
 }
 
 .entity-panel__land-legend-chip {
@@ -1070,24 +1071,40 @@ wa-dropdown-item.is-active::part(base) {
   font-size: 0.75rem;
 }
 
+.entity-panel__row--land-nested {
+  padding-left: 0.85rem;
+}
+
+.entity-panel__meta-tag--exclude {
+  opacity: 0.72;
+  text-decoration: line-through;
+}
+
 .entity-panel__land-source {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.35rem 0.5rem 0.15rem;
+  padding: 0.5rem 0.35rem 0.15rem;
   border-top: 1px solid var(--wa-color-surface-border);
 }
 
+.entity-panel__land-source:first-child {
+  border-top: 0;
+  padding-top: 0.15rem;
+}
+
 .entity-panel__land-source-title {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
-  color: var(--wa-color-text-quiet);
+  color: var(--wa-color-text-normal);
+  line-height: 1.25;
 }
 
 .entity-panel__land-source-actions {
   display: flex;
-  gap: 0.25rem;
+  gap: 0.1rem;
+  flex-shrink: 0;
 }
 
 .entity-tabs {
