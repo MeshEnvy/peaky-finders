@@ -1918,6 +1918,8 @@
   function defaultLandLayerConfig() {
     return {
       labelField: "",
+      include: [],
+      exclude: [],
       attrsOpen: false,
       fields: null,
       fieldsLoading: false,
@@ -1960,6 +1962,10 @@
       .flatMap((filt) => (Array.isArray(filt.values) ? filt.values : []))
       .filter(Boolean);
     if (includeValues.length) parts.push(`(${includeValues.join(", ")})`);
+    const excludeValues = (spec.exclude || [])
+      .flatMap((filt) => (Array.isArray(filt.values) ? filt.values : []))
+      .filter(Boolean);
+    if (excludeValues.length) parts.push(`(−${excludeValues.join(", ")})`);
     return parts.join(" ");
   }
 
@@ -2009,6 +2015,8 @@
     const config = layerConfigs.get(name) || defaultLandLayerConfig();
     const row = { name };
     if (config.labelField) row.labelField = config.labelField;
+    if (config.include?.length) row.include = config.include;
+    if (config.exclude?.length) row.exclude = config.exclude;
     if (layerStyles.has(name)) {
       row.style = normalizeLandLayerStyle(layerStyles.get(name));
     }
@@ -2022,10 +2030,33 @@
     return `9${upper}`;
   }
 
+  function excludedValuesForField(config, field) {
+    if (!field) return new Set();
+    const filt = (config.exclude || []).find((item) => item.field === field);
+    return new Set(Array.isArray(filt?.values) ? filt.values : []);
+  }
+
+  function setExcludedValueForField(config, field, value, excluded) {
+    if (!field || !value) return;
+    if (!Array.isArray(config.exclude)) config.exclude = [];
+    let filt = config.exclude.find((item) => item.field === field);
+    if (!filt) {
+      filt = { field, values: [] };
+      config.exclude.push(filt);
+    }
+    const values = new Set(Array.isArray(filt.values) ? filt.values : []);
+    if (excluded) values.add(value);
+    else values.delete(value);
+    filt.values = [...values];
+    config.exclude = config.exclude.filter((item) => Array.isArray(item.values) && item.values.length);
+  }
+
   function configFromRegisteredLayer(layer) {
     const spec = normalizeRegisteredLayer(layer);
     return {
       labelField: spec.labelField || "",
+      include: spec.include || [],
+      exclude: spec.exclude || [],
       attrsOpen: false,
       fields: null,
       fieldsLoading: false,
@@ -2052,6 +2083,14 @@
     return payload;
   }
 
+  function landPreviewLayerConfig(config) {
+    if (!config) return null;
+    if (config.labelField || config.include?.length || config.exclude?.length || config.styleField) {
+      return config;
+    }
+    return null;
+  }
+
   async function fetchLandPreviewGeoJson(path, layer, layerConfig) {
     const cacheKey = `${landPreviewCacheKey(path, layer)}|${JSON.stringify(layerConfig || {})}`;
     return fetchCachedGeoJson(
@@ -2059,7 +2098,13 @@
       landPreviewGeoJsonInflight,
       cacheKey,
       async () => {
-        if (layerConfig && (layerConfig.include?.length || layerConfig.styleField || layerConfig.labelField)) {
+        if (
+          layerConfig &&
+          (layerConfig.include?.length ||
+            layerConfig.exclude?.length ||
+            layerConfig.styleField ||
+            layerConfig.labelField)
+        ) {
           const body = {
             path,
             layer,
@@ -2689,6 +2734,16 @@
     const valuesEl = document.createElement("div");
     valuesEl.className = "import-land-attrs-values";
 
+    const valuesTitle = document.createElement("div");
+    valuesTitle.className = "import-land-attrs-section-title";
+    valuesTitle.textContent = "Categories";
+    valuesTitle.hidden = true;
+
+    const valuesHint = document.createElement("div");
+    valuesHint.className = "wa-caption pf-muted import-land-attrs-values-hint";
+    valuesHint.textContent = "Check to exclude from import";
+    valuesHint.hidden = true;
+
     function populateLabelSelect() {
       const fields = config.fields || [];
       const prev = labelSelect.value || config.labelField;
@@ -2709,8 +2764,12 @@
     async function loadLabelValues() {
       if (!config.labelField) {
         valuesEl.innerHTML = "";
+        valuesTitle.hidden = true;
+        valuesHint.hidden = true;
         return;
       }
+      valuesTitle.hidden = false;
+      valuesHint.hidden = false;
       valuesEl.innerHTML = '<span class="wa-caption pf-muted">Loading…</span>';
       try {
         const payload = await fetchLandFieldValues(gdbPath, layerName, config.labelField);
@@ -2720,10 +2779,30 @@
           valuesEl.innerHTML = '<span class="wa-caption pf-muted">No values</span>';
           return;
         }
+        const excluded = excludedValuesForField(config, config.labelField);
         for (const row of rows) {
-          const item = document.createElement("div");
-          item.className = "import-land-attrs-value-row import-land-attrs-value-row--read-only";
-          item.textContent = `${row.value} (${row.count})`;
+          const item = document.createElement("label");
+          item.className = "import-land-attrs-value-row";
+          if (excluded.has(row.value)) {
+            item.classList.add("import-land-attrs-value-row--excluded");
+          }
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = excluded.has(row.value);
+          checkbox.title = "Exclude this category";
+
+          const text = document.createElement("span");
+          text.textContent = `${row.value} (${row.count})`;
+
+          checkbox.addEventListener("change", () => {
+            setExcludedValueForField(config, config.labelField, row.value, checkbox.checked);
+            item.classList.toggle("import-land-attrs-value-row--excluded", checkbox.checked);
+            if (onLabelFieldChange) onLabelFieldChange(layerName);
+          });
+
+          item.appendChild(checkbox);
+          item.appendChild(text);
           valuesEl.appendChild(item);
         }
       } catch (_) {
@@ -2759,6 +2838,8 @@
 
     panel.appendChild(labelTitle);
     panel.appendChild(labelSelect);
+    panel.appendChild(valuesTitle);
+    panel.appendChild(valuesHint);
     panel.appendChild(valuesEl);
 
     void ensureFields().then(() => {
@@ -2995,7 +3076,7 @@
       const geojson = await fetchLandPreviewGeoJson(
         path,
         layerName,
-        config.labelField ? config : null,
+        landPreviewLayerConfig(config),
       );
       if (previewMap.getSource(sourceName)) {
         previewMap.getSource(sourceName).setData(geojson);
@@ -3039,7 +3120,7 @@
       const geojson = await fetchLandPreviewGeoJson(
         path,
         layerName,
-        config.labelField ? config : null,
+        landPreviewLayerConfig(config),
       );
       await applyLandPreviewMapData(previewMap, sourceName, fillId, lineId, geojson, style, config);
       const layerMeta = layerMetaList.find((layer) => layer.name === layerName);

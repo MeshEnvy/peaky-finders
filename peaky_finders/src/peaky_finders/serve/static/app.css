@@ -1003,6 +1003,15 @@ wa-dropdown-item.is-active::part(base) {
   cursor: pointer;
 }
 
+.import-land-attrs-value-row--excluded span {
+  text-decoration: line-through;
+  color: var(--wa-color-text-quiet);
+}
+
+.import-land-attrs-values-hint {
+  margin-top: -0.1rem;
+}
+
 .import-land-attrs-picks {
   display: flex;
   flex-wrap: wrap;

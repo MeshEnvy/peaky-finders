@@ -137,6 +137,24 @@ def test_ogr_where_for_land_layer_filters(tmp_path: Path) -> None:
     assert gdf.iloc[0]["ABBR"] == "BLM"
 
 
+def test_ogr_where_for_land_layer_exclude_filters(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo"
+    project_dir.mkdir()
+    rel = _write_test_gdb(project_dir, with_agency=True)
+    gdb_path = resolve_land_gdb_path(project_dir, rel)
+    entry = LandLayerEntry(
+        name="poly",
+        exclude=[{"field": "NAME", "values": ["Private"]}],
+        label_field="NAME",
+    )
+    where = ogr_where_for_land_layer(entry)
+    assert where is not None
+    assert "Private" in where
+    gdf = gpd.read_file(gdb_path, layer="poly", where=where)
+    assert len(gdf) == 1
+    assert gdf.iloc[0]["NAME"] == "Bureau of Land Management"
+
+
 def test_resolve_land_gdb_path_rejects_outside_data(tmp_path: Path) -> None:
     project_dir = tmp_path / "demo"
     project_dir.mkdir()
@@ -384,6 +402,53 @@ def test_land_import_and_geojson_endpoint(tmp_path: Path) -> None:
         geojson = json.loads(resp.read().decode("utf-8"))
         style_keys = {feat["properties"]["style_key"] for feat in geojson["features"]}
         assert style_keys == {"BLM", "PVT"}
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_land_import_excludes_private(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+    project_dir = projects_dir / "mesh-demo"
+    rel = _write_test_gdb(project_dir, with_agency=True)
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps(
+            {
+                "path": rel,
+                "layers": [
+                    {
+                        "name": "poly",
+                        "exclude": [{"field": "NAME", "values": ["Private"]}],
+                        "labelField": "NAME",
+                        "style": {"color": "#4a6cf7", "opacity": 0.48},
+                    }
+                ],
+                "label": "Parcels",
+            }
+        ).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request(
+            "POST",
+            "/api/p/mesh-demo/land/import",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 201
+        assert payload["source"]["layers"][0]["exclude"][0]["values"] == ["Private"]
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/p/mesh-demo/land/sources/test-parcel/layers/poly/geojson")
+        resp = conn.getresponse()
+        assert resp.status == 200
+        geojson = json.loads(resp.read().decode("utf-8"))
+        labels = {feat["properties"].get("label") for feat in geojson["features"]}
+        assert labels == {"Bureau of Land Management"}
     finally:
         server.shutdown()
         server.server_close()
