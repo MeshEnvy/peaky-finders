@@ -24,30 +24,39 @@ Read [MEMORY.md](../../MEMORY.md) first.
 | `display` | Viewshed colormap / transparency |
 | `sites` | `name`, `loc`, optional `tags`, `height_m`, metadata — **no `type`** |
 | `links` | Manual pairs `[[a, b], …]` |
-| `land` | Project-only GDB overlay registry (`land.sources`) — informational v1 |
+| `land` | Project-only GDB overlay registry (`land.sources`) — attribute filters + style-by-value v2 |
 
 `load_preset` deep-merges global ← project. Writes prune keys equal to defaults.
 
-## Land (v1)
+## Land (v2)
 
-Project-only (`_PROJECT_ONLY_KEYS`). GDBs live under `projects/<slug>/data/`; import **registers** path + layer list (no file copy).
+Project-only (`_PROJECT_ONLY_KEYS`). GDBs live under `projects/<slug>/data/`; import **registers** path + structured layer entries (no file copy).
 
 ```yaml
 land:
   sources:
-    blm_field_offices:
-      path: data/BLM_NV_Field_Office_Boundary_Polygons.gdb
-      layers: [admu_ofc_poly]
-      label: BLM field offices   # optional
-      layer_styles:
-        admu_ofc_poly:
-          color: "#4a6cf7"
-          opacity: 0.48
+    blm_sma:
+      path: data/BLM_Nevada_Surface_Management_Agency.gdb
+      label: BLM surface management
+      layers:
+        - name: Land_Status_Dis
+          include:
+            - field: ABBR
+              values: [BLM, FS]
+          label_field: NAME
+          style_field: ABBR
+          style:
+            BLM: { color: "#f4a261", opacity: 0.55 }
+            FS: { color: "#2a9d8f", opacity: 0.55 }
+        - name: admu_ofc_poly
+          style: { color: "#4a6cf7", opacity: 0.48 }
 ```
 
 - `path` — relative to project dir; must resolve under `data/` and end with `.gdb`
-- `layer_styles` — optional per-layer `{color, opacity}` (defaults: `#4a6cf7` / `0.48`)
-- Cache: `<project>/.peaky/cache/land/<source_id>/<layer>.geojson` + `manifest.json` (digest from GDB mtime + layer name)
+- `layers[]` — `LandLayerEntry`: `name`, optional `id`, `include`/`exclude` (`field` + `values`), `label_field`, `style_field`, `style` (flat `{color, opacity}` or per-value map when `style_field` set)
+- Legacy `layers: [str]` + top-level `layer_styles` coerced to layer objects on load
+- GeoJSON route key: `layers/<layerKey>/geojson` where `layerKey` = slug(`id`) or slug(`name`)
+- Cache: `<project>/.peaky/cache/land/<source_id>/<layerKey>.geojson` + digest (GDB mtime, filters, label/style fields)
 
 ## Sites
 
