@@ -61,7 +61,7 @@ Global defaults: `$PEAKY_HOME/config.yaml`, `modems.yaml`, `environments.yaml`. 
 
 Entity sidebar: **Sites | Land** tabs (`entityPanelTab` in `localStorage`). Sites panel: **+ Site** (manual add) and **Import** (KML/KMZ Point placemarks). **Bulk tag** adds/removes tags on sites currently listed in the sidebar (`POST …/sites/tags/bulk`); scope follows sidebar filters (**In view**, tag intersect/union). Open/closed state persists per project in `localStorage` (`peaky.map.v1.<slug>`). Sidebar **In view** toggle filters the site list to sites whose coords project inside the map canvas (client-side `map.project`, not geographic bounds — accurate with pitch; persists in map state). Row actions: eye (site visibility), droplet (viewshed), trash (delete). Multi-select tag filters with **intersect/union** mode (default **intersect** = AND); site rows always show all tags, with active filter tags highlighted. Import flow: file → `POST …/sites/import/preview` → in-modal MapLibre preview + scrollable point list with per-row **Import** toggle, **Select all** / **Clear all**, and **In view** filter; points within **100 m** of an existing site default skipped (gray on map); tags → `POST …/sites/import` with filtered `points[]` (`serve/kml_import.py`, `import_sites_to_preset`).
 
-Land panel (v2): informational GDB overlays from `projects/<slug>/data/**/*.gdb` — no upload, no AOI/eligible pipeline. **Import** modal: pick GDB, preview layers, per-layer **Attributes** panel (`labelField`, per-category **exclude** checkboxes on distinct values, `styleField`, per-value colors). Registers structured `land.sources.<id>.layers[]` entries (`name`, optional `include`/`exclude`, `label_field`, `style_field`, flat or per-value `style`) in preset. GeoJSON features carry `properties.label` and `properties.style_key`; main map uses MapLibre `match` on `style_key` when styled. Sidebar: flat draggable list (grip handle) — list top renders above list bottom; order persisted in `landLayerOrder` in map state. Multi-layer sources show source subtitle; edit/delete on first row per source in list order. Filter include/exclude as meta chips; styled layers show legend swatches. Per-layer eye toggles (`landVisible` in map state); per-layer label toggles (`landLabelsVisible`, default on when `label_field` set). Cache digest includes filters + label/style fields (`serve/land.py`, `serve/land_import.py`).
+Land panel (v2): informational GDB overlays from `projects/<slug>/data/**/*.gdb` — no upload. **Import** modal: pick GDB, preview layers (full GDB — not AOI-clipped), per-layer **Attributes** (`role`, `labelField`, category exclude checkboxes, `styleField`, colors). Registers `land.sources.<id>.layers[]` (`name`, optional `role: aoi|include|exclude`, attribute `include`/`exclude`, `label_field`, `style_field`, `style`). **`role: aoi`** layers union to uber-AOI; serve GeoJSON for other layers clips to that boundary (lazy on `GET …/geojson`). Preview cache never clips; serve cache digest includes `aoi_digest`. AOI change purges clipped serve files; client reloads visible layers with per-row spinners. `include`/`exclude` roles reserved. Sidebar: draggable list, AOI badge, filter chips, legend, eye + label toggles.
 
 | Sites API | Role |
 |-----------|------|
@@ -72,7 +72,7 @@ Land panel (v2): informational GDB overlays from `projects/<slug>/data/**/*.gdb`
 
 | Land API | Role |
 |----------|------|
-| `GET /api/p/<slug>/land` | List registered sources + layer entries (`key`, filters, style) |
+| `GET /api/p/<slug>/land` | List sources + layers; `aoiDigest` |
 | `GET …/land/data-gdbs` | GDB paths under `data/` |
 | `POST …/land/import/preview` | Layer list + bbox for modal (`path`) |
 | `GET …/land/import/preview/fields` | Layer attribute fields + row count |
@@ -81,7 +81,7 @@ Land panel (v2): informational GDB overlays from `projects/<slug>/data/**/*.gdb`
 | `PATCH …/land/sources/<id>` | Update `layers[]` / `label` |
 | `DELETE …/land/sources/<id>` | Remove source + invalidate cache dir |
 | `GET/POST …/land/preview/geojson` | Modal preview (`path`, `layer`; POST accepts filters/label/style) |
-| `GET …/land/sources/<id>/layers/<layerKey>/geojson` | Cached WGS84 FeatureCollection with attrs |
+| `GET …/land/sources/<id>/layers/<layerKey>/geojson` | Lazy clipped serve GeoJSON; `X-Peaky-Digest` header |
 
 ## Repo layout
 
