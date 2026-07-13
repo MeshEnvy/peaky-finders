@@ -62,6 +62,7 @@ from peaky_finders.serve.land import (
 )
 from peaky_finders.serve.land_import import (
     layer_preview_geojson,
+    ensure_layer_preview_geojson,
     list_data_gdbs,
     list_gdb_layers,
     resolve_land_gdb_path,
@@ -573,7 +574,7 @@ class ServeDispatcher:
                 return
             try:
                 gdb_path = resolve_land_gdb_path(project_dir, rel_path)
-                geojson = layer_preview_geojson(gdb_path, layer)
+                geojson = ensure_layer_preview_geojson(project_dir, gdb_path, layer)
             except ValueError as e:
                 payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=422)

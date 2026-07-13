@@ -21,10 +21,12 @@ from peaky_finders.serve.land import (
     read_layer_geojson_bytes,
 )
 from peaky_finders.serve.land_import import (
+    ensure_layer_preview_geojson,
     gdf_to_feature_collection_geojson,
     list_data_gdbs,
     list_gdb_layers,
     resolve_land_gdb_path,
+    resolved_land_preview_cache_dir,
 )
 from peaky_finders.core.preset import LandLayerStyle, load_preset, read_preset_document
 from test_serve_cli import _start_server
@@ -157,6 +159,21 @@ def test_ensure_layer_geojson_caches(tmp_path: Path) -> None:
     payload = json.loads(read_layer_geojson_bytes(preset_path, "test-parcel", "poly"))
     assert payload["type"] == "FeatureCollection"
     assert len(payload["features"]) == 2
+
+
+def test_ensure_layer_preview_geojson_caches(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo"
+    project_dir.mkdir()
+    rel = _write_test_gdb(project_dir)
+    gdb_path = resolve_land_gdb_path(project_dir, rel)
+    cache_root = resolved_land_preview_cache_dir(project_dir)
+
+    geojson1 = ensure_layer_preview_geojson(project_dir, gdb_path, "poly")
+    geojson2 = ensure_layer_preview_geojson(project_dir, gdb_path, "poly")
+    assert geojson1 == geojson2
+    assert geojson1["type"] == "FeatureCollection"
+    assert len(geojson1["features"]) == 2
+    assert list(cache_root.rglob("*.geojson"))
 
 
 def test_land_import_preview_does_not_write_yaml(tmp_path: Path) -> None:

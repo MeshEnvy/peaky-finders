@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,8 +12,11 @@ import geopandas as gpd
 import pyogrio
 from pyproj import Transformer
 
+from peaky_finders.core.preset import slugify_files_segment
+
 _PREVIEW_SIMPLIFY_TOLERANCE_DEG = 0.0005
 _PREVIEW_MAX_FEATURES = 500
+_PREVIEW_CACHE_VERSION = "v1"
 
 
 @dataclass(frozen=True)
@@ -158,3 +162,43 @@ def layer_preview_geojson(
         gdf = gdf.copy()
         gdf["geometry"] = gdf.geometry.simplify(simplify_tolerance_deg, preserve_topology=True)
     return gdf_to_feature_collection_geojson(gdf)
+
+
+def resolved_land_preview_cache_dir(project_dir: Path) -> Path:
+    return Path(project_dir).expanduser().resolve() / ".peaky" / "cache" / "land" / "preview"
+
+
+def _preview_cache_digest(gdb_path: Path, layer: str) -> str:
+    stat = gdb_path.stat()
+    payload = (
+        f"{_PREVIEW_CACHE_VERSION}|{gdb_path}|{layer}|{stat.st_mtime_ns}|{stat.st_size}"
+        f"|{_PREVIEW_MAX_FEATURES}|{_PREVIEW_SIMPLIFY_TOLERANCE_DEG}"
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _preview_cache_path(cache_root: Path, digest: str, layer: str) -> Path:
+    safe_layer = slugify_files_segment(layer) or "layer"
+    return cache_root / digest / f"{safe_layer}.geojson"
+
+
+def ensure_layer_preview_geojson(project_dir: Path, gdb_path: Path, layer: str) -> dict[str, Any]:
+    """Build or reuse cached preview GeoJSON for import/edit modals."""
+    path = Path(gdb_path).expanduser().resolve()
+    layer_name = str(layer).strip()
+    if not layer_name:
+        raise ValueError("layer is required")
+    cache_root = resolved_land_preview_cache_dir(project_dir)
+    digest = _preview_cache_digest(path, layer_name)
+    out_path = _preview_cache_path(cache_root, digest, layer_name)
+    if out_path.is_file():
+        try:
+            raw = json.loads(out_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            raw = None
+        if isinstance(raw, dict) and raw.get("type") == "FeatureCollection":
+            return raw
+    geojson = layer_preview_geojson(path, layer_name)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(geojson) + "\n", encoding="utf-8")
+    return geojson

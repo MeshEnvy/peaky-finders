@@ -880,6 +880,45 @@ wa-dropdown-item.is-active::part(base) {
   background: rgba(74, 108, 247, 0.15);
 }
 
+.import-land-preview-map-wrap {
+  position: relative;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 16rem;
+}
+
+.import-land-preview-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 14, 20, 0.45);
+  z-index: 2;
+  pointer-events: none;
+  border-radius: var(--wa-border-radius-s);
+}
+
+.import-land-preview-spinner {
+  position: static;
+  margin: 0;
+}
+
+.import-land-layer-row--loading .import-land-layer-label {
+  opacity: 0.65;
+}
+
+.import-land-layer-row--loading::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #4a6cf7;
+  border-radius: 50%;
+  animation: pin-load-spin 0.7s linear infinite;
+  flex: 0 0 auto;
+}
+
 .entity-panel__row--land .entity-panel__meta {
   font-size: 0.75rem;
 }
