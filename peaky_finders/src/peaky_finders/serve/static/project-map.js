@@ -4,6 +4,7 @@
   let sites = config.sites || [];
   let landSources = Array.isArray(config.land?.sources) ? [...config.land.sources] : [];
   let landDataGdbPaths = Array.isArray(config.land?.dataGdbPaths) ? [...config.land.dataGdbPaths] : [];
+  let landAoiDigest = typeof config.land?.aoiDigest === "string" ? config.land.aoiDigest : "none";
 
   const TERRAIN_SOURCE = "terrain-dem";
   const TERRAIN_HILLSHADE = "terrain-hillshade";
@@ -1890,8 +1891,24 @@
     return `preview|${path}|${layer}`;
   }
 
-  function landLayerCacheKey(sourceId, layer) {
-    return `layer|${sourceId}|${layer}`;
+  function landLayerCacheKey(sourceId, layer, digest) {
+    const d = digest ? String(digest) : "";
+    return d ? `layer|${sourceId}|${layer}|${d}` : `layer|${sourceId}|${layer}`;
+  }
+
+  function clearLandLayerGeoJsonCacheForLayer(sourceId, layerKey) {
+    const prefix = `layer|${sourceId}|${layerKey}`;
+    for (const key of [...landLayerGeoJsonCache.keys()]) {
+      if (key === prefix || key.startsWith(`${prefix}|`)) {
+        landLayerGeoJsonCache.delete(key);
+        landLayerGeoJsonInflight.delete(key);
+      }
+    }
+  }
+
+  function clearAllLandLayerGeoJsonCache() {
+    landLayerGeoJsonCache.clear();
+    landLayerGeoJsonInflight.clear();
   }
 
   async function fetchCachedGeoJson(cache, inflight, key, fetchFn) {
@@ -1928,6 +1945,7 @@
   function defaultLandLayerConfig() {
     return {
       labelField: "",
+      role: "",
       include: [],
       exclude: [],
       attrsOpen: false,
@@ -1947,6 +1965,8 @@
       return {
         name,
         key: landLayerSlug(name),
+        role: null,
+        digest: null,
         style: null,
         styleField: null,
         labelField: null,
@@ -1958,6 +1978,8 @@
     return {
       name,
       key: layer.key || landLayerSlug(name),
+      role: layer.role || null,
+      digest: layer.digest || null,
       style: layer.style || null,
       styleField: layer.styleField || layer.style_field || null,
       labelField: layer.labelField || layer.label_field || null,
@@ -2028,6 +2050,46 @@
     return titles;
   }
 
+  function landLayerRoleBadgeSpec(role) {
+    const normalized = String(role || "").trim().toLowerCase();
+    if (normalized === "aoi") {
+      return {
+        label: "AOI",
+        className: "entity-panel__land-role-badge entity-panel__land-role-badge--aoi",
+        title: "Area of interest — unioned clip boundary for other layers",
+      };
+    }
+    if (normalized === "include") {
+      return {
+        label: "Include",
+        className: "entity-panel__land-role-badge entity-panel__land-role-badge--include",
+        title: "Include role (reserved — no spatial effect yet)",
+      };
+    }
+    if (normalized === "exclude") {
+      return {
+        label: "Exclude",
+        className: "entity-panel__land-role-badge entity-panel__land-role-badge--exclude",
+        title: "Exclude role (reserved — no spatial effect yet)",
+      };
+    }
+    return {
+      label: "Overlay",
+      className: "entity-panel__land-role-badge entity-panel__land-role-badge--overlay",
+      title: "Default overlay layer",
+    };
+  }
+
+  function appendLandLayerRoleBadge(parent, role) {
+    const spec = landLayerRoleBadgeSpec(role);
+    const badge = document.createElement("span");
+    badge.className = spec.className;
+    badge.textContent = spec.label;
+    badge.title = spec.title;
+    parent.appendChild(badge);
+    return badge;
+  }
+
   function appendLandLayerMeta(parent, spec) {
     const meta = document.createElement("div");
     meta.className = "entity-panel__meta";
@@ -2040,18 +2102,6 @@
         const pill = document.createElement("span");
         pill.className = "entity-panel__meta-tag entity-panel__meta-tag--active";
         pill.textContent = field ? `${field}: ${value}` : String(value);
-        meta.appendChild(pill);
-        hasMeta = true;
-      }
-    }
-
-    for (const filt of spec.exclude || []) {
-      const field = filt.field || "";
-      for (const value of filt.values || []) {
-        if (!value) continue;
-        const pill = document.createElement("span");
-        pill.className = "entity-panel__meta-tag entity-panel__meta-tag--exclude";
-        pill.textContent = field ? `−${field}: ${value}` : `−${value}`;
         meta.appendChild(pill);
         hasMeta = true;
       }
@@ -2125,6 +2175,7 @@
   function layerConfigToPayload(name, layerStyles, layerConfigs) {
     const config = layerConfigs.get(name) || defaultLandLayerConfig();
     const row = { name };
+    if (config.role) row.role = config.role;
     if (config.labelField) row.labelField = config.labelField;
     if (config.include?.length) row.include = config.include;
     if (config.exclude?.length) row.exclude = config.exclude;
@@ -2166,6 +2217,7 @@
     const spec = normalizeRegisteredLayer(layer);
     return {
       labelField: spec.labelField || "",
+      role: spec.role || "",
       include: spec.include || [],
       exclude: spec.exclude || [],
       attrsOpen: false,
@@ -2245,15 +2297,20 @@
     );
   }
 
-  async function fetchLandLayerGeoJson(sourceId, layer) {
+  async function fetchLandLayerGeoJson(sourceId, layerKey, digest) {
     return fetchCachedGeoJson(
       landLayerGeoJsonCache,
       landLayerGeoJsonInflight,
-      landLayerCacheKey(sourceId, layer),
+      landLayerCacheKey(sourceId, layerKey, digest),
       async () => {
-        const resp = await fetch(landLayerGeoJsonUrl(sourceId, layer));
+        const resp = await fetch(landLayerGeoJsonUrl(sourceId, layerKey));
         if (!resp.ok) throw new Error(`GeoJSON failed (${resp.status})`);
-        return resp.json();
+        const data = await resp.json();
+        const respDigest = resp.headers.get("X-Peaky-Digest");
+        if (respDigest && respDigest !== digest) {
+          landLayerGeoJsonCache.set(landLayerCacheKey(sourceId, layerKey, respDigest), data);
+        }
+        return data;
       },
     );
   }
@@ -2675,7 +2732,7 @@
     }
   }
 
-  async function ensureLandMapLayer(sourceId, layerKey) {
+  async function ensureLandMapLayer(sourceId, layerKey, { force = false } = {}) {
     if (!mapReady) return;
     const sourceMapId = landMapSourceId(sourceId, layerKey);
     const fillId = `${sourceMapId}-fill`;
@@ -2696,14 +2753,17 @@
             "fill-opacity": fallback.opacity,
             "fill-outline-color": lineColor,
           };
-    if (map.getSource(sourceMapId)) {
+    if (map.getSource(sourceMapId) && !force) {
       applyLandMapLayerStyle(sourceId, layerKey);
       syncLandMapLayerVisibility(sourceId, layerKey);
       syncLandMapLabelLayer(sourceId, layerKey);
       return;
     }
+    if (force && map.getSource(sourceMapId)) {
+      removeLandMapLayer(sourceId, layerKey);
+    }
     try {
-      const geojson = await fetchLandLayerGeoJson(sourceId, layerKey);
+      const geojson = await fetchLandLayerGeoJson(sourceId, layerKey, spec?.digest || "");
       map.addSource(sourceMapId, { type: "geojson", data: geojson });
       map.addLayer({
         id: fillId,
@@ -2727,6 +2787,26 @@
     } catch (_) {
       /* network */
     }
+  }
+
+  async function refreshLandMapLayer(sourceId, layerKey) {
+    if (!mapReady) return;
+    if (!isLandLayerVisible(sourceId, layerKey)) return;
+    setLandSidebarRowLoading(sourceId, layerKey, true);
+    try {
+      clearLandLayerGeoJsonCacheForLayer(sourceId, layerKey);
+      await ensureLandMapLayer(sourceId, layerKey, { force: true });
+    } finally {
+      setLandSidebarRowLoading(sourceId, layerKey, false);
+    }
+  }
+
+  async function reloadClippedLandLayers() {
+    const rows = landLayerRows().filter((row) => {
+      if (row.spec.role === "aoi") return false;
+      return isLandLayerVisible(row.sourceId, row.layerKey);
+    });
+    await Promise.all(rows.map((row) => refreshLandMapLayer(row.sourceId, row.layerKey)));
   }
 
   function removeLandMapLayer(sourceId, layer) {
@@ -2836,6 +2916,18 @@
     }
   }
 
+  function setLandSidebarRowLoading(sourceId, layerKey, loading) {
+    if (!entityPanelLandList) return;
+    const rowKey = landLayerKey(sourceId, layerKey);
+    const row = entityPanelLandList.querySelector(
+      `.entity-panel__row--land[data-land-key="${rowKey}"]`,
+    );
+    if (!row) return;
+    row.classList.toggle("entity-panel__row--land-loading", !!loading);
+    const spinner = row.querySelector(".entity-panel__land-row-spinner");
+    if (spinner) spinner.hidden = !loading;
+  }
+
   function buildLandEntityRow(row, { title, subtitle = null, showSourceActions = false } = {}) {
     const rowKey = landLayerKey(row.sourceId, row.layerKey);
     const el = document.createElement("div");
@@ -2849,10 +2941,16 @@
 
     const main = document.createElement("div");
     main.className = "entity-panel__main";
+    const titleRow = document.createElement("div");
+    titleRow.className = "entity-panel__land-title-row";
     const name = document.createElement("div");
     name.className = "entity-panel__name";
-    name.textContent = title || friendlyLandLayerName(row.spec.name);
-    main.appendChild(name);
+    const nameText = title || friendlyLandLayerName(row.spec.name);
+    name.textContent = nameText;
+    name.title = nameText;
+    titleRow.appendChild(name);
+    appendLandLayerRoleBadge(titleRow, row.spec.role);
+    main.appendChild(titleRow);
     if (subtitle) {
       const sourceLabel = document.createElement("div");
       sourceLabel.className = "entity-panel__land-subtitle";
@@ -2863,6 +2961,14 @@
 
     const controls = document.createElement("div");
     controls.className = "entity-panel__controls";
+    const spinnerSlot = document.createElement("span");
+    spinnerSlot.className = "entity-panel__land-spinner-slot";
+    spinnerSlot.setAttribute("aria-hidden", "true");
+    const spinner = document.createElement("span");
+    spinner.className = "entity-panel__land-row-spinner pin-load-spinner";
+    spinner.hidden = true;
+    spinnerSlot.appendChild(spinner);
+    controls.appendChild(spinnerSlot);
     controls.appendChild(buildLandLayerEyeBtn(row.sourceId, row.layerKey));
     if (row.spec.labelField) {
       controls.appendChild(buildLandLayerLabelBtn(row.sourceId, row.layerKey));
@@ -2876,14 +2982,25 @@
     return el;
   }
 
-  async function reloadLandSources() {
+  async function reloadLandSources({ refreshMap = true } = {}) {
+    const prevAoiDigest = landAoiDigest;
     try {
       const resp = await fetch(landApiUrl());
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) return;
       landSources = Array.isArray(payload.sources) ? payload.sources : [];
+      const nextAoiDigest =
+        typeof payload.aoiDigest === "string" ? payload.aoiDigest : "none";
+      const aoiChanged = nextAoiDigest !== prevAoiDigest;
+      landAoiDigest = nextAoiDigest;
       renderLandPanel();
-      await refreshLandMapLayers();
+      if (!refreshMap) return;
+      if (aoiChanged) {
+        clearAllLandLayerGeoJsonCache();
+        await reloadClippedLandLayers();
+      } else {
+        await refreshLandMapLayers();
+      }
     } catch (_) {
       /* network */
     }
@@ -2891,6 +3008,7 @@
 
   async function deleteLandSource(sourceId) {
     if (!window.confirm(`Remove land source "${sourceId}"?`)) return;
+    const prevAoiDigest = landAoiDigest;
     try {
       const resp = await fetch(landSourceApiUrl(sourceId), { method: "DELETE" });
       const payload = await resp.json().catch(() => ({}));
@@ -2905,13 +3023,14 @@
           removeLandMapLayer(sourceId, spec.key);
           landVisible.delete(landLayerKey(sourceId, spec.key));
           landLabelsVisible.delete(landLayerKey(sourceId, spec.key));
-          landLayerGeoJsonCache.delete(landLayerCacheKey(sourceId, spec.key));
-          landLayerGeoJsonInflight.delete(landLayerCacheKey(sourceId, spec.key));
+          clearLandLayerGeoJsonCacheForLayer(sourceId, spec.key);
         }
       }
-      landSources = landSources.filter((s) => s.id !== sourceId);
-      landLayerOrder = currentLandLayerOrder();
-      renderLandPanel();
+      await reloadLandSources({ refreshMap: false });
+      if (landAoiDigest !== prevAoiDigest) {
+        clearAllLandLayerGeoJsonCache();
+        await reloadClippedLandLayers();
+      }
       scheduleSaveMapState();
     } catch (_) {
       window.alert("Could not reach server.");
@@ -3045,6 +3164,28 @@
     valuesHint.textContent = "Check to exclude from import";
     valuesHint.hidden = true;
 
+    const roleTitle = document.createElement("div");
+    roleTitle.className = "import-land-attrs-section-title";
+    roleTitle.textContent = "Role";
+
+    const roleSelect = document.createElement("select");
+    roleSelect.className = "import-land-attrs-select";
+    for (const [value, label] of [
+      ["", "Default"],
+      ["aoi", "AOI (clip boundary)"],
+      ["include", "Include (reserved)"],
+      ["exclude", "Exclude (reserved)"],
+    ]) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      roleSelect.appendChild(opt);
+    }
+    roleSelect.value = config.role || "";
+    roleSelect.addEventListener("change", () => {
+      config.role = roleSelect.value;
+    });
+
     function populateLabelSelect() {
       const fields = config.fields || [];
       const prev = labelSelect.value || config.labelField;
@@ -3137,6 +3278,8 @@
       if (onLabelFieldChange) onLabelFieldChange(layerName);
     });
 
+    panel.appendChild(roleTitle);
+    panel.appendChild(roleSelect);
     panel.appendChild(labelTitle);
     panel.appendChild(labelSelect);
     panel.appendChild(valuesTitle);
@@ -3686,6 +3829,7 @@
     }
     setImportLandError("");
     if (importLandSave) importLandSave.disabled = true;
+    const prevAoiDigest = landAoiDigest;
     try {
       const body = {
         path: importLandPreviewPath,
@@ -3707,14 +3851,27 @@
         return;
       }
       if (importLandModal) importLandModal.open = false;
-      await reloadLandSources();
+      await reloadLandSources({ refreshMap: false });
       const source = payload.source;
       if (source?.id && Array.isArray(source.layers)) {
         for (const rawLayer of source.layers) {
           const spec = normalizeRegisteredLayer(rawLayer);
           setLandLayerVisible(source.id, spec.key, true);
-          await ensureLandMapLayer(source.id, spec.key);
         }
+        renderLandPanel();
+        if (landAoiDigest !== prevAoiDigest) {
+          clearAllLandLayerGeoJsonCache();
+          await reloadClippedLandLayers();
+        } else {
+          await Promise.all(
+            source.layers.map((rawLayer) => {
+              const spec = normalizeRegisteredLayer(rawLayer);
+              return refreshLandMapLayer(source.id, spec.key);
+            }),
+          );
+        }
+      } else {
+        await refreshLandMapLayers();
       }
     } catch (_) {
       setImportLandError("Could not reach server.");
@@ -3841,6 +3998,7 @@
     }
     setEditLandError("");
     if (editLandSave) editLandSave.disabled = true;
+    const prevAoiDigest = landAoiDigest;
     const prevSource = landSources.find((s) => s.id === editLandSourceId);
     const prevKeys = new Set(
       (prevSource?.layers || []).map((layer) => normalizeRegisteredLayer(layer).key),
@@ -3874,12 +4032,20 @@
           removeLandMapLayer(editLandSourceId, key);
           landVisible.delete(landLayerKey(editLandSourceId, key));
           landLabelsVisible.delete(landLayerKey(editLandSourceId, key));
+          clearLandLayerGeoJsonCacheForLayer(editLandSourceId, key);
         }
       }
-      await reloadLandSources();
       for (const key of newKeys) {
         if (!prevKeys.has(key)) setLandLayerVisible(editLandSourceId, key, true);
-        await ensureLandMapLayer(editLandSourceId, key);
+      }
+      await reloadLandSources({ refreshMap: false });
+      if (landAoiDigest !== prevAoiDigest) {
+        clearAllLandLayerGeoJsonCache();
+        await reloadClippedLandLayers();
+      } else {
+        await Promise.all(
+          [...newKeys].map((key) => refreshLandMapLayer(editLandSourceId, key)),
+        );
       }
     } catch (_) {
       setEditLandError("Could not reach server.");

@@ -1071,6 +1071,47 @@ wa-dropdown-item.is-active::part(base) {
   font-size: 0.75rem;
 }
 
+.entity-panel__row--land {
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+
+.entity-panel__row--land .entity-panel__land-drag-handle {
+  align-self: flex-start;
+  margin-top: 0.05rem;
+}
+
+.entity-panel__row--land .entity-panel__controls {
+  align-self: flex-start;
+  padding-top: 0.05rem;
+}
+
+.entity-panel__row--land .entity-panel__name {
+  line-height: 1.25;
+}
+
+.entity-panel__land-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.entity-panel__land-title-row .entity-panel__name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.entity-panel__land-spinner-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  flex-shrink: 0;
+}
+
 .entity-panel__land-subtitle {
   font-size: 0.6875rem;
   color: var(--wa-color-text-quiet);
@@ -1117,6 +1158,54 @@ wa-dropdown-item.is-active::part(base) {
 
 .entity-panel__row--land-nested {
   padding-left: 0.85rem;
+}
+
+.entity-panel__row--land-loading .entity-panel__name {
+  opacity: 0.72;
+}
+
+.entity-panel__land-row-spinner {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.entity-panel__land-role-badge {
+  display: inline-block;
+  flex-shrink: 0;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.25rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.entity-panel__land-role-badge--aoi {
+  color: #f59e0b;
+  background: rgb(245 158 11 / 0.15);
+}
+
+.entity-panel__land-role-badge--overlay {
+  color: var(--wa-color-text-quiet);
+  background: rgb(148 163 184 / 0.1);
+}
+
+.entity-panel__land-role-badge--include {
+  color: #6ee7b7;
+  background: rgb(16 185 129 / 0.12);
+}
+
+.entity-panel__land-role-badge--exclude {
+  color: #fca5a5;
+  background: rgb(239 68 68 / 0.12);
+}
+
+.entity-panel__land-role-badge--muted {
+  color: var(--wa-color-neutral-60);
+  background: rgb(148 163 184 / 0.12);
 }
 
 .entity-panel__meta-tag--exclude {
