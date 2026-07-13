@@ -389,12 +389,18 @@ def project_html(
     sites: list[dict[str, object]],
     *,
     simulation: dict[str, object] | None = None,
+    land: list[dict[str, object]] | None = None,
+    land_data_gdbs: list[str] | None = None,
 ) -> bytes:
     peaky_config = json.dumps(
         {
             "slug": slug,
             "sites": sites,
             "simulation": simulation or {},
+            "land": {
+                "sources": land or [],
+                "dataGdbPaths": land_data_gdbs or [],
+            },
         }
     )
     body = f"""<header class="project-toolbar">
@@ -406,7 +412,11 @@ def project_html(
   </div>
 </header>
 <div class="map-shell">
-  <aside id="entity-panel" class="entity-panel" hidden aria-label="Sites">
+  <aside id="entity-panel" class="entity-panel" hidden aria-label="Sites and land">
+    <div class="entity-tabs" role="tablist" aria-label="Sidebar panels">
+      <button type="button" class="entity-tab active" data-entity-tab="sites" role="tab" aria-selected="true" aria-controls="entity-panel-sites-pane">Sites</button>
+      <button type="button" class="entity-tab" data-entity-tab="land" role="tab" aria-selected="false" aria-controls="entity-panel-land-pane">Land</button>
+    </div>
     <div class="entity-panel__body">
       <div id="entity-panel-sites-pane" class="entity-panel__pane" role="tabpanel">
         <div id="entity-panel-tag-filters" class="entity-panel__tag-filters" role="toolbar" aria-label="Site tags"></div>
@@ -425,6 +435,17 @@ def project_html(
           <div class="entity-panel__footer-actions">
             <wa-button id="entity-panel-import-sites" appearance="outlined" size="s" class="pf-stretch" type="button" title="Import sites from KML">Import</wa-button>
             <wa-button id="entity-panel-add-site" appearance="outlined" variant="brand" size="s" class="pf-stretch" type="button" title="Add site">+ Site</wa-button>
+          </div>
+        </div>
+      </div>
+      <div id="entity-panel-land-pane" class="entity-panel__pane" role="tabpanel" hidden>
+        <div class="entity-panel__list-header">
+          <span class="wa-caption pf-muted entity-panel__list-count" id="entity-panel-land-count"></span>
+        </div>
+        <div id="entity-panel-land-list" class="entity-panel__list"></div>
+        <div class="entity-panel__footer">
+          <div class="entity-panel__footer-actions">
+            <wa-button id="entity-panel-import-land" appearance="outlined" variant="brand" size="s" class="pf-stretch" type="button" title="Import GDB layers from data/">Import</wa-button>
           </div>
         </div>
       </div>
@@ -679,6 +700,76 @@ def project_html(
   </div>
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
   <wa-button slot="footer" id="import-sites-save" variant="brand" size="s" type="button" disabled>Import</wa-button>
+</wa-dialog>
+<wa-dialog id="import-land-modal" label="Import land layers" style="--width: 46rem" with-footer light-dismiss>
+  <wa-callout id="import-land-error" variant="danger" hidden></wa-callout>
+  <div class="pf-form-grid import-land-form">
+    <div class="pf-form-field pf-form-field--full">
+      <label for="import-land-gdb" class="pf-label">GDB in data/</label>
+      <select id="import-land-gdb" class="import-land-gdb-select">
+        <option value="">Select a GDB…</option>
+      </select>
+      <p class="wa-caption pf-muted" id="import-land-status">Choose a FileGDB under the project data folder.</p>
+    </div>
+    <div class="pf-form-field">
+      <label for="import-land-label" class="pf-label">Label (optional)</label>
+      <input id="import-land-label" type="text" autocomplete="off" placeholder="Display name">
+    </div>
+    <div class="pf-form-field pf-form-field--full import-land-preview-field" id="import-land-preview-field" hidden>
+      <div class="import-sites-preview-grid">
+        <div class="import-sites-preview-map-pane">
+          <span class="pf-label">Map</span>
+          <div id="import-land-preview-map" class="import-sites-preview-map" aria-label="Land import preview map"></div>
+        </div>
+        <div class="import-sites-preview-list-pane">
+          <span class="pf-label">Layers</span>
+          <div class="import-sites-list-header">
+            <span class="wa-caption pf-muted import-sites-list-count" id="import-land-list-count"></span>
+            <div class="import-sites-list-toolbar">
+              <div class="import-sites-list-bulk">
+                <wa-button id="import-land-select-all" appearance="plain" size="s" type="button" title="Select all layers" disabled>Select all</wa-button>
+                <wa-button id="import-land-clear-all" appearance="plain" size="s" type="button" title="Clear all layers" disabled>Clear all</wa-button>
+              </div>
+            </div>
+          </div>
+          <div id="import-land-layer-list" class="import-sites-point-list" role="list" aria-label="GDB layers"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
+  <wa-button slot="footer" id="import-land-save" variant="brand" size="s" type="button" disabled>Import</wa-button>
+</wa-dialog>
+<wa-dialog id="edit-land-modal" label="Edit land source" style="--width: 46rem" with-footer light-dismiss>
+  <wa-callout id="edit-land-error" variant="danger" hidden></wa-callout>
+  <p class="wa-caption pf-muted" id="edit-land-source-path"></p>
+  <div class="pf-form-field">
+    <label for="edit-land-label" class="pf-label">Label</label>
+    <input id="edit-land-label" type="text" autocomplete="off">
+  </div>
+  <div class="pf-form-field pf-form-field--full import-land-preview-field" id="edit-land-preview-field">
+    <div class="import-sites-preview-grid">
+      <div class="import-sites-preview-map-pane">
+        <span class="pf-label">Map</span>
+        <div id="edit-land-preview-map" class="import-sites-preview-map" aria-label="Land edit preview map"></div>
+      </div>
+      <div class="import-sites-preview-list-pane">
+        <span class="pf-label">Layers</span>
+        <div class="import-sites-list-header">
+          <span class="wa-caption pf-muted import-sites-list-count" id="edit-land-list-count"></span>
+          <div class="import-sites-list-toolbar">
+            <div class="import-sites-list-bulk">
+              <wa-button id="edit-land-select-all" appearance="plain" size="s" type="button" title="Select all layers">Select all</wa-button>
+              <wa-button id="edit-land-clear-all" appearance="plain" size="s" type="button" title="Clear all layers">Clear all</wa-button>
+            </div>
+          </div>
+        </div>
+        <div id="edit-land-layer-list" class="import-sites-point-list" role="list" aria-label="GDB layers"></div>
+      </div>
+    </div>
+  </div>
+  <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
+  <wa-button slot="footer" id="edit-land-save" variant="brand" size="s" type="button" disabled>Save</wa-button>
 </wa-dialog>
 <wa-dialog id="bulk-tag-modal" label="Bulk tag sidebar sites" style="--width: 28rem" with-footer light-dismiss>
   <wa-callout id="bulk-tag-error" variant="danger" hidden></wa-callout>

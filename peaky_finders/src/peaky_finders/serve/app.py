@@ -8,7 +8,7 @@ import threading
 import time
 import base64
 import binascii
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
@@ -51,6 +51,21 @@ from peaky_finders.serve.kml_import import (
     parse_kml_point_placemarks,
     parse_kmz_point_placemarks,
     serialize_kml_point,
+)
+from peaky_finders.serve.land import (
+    add_land_source,
+    delete_land_source,
+    list_land_payload,
+    patch_land_source,
+    read_layer_geojson_bytes,
+    serialize_land_sources,
+)
+from peaky_finders.serve.land_import import (
+    layer_preview_geojson,
+    list_data_gdbs,
+    list_gdb_layers,
+    resolve_land_gdb_path,
+    serialize_layer_info,
 )
 from peaky_finders.serve.events import get_serve_event_hub
 from peaky_finders.serve.preset_cache import load_serve_project_context
@@ -96,6 +111,25 @@ _API_PROJECT_SITES_IMPORT_RE = re.compile(
 )
 _API_PROJECT_SITES_TAGS_BULK_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/tags/bulk/?$"
+)
+_API_PROJECT_LAND_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/land/?$")
+_API_PROJECT_LAND_DATA_GDBS_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/land/data-gdbs/?$"
+)
+_API_PROJECT_LAND_IMPORT_PREVIEW_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/land/import/preview/?$"
+)
+_API_PROJECT_LAND_IMPORT_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/land/import/?$"
+)
+_API_PROJECT_LAND_PREVIEW_GEOJSON_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/land/preview/geojson/?$"
+)
+_API_PROJECT_LAND_SOURCE_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/land/sources/([a-zA-Z][a-zA-Z0-9_-]*)/?$"
+)
+_API_PROJECT_LAND_LAYER_GEOJSON_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/land/sources/([a-zA-Z][a-zA-Z0-9_-]*)/layers/([^/]+)/geojson/?$"
 )
 _API_PROJECT_SITE_SLUG_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/([a-zA-Z][a-zA-Z0-9_-]*)/?$"
@@ -181,6 +215,54 @@ def _parse_import_sites_body(raw: dict[str, object]) -> tuple[list[KmlPointSite]
         sites = [_coerce_import_point(item, index=i) for i, item in enumerate(points_raw)]
         return sites, 0
     return _parse_kml_import_payload(raw)
+
+
+def _parse_land_path_field(raw: Mapping[str, object]) -> str:
+    path = raw.get("path")
+    if path is None or not str(path).strip():
+        raise ValueError("path is required")
+    return str(path).strip().replace("\\", "/")
+
+
+def _parse_land_layers_field(raw: Mapping[str, object]) -> list[str]:
+    layers_raw = raw.get("layers")
+    if not isinstance(layers_raw, list) or not layers_raw:
+        raise ValueError("layers must be a non-empty list of strings")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in layers_raw:
+        name = str(item).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    if not out:
+        raise ValueError("layers must be a non-empty list of strings")
+    return out
+
+
+def _parse_land_layer_styles_field(
+    raw: Mapping[str, object],
+    *,
+    layer_names: list[str],
+) -> dict[str, object] | None:
+    styles_raw = raw.get("layer_styles")
+    if styles_raw is None:
+        styles_raw = raw.get("layerStyles")
+    if styles_raw is None:
+        return None
+    if not isinstance(styles_raw, dict):
+        raise ValueError("layer_styles must be a mapping of layer name to {color, opacity}")
+    allowed = set(layer_names)
+    out: dict[str, object] = {}
+    for key, value in styles_raw.items():
+        name = str(key).strip()
+        if not name or name not in allowed:
+            continue
+        if not isinstance(value, dict):
+            raise ValueError(f"layer_styles[{name!r}] must be an object with color and opacity")
+        out[name] = value
+    return out
 
 
 def _parse_form_body(body: bytes) -> dict[str, str]:
@@ -442,6 +524,91 @@ class ServeDispatcher:
                 return
             payload = json.dumps({"slug": slug, "sites": sites}).encode("utf-8")
             self._send_bytes(payload, "application/json")
+            return
+
+        land_match = _API_PROJECT_LAND_RE.match(path)
+        if land_match:
+            slug = land_match.group(1)
+            preset_path = self.projects_dir / slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                payload_obj = list_land_payload(preset_path)
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            payload = json.dumps({"slug": slug, **payload_obj}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
+        land_gdbs_match = _API_PROJECT_LAND_DATA_GDBS_RE.match(path)
+        if land_gdbs_match:
+            slug = land_gdbs_match.group(1)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            paths = list_data_gdbs(project_dir)
+            payload = json.dumps({"slug": slug, "paths": paths}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
+        land_preview_geojson_match = _API_PROJECT_LAND_PREVIEW_GEOJSON_RE.match(path)
+        if land_preview_geojson_match:
+            slug = land_preview_geojson_match.group(1)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            qs = parse_qs(parsed_url.query)
+            rel_path = str(qs.get("path", [""])[0]).strip()
+            layer = str(qs.get("layer", [""])[0]).strip()
+            if not rel_path or not layer:
+                payload = json.dumps(
+                    {"slug": slug, "error": "path and layer query parameters are required"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            try:
+                gdb_path = resolve_land_gdb_path(project_dir, rel_path)
+                geojson = layer_preview_geojson(gdb_path, layer)
+            except ValueError as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {"slug": slug, "path": rel_path, "layer": layer, "geojson": geojson},
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
+        land_layer_geojson_match = _API_PROJECT_LAND_LAYER_GEOJSON_RE.match(path)
+        if land_layer_geojson_match:
+            slug = land_layer_geojson_match.group(1)
+            source_id = land_layer_geojson_match.group(2)
+            layer = land_layer_geojson_match.group(3)
+            preset_path = self.projects_dir / slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                body = read_layer_geojson_bytes(preset_path, source_id, layer)
+            except ValueError as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            self._send_bytes(body, "application/geo+json")
             return
 
         sites_prefetch_match = _API_PROJECT_SITES_PREFETCH_RE.match(path)
@@ -740,6 +907,8 @@ class ServeDispatcher:
                     project_dir,
                     _serialize_project_sites(sites),
                     simulation=_serialize_serve_simulation(preset),
+                    land=serialize_land_sources(project_dir / "config.yaml"),
+                    land_data_gdbs=list_data_gdbs(project_dir),
                 )
             )
             return
@@ -958,6 +1127,109 @@ class ServeDispatcher:
                 sort_keys=True,
             ).encode("utf-8")
             self._send_bytes(payload, "application/json", status=200)
+            return
+
+        land_import_preview_match = _API_PROJECT_LAND_IMPORT_PREVIEW_RE.match(path)
+        if land_import_preview_match:
+            project_slug = land_import_preview_match.group(1)
+            project_dir = self.projects_dir / project_slug
+            preset_path = project_dir / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = _parse_json_body(body)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": f"invalid JSON: {e}"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if not isinstance(raw, dict):
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "body must be a JSON object"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            try:
+                rel_path = _parse_land_path_field(raw)
+                gdb_path = resolve_land_gdb_path(project_dir, rel_path)
+                layers = list_gdb_layers(gdb_path)
+            except ValueError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            if not layers:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "no layers found in GDB"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            payload = json.dumps(
+                {
+                    "slug": project_slug,
+                    "path": rel_path,
+                    "layers": [serialize_layer_info(layer) for layer in layers],
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        land_import_match = _API_PROJECT_LAND_IMPORT_RE.match(path)
+        if land_import_match:
+            project_slug = land_import_match.group(1)
+            preset_path = self.projects_dir / project_slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = _parse_json_body(body)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": f"invalid JSON: {e}"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if not isinstance(raw, dict):
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "body must be a JSON object"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            try:
+                rel_path = _parse_land_path_field(raw)
+                layer_names = _parse_land_layers_field(raw)
+                label_raw = raw.get("label")
+                label = str(label_raw).strip() if label_raw is not None else None
+                source_id_raw = raw.get("id")
+                source_id = str(source_id_raw).strip() if source_id_raw is not None else None
+                styles_raw = _parse_land_layer_styles_field(raw, layer_names=layer_names)
+                source = add_land_source(
+                    preset_path,
+                    path=rel_path,
+                    layers=layer_names,
+                    label=label or None,
+                    source_id=source_id or None,
+                    layer_styles=styles_raw,
+                )
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {"slug": project_slug, "source": source},
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=201)
             return
 
         import_preview_match = _API_PROJECT_SITES_IMPORT_PREVIEW_RE.match(path)
@@ -1434,6 +1706,86 @@ class ServeDispatcher:
             self._send_bytes(payload, "application/json", status=200)
             return
 
+        land_source_match = _API_PROJECT_LAND_SOURCE_RE.match(path)
+        if land_source_match:
+            project_slug = land_source_match.group(1)
+            source_id = land_source_match.group(2)
+            preset_path = self.projects_dir / project_slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = self._parse_entity_patch_body(body)
+            except ValueError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            layers_raw = raw.get("layers")
+            label_raw = raw.get("label")
+            styles_raw_field = raw.get("layer_styles")
+            if styles_raw_field is None:
+                styles_raw_field = raw.get("layerStyles")
+            layers_list: list[str] | None = None
+            label_str: str | None = None
+            styles_list: dict[str, object] | None = None
+            if layers_raw is not None:
+                if not isinstance(layers_raw, list):
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": "layers must be a list of strings"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                layers_list = _parse_land_layers_field({"layers": layers_raw})
+            if label_raw is not None:
+                label_str = str(label_raw).strip()
+            if styles_raw_field is not None:
+                if not isinstance(styles_raw_field, dict):
+                    payload = json.dumps(
+                        {"slug": project_slug, "error": "layer_styles must be a mapping"}
+                    ).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+                layer_scope = layers_list
+                if layer_scope is None:
+                    job = load_preset(preset_path)
+                    entry = job.land.sources.get(source_id)
+                    layer_scope = list(entry.layers) if entry is not None else []
+                styles_list = _parse_land_layer_styles_field(
+                    {"layer_styles": styles_raw_field},
+                    layer_names=layer_scope,
+                )
+            if layers_list is None and label_raw is None and styles_raw_field is None:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "layers, label, or layer_styles required"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            try:
+                source = patch_land_source(
+                    preset_path,
+                    source_id,
+                    layers=layers_list,
+                    label=label_str,
+                    layer_styles=styles_list,
+                )
+            except ValueError as e:
+                if "unknown land source" in str(e):
+                    self.send_error(404)
+                    return
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {"slug": project_slug, "source": source},
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
         self.send_error(404)
 
     def _do_delete(self, parsed: ParseResult) -> None:
@@ -1485,6 +1837,34 @@ class ServeDispatcher:
                 self._send_bytes(payload, "application/json", status=500)
                 return
             payload = json.dumps({"deleted": name}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        land_source_match = _API_PROJECT_LAND_SOURCE_RE.match(path)
+        if land_source_match:
+            project_slug = land_source_match.group(1)
+            source_id = land_source_match.group(2)
+            preset_path = self.projects_dir / project_slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                delete_land_source(preset_path, source_id)
+            except ValueError as e:
+                if "unknown land source" in str(e):
+                    self.send_error(404)
+                    return
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {"slug": project_slug, "deleted": source_id},
+                sort_keys=True,
+            ).encode("utf-8")
             self._send_bytes(payload, "application/json", status=200)
             return
 

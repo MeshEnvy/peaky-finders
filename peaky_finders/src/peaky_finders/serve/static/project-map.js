@@ -2,6 +2,8 @@
   const config = window.PEAKY_PROJECT || {};
   const projectSlug = config.slug;
   let sites = config.sites || [];
+  let landSources = Array.isArray(config.land?.sources) ? [...config.land.sources] : [];
+  let landDataGdbPaths = Array.isArray(config.land?.dataGdbPaths) ? [...config.land.dataGdbPaths] : [];
 
   const TERRAIN_SOURCE = "terrain-dem";
   const TERRAIN_HILLSHADE = "terrain-hillshade";
@@ -20,6 +22,11 @@
   const EDIT_HISTORY_LINKS_SOURCE = "edit-history-links";
   const EDIT_HISTORY_LINKS_LAYER = "edit-history-links-line";
   const EDIT_HISTORY_LINKS_LABELS_LAYER = "edit-history-links-label";
+  const LAND_DEFAULT_FILL_COLOR = "#4a6cf7";
+  const LAND_DEFAULT_FILL_OPACITY = 0.48;
+  const LAND_DEFAULT_LINE_COLOR = "#1e40af";
+  const LAND_LINE_WIDTH = 1.25;
+  const LAND_PREVIEW_LINE_WIDTH = 2.5;
   const VIEWSHED_OPACITY_DEFAULT = 0.75;
   const DRAFT_VIEWSHED_SLUG = "_draft";
   const VIEWSHED_PREVIEW_RASTER_DIMENSION = 256;
@@ -420,6 +427,34 @@
   const entityPanelBulkTag = document.getElementById("entity-panel-bulk-tag");
   const entityPanelAddSite = document.getElementById("entity-panel-add-site");
   const entityPanelImportSites = document.getElementById("entity-panel-import-sites");
+  const entityPanelSitesPane = document.getElementById("entity-panel-sites-pane");
+  const entityPanelLandPane = document.getElementById("entity-panel-land-pane");
+  const entityPanelLandList = document.getElementById("entity-panel-land-list");
+  const entityPanelLandCount = document.getElementById("entity-panel-land-count");
+  const entityPanelImportLand = document.getElementById("entity-panel-import-land");
+  const entityPanelTabs = document.querySelectorAll("[data-entity-tab]");
+  const importLandModal = document.getElementById("import-land-modal");
+  const importLandGdb = document.getElementById("import-land-gdb");
+  const importLandLabel = document.getElementById("import-land-label");
+  const importLandStatus = document.getElementById("import-land-status");
+  const importLandPreviewField = document.getElementById("import-land-preview-field");
+  const importLandPreviewMapEl = document.getElementById("import-land-preview-map");
+  const importLandError = document.getElementById("import-land-error");
+  const importLandSave = document.getElementById("import-land-save");
+  const importLandListCount = document.getElementById("import-land-list-count");
+  const importLandSelectAll = document.getElementById("import-land-select-all");
+  const importLandClearAll = document.getElementById("import-land-clear-all");
+  const importLandLayerList = document.getElementById("import-land-layer-list");
+  const editLandModal = document.getElementById("edit-land-modal");
+  const editLandSourcePath = document.getElementById("edit-land-source-path");
+  const editLandLabel = document.getElementById("edit-land-label");
+  const editLandPreviewMapEl = document.getElementById("edit-land-preview-map");
+  const editLandError = document.getElementById("edit-land-error");
+  const editLandSave = document.getElementById("edit-land-save");
+  const editLandListCount = document.getElementById("edit-land-list-count");
+  const editLandSelectAll = document.getElementById("edit-land-select-all");
+  const editLandClearAll = document.getElementById("edit-land-clear-all");
+  const editLandLayerList = document.getElementById("edit-land-layer-list");
   const sitePanelTags = document.getElementById("site-panel-tags");
   const sitePanelTagsSection = document.getElementById("site-panel-tags-section");
   const addSiteModal = document.getElementById("add-site-modal");
@@ -480,6 +515,7 @@
   );
   let tagFilterMode = savedMapState?.tagFilterMode === "or" ? "or" : "and";
   let entityPanelOpen = savedMapState?.entityPanelOpen === true;
+  let entityPanelTab = savedMapState?.entityPanelTab === "land" ? "land" : "sites";
   let entityPanelFilterByViewport = savedMapState?.filterByViewport === true;
   let tagAddOpen = false;
   let addSiteDraftTags = [];
@@ -496,6 +532,25 @@
   let bulkTagTargetSlugs = [];
   let bulkTagInitialCounts = new Map();
   let bulkTagPending = new Map();
+  const landVisible = new Map();
+  if (savedMapState?.landVisible && typeof savedMapState.landVisible === "object") {
+    for (const [key, visible] of Object.entries(savedMapState.landVisible)) {
+      landVisible.set(key, !!visible);
+    }
+  }
+  let importLandPreviewLayers = [];
+  let importLandPreviewPath = "";
+  let importLandPreviewMap = null;
+  let importLandPreviewBusy = false;
+  let importLandLayerStyles = new Map();
+  let editLandSourceId = "";
+  let editLandPreviewLayers = [];
+  let editLandPreviewPath = "";
+  let editLandPreviewMap = null;
+  let editLandPreviewBusy = false;
+  let editLandLayerStyles = new Map();
+  const IMPORT_LAND_PREVIEW_SOURCE = "import-land-preview";
+  const EDIT_LAND_PREVIEW_SOURCE = "edit-land-preview";
 
   function ensureTerrainSource() {
     if (map.getSource(TERRAIN_SOURCE)) return;
@@ -1783,6 +1838,920 @@
     }
   }
 
+  function landApiUrl() {
+    return `/api/p/${projectSlug}/land`;
+  }
+
+  function landDataGdbsUrl() {
+    return `/api/p/${projectSlug}/land/data-gdbs`;
+  }
+
+  function landImportPreviewApiUrl() {
+    return `/api/p/${projectSlug}/land/import/preview`;
+  }
+
+  function landImportApiUrl() {
+    return `/api/p/${projectSlug}/land/import`;
+  }
+
+  function landSourceApiUrl(sourceId) {
+    return `/api/p/${projectSlug}/land/sources/${encodeURIComponent(sourceId)}`;
+  }
+
+  function landLayerGeoJsonUrl(sourceId, layer) {
+    return `/api/p/${projectSlug}/land/sources/${encodeURIComponent(sourceId)}/layers/${encodeURIComponent(layer)}/geojson`;
+  }
+
+  function landPreviewGeoJsonUrl(path, layer) {
+    const params = new URLSearchParams({ path, layer });
+    return `/api/p/${projectSlug}/land/preview/geojson?${params}`;
+  }
+
+  function defaultLandLayerStyle() {
+    return { color: LAND_DEFAULT_FILL_COLOR, opacity: LAND_DEFAULT_FILL_OPACITY };
+  }
+
+  function landLineColorFromFill(hex) {
+    const normalized = String(hex || "").replace("#", "");
+    if (normalized.length !== 6) return LAND_DEFAULT_LINE_COLOR;
+    const r = Number.parseInt(normalized.slice(0, 2), 16);
+    const g = Number.parseInt(normalized.slice(2, 4), 16);
+    const b = Number.parseInt(normalized.slice(4, 6), 16);
+    if ([r, g, b].some((n) => Number.isNaN(n))) return LAND_DEFAULT_LINE_COLOR;
+    const factor = 0.55;
+    const toHex = (n) => Math.round(n * factor).toString(16).padStart(2, "0");
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+
+  function normalizeLandLayerStyle(raw) {
+    const defaults = defaultLandLayerStyle();
+    if (!raw || typeof raw !== "object") return { ...defaults };
+    const color =
+      typeof raw.color === "string" && /^#[0-9a-fA-F]{6}$/.test(raw.color)
+        ? raw.color.toLowerCase()
+        : defaults.color;
+    const opacityRaw = Number(raw.opacity);
+    const opacity = Number.isFinite(opacityRaw)
+      ? Math.min(1, Math.max(0, opacityRaw))
+      : defaults.opacity;
+    return { color, opacity };
+  }
+
+  function resolveLandLayerStyle(sourceId, layer) {
+    const source = landSources.find((s) => s.id === sourceId);
+    const styles = source?.layerStyles || source?.layer_styles || {};
+    return normalizeLandLayerStyle(styles[layer]);
+  }
+
+  function landLayerStylePayload(layerStyles, layerNames) {
+    const out = {};
+    for (const layer of layerNames) {
+      const style = normalizeLandLayerStyle(layerStyles.get(layer));
+      out[layer] = style;
+    }
+    return out;
+  }
+
+  function landPreviewSourceId(prefix, layerName) {
+    return `${prefix}-${landLayerSlug(layerName)}`;
+  }
+
+  function landLayerKey(sourceId, layer) {
+    return `${sourceId}/${layer}`;
+  }
+
+  function landLayerSlug(text) {
+    return (
+      String(text)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "layer"
+    );
+  }
+
+  function landMapSourceId(sourceId, layer) {
+    return `land-${sourceId}-${landLayerSlug(layer)}`;
+  }
+
+  function isLandLayerVisible(sourceId, layer) {
+    const key = landLayerKey(sourceId, layer);
+    if (!landVisible.has(key)) return false;
+    return landVisible.get(key) === true;
+  }
+
+  function setLandLayerVisible(sourceId, layer, visible) {
+    landVisible.set(landLayerKey(sourceId, layer), !!visible);
+    scheduleSaveMapState();
+    syncLandMapLayerVisibility(sourceId, layer);
+  }
+
+  function landLayerRows() {
+    const rows = [];
+    for (const source of landSources) {
+      const layers = Array.isArray(source.layers) ? source.layers : [];
+      for (const layer of layers) {
+        rows.push({
+          sourceId: source.id,
+          label: source.label || source.id,
+          path: source.path,
+          layer,
+        });
+      }
+    }
+    return rows.sort((a, b) => {
+      const byLabel = String(a.label).localeCompare(String(b.label));
+      if (byLabel !== 0) return byLabel;
+      return String(a.layer).localeCompare(String(b.layer));
+    });
+  }
+
+  function setEntityTab(tab) {
+    const next = tab === "land" ? "land" : "sites";
+    entityPanelTab = next;
+    for (const btn of entityPanelTabs) {
+      const active = btn.getAttribute("data-entity-tab") === next;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    }
+    if (entityPanelSitesPane) entityPanelSitesPane.hidden = next !== "sites";
+    if (entityPanelLandPane) entityPanelLandPane.hidden = next !== "land";
+    if (entityPanelToggle) {
+      entityPanelToggle.title = next === "land" ? "Land" : "Sites";
+      entityPanelToggle.setAttribute(
+        "aria-label",
+        entityPanelOpen ? `Hide ${next}` : `Show ${next}`,
+      );
+    }
+    scheduleSaveMapState();
+  }
+
+  function syncLandMapLayerVisibility(sourceId, layer) {
+    if (!mapReady) return;
+    const sourceMapId = landMapSourceId(sourceId, layer);
+    const fillId = `${sourceMapId}-fill`;
+    const lineId = `${sourceMapId}-line`;
+    const vis = isLandLayerVisible(sourceId, layer) ? "visible" : "none";
+    if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
+    if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
+  }
+
+  function applyLandMapLayerStyle(sourceId, layer) {
+    if (!mapReady) return;
+    const sourceMapId = landMapSourceId(sourceId, layer);
+    const fillId = `${sourceMapId}-fill`;
+    const lineId = `${sourceMapId}-line`;
+    const style = resolveLandLayerStyle(sourceId, layer);
+    const lineColor = landLineColorFromFill(style.color);
+    if (map.getLayer(fillId)) {
+      map.setPaintProperty(fillId, "fill-color", style.color);
+      map.setPaintProperty(fillId, "fill-opacity", style.opacity);
+      map.setPaintProperty(fillId, "fill-outline-color", lineColor);
+    }
+    if (map.getLayer(lineId)) {
+      map.setPaintProperty(lineId, "line-color", lineColor);
+      map.setPaintProperty(lineId, "line-width", LAND_LINE_WIDTH);
+    }
+  }
+
+  async function ensureLandMapLayer(sourceId, layer) {
+    if (!mapReady) return;
+    const sourceMapId = landMapSourceId(sourceId, layer);
+    const fillId = `${sourceMapId}-fill`;
+    const lineId = `${sourceMapId}-line`;
+    const style = resolveLandLayerStyle(sourceId, layer);
+    const lineColor = landLineColorFromFill(style.color);
+    if (map.getSource(sourceMapId)) {
+      applyLandMapLayerStyle(sourceId, layer);
+      syncLandMapLayerVisibility(sourceId, layer);
+      return;
+    }
+    try {
+      const resp = await fetch(landLayerGeoJsonUrl(sourceId, layer));
+      if (!resp.ok) return;
+      const geojson = await resp.json();
+      map.addSource(sourceMapId, { type: "geojson", data: geojson });
+      map.addLayer({
+        id: fillId,
+        type: "fill",
+        source: sourceMapId,
+        paint: {
+          "fill-color": style.color,
+          "fill-opacity": style.opacity,
+          "fill-outline-color": lineColor,
+        },
+        layout: { visibility: isLandLayerVisible(sourceId, layer) ? "visible" : "none" },
+      });
+      map.addLayer({
+        id: lineId,
+        type: "line",
+        source: sourceMapId,
+        paint: {
+          "line-color": lineColor,
+          "line-width": LAND_LINE_WIDTH,
+        },
+        layout: { visibility: isLandLayerVisible(sourceId, layer) ? "visible" : "none" },
+      });
+      raiseSiteLayers();
+    } catch (_) {
+      /* network */
+    }
+  }
+
+  function removeLandMapLayer(sourceId, layer) {
+    if (!mapReady) return;
+    const sourceMapId = landMapSourceId(sourceId, layer);
+    const fillId = `${sourceMapId}-fill`;
+    const lineId = `${sourceMapId}-line`;
+    if (map.getLayer(lineId)) map.removeLayer(lineId);
+    if (map.getLayer(fillId)) map.removeLayer(fillId);
+    if (map.getSource(sourceMapId)) map.removeSource(sourceMapId);
+  }
+
+  async function refreshLandMapLayers() {
+    for (const row of landLayerRows()) {
+      await ensureLandMapLayer(row.sourceId, row.layer);
+    }
+  }
+
+  function renderLandPanel() {
+    if (!entityPanelLandList) return;
+    const rows = landLayerRows();
+    if (entityPanelLandCount) {
+      entityPanelLandCount.textContent =
+        rows.length === 0 ? "No land layers" : `${rows.length} layer${rows.length === 1 ? "" : "s"}`;
+    }
+    entityPanelLandList.innerHTML = "";
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "entity-panel__empty";
+      empty.textContent = "Import GDB layers from data/.";
+      entityPanelLandList.appendChild(empty);
+      return;
+    }
+    const bySource = new Map();
+    for (const row of rows) {
+      if (!bySource.has(row.sourceId)) bySource.set(row.sourceId, []);
+      bySource.get(row.sourceId).push(row);
+    }
+    for (const [sourceId, sourceRows] of bySource) {
+      const header = document.createElement("div");
+      header.className = "entity-panel__land-source";
+      const title = document.createElement("div");
+      title.className = "entity-panel__land-source-title";
+      title.textContent = sourceRows[0].label;
+      const actions = document.createElement("div");
+      actions.className = "entity-panel__land-source-actions";
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "entity-panel__action";
+      editBtn.title = "Edit layers";
+      editBtn.innerHTML = mapToolIcon("pen", "Edit");
+      editBtn.addEventListener("click", () => {
+        void openEditLandModal(sourceId);
+      });
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "entity-panel__action";
+      deleteBtn.title = "Remove source";
+      deleteBtn.innerHTML = mapToolIcon("trash", "Delete");
+      deleteBtn.addEventListener("click", () => {
+        void deleteLandSource(sourceId);
+      });
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+      header.appendChild(title);
+      header.appendChild(actions);
+      entityPanelLandList.appendChild(header);
+      for (const row of sourceRows) {
+        entityPanelLandList.appendChild(buildLandEntityRow(row));
+      }
+    }
+  }
+
+  function buildLandEntityRow(row) {
+    const el = document.createElement("div");
+    el.className = "entity-panel__row entity-panel__row--land";
+    el.dataset.landKey = landLayerKey(row.sourceId, row.layer);
+    const main = document.createElement("div");
+    main.className = "entity-panel__main";
+    const name = document.createElement("div");
+    name.className = "entity-panel__name";
+    name.textContent = row.layer;
+    const meta = document.createElement("div");
+    meta.className = "entity-panel__meta pf-muted";
+    meta.textContent = row.path;
+    main.appendChild(name);
+    main.appendChild(meta);
+    const controls = document.createElement("div");
+    controls.className = "entity-panel__controls";
+    const eye = document.createElement("button");
+    eye.type = "button";
+    eye.className = "entity-panel__action";
+    eye.title = "Toggle visibility";
+    const visible = isLandLayerVisible(row.sourceId, row.layer);
+    eye.innerHTML = mapToolIcon(visible ? "eye" : "eye-slash", "Visibility");
+    eye.addEventListener("click", () => {
+      const next = !isLandLayerVisible(row.sourceId, row.layer);
+      setLandLayerVisible(row.sourceId, row.layer, next);
+      eye.innerHTML = mapToolIcon(next ? "eye" : "eye-slash", "Visibility");
+      if (next) void ensureLandMapLayer(row.sourceId, row.layer);
+    });
+    controls.appendChild(eye);
+    el.appendChild(main);
+    el.appendChild(controls);
+    return el;
+  }
+
+  async function reloadLandSources() {
+    try {
+      const resp = await fetch(landApiUrl());
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) return;
+      landSources = Array.isArray(payload.sources) ? payload.sources : [];
+      renderLandPanel();
+      await refreshLandMapLayers();
+    } catch (_) {
+      /* network */
+    }
+  }
+
+  async function deleteLandSource(sourceId) {
+    if (!window.confirm(`Remove land source "${sourceId}"?`)) return;
+    try {
+      const resp = await fetch(landSourceApiUrl(sourceId), { method: "DELETE" });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        window.alert(payload.error || `Delete failed (${resp.status})`);
+        return;
+      }
+      const source = landSources.find((s) => s.id === sourceId);
+      if (source && Array.isArray(source.layers)) {
+        for (const layer of source.layers) {
+          removeLandMapLayer(sourceId, layer);
+          landVisible.delete(landLayerKey(sourceId, layer));
+        }
+      }
+      landSources = landSources.filter((s) => s.id !== sourceId);
+      renderLandPanel();
+      scheduleSaveMapState();
+    } catch (_) {
+      window.alert("Could not reach server.");
+    }
+  }
+
+  function setImportLandError(message) {
+    if (!importLandError) return;
+    if (message) {
+      importLandError.textContent = message;
+      importLandError.hidden = false;
+    } else {
+      importLandError.textContent = "";
+      importLandError.hidden = true;
+    }
+  }
+
+  function setEditLandError(message) {
+    if (!editLandError) return;
+    if (message) {
+      editLandError.textContent = message;
+      editLandError.hidden = false;
+    } else {
+      editLandError.textContent = "";
+      editLandError.hidden = true;
+    }
+  }
+
+  function destroyImportLandPreviewMap() {
+    if (importLandPreviewMap) {
+      importLandPreviewMap.remove();
+      importLandPreviewMap = null;
+    }
+  }
+
+  function destroyEditLandPreviewMap() {
+    if (editLandPreviewMap) {
+      editLandPreviewMap.remove();
+      editLandPreviewMap = null;
+    }
+  }
+
+  function ensureLandPreviewMap(el, mapRef) {
+    if (!el) return null;
+    if (mapRef) {
+      mapRef.resize();
+      return mapRef;
+    }
+    const preview = new maplibregl.Map({
+      container: el,
+      style: basemapStyle(currentBasemapKey),
+      center: map.getCenter(),
+      zoom: map.getZoom(),
+      bearing: 0,
+      pitch: 0,
+      attributionControl: false,
+    });
+    return preview;
+  }
+
+  function fitPreviewMapToBboxes(previewMap, bboxes) {
+    if (!previewMap || !bboxes.length) return;
+    const bounds = new maplibregl.LngLatBounds();
+    for (const bbox of bboxes) {
+      if (!Array.isArray(bbox) || bbox.length !== 4) continue;
+      const [minx, miny, maxx, maxy] = bbox;
+      bounds.extend([minx, miny]);
+      bounds.extend([maxx, maxy]);
+    }
+    if (!bounds.isEmpty()) {
+      previewMap.fitBounds(bounds, { padding: 36, maxZoom: 12, duration: 0 });
+    }
+  }
+
+  function ensureLandLayerStyleState(layerStyles, layerName, seed) {
+    if (!layerStyles.has(layerName)) {
+      layerStyles.set(layerName, normalizeLandLayerStyle(seed));
+    }
+    return layerStyles.get(layerName);
+  }
+
+  function renderLandLayerChecklist(
+    listEl,
+    layers,
+    { selected, layerStyles, onToggle, onStyleChange, countEl },
+  ) {
+    if (!listEl) return;
+    listEl.innerHTML = "";
+    const selectedSet = selected instanceof Set ? selected : new Set(selected || []);
+    for (const layer of layers) {
+      ensureLandLayerStyleState(layerStyles, layer.name);
+      const row = document.createElement("div");
+      row.className = "import-sites-point-row import-land-layer-row";
+      if (selectedSet.has(layer.name)) row.classList.add("import-land-layer-row--selected");
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = selectedSet.has(layer.name);
+      checkbox.dataset.layerName = layer.name;
+      checkbox.addEventListener("change", () => {
+        onToggle(layer.name, checkbox.checked);
+        row.classList.toggle("import-land-layer-row--selected", checkbox.checked);
+      });
+
+      const text = document.createElement("span");
+      text.className = "import-sites-point-label import-land-layer-label";
+      text.textContent = `${layer.name} (${layer.geometry || "layer"}, ${layer.count || 0})`;
+
+      const styleWrap = document.createElement("div");
+      styleWrap.className = "import-land-layer-style";
+
+      const colorInput = document.createElement("input");
+      colorInput.type = "color";
+      colorInput.className = "import-land-layer-color";
+      colorInput.value = layerStyles.get(layer.name).color;
+      colorInput.title = "Layer color";
+      colorInput.addEventListener("input", () => {
+        const style = layerStyles.get(layer.name);
+        style.color = colorInput.value.toLowerCase();
+        onStyleChange(layer.name, style);
+      });
+
+      const opacityInput = document.createElement("input");
+      opacityInput.type = "range";
+      opacityInput.className = "import-land-layer-opacity";
+      opacityInput.min = "0";
+      opacityInput.max = "100";
+      opacityInput.step = "1";
+      opacityInput.value = String(Math.round(layerStyles.get(layer.name).opacity * 100));
+      opacityInput.title = "Layer opacity";
+
+      const opacityLabel = document.createElement("span");
+      opacityLabel.className = "import-land-layer-opacity-label";
+      opacityLabel.textContent = `${opacityInput.value}%`;
+
+      opacityInput.addEventListener("input", () => {
+        const style = layerStyles.get(layer.name);
+        style.opacity = Number(opacityInput.value) / 100;
+        opacityLabel.textContent = `${opacityInput.value}%`;
+        onStyleChange(layer.name, style);
+      });
+
+      styleWrap.appendChild(colorInput);
+      styleWrap.appendChild(opacityInput);
+      styleWrap.appendChild(opacityLabel);
+
+      row.appendChild(checkbox);
+      row.appendChild(text);
+      row.appendChild(styleWrap);
+      listEl.appendChild(row);
+    }
+    if (countEl) {
+      const n = selectedSet.size;
+      countEl.textContent = `${n} of ${layers.length} selected`;
+    }
+  }
+
+  function landPreviewLayerSpecs(sourceName, fillId, lineId, style) {
+    const normalized = normalizeLandLayerStyle(style);
+    const lineColor = landLineColorFromFill(normalized.color);
+    return [
+      {
+        id: fillId,
+        type: "fill",
+        source: sourceName,
+        paint: {
+          "fill-color": normalized.color,
+          "fill-opacity": normalized.opacity,
+          "fill-outline-color": lineColor,
+        },
+      },
+      {
+        id: lineId,
+        type: "line",
+        source: sourceName,
+        paint: {
+          "line-color": lineColor,
+          "line-width": LAND_PREVIEW_LINE_WIDTH,
+        },
+      },
+    ];
+  }
+
+  function applyLandPreviewMapData(previewMap, sourceName, fillId, lineId, data, style) {
+    if (!previewMap) return;
+    const apply = () => {
+      if (!previewMap.getSource(sourceName)) {
+        previewMap.addSource(sourceName, { type: "geojson", data });
+        for (const spec of landPreviewLayerSpecs(sourceName, fillId, lineId, style)) {
+          if (!previewMap.getLayer(spec.id)) previewMap.addLayer(spec);
+        }
+      } else {
+        previewMap.getSource(sourceName).setData(data);
+      }
+      const normalized = normalizeLandLayerStyle(style);
+      const lineColor = landLineColorFromFill(normalized.color);
+      if (previewMap.getLayer(fillId)) {
+        previewMap.setPaintProperty(fillId, "fill-color", normalized.color);
+        previewMap.setPaintProperty(fillId, "fill-opacity", normalized.opacity);
+        previewMap.setPaintProperty(fillId, "fill-outline-color", lineColor);
+      }
+      if (previewMap.getLayer(lineId)) {
+        previewMap.setPaintProperty(lineId, "line-color", lineColor);
+        previewMap.setPaintProperty(lineId, "line-width", LAND_PREVIEW_LINE_WIDTH);
+      }
+    };
+    if (previewMap.loaded()) apply();
+    else previewMap.once("load", apply);
+  }
+
+  function removeLandPreviewLayer(previewMap, prefix, layerName) {
+    if (!previewMap) return;
+    const sourceName = landPreviewSourceId(prefix, layerName);
+    const fillId = `${sourceName}-fill`;
+    const lineId = `${sourceName}-line`;
+    if (previewMap.getLayer(lineId)) previewMap.removeLayer(lineId);
+    if (previewMap.getLayer(fillId)) previewMap.removeLayer(fillId);
+    if (previewMap.getSource(sourceName)) previewMap.removeSource(sourceName);
+  }
+
+  function clearLandPreviewMapLayers(previewMap, prefix, allLayerNames, keepLayerNames) {
+    if (!previewMap) return;
+    const keep = new Set(keepLayerNames);
+    for (const layerName of allLayerNames) {
+      if (!keep.has(layerName)) removeLandPreviewLayer(previewMap, prefix, layerName);
+    }
+  }
+
+  async function updateLandPreviewMap(
+    previewMap,
+    path,
+    selectedNames,
+    sourceIdPrefix,
+    layerStyles,
+    allLayerNames,
+  ) {
+    if (!previewMap) return;
+    const selected = [...selectedNames];
+    const prefix =
+      sourceIdPrefix === "import" ? IMPORT_LAND_PREVIEW_SOURCE : EDIT_LAND_PREVIEW_SOURCE;
+    clearLandPreviewMapLayers(previewMap, prefix, allLayerNames, selected);
+    const bboxes = [];
+    for (const layerName of selected) {
+      try {
+        const resp = await fetch(landPreviewGeoJsonUrl(path, layerName));
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok || !payload.geojson) continue;
+        const sourceName = landPreviewSourceId(prefix, layerName);
+        const fillId = `${sourceName}-fill`;
+        const lineId = `${sourceName}-line`;
+        const style = normalizeLandLayerStyle(layerStyles.get(layerName));
+        applyLandPreviewMapData(previewMap, sourceName, fillId, lineId, payload.geojson, style);
+        const layerMeta = (sourceIdPrefix === "import" ? importLandPreviewLayers : editLandPreviewLayers).find(
+          (layer) => layer.name === layerName,
+        );
+        if (layerMeta?.bbox) bboxes.push(layerMeta.bbox);
+      } catch (_) {
+        /* skip layer */
+      }
+    }
+    fitPreviewMapToBboxes(previewMap, bboxes);
+  }
+
+  function resetImportLandModal() {
+    setImportLandError("");
+    importLandPreviewLayers = [];
+    importLandPreviewPath = "";
+    importLandPreviewBusy = false;
+    importLandLayerStyles = new Map();
+    if (importLandGdb) importLandGdb.value = "";
+    if (importLandLabel) importLandLabel.value = "";
+    if (importLandStatus) importLandStatus.textContent = "Choose a FileGDB under the project data folder.";
+    if (importLandPreviewField) importLandPreviewField.hidden = true;
+    if (importLandLayerList) importLandLayerList.innerHTML = "";
+    if (importLandSave) importLandSave.disabled = true;
+    destroyImportLandPreviewMap();
+  }
+
+  function fillImportLandGdbSelect(paths) {
+    if (!importLandGdb) return;
+    importLandGdb.innerHTML = '<option value="">Select a GDB…</option>';
+    for (const path of paths) {
+      const opt = document.createElement("option");
+      opt.value = path;
+      opt.textContent = path;
+      importLandGdb.appendChild(opt);
+    }
+  }
+
+  async function populateImportLandGdbSelect() {
+    if (!importLandGdb) return;
+    if (landDataGdbPaths.length) {
+      fillImportLandGdbSelect(landDataGdbPaths);
+      return;
+    }
+    importLandGdb.innerHTML = '<option value="">Loading GDB list…</option>';
+    importLandGdb.disabled = true;
+    try {
+      const resp = await fetch(landDataGdbsUrl());
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        fillImportLandGdbSelect([]);
+        return;
+      }
+      landDataGdbPaths = Array.isArray(payload.paths) ? payload.paths : [];
+      fillImportLandGdbSelect(landDataGdbPaths);
+    } catch (_) {
+      fillImportLandGdbSelect([]);
+    } finally {
+      importLandGdb.disabled = false;
+    }
+  }
+
+  async function previewImportLandPath(path) {
+    if (!path) {
+      resetImportLandModal();
+      return;
+    }
+    setImportLandError("");
+    importLandPreviewBusy = true;
+    if (importLandSave) importLandSave.disabled = true;
+    if (importLandStatus) importLandStatus.textContent = "Loading layers…";
+    try {
+      const resp = await fetch(landImportPreviewApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setImportLandError(payload.error || `Preview failed (${resp.status})`);
+        if (importLandPreviewField) importLandPreviewField.hidden = true;
+        return;
+      }
+      importLandPreviewPath = path;
+      importLandPreviewLayers = Array.isArray(payload.layers) ? payload.layers : [];
+      importLandLayerStyles = new Map();
+      const allLayerNames = importLandPreviewLayers.map((layer) => layer.name);
+      if (importLandPreviewField) importLandPreviewField.hidden = false;
+      if (importLandStatus) {
+        importLandStatus.textContent = `${importLandPreviewLayers.length} layer(s) in ${path}`;
+      }
+      const selected = new Set();
+      const refreshImportPreview = () => {
+        void updateLandPreviewMap(
+          importLandPreviewMap,
+          importLandPreviewPath,
+          selected,
+          "import",
+          importLandLayerStyles,
+          allLayerNames,
+        );
+      };
+      renderLandLayerChecklist(importLandLayerList, importLandPreviewLayers, {
+        selected,
+        layerStyles: importLandLayerStyles,
+        countEl: importLandListCount,
+        onToggle: (name, checked) => {
+          if (checked) selected.add(name);
+          else selected.delete(name);
+          if (importLandListCount) {
+            importLandListCount.textContent = `${selected.size} of ${importLandPreviewLayers.length} selected`;
+          }
+          if (importLandSave) importLandSave.disabled = selected.size === 0;
+          refreshImportPreview();
+        },
+        onStyleChange: (name) => {
+          if (selected.has(name)) refreshImportPreview();
+        },
+      });
+      importLandPreviewMap = ensureLandPreviewMap(importLandPreviewMapEl, importLandPreviewMap);
+      if (importLandSave) importLandSave.disabled = true;
+      if (importLandSelectAll) importLandSelectAll.disabled = importLandPreviewLayers.length === 0;
+      if (importLandClearAll) importLandClearAll.disabled = importLandPreviewLayers.length === 0;
+      fitPreviewMapToBboxes(
+        importLandPreviewMap,
+        importLandPreviewLayers.map((layer) => layer.bbox).filter(Boolean),
+      );
+    } catch (_) {
+      setImportLandError("Could not reach server.");
+    } finally {
+      importLandPreviewBusy = false;
+    }
+  }
+
+  async function openImportLandModal() {
+    if (!importLandModal) return;
+    setAddPlacementMode(null);
+    setEntityPanelOpen(true);
+    setEntityTab("land");
+    resetImportLandModal();
+    await customElements.whenDefined("wa-dialog");
+    importLandModal.open = true;
+    void populateImportLandGdbSelect();
+  }
+
+  function collectSelectedLandLayers(listEl) {
+    const selected = [];
+    if (!listEl) return selected;
+    for (const input of listEl.querySelectorAll('input[type="checkbox"][data-layer-name]')) {
+      if (input.checked && input.dataset.layerName) selected.push(input.dataset.layerName);
+    }
+    return selected;
+  }
+
+  async function saveImportLandModal() {
+    const selected = collectSelectedLandLayers(importLandLayerList);
+    if (!importLandPreviewPath || !selected.length) {
+      setImportLandError("Select a GDB and at least one layer.");
+      return;
+    }
+    setImportLandError("");
+    if (importLandSave) importLandSave.disabled = true;
+    try {
+      const body = {
+        path: importLandPreviewPath,
+        layers: selected,
+        layer_styles: landLayerStylePayload(importLandLayerStyles, selected),
+      };
+      if (importLandLabel?.value.trim()) body.label = importLandLabel.value.trim();
+      const resp = await fetch(landImportApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setImportLandError(payload.error || `Import failed (${resp.status})`);
+        return;
+      }
+      if (importLandModal) importLandModal.open = false;
+      await reloadLandSources();
+      const source = payload.source;
+      if (source?.id && Array.isArray(source.layers)) {
+        for (const layer of source.layers) {
+          setLandLayerVisible(source.id, layer, true);
+          await ensureLandMapLayer(source.id, layer);
+        }
+      }
+    } catch (_) {
+      setImportLandError("Could not reach server.");
+    } finally {
+      if (importLandSave) importLandSave.disabled = false;
+    }
+  }
+
+  async function openEditLandModal(sourceId) {
+    const source = landSources.find((s) => s.id === sourceId);
+    if (!source || !editLandModal) return;
+    editLandSourceId = sourceId;
+    editLandPreviewPath = source.path;
+    setEditLandError("");
+    if (editLandSourcePath) editLandSourcePath.textContent = source.path;
+    if (editLandLabel) editLandLabel.value = source.label || source.id;
+    if (editLandSave) editLandSave.disabled = true;
+    try {
+      const resp = await fetch(landImportPreviewApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: source.path }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setEditLandError(payload.error || `Preview failed (${resp.status})`);
+        return;
+      }
+      editLandPreviewLayers = Array.isArray(payload.layers) ? payload.layers : [];
+      editLandLayerStyles = new Map();
+      const sourceStyles = source.layerStyles || source.layer_styles || {};
+      const allLayerNames = editLandPreviewLayers.map((layer) => layer.name);
+      for (const layer of editLandPreviewLayers) {
+        ensureLandLayerStyleState(editLandLayerStyles, layer.name, sourceStyles[layer.name]);
+      }
+      const selected = new Set(Array.isArray(source.layers) ? source.layers : []);
+      const refreshEditPreview = () => {
+        void updateLandPreviewMap(
+          editLandPreviewMap,
+          editLandPreviewPath,
+          selected,
+          "edit",
+          editLandLayerStyles,
+          allLayerNames,
+        );
+      };
+      renderLandLayerChecklist(editLandLayerList, editLandPreviewLayers, {
+        selected,
+        layerStyles: editLandLayerStyles,
+        countEl: editLandListCount,
+        onToggle: (name, checked) => {
+          if (checked) selected.add(name);
+          else selected.delete(name);
+          if (editLandListCount) {
+            editLandListCount.textContent = `${selected.size} of ${editLandPreviewLayers.length} selected`;
+          }
+          if (editLandSave) editLandSave.disabled = selected.size === 0;
+          refreshEditPreview();
+        },
+        onStyleChange: (name) => {
+          if (selected.has(name)) refreshEditPreview();
+        },
+      });
+      editLandPreviewMap = ensureLandPreviewMap(editLandPreviewMapEl, editLandPreviewMap);
+      if (editLandSave) editLandSave.disabled = selected.size === 0;
+      refreshEditPreview();
+      await customElements.whenDefined("wa-dialog");
+      editLandModal.open = true;
+    } catch (_) {
+      setEditLandError("Could not reach server.");
+    }
+  }
+
+  async function saveEditLandModal() {
+    if (!editLandSourceId) return;
+    const selected = collectSelectedLandLayers(editLandLayerList);
+    if (!selected.length) {
+      setEditLandError("Select at least one layer.");
+      return;
+    }
+    setEditLandError("");
+    if (editLandSave) editLandSave.disabled = true;
+    const prevSource = landSources.find((s) => s.id === editLandSourceId);
+    const prevLayers = new Set(Array.isArray(prevSource?.layers) ? prevSource.layers : []);
+    try {
+      const body = {
+        layers: selected,
+        label: editLandLabel?.value.trim() || editLandSourceId,
+        layer_styles: landLayerStylePayload(editLandLayerStyles, selected),
+      };
+      const resp = await fetch(landSourceApiUrl(editLandSourceId), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setEditLandError(payload.error || `Save failed (${resp.status})`);
+        return;
+      }
+      if (editLandModal) editLandModal.open = false;
+      for (const layer of prevLayers) {
+        if (!selected.includes(layer)) {
+          removeLandMapLayer(editLandSourceId, layer);
+          landVisible.delete(landLayerKey(editLandSourceId, layer));
+        }
+      }
+      await reloadLandSources();
+      for (const layer of selected) {
+        if (!prevLayers.has(layer)) {
+          setLandLayerVisible(editLandSourceId, layer, true);
+        }
+        await ensureLandMapLayer(editLandSourceId, layer);
+      }
+    } catch (_) {
+      setEditLandError("Could not reach server.");
+    } finally {
+      if (editLandSave) editLandSave.disabled = false;
+    }
+  }
+
   function captureMapState() {
     const c = map.getCenter();
     return {
@@ -1800,6 +2769,8 @@
       filterByViewport: entityPanelFilterByViewport,
       viewshedVisible: Object.fromEntries(viewshedVisible),
       entityPanelOpen,
+      entityPanelTab,
+      landVisible: Object.fromEntries(landVisible),
     };
   }
 
@@ -4453,6 +5424,8 @@
     // Links first: cold warm re-reads many GPKGs; defer bulk viewshed warms until ready.
     void loadSiteLinks();
     renderEntityPanel();
+    renderLandPanel();
+    setEntityTab(entityPanelTab);
     applyEntityVisibility();
     syncBasemapMenu();
     setBasemap(currentBasemapKey);
@@ -4462,6 +5435,7 @@
     } else {
       fitSites();
     }
+    void refreshLandMapLayers();
     restoring = false;
   });
 
@@ -4612,6 +5586,85 @@
   if (entityPanelImportSites) {
     entityPanelImportSites.addEventListener("click", () => {
       void openImportSitesModal();
+    });
+  }
+  if (entityPanelImportLand) {
+    entityPanelImportLand.addEventListener("click", () => {
+      void openImportLandModal();
+    });
+  }
+  for (const tabBtn of entityPanelTabs) {
+    tabBtn.addEventListener("click", () => {
+      setEntityTab(tabBtn.getAttribute("data-entity-tab") || "sites");
+    });
+  }
+  if (importLandGdb) {
+    importLandGdb.addEventListener("change", () => {
+      void previewImportLandPath(importLandGdb.value);
+    });
+  }
+  if (importLandSave) {
+    importLandSave.addEventListener("click", () => {
+      void saveImportLandModal();
+    });
+  }
+  if (importLandSelectAll) {
+    importLandSelectAll.addEventListener("click", () => {
+      if (!importLandLayerList) return;
+      for (const input of importLandLayerList.querySelectorAll('input[type="checkbox"]')) {
+        input.checked = true;
+        input.dispatchEvent(new Event("change"));
+      }
+    });
+  }
+  if (importLandClearAll) {
+    importLandClearAll.addEventListener("click", () => {
+      if (!importLandLayerList) return;
+      for (const input of importLandLayerList.querySelectorAll('input[type="checkbox"]')) {
+        input.checked = false;
+        input.dispatchEvent(new Event("change"));
+      }
+    });
+  }
+  if (importLandModal) {
+    importLandModal.addEventListener("wa-after-show", () => {
+      if (importLandPreviewMap) requestAnimationFrame(() => importLandPreviewMap.resize());
+    });
+    importLandModal.addEventListener("wa-after-hide", () => {
+      resetImportLandModal();
+    });
+  }
+  if (editLandSave) {
+    editLandSave.addEventListener("click", () => {
+      void saveEditLandModal();
+    });
+  }
+  if (editLandSelectAll) {
+    editLandSelectAll.addEventListener("click", () => {
+      if (!editLandLayerList) return;
+      for (const input of editLandLayerList.querySelectorAll('input[type="checkbox"]')) {
+        input.checked = true;
+        input.dispatchEvent(new Event("change"));
+      }
+    });
+  }
+  if (editLandClearAll) {
+    editLandClearAll.addEventListener("click", () => {
+      if (!editLandLayerList) return;
+      for (const input of editLandLayerList.querySelectorAll('input[type="checkbox"]')) {
+        input.checked = false;
+        input.dispatchEvent(new Event("change"));
+      }
+    });
+  }
+  if (editLandModal) {
+    editLandModal.addEventListener("wa-after-show", () => {
+      if (editLandPreviewMap) requestAnimationFrame(() => editLandPreviewMap.resize());
+    });
+    editLandModal.addEventListener("wa-after-hide", () => {
+      destroyEditLandPreviewMap();
+      editLandSourceId = "";
+      setEditLandError("");
     });
   }
   if (entityPanelBulkTag) {

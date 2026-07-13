@@ -828,6 +828,82 @@ wa-dropdown-item.is-active::part(base) {
   display: none !important;
 }
 
+.import-land-gdb-select {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--wa-border-radius-s);
+  border: 1px solid var(--wa-color-surface-border);
+  background: var(--wa-color-surface-raised);
+  color: var(--wa-color-text-normal);
+  font-size: 0.875rem;
+}
+
+.import-land-layer-row {
+  flex-wrap: wrap;
+}
+
+.import-land-layer-label {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.import-land-layer-style {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.import-land-layer-color {
+  width: 2rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--wa-color-surface-border);
+  border-radius: var(--wa-border-radius-s);
+  background: transparent;
+  cursor: pointer;
+}
+
+.import-land-layer-opacity {
+  width: 4.5rem;
+}
+
+.import-land-layer-opacity-label {
+  font-size: 0.625rem;
+  color: var(--wa-color-text-quiet);
+  min-width: 2rem;
+  text-align: right;
+}
+
+.import-land-layer-row--selected {
+  background: rgba(74, 108, 247, 0.15);
+}
+
+.entity-panel__row--land .entity-panel__meta {
+  font-size: 0.75rem;
+}
+
+.entity-panel__land-source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem 0.15rem;
+  border-top: 1px solid var(--wa-color-surface-border);
+}
+
+.entity-panel__land-source-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--wa-color-text-quiet);
+}
+
+.entity-panel__land-source-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
 .entity-tabs {
   display: flex;
   gap: var(--wa-space-2xs);
