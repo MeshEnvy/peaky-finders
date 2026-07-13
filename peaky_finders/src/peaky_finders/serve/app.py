@@ -61,7 +61,6 @@ from peaky_finders.serve.land import (
     parse_land_layer_entries,
     patch_land_source,
     read_layer_geojson_bytes,
-    serialize_land_sources,
 )
 from peaky_finders.serve.land_import import (
     ensure_layer_preview_geojson,
@@ -264,6 +263,7 @@ def _parse_land_layer_entry_body(raw: Mapping[str, object], *, layer_name: str) 
     payload: dict[str, Any] = {"name": layer_name}
     for src, dst in (
         ("id", "id"),
+        ("role", "role"),
         ("label_field", "label_field"),
         ("labelField", "label_field"),
         ("style_field", "style_field"),
@@ -679,7 +679,7 @@ class ServeDispatcher:
                 self.send_error(404)
                 return
             try:
-                body = read_layer_geojson_bytes(preset_path, source_id, layer)
+                body, digest = read_layer_geojson_bytes(preset_path, source_id, layer)
             except ValueError as e:
                 payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=422)
@@ -688,7 +688,11 @@ class ServeDispatcher:
                 payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=500)
                 return
-            self._send_bytes(body, "application/geo+json")
+            self._send_bytes(
+                body,
+                "application/geo+json",
+                extra_headers={"X-Peaky-Digest": digest},
+            )
             return
 
         sites_prefetch_match = _API_PROJECT_SITES_PREFETCH_RE.match(path)
@@ -981,14 +985,16 @@ class ServeDispatcher:
             except (ValueError, ValidationError) as e:
                 self._send_html(project_error_html(slug, project_dir, str(e)), status=422)
                 return
+            land_payload = list_land_payload(project_dir / "config.yaml")
             self._send_html(
                 project_html(
                     slug,
                     project_dir,
                     _serialize_project_sites(sites),
                     simulation=_serialize_serve_simulation(preset),
-                    land=serialize_land_sources(project_dir / "config.yaml"),
+                    land=land_payload["sources"],
                     land_data_gdbs=list_data_gdbs(project_dir),
+                    land_aoi_digest=land_payload.get("aoiDigest"),
                 )
             )
             return

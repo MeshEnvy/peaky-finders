@@ -11,14 +11,22 @@ import pandas as pd
 import pytest
 from shapely.geometry import Polygon
 
-from peaky_finders.core.preset import LandLayerEntry, LandLayerStyle, load_preset, read_preset_document
+from peaky_finders.core.preset import (
+    LandLayerEntry,
+    LandLayerRole,
+    LandLayerStyle,
+    load_preset,
+    read_preset_document,
+)
 from peaky_finders.core.project.scaffold import scaffold_project
 from peaky_finders.serve.land import (
     add_land_source,
+    aoi_digest,
     delete_land_source,
     ensure_layer_geojson,
     list_land_payload,
     patch_land_source,
+    purge_clipped_serve_caches,
     read_layer_geojson_bytes,
 )
 from peaky_finders.serve.land_import import (
@@ -67,6 +75,42 @@ def _write_test_gdb(
         )
     gdf.to_file(gdb_path, layer=layer, driver="OpenFileGDB")
     return "data/test-parcel.gdb"
+
+
+def _write_clip_test_gdbs(project_dir: Path) -> tuple[str, str]:
+    data_dir = project_dir / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    aoi_gdf = gpd.GeoDataFrame(
+        geometry=[
+            Polygon(
+                [
+                    (-119.45, 39.52),
+                    (-119.42, 39.52),
+                    (-119.42, 39.55),
+                    (-119.45, 39.55),
+                ]
+            )
+        ],
+        crs="EPSG:4326",
+    )
+    big_gdf = gpd.GeoDataFrame(
+        geometry=[
+            Polygon(
+                [
+                    (-119.5, 39.5),
+                    (-119.3, 39.5),
+                    (-119.3, 39.7),
+                    (-119.5, 39.7),
+                ]
+            )
+        ],
+        crs="EPSG:4326",
+    )
+    aoi_path = data_dir / "aoi.gdb"
+    big_path = data_dir / "big.gdb"
+    aoi_gdf.to_file(aoi_path, layer="aoi", driver="OpenFileGDB")
+    big_gdf.to_file(big_path, layer="big", driver="OpenFileGDB")
+    return "data/aoi.gdb", "data/big.gdb"
 
 
 def test_gdf_to_feature_collection_geojson_strips_non_json_attrs() -> None:
@@ -254,10 +298,11 @@ def test_ensure_layer_geojson_caches_with_filter(tmp_path: Path) -> None:
         ],
     )
 
-    path1, bbox1 = ensure_layer_geojson(preset_path, "test-parcel", "poly")
-    path2, bbox2 = ensure_layer_geojson(preset_path, "test-parcel", "poly")
+    path1, bbox1, _digest1 = ensure_layer_geojson(preset_path, "test-parcel", "poly")
+    path2, bbox2, _digest2 = ensure_layer_geojson(preset_path, "test-parcel", "poly")
     assert path1 == path2
-    payload = json.loads(read_layer_geojson_bytes(preset_path, "test-parcel", "poly"))
+    body, _digest = read_layer_geojson_bytes(preset_path, "test-parcel", "poly")
+    payload = json.loads(body)
     assert len(payload["features"]) == 1
     assert payload["features"][0]["properties"]["style_key"] == "BLM"
 
@@ -272,8 +317,9 @@ def test_ensure_layer_geojson_caches_with_filter(tmp_path: Path) -> None:
             )
         ],
     )
-    path3, _ = ensure_layer_geojson(preset_path, "test-parcel", "poly")
-    payload2 = json.loads(read_layer_geojson_bytes(preset_path, "test-parcel", "poly"))
+    path3, _, _digest3 = ensure_layer_geojson(preset_path, "test-parcel", "poly")
+    body2, _ = read_layer_geojson_bytes(preset_path, "test-parcel", "poly")
+    payload2 = json.loads(body2)
     assert len(payload2["features"]) == 1
     assert payload2["features"][0]["properties"]["style_key"] == "PVT"
     assert payload2["features"][0]["properties"]["style_key"] != payload["features"][0]["properties"]["style_key"]
@@ -486,6 +532,115 @@ def test_land_patch_and_delete(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_list_land_payload_includes_aoi_digest(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    payload = list_land_payload(preset_path)
+    assert payload["aoiDigest"] == "none"
+
+
+def test_aoi_clip_serve_unclipped_preview(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    project_dir = projects_dir / "demo"
+    preset_path = project_dir / "config.yaml"
+    aoi_rel, big_rel = _write_clip_test_gdbs(project_dir)
+
+    add_land_source(
+        preset_path,
+        path=aoi_rel,
+        source_id="aoi-src",
+        layers=[LandLayerEntry(name="aoi", role=LandLayerRole.AOI)],
+    )
+    add_land_source(
+        preset_path,
+        path=big_rel,
+        source_id="big-src",
+        layers=[LandLayerEntry(name="big")],
+    )
+    assert aoi_digest(preset_path) != "none"
+
+    preview = ensure_layer_preview_geojson(
+        project_dir,
+        resolve_land_gdb_path(project_dir, big_rel),
+        "big",
+    )
+    assert len(preview["features"]) == 1
+    preview_bounds = gpd.GeoDataFrame.from_features(preview["features"], crs="EPSG:4326").total_bounds
+    assert preview_bounds[0] < -119.45
+
+    _path, bbox, _digest = ensure_layer_geojson(preset_path, "big-src", "big")
+    assert bbox[0] >= -119.45 - 1e-6
+    assert bbox[2] <= -119.42 + 1e-6
+
+
+def test_aoi_change_purges_clipped_serve_cache(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    project_dir = projects_dir / "demo"
+    preset_path = project_dir / "config.yaml"
+    aoi_rel, big_rel = _write_clip_test_gdbs(project_dir)
+
+    add_land_source(
+        preset_path,
+        path=aoi_rel,
+        source_id="aoi-src",
+        layers=[LandLayerEntry(name="aoi", role=LandLayerRole.AOI)],
+    )
+    add_land_source(
+        preset_path,
+        path=big_rel,
+        source_id="big-src",
+        layers=[LandLayerEntry(name="big")],
+    )
+    cache_path, _, _ = ensure_layer_geojson(preset_path, "big-src", "big")
+    assert cache_path.is_file()
+
+    patch_land_source(
+        preset_path,
+        "aoi-src",
+        layers=[LandLayerEntry(name="aoi")],
+    )
+    assert not cache_path.is_file()
+
+    _path, bbox, _ = ensure_layer_geojson(preset_path, "big-src", "big")
+    assert bbox[0] < -119.45
+
+
+def test_purge_clipped_serve_caches_keeps_aoi_layers(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    project_dir = projects_dir / "demo"
+    preset_path = project_dir / "config.yaml"
+    aoi_rel, big_rel = _write_clip_test_gdbs(project_dir)
+
+    add_land_source(
+        preset_path,
+        path=aoi_rel,
+        source_id="aoi-src",
+        layers=[LandLayerEntry(name="aoi", role=LandLayerRole.AOI)],
+    )
+    add_land_source(
+        preset_path,
+        path=big_rel,
+        source_id="big-src",
+        layers=[LandLayerEntry(name="big")],
+    )
+    aoi_cache, _, _ = ensure_layer_geojson(preset_path, "aoi-src", "aoi")
+    big_cache, _, _ = ensure_layer_geojson(preset_path, "big-src", "big")
+    assert aoi_cache.is_file()
+    assert big_cache.is_file()
+
+    purge_clipped_serve_caches(preset_path)
+    assert aoi_cache.is_file()
+    assert not big_cache.is_file()
 
 
 def test_land_import_rejects_invalid_path(tmp_path: Path) -> None:

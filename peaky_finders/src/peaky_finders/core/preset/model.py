@@ -256,6 +256,14 @@ def _coerce_land_attribute_filters(v: Any) -> list[Any]:
     return out
 
 
+class LandLayerRole(StrEnum):
+    """Spatial role for a registered GDB layer."""
+
+    AOI = "aoi"
+    INCLUDE = "include"
+    EXCLUDE = "exclude"
+
+
 class LandLayerEntry(BaseModel):
     """One GDB layer with optional attribute filters and style mapping."""
 
@@ -263,6 +271,7 @@ class LandLayerEntry(BaseModel):
 
     name: str
     id: str | None = None
+    role: LandLayerRole | None = None
     include: list[LandAttributeFilter] = Field(default_factory=list)
     exclude: list[LandAttributeFilter] = Field(default_factory=list)
     label_field: str | None = Field(default=None, alias="labelField")
@@ -296,6 +305,18 @@ class LandLayerEntry(BaseModel):
             return None
         s = str(v).strip()
         return s or None
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def _normalize_role(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return None
+        if isinstance(v, LandLayerRole):
+            return v
+        s = str(v).strip().lower()
+        if not s:
+            return None
+        return s
 
     @field_validator("include", "exclude", mode="before")
     @classmethod

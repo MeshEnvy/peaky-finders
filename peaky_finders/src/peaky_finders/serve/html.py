@@ -391,6 +391,7 @@ def project_html(
     simulation: dict[str, object] | None = None,
     land: list[dict[str, object]] | None = None,
     land_data_gdbs: list[str] | None = None,
+    land_aoi_digest: str | None = None,
 ) -> bytes:
     peaky_config = json.dumps(
         {
@@ -400,6 +401,7 @@ def project_html(
             "land": {
                 "sources": land or [],
                 "dataGdbPaths": land_data_gdbs or [],
+                "aoiDigest": land_aoi_digest or "none",
             },
         }
     )
