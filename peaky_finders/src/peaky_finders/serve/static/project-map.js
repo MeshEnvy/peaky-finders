@@ -2950,8 +2950,11 @@
     name.textContent = nameText;
     name.title = nameText;
     titleRow.appendChild(name);
-    appendLandLayerRoleBadge(titleRow, row.spec.role);
     main.appendChild(titleRow);
+    const badgeRow = document.createElement("div");
+    badgeRow.className = "entity-panel__land-badge-row";
+    appendLandLayerRoleBadge(badgeRow, row.spec.role);
+    main.appendChild(badgeRow);
     if (subtitle) {
       const sourceLabel = document.createElement("div");
       sourceLabel.className = "entity-panel__land-subtitle";
