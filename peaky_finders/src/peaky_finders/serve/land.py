@@ -17,6 +17,8 @@ from peaky_finders.core.preset import (
     LandLayerEntry,
     LandLayerRole,
     LandLayerStyle,
+    LandSidebar,
+    LandSidebarFolder,
     LandSourceEntry,
     Preset,
     load_preset,
@@ -43,7 +45,139 @@ def _aoi_memo_dir(cache_root: Path) -> Path:
     return cache_root / "aoi"
 
 
+def unique_folder_id(existing: set[str], stem: str) -> str:
+    slug = slugify_files_segment(stem)
+    if not slug:
+        slug = "folder"
+    if slug not in existing:
+        return slug
+    n = 2
+    while f"{slug}-{n}" in existing:
+        n += 1
+    return f"{slug}-{n}"
+
+
 def unique_source_id(existing: set[str], stem: str) -> str:
+    slug = slugify_files_segment(stem)
+    if slug.endswith(".gdb"):
+        slug = slugify_files_segment(slug[:-4])
+    if not slug:
+        slug = "land-source"
+    if slug not in existing:
+        return slug
+    n = 2
+    while f"{slug}-{n}" in existing:
+        n += 1
+    return f"{slug}-{n}"
+
+
+def _all_land_source_ids(preset: Preset) -> set[str]:
+    return set(preset.land.sources.keys())
+
+
+def normalize_land_sidebar(preset: Preset) -> LandSidebar:
+    """Prune stale source ids and append new sources to unfiled."""
+    valid = _all_land_source_ids(preset)
+    raw = preset.land.sidebar
+    if raw is None:
+        return LandSidebar(unfiled_sources=sorted(valid))
+
+    folders: list[LandSidebarFolder] = []
+    assigned: set[str] = set()
+    for folder in raw.folders:
+        kept = [sid for sid in folder.sources if sid in valid]
+        assigned.update(kept)
+        folders.append(
+            LandSidebarFolder(id=folder.id, label=folder.label, sources=kept),
+        )
+
+    unfiled: list[str] = [sid for sid in raw.unfiled_sources if sid in valid and sid not in assigned]
+    assigned.update(unfiled)
+    for sid in sorted(valid):
+        if sid not in assigned:
+            unfiled.append(sid)
+    return LandSidebar(folders=folders, unfiled_sources=unfiled)
+
+
+def serialize_land_sidebar(preset: Preset) -> dict[str, Any]:
+    sidebar = normalize_land_sidebar(preset)
+    return {
+        "folders": [
+            {"id": f.id, "label": f.label, "sources": list(f.sources)}
+            for f in sidebar.folders
+        ],
+        "unfiledSources": list(sidebar.unfiled_sources),
+    }
+
+
+def _sidebar_to_yaml(sidebar: LandSidebar) -> dict[str, Any]:
+    return {
+        "folders": [
+            {"id": f.id, "label": f.label, "sources": list(f.sources)}
+            for f in sidebar.folders
+        ],
+        "unfiled_sources": list(sidebar.unfiled_sources),
+    }
+
+
+def _ensure_land_sidebar_raw(land_raw: dict[str, Any]) -> dict[str, Any]:
+    sidebar_raw = land_raw.get("sidebar")
+    if not isinstance(sidebar_raw, dict):
+        sidebar_raw = {}
+        land_raw["sidebar"] = sidebar_raw
+    if "folders" not in sidebar_raw:
+        sidebar_raw["folders"] = []
+    if "unfiled_sources" not in sidebar_raw:
+        sidebar_raw["unfiled_sources"] = []
+    return sidebar_raw
+
+
+def _remove_source_from_sidebar_raw(sidebar_raw: dict[str, Any], source_id: str) -> None:
+    folders = sidebar_raw.get("folders")
+    if isinstance(folders, list):
+        for folder in folders:
+            if not isinstance(folder, dict):
+                continue
+            sources = folder.get("sources")
+            if isinstance(sources, list):
+                folder["sources"] = [s for s in sources if str(s) != source_id]
+    unfiled = sidebar_raw.get("unfiled_sources")
+    if isinstance(unfiled, list):
+        sidebar_raw["unfiled_sources"] = [s for s in unfiled if str(s) != source_id]
+
+
+def patch_land_sidebar(preset_path: Path, sidebar: LandSidebar) -> dict[str, Any]:
+    job = load_preset(preset_path)
+    valid = _all_land_source_ids(job)
+    for folder in sidebar.folders:
+        for sid in folder.sources:
+            if sid not in valid:
+                raise ValueError(f"unknown land source: {sid}")
+    for sid in sidebar.unfiled_sources:
+        if sid not in valid:
+            raise ValueError(f"unknown land source: {sid}")
+
+    validated = LandSidebar.model_validate(sidebar.model_dump(mode="python"))
+
+    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> dict[str, Any]:
+        land_raw = root.get("land")
+        if not isinstance(land_raw, dict):
+            land_raw = {}
+            root["land"] = land_raw
+        sidebar_raw = _ensure_land_sidebar_raw(land_raw)
+        sidebar_raw.clear()
+        sidebar_raw.update(_sidebar_to_yaml(validated))
+        return {
+            "folders": [
+                {"id": f.id, "label": f.label, "sources": list(f.sources)}
+                for f in validated.folders
+            ],
+            "unfiledSources": list(validated.unfiled_sources),
+        }
+
+    return update_preset_yaml_tree(preset_path, mutator, validate=True)
+
+
     slug = slugify_files_segment(stem)
     if slug.endswith(".gdb"):
         slug = slugify_files_segment(slug[:-4])
@@ -276,8 +410,10 @@ def serialize_land_sources(preset_path: Path) -> list[dict[str, Any]]:
 
 
 def list_land_payload(preset_path: Path) -> dict[str, Any]:
+    job = load_preset(preset_path)
     return {
         "sources": serialize_land_sources(preset_path),
+        "sidebar": serialize_land_sidebar(job),
         "aoiDigest": aoi_digest(preset_path),
     }
 
@@ -368,6 +504,10 @@ def add_land_source(
         if label and str(label).strip():
             entry["label"] = str(label).strip()
         sources_raw[sid] = entry
+        sidebar_raw = _ensure_land_sidebar_raw(land_raw)
+        unfiled = sidebar_raw.get("unfiled_sources")
+        if isinstance(unfiled, list):
+            unfiled.append(sid)
         return serialize_land_source(sid, LandSourceEntry.model_validate(entry))
 
     result = update_preset_yaml_tree(preset_path, mutator, validate=True)
@@ -435,6 +575,9 @@ def delete_land_source(preset_path: Path, source_id: str) -> None:
         if not isinstance(sources_raw, dict) or sid not in sources_raw:
             raise ValueError(f"unknown land source: {sid}")
         del sources_raw[sid]
+        sidebar_raw = land_raw.get("sidebar")
+        if isinstance(sidebar_raw, dict):
+            _remove_source_from_sidebar_raw(sidebar_raw, sid)
         if not sources_raw:
             if "sources" in land_raw:
                 del land_raw["sources"]

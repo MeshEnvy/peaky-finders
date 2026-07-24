@@ -452,12 +452,114 @@ class LandSourceEntry(BaseModel):
         return None
 
 
+_LAND_FOLDER_ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$")
+
+
+class LandSidebarFolder(BaseModel):
+    """User folder grouping whole land sources in the serve sidebar."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    label: str
+    sources: list[str] = Field(default_factory=list)
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _normalize_id(cls, v: Any) -> str:
+        s = str(v or "").strip().lower()
+        if not s or not _LAND_FOLDER_ID_RE.fullmatch(s):
+            raise ValueError(
+                "land folder id must use lowercase letters, digits, hyphens, underscores"
+            )
+        return s
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _normalize_label(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("land folder label is required")
+        return s
+
+    @field_validator("sources", mode="before")
+    @classmethod
+    def _normalize_sources(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("land folder sources must be a list")
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            s = str(item).strip()
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            out.append(s)
+        return out
+
+
+class LandSidebar(BaseModel):
+    """Sidebar layout: ordered folders and unfiled source ids."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    folders: list[LandSidebarFolder] = Field(default_factory=list)
+    unfiled_sources: list[str] = Field(default_factory=list, alias="unfiledSources")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_sidebar_keys(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw = dict(data)
+        if "unfiledSources" in raw and "unfiled_sources" not in raw:
+            raw["unfiled_sources"] = raw.pop("unfiledSources")
+        return raw
+
+    @field_validator("unfiled_sources", mode="before")
+    @classmethod
+    def _normalize_unfiled_sources(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("land sidebar unfiled_sources must be a list")
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            s = str(item).strip()
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            out.append(s)
+        return out
+
+    @model_validator(mode="after")
+    def _reject_duplicate_source_assignments(self) -> LandSidebar:
+        folder_ids = [f.id for f in self.folders]
+        if len(folder_ids) != len(set(folder_ids)):
+            raise ValueError("duplicate land folder id")
+        seen: set[str] = set()
+        for folder in self.folders:
+            for sid in folder.sources:
+                if sid in seen:
+                    raise ValueError(f"duplicate land source in sidebar: {sid}")
+                seen.add(sid)
+        for sid in self.unfiled_sources:
+            if sid in seen:
+                raise ValueError(f"duplicate land source in sidebar: {sid}")
+            seen.add(sid)
+        return self
+
+
 class LandConfig(BaseModel):
     """Informational GDB overlays registered from ``projects/<slug>/data/``."""
 
     model_config = ConfigDict(extra="ignore")
 
     sources: dict[str, LandSourceEntry] = Field(default_factory=dict)
+    sidebar: LandSidebar | None = None
 
 
 def _reject_site_type_field(site: Mapping[str, Any], slug: str) -> None:

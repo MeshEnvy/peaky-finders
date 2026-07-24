@@ -392,6 +392,7 @@ def project_html(
     land: list[dict[str, object]] | None = None,
     land_data_gdbs: list[str] | None = None,
     land_aoi_digest: str | None = None,
+    land_sidebar: dict[str, object] | None = None,
 ) -> bytes:
     peaky_config = json.dumps(
         {
@@ -402,6 +403,7 @@ def project_html(
                 "sources": land or [],
                 "dataGdbPaths": land_data_gdbs or [],
                 "aoiDigest": land_aoi_digest or "none",
+                "sidebar": land_sidebar or {"folders": [], "unfiledSources": []},
             },
         }
     )
@@ -447,6 +449,7 @@ def project_html(
         <div id="entity-panel-land-list" class="entity-panel__list"></div>
         <div class="entity-panel__footer">
           <div class="entity-panel__footer-actions">
+            <wa-button id="entity-panel-add-land-folder" appearance="outlined" size="s" class="pf-stretch" type="button" title="Create land folder">+ Folder</wa-button>
             <wa-button id="entity-panel-import-land" appearance="outlined" variant="brand" size="s" class="pf-stretch" type="button" title="Import GDB layers from data/">Import</wa-button>
           </div>
         </div>

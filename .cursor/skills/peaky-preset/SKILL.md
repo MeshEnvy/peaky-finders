@@ -24,7 +24,7 @@ Read [MEMORY.md](../../MEMORY.md) first.
 | `display` | Viewshed colormap / transparency |
 | `sites` | `name`, `loc`, optional `tags`, `height_m`, metadata — **no `type`** |
 | `links` | Manual pairs `[[a, b], …]` |
-| `land` | Project-only GDB overlay registry (`land.sources`) — attribute filters + style-by-value v2 |
+| `land` | Project-only GDB overlay registry (`land.sources`, `land.sidebar`) — attribute filters + style-by-value v2 |
 
 `load_preset` deep-merges global ← project. Writes prune keys equal to defaults.
 
@@ -50,10 +50,17 @@ land:
             FS: { color: "#2a9d8f", opacity: 0.55 }
         - name: admu_ofc_poly
           style: { color: "#4a6cf7", opacity: 0.48 }
+  sidebar:
+    folders:
+      - id: federal
+        label: Federal lands
+        sources: [blm_sma]
+    unfiled_sources: []
 ```
 
 - `path` — relative to project dir; must resolve under `data/` and end with `.gdb`
 - `layers[]` — `LandLayerEntry`: `name`, optional `id`, `include`/`exclude` (`field` + `values`), `label_field`, `style_field`, `style` (flat `{color, opacity}` or per-value map when `style_field` set)
+- `sidebar` — optional folder layout: `folders[]` (`id`, `label`, `sources[]` source ids), `unfiled_sources[]` (sources not in any folder). New imports append to `unfiled_sources`.
 - Legacy `layers: [str]` + top-level `layer_styles` coerced to layer objects on load
 - GeoJSON route key: `layers/<layerKey>/geojson` where `layerKey` = slug(`id`) or slug(`name`)
 - Cache: `<project>/.peaky/cache/land/<source_id>/<layerKey>.geojson` + digest (GDB mtime, filters, label/style fields)

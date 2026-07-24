@@ -1126,16 +1126,31 @@ wa-dropdown-item.is-active::part(base) {
   opacity: 0.68;
 }
 
-.entity-panel__land-title-row {
+.entity-panel__land-title-row,
+.entity-panel__land-source-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   min-width: 0;
 }
 
-.entity-panel__land-badge-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem;
-  margin-top: 0.2rem;
+.entity-panel__land-source-title-row .entity-panel__land-source-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-panel__land-source-meta {
+  padding: 0 0.35rem 0.25rem 2.1rem;
+}
+
+.entity-panel__land-drop-row.entity-panel__row--land-drop-target {
+  box-shadow: inset 0 -2px 0 #4a6cf7;
+}
+
+.entity-panel__land-drop-row.entity-panel__row--land-dragging {
+  opacity: 0.55;
 }
 
 .entity-panel__land-spinner-slot {
@@ -1260,8 +1275,76 @@ wa-dropdown-item.is-active::part(base) {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.5rem 0.35rem 0.15rem;
+  padding: 0.35rem 0.35rem 0.15rem;
+}
+
+.entity-panel__land-source-group {
   border-top: 1px solid var(--wa-color-surface-border);
+}
+
+.entity-panel__land-source-group:first-child {
+  border-top: 0;
+}
+
+.entity-panel__land-source-layers {
+  padding-left: 0.35rem;
+}
+
+.entity-panel__land-folder {
+  border-top: 1px solid var(--wa-color-surface-border);
+}
+
+.entity-panel__land-folder:first-child {
+  border-top: 0;
+}
+
+.entity-panel__land-folder-header {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.45rem 0.35rem 0.2rem;
+}
+
+.entity-panel__land-folder-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--wa-color-text-quiet);
+  cursor: pointer;
+}
+
+.entity-panel__land-folder-title {
+  flex: 1 1 auto;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--wa-color-text-normal);
+  line-height: 1.25;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-panel__land-folder-body {
+  padding-left: 0.35rem;
+}
+
+.entity-panel__land-unfiled {
+  border-top: 1px solid var(--wa-color-surface-border);
+}
+
+.entity-panel__land-unfiled-header {
+  padding: 0.45rem 0.35rem 0.2rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--wa-color-text-quiet);
 }
 
 .entity-panel__land-source:first-child {

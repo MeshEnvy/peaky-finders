@@ -15,6 +15,8 @@ from peaky_finders.core.preset import (
     LandLayerEntry,
     LandLayerRole,
     LandLayerStyle,
+    LandSidebar,
+    LandSidebarFolder,
     load_preset,
     read_preset_document,
 )
@@ -25,6 +27,8 @@ from peaky_finders.serve.land import (
     delete_land_source,
     ensure_layer_geojson,
     list_land_payload,
+    normalize_land_sidebar,
+    patch_land_sidebar,
     patch_land_source,
     purge_clipped_serve_caches,
     read_layer_geojson_bytes,
@@ -229,6 +233,8 @@ def test_add_patch_delete_land_source(tmp_path: Path) -> None:
     assert source["layers"][0]["name"] == "poly"
     preset = load_preset(preset_path)
     assert "test-parcel" in preset.land.sources
+    assert preset.land.sidebar is not None
+    assert preset.land.sidebar.unfiled_sources == ["test-parcel"]
 
     updated = patch_land_source(
         preset_path,
@@ -240,6 +246,151 @@ def test_add_patch_delete_land_source(tmp_path: Path) -> None:
     delete_land_source(preset_path, "test-parcel")
     preset = load_preset(preset_path)
     assert preset.land.sources == {}
+    assert preset.land.sidebar is None or preset.land.sidebar.unfiled_sources == []
+
+
+def test_normalize_land_sidebar_prunes_and_appends(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    project_dir = projects_dir / "demo"
+    preset_path = project_dir / "config.yaml"
+    rel = _write_test_gdb(project_dir)
+    add_land_source(preset_path, path=rel, layers=[LandLayerEntry(name="poly")], source_id="parcel-a")
+    add_land_source(
+        preset_path,
+        path=rel,
+        layers=[LandLayerEntry(name="poly")],
+        source_id="parcel-b",
+    )
+
+    preset = load_preset(preset_path)
+    preset.land.sidebar = LandSidebar.model_construct(
+        folders=[
+            LandSidebarFolder.model_construct(
+                id="federal",
+                label="Federal",
+                sources=["parcel-a", "stale-src"],
+            ),
+        ],
+        unfiled_sources=["other-stale"],
+    )
+    sidebar = normalize_land_sidebar(preset)
+    assert sidebar.folders[0].sources == ["parcel-a"]
+    assert sidebar.unfiled_sources == ["parcel-b"]
+
+
+def test_patch_land_sidebar_round_trip(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    project_dir = projects_dir / "demo"
+    preset_path = project_dir / "config.yaml"
+    rel = _write_test_gdb(project_dir)
+    add_land_source(preset_path, path=rel, layers=[LandLayerEntry(name="poly")], source_id="parcel-a")
+    add_land_source(
+        preset_path,
+        path=rel,
+        layers=[LandLayerEntry(name="poly")],
+        source_id="parcel-b",
+    )
+
+    result = patch_land_sidebar(
+        preset_path,
+        LandSidebar(
+            folders=[LandSidebarFolder(id="refs", label="Reference", sources=["parcel-b"])],
+            unfiled_sources=["parcel-a"],
+        ),
+    )
+    assert result["folders"][0]["sources"] == ["parcel-b"]
+    assert result["unfiledSources"] == ["parcel-a"]
+
+    doc = read_preset_document(preset_path)
+    assert doc["land"]["sidebar"]["folders"][0]["id"] == "refs"
+    assert doc["land"]["sidebar"]["unfiled_sources"] == ["parcel-a"]
+
+
+def test_patch_land_sidebar_rejects_duplicate_source(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    project_dir = projects_dir / "demo"
+    preset_path = project_dir / "config.yaml"
+    rel = _write_test_gdb(project_dir)
+    add_land_source(preset_path, path=rel, layers=[LandLayerEntry(name="poly")], source_id="parcel-a")
+    add_land_source(
+        preset_path,
+        path=rel,
+        layers=[LandLayerEntry(name="poly")],
+        source_id="parcel-b",
+    )
+
+    with pytest.raises(ValueError, match="duplicate land source"):
+        patch_land_sidebar(
+            preset_path,
+            LandSidebar(
+                folders=[LandSidebarFolder(id="refs", label="Reference", sources=["parcel-a"])],
+                unfiled_sources=["parcel-a"],
+            ),
+        )
+
+
+def test_list_land_payload_includes_sidebar(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    project_dir = projects_dir / "demo"
+    preset_path = project_dir / "config.yaml"
+    rel = _write_test_gdb(project_dir)
+    add_land_source(preset_path, path=rel, layers=[LandLayerEntry(name="poly")])
+
+    payload = list_land_payload(preset_path)
+    assert "sidebar" in payload
+    assert payload["sidebar"]["unfiledSources"] == ["test-parcel"]
+
+
+def test_land_sidebar_patch_http(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("mesh-demo", parent=projects_dir)
+    project_dir = projects_dir / "mesh-demo"
+    preset_path = project_dir / "config.yaml"
+    rel = _write_test_gdb(project_dir)
+    add_land_source(preset_path, path=rel, layers=[LandLayerEntry(name="poly")], source_id="parcel-a")
+    add_land_source(
+        preset_path,
+        path=rel,
+        layers=[LandLayerEntry(name="poly")],
+        source_id="parcel-b",
+    )
+
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        body = json.dumps(
+            {
+                "folders": [
+                    {"id": "refs", "label": "Reference", "sources": ["parcel-b"]},
+                ],
+                "unfiledSources": ["parcel-a"],
+            }
+        ).encode("utf-8")
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request(
+            "PATCH",
+            "/api/p/mesh-demo/land/sidebar",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        payload = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert payload["sidebar"]["folders"][0]["sources"] == ["parcel-b"]
+        preset = load_preset(preset_path)
+        assert preset.land.sidebar is not None
+        assert preset.land.sidebar.folders[0].sources == ["parcel-b"]
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_land_layer_styles_round_trip(tmp_path: Path) -> None:

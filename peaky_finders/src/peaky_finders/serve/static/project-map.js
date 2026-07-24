@@ -5,6 +5,7 @@
   let landSources = Array.isArray(config.land?.sources) ? [...config.land.sources] : [];
   let landDataGdbPaths = Array.isArray(config.land?.dataGdbPaths) ? [...config.land.dataGdbPaths] : [];
   let landAoiDigest = typeof config.land?.aoiDigest === "string" ? config.land.aoiDigest : "none";
+  let landSidebar = normalizeLandSidebarInput(config.land?.sidebar);
 
   const TERRAIN_SOURCE = "terrain-dem";
   const TERRAIN_HILLSHADE = "terrain-hillshade";
@@ -433,6 +434,7 @@
   const entityPanelLandList = document.getElementById("entity-panel-land-list");
   const entityPanelLandCount = document.getElementById("entity-panel-land-count");
   const entityPanelImportLand = document.getElementById("entity-panel-import-land");
+  const entityPanelAddLandFolder = document.getElementById("entity-panel-add-land-folder");
   const entityPanelTabs = document.querySelectorAll("[data-entity-tab]");
   const importLandModal = document.getElementById("import-land-modal");
   const importLandGdb = document.getElementById("import-land-gdb");
@@ -548,7 +550,17 @@
   let landLayerOrder = Array.isArray(savedMapState?.landLayerOrder)
     ? savedMapState.landLayerOrder.filter((key) => typeof key === "string")
     : [];
-  let landDragKey = null;
+  const landFoldersCollapsed = new Map();
+  if (savedMapState?.landFoldersCollapsed && typeof savedMapState.landFoldersCollapsed === "object") {
+    for (const [key, collapsed] of Object.entries(savedMapState.landFoldersCollapsed)) {
+      landFoldersCollapsed.set(key, !!collapsed);
+    }
+  }
+  let landDragKind = null;
+  let landDragId = null;
+  let landSidebarSaveTimer = null;
+  let landSidebarMigrationPending = false;
+  const LAND_SIDEBAR_SAVE_MS = 400;
   let importLandPreviewLayers = [];
   let importLandPreviewPath = "";
   let importLandPreviewMap = null;
@@ -1862,6 +1874,10 @@
     return `/api/p/${projectSlug}/land`;
   }
 
+  function landSidebarApiUrl() {
+    return `/api/p/${projectSlug}/land/sidebar`;
+  }
+
   function landDataGdbsUrl() {
     return `/api/p/${projectSlug}/land/data-gdbs`;
   }
@@ -2059,35 +2075,35 @@
         title: "Area of interest — unioned clip boundary for other layers",
       };
     }
-    if (normalized === "include") {
-      return {
-        label: "Include",
-        className: "entity-panel__land-role-badge entity-panel__land-role-badge--include",
-        title: "Include role (reserved — no spatial effect yet)",
-      };
-    }
-    if (normalized === "exclude") {
-      return {
-        label: "Exclude",
-        className: "entity-panel__land-role-badge entity-panel__land-role-badge--exclude",
-        title: "Exclude role (reserved — no spatial effect yet)",
-      };
-    }
-    return {
-      label: "Overlay",
-      className: "entity-panel__land-role-badge entity-panel__land-role-badge--overlay",
-      title: "Default overlay layer",
-    };
+    return null;
   }
 
   function appendLandLayerRoleBadge(parent, role) {
     const spec = landLayerRoleBadgeSpec(role);
+    if (!spec) return null;
     const badge = document.createElement("span");
     badge.className = spec.className;
     badge.textContent = spec.label;
     badge.title = spec.title;
     parent.appendChild(badge);
     return badge;
+  }
+
+  function buildLandLayerControls(sourceId, layerKey, { labelField = null } = {}) {
+    const controls = document.createDocumentFragment();
+    const spinnerSlot = document.createElement("span");
+    spinnerSlot.className = "entity-panel__land-spinner-slot";
+    spinnerSlot.setAttribute("aria-hidden", "true");
+    const spinner = document.createElement("span");
+    spinner.className = "entity-panel__land-row-spinner pin-load-spinner";
+    spinner.hidden = true;
+    spinnerSlot.appendChild(spinner);
+    controls.appendChild(spinnerSlot);
+    controls.appendChild(buildLandLayerEyeBtn(sourceId, layerKey));
+    if (labelField) {
+      controls.appendChild(buildLandLayerLabelBtn(sourceId, layerKey));
+    }
+    return controls;
   }
 
   function appendLandLayerMeta(parent, spec) {
@@ -2474,9 +2490,196 @@
     syncLandMapLabelLayer(sourceId, layer);
   }
 
+  function normalizeLandSidebarInput(raw) {
+    const folders = Array.isArray(raw?.folders)
+      ? raw.folders.map((folder) => ({
+          id: String(folder?.id || "").trim(),
+          label: String(folder?.label || folder?.id || "").trim(),
+          sources: Array.isArray(folder?.sources)
+            ? folder.sources.map((sid) => String(sid).trim()).filter(Boolean)
+            : [],
+        })).filter((folder) => folder.id)
+      : [];
+    const unfiledSources = Array.isArray(raw?.unfiledSources)
+      ? raw.unfiledSources.map((sid) => String(sid).trim()).filter(Boolean)
+      : Array.isArray(raw?.unfiled_sources)
+        ? raw.unfiled_sources.map((sid) => String(sid).trim()).filter(Boolean)
+        : [];
+    return { folders, unfiledSources };
+  }
+
+  function cloneLandSidebar(sidebar = landSidebar) {
+    return {
+      folders: sidebar.folders.map((folder) => ({
+        id: folder.id,
+        label: folder.label,
+        sources: [...folder.sources],
+      })),
+      unfiledSources: [...sidebar.unfiledSources],
+    };
+  }
+
+  function landSourceRecord(sourceId) {
+    return landSources.find((source) => source.id === sourceId) || null;
+  }
+
+  function allLandSourceIds() {
+    return landSources.map((source) => source.id);
+  }
+
+  function syncLandSidebarWithSources() {
+    const valid = new Set(allLandSourceIds());
+    const assigned = new Set();
+    const folders = [];
+    for (const folder of landSidebar.folders) {
+      const sources = folder.sources.filter((sid) => valid.has(sid) && !assigned.has(sid));
+      sources.forEach((sid) => assigned.add(sid));
+      folders.push({ id: folder.id, label: folder.label, sources });
+    }
+    const unfiledSources = landSidebar.unfiledSources.filter(
+      (sid) => valid.has(sid) && !assigned.has(sid),
+    );
+    unfiledSources.forEach((sid) => assigned.add(sid));
+    for (const sid of allLandSourceIds()) {
+      if (!assigned.has(sid)) unfiledSources.push(sid);
+    }
+    landSidebar = { folders, unfiledSources };
+  }
+
+  function orderedLandSourceIds() {
+    syncLandSidebarWithSources();
+    const ids = [];
+    for (const folder of landSidebar.folders) {
+      for (const sid of folder.sources) ids.push(sid);
+    }
+    for (const sid of landSidebar.unfiledSources) ids.push(sid);
+    return ids;
+  }
+
+  function slugifyLandFolderId(label, folders) {
+    const base =
+      String(label)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "folder";
+    const existing = new Set(folders.map((folder) => folder.id));
+    if (!existing.has(base)) return base;
+    let n = 2;
+    while (existing.has(`${base}-${n}`)) n += 1;
+    return `${base}-${n}`;
+  }
+
+  function removeSourceFromSidebar(sidebar, sourceId) {
+    for (const folder of sidebar.folders) {
+      folder.sources = folder.sources.filter((sid) => sid !== sourceId);
+    }
+    sidebar.unfiledSources = sidebar.unfiledSources.filter((sid) => sid !== sourceId);
+  }
+
+  function schedulePersistLandSidebar() {
+    if (landSidebarSaveTimer) clearTimeout(landSidebarSaveTimer);
+    landSidebarSaveTimer = setTimeout(() => {
+      landSidebarSaveTimer = null;
+      void persistLandSidebar();
+    }, LAND_SIDEBAR_SAVE_MS);
+  }
+
+  async function persistLandSidebar({ refreshMap = false } = {}) {
+    syncLandSidebarWithSources();
+    try {
+      const resp = await fetch(landSidebarApiUrl(), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(landSidebar),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        window.alert(payload.error || `Save sidebar failed (${resp.status})`);
+        return false;
+      }
+      if (payload.sidebar) landSidebar = normalizeLandSidebarInput(payload.sidebar);
+      if (refreshMap) await refreshLandMapLayers();
+      return true;
+    } catch (_) {
+      window.alert("Could not reach server.");
+      return false;
+    }
+  }
+
+  async function maybeMigrateLandSidebarFromLayerOrder() {
+    if (!landSidebarMigrationPending) return;
+    landSidebarMigrationPending = false;
+    await persistLandSidebar();
+  }
+
+  function queueLandSidebarMigrationFromLayerOrder() {
+    if (landSidebar.folders.length || landSidebar.unfiledSources.length) return;
+    if (!landLayerOrder.length) return;
+    const seen = new Set();
+    const order = [];
+    for (const key of landLayerOrder) {
+      const sid = String(key).split("/")[0];
+      if (!sid || seen.has(sid)) continue;
+      seen.add(sid);
+      order.push(sid);
+    }
+    for (const sid of allLandSourceIds()) {
+      if (!seen.has(sid)) order.push(sid);
+    }
+    landSidebar = { folders: [], unfiledSources: order };
+    landSidebarMigrationPending = true;
+  }
+
+  function isLandFolderCollapsed(folderId) {
+    return landFoldersCollapsed.get(folderId) === true;
+  }
+
+  function setLandFolderCollapsed(folderId, collapsed) {
+    landFoldersCollapsed.set(folderId, !!collapsed);
+    scheduleSaveMapState();
+    renderLandPanel();
+  }
+
+  function landFolderLayerRefs(folderId) {
+    const folder = landSidebar.folders.find((item) => item.id === folderId);
+    if (!folder) return [];
+    const refs = [];
+    for (const sourceId of folder.sources) {
+      const source = landSourceRecord(sourceId);
+      if (!source || !Array.isArray(source.layers)) continue;
+      for (const rawLayer of source.layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        refs.push(landLayerKey(sourceId, spec.key));
+      }
+    }
+    return refs;
+  }
+
+  function isLandFolderVisible(folderId) {
+    const refs = landFolderLayerRefs(folderId);
+    if (!refs.length) return false;
+    return refs.every((key) => landVisible.get(key) === true);
+  }
+
+  function setLandFolderVisible(folderId, visible) {
+    const folder = landSidebar.folders.find((item) => item.id === folderId);
+    if (!folder) return;
+    for (const sourceId of folder.sources) {
+      const source = landSourceRecord(sourceId);
+      if (!source || !Array.isArray(source.layers)) continue;
+      for (const rawLayer of source.layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        setLandLayerVisible(sourceId, spec.key, visible);
+      }
+    }
+    renderLandPanel();
+  }
+
   function landLayerRowsRaw() {
     const rows = [];
-    for (const source of landSources) {
+    for (const sourceId of orderedLandSourceIds()) {
+      const source = landSourceRecord(sourceId);
+      if (!source) continue;
       const layers = Array.isArray(source.layers) ? source.layers : [];
       for (const rawLayer of layers) {
         const spec = normalizeRegisteredLayer(rawLayer);
@@ -2492,53 +2695,104 @@
     return rows;
   }
 
-  function normalizeLandLayerOrder(order, rows) {
-    const validKeys = new Set(rows.map((row) => landLayerKey(row.sourceId, row.layerKey)));
-    const next = [];
-    const seen = new Set();
-    for (const key of order) {
-      if (!validKeys.has(key) || seen.has(key)) continue;
-      next.push(key);
-      seen.add(key);
-    }
-    for (const row of rows) {
-      const key = landLayerKey(row.sourceId, row.layerKey);
-      if (!seen.has(key)) next.push(key);
-    }
-    return next;
-  }
-
-  function currentLandLayerOrder() {
-    return normalizeLandLayerOrder(landLayerOrder, landLayerRowsRaw());
-  }
-
   function landLayerRows() {
-    const rows = landLayerRowsRaw();
-    const order = currentLandLayerOrder();
-    const index = new Map(order.map((key, idx) => [key, idx]));
-    return rows.sort((a, b) => {
-      const ka = landLayerKey(a.sourceId, a.layerKey);
-      const kb = landLayerKey(b.sourceId, b.layerKey);
-      return (index.get(ka) ?? 9999) - (index.get(kb) ?? 9999);
+    return landLayerRowsRaw();
+  }
+
+  function applyLandSidebarMutation(mutator) {
+    const next = cloneLandSidebar();
+    mutator(next);
+    landSidebar = next;
+    syncLandSidebarWithSources();
+    renderLandPanel();
+    syncLandMapLayerOrder();
+    schedulePersistLandSidebar();
+  }
+
+  function reorderLandFolder(fromFolderId, beforeFolderId) {
+    if (!fromFolderId || fromFolderId === beforeFolderId) return;
+    applyLandSidebarMutation((sidebar) => {
+      const fromIdx = sidebar.folders.findIndex((folder) => folder.id === fromFolderId);
+      const toIdx = sidebar.folders.findIndex((folder) => folder.id === beforeFolderId);
+      if (fromIdx < 0 || toIdx < 0) return;
+      const [folder] = sidebar.folders.splice(fromIdx, 1);
+      sidebar.folders.splice(toIdx, 0, folder);
     });
   }
 
-  function setLandLayerOrder(order) {
-    landLayerOrder = normalizeLandLayerOrder(order, landLayerRowsRaw());
-    scheduleSaveMapState();
-    renderLandPanel();
-    syncLandMapLayerOrder();
+  function moveLandSource(sourceId, { folderId = null, beforeSourceId = null } = {}) {
+    if (!sourceId) return;
+    applyLandSidebarMutation((sidebar) => {
+      removeSourceFromSidebar(sidebar, sourceId);
+      if (folderId) {
+        const folder = sidebar.folders.find((item) => item.id === folderId);
+        if (!folder) return;
+        if (beforeSourceId) {
+          const idx = folder.sources.indexOf(beforeSourceId);
+          folder.sources.splice(idx >= 0 ? idx : folder.sources.length, 0, sourceId);
+        } else {
+          folder.sources.push(sourceId);
+        }
+        return;
+      }
+      if (beforeSourceId) {
+        const idx = sidebar.unfiledSources.indexOf(beforeSourceId);
+        sidebar.unfiledSources.splice(idx >= 0 ? idx : sidebar.unfiledSources.length, 0, sourceId);
+      } else {
+        sidebar.unfiledSources.push(sourceId);
+      }
+    });
   }
 
-  function reorderLandLayer(fromKey, beforeKey) {
-    const order = currentLandLayerOrder();
-    const fromIdx = order.indexOf(fromKey);
-    if (fromIdx < 0 || fromKey === beforeKey) return;
-    order.splice(fromIdx, 1);
-    const toIdx = order.indexOf(beforeKey);
-    if (toIdx < 0) return;
-    order.splice(toIdx, 0, fromKey);
-    setLandLayerOrder(order);
+  function reorderLandSource(fromSourceId, beforeSourceId, folderId = null) {
+    if (!fromSourceId || fromSourceId === beforeSourceId) return;
+    applyLandSidebarMutation((sidebar) => {
+      removeSourceFromSidebar(sidebar, fromSourceId);
+      if (folderId) {
+        const folder = sidebar.folders.find((item) => item.id === folderId);
+        if (!folder) return;
+        const idx = beforeSourceId ? folder.sources.indexOf(beforeSourceId) : folder.sources.length;
+        folder.sources.splice(idx >= 0 ? idx : folder.sources.length, 0, fromSourceId);
+        return;
+      }
+      const idx = beforeSourceId
+        ? sidebar.unfiledSources.indexOf(beforeSourceId)
+        : sidebar.unfiledSources.length;
+      sidebar.unfiledSources.splice(idx >= 0 ? idx : sidebar.unfiledSources.length, 0, fromSourceId);
+    });
+  }
+
+  function createLandFolder() {
+    const label = window.prompt("Folder name");
+    if (!label || !label.trim()) return;
+    const trimmed = label.trim();
+    const id = slugifyLandFolderId(trimmed, landSidebar.folders);
+    applyLandSidebarMutation((sidebar) => {
+      sidebar.folders.push({ id, label: trimmed, sources: [] });
+    });
+  }
+
+  function renameLandFolder(folderId) {
+    const folder = landSidebar.folders.find((item) => item.id === folderId);
+    if (!folder) return;
+    const label = window.prompt("Folder name", folder.label);
+    if (!label || !label.trim() || label.trim() === folder.label) return;
+    applyLandSidebarMutation((sidebar) => {
+      const target = sidebar.folders.find((item) => item.id === folderId);
+      if (target) target.label = label.trim();
+    });
+  }
+
+  function deleteLandFolder(folderId) {
+    const folder = landSidebar.folders.find((item) => item.id === folderId);
+    if (!folder) return;
+    if (!window.confirm(`Delete folder "${folder.label}"? Sources will move to Unfiled.`)) return;
+    applyLandSidebarMutation((sidebar) => {
+      const idx = sidebar.folders.findIndex((item) => item.id === folderId);
+      if (idx < 0) return;
+      const [removed] = sidebar.folders.splice(idx, 1);
+      sidebar.unfiledSources.push(...removed.sources);
+    });
   }
 
   function syncLandMapLayerOrder() {
@@ -2562,23 +2816,25 @@
     raiseSiteLayers();
   }
 
-  function buildLandDragHandle(rowKey) {
+  function buildLandDragHandle({ kind, id, label }) {
     const handle = document.createElement("button");
     handle.type = "button";
     handle.className = "entity-panel__land-drag-handle";
     handle.draggable = true;
     handle.title = "Drag to reorder";
-    handle.setAttribute("aria-label", "Drag to reorder layer");
-    handle.innerHTML = mapToolIcon("grip-vertical", "Drag to reorder");
+    handle.setAttribute("aria-label", label || "Drag to reorder");
+    handle.innerHTML = mapToolIcon("grip-vertical", label || "Drag to reorder");
     handle.addEventListener("mousedown", (ev) => ev.stopPropagation());
     handle.addEventListener("click", (ev) => ev.stopPropagation());
     handle.addEventListener("dragstart", (ev) => {
-      landDragKey = rowKey;
-      const row = handle.closest(".entity-panel__row--land");
-      if (row) row.classList.add("entity-panel__row--land-dragging");
+      const row = handle.closest(".entity-panel__land-drop-row");
+      if (!row) return;
+      landDragKind = row.dataset.landDragKind || null;
+      landDragId = row.dataset.landDragId || null;
+      row.classList.add("entity-panel__row--land-dragging");
       ev.dataTransfer.effectAllowed = "move";
       try {
-        ev.dataTransfer.setData("text/plain", rowKey);
+        ev.dataTransfer.setData("text/plain", `${landDragKind}:${landDragId}`);
       } catch (_) {
         /* Safari */
       }
@@ -2586,22 +2842,27 @@
     return handle;
   }
 
+  function clearLandDragState() {
+    landDragKind = null;
+    landDragId = null;
+    if (!entityPanelLandList) return;
+    for (const el of entityPanelLandList.querySelectorAll(
+      ".entity-panel__land-drop-row.entity-panel__row--land-dragging, .entity-panel__land-drop-row.entity-panel__row--land-drop-target",
+    )) {
+      el.classList.remove("entity-panel__row--land-dragging", "entity-panel__row--land-drop-target");
+    }
+  }
+
   function initLandPanelDragDrop() {
     if (!entityPanelLandList || entityPanelLandList.dataset.landDragBound) return;
     entityPanelLandList.dataset.landDragBound = "1";
 
-    entityPanelLandList.addEventListener("dragend", () => {
-      landDragKey = null;
-      for (const el of entityPanelLandList.querySelectorAll(
-        ".entity-panel__row--land-dragging, .entity-panel__row--land-drop-target",
-      )) {
-        el.classList.remove("entity-panel__row--land-dragging", "entity-panel__row--land-drop-target");
-      }
-    });
+    entityPanelLandList.addEventListener("dragend", clearLandDragState);
 
     entityPanelLandList.addEventListener("dragover", (ev) => {
-      const row = ev.target.closest(".entity-panel__row--land-draggable");
-      if (!row || row.dataset.landKey === landDragKey) return;
+      const row = ev.target.closest(".entity-panel__land-drop-row");
+      if (!row || !landDragKind || !landDragId) return;
+      if (row.dataset.landDragKind === landDragKind && row.dataset.landDragId === landDragId) return;
       ev.preventDefault();
       ev.dataTransfer.dropEffect = "move";
       for (const el of entityPanelLandList.querySelectorAll(".entity-panel__row--land-drop-target")) {
@@ -2611,7 +2872,7 @@
     });
 
     entityPanelLandList.addEventListener("dragleave", (ev) => {
-      const row = ev.target.closest(".entity-panel__row--land-draggable");
+      const row = ev.target.closest(".entity-panel__land-drop-row");
       if (!row) return;
       const related = ev.relatedTarget;
       if (related && row.contains(related)) return;
@@ -2620,10 +2881,29 @@
 
     entityPanelLandList.addEventListener("drop", (ev) => {
       ev.preventDefault();
-      const row = ev.target.closest(".entity-panel__row--land-draggable");
-      if (!row || !landDragKey || row.dataset.landKey === landDragKey) return;
+      const row = ev.target.closest(".entity-panel__land-drop-row");
+      if (!row || !landDragKind || !landDragId) return;
       row.classList.remove("entity-panel__row--land-drop-target");
-      reorderLandLayer(landDragKey, row.dataset.landKey);
+      const targetKind = row.dataset.landDragKind;
+      const targetId = row.dataset.landDragId;
+      const targetFolderId = row.dataset.landFolderId || null;
+      if (landDragKind === "folder" && targetKind === "folder") {
+        reorderLandFolder(landDragId, targetId);
+        return;
+      }
+      if (landDragKind === "source") {
+        if (targetKind === "folder") {
+          moveLandSource(landDragId, { folderId: targetId });
+          return;
+        }
+        if (targetKind === "unfiled") {
+          moveLandSource(landDragId, {});
+          return;
+        }
+        if (targetKind === "source") {
+          reorderLandSource(landDragId, targetId, targetFolderId);
+        }
+      }
     });
   }
 
@@ -2637,6 +2917,7 @@
     }
     if (entityPanelSitesPane) entityPanelSitesPane.hidden = next !== "sites";
     if (entityPanelLandPane) entityPanelLandPane.hidden = next !== "land";
+    if (next === "land") void maybeMigrateLandSidebarFromLayerOrder();
     if (entityPanelToggle) {
       entityPanelToggle.title = next === "land" ? "Land" : "Sites";
       entityPanelToggle.setAttribute(
@@ -2823,7 +3104,6 @@
   }
 
   async function refreshLandMapLayers() {
-    landLayerOrder = currentLandLayerOrder();
     await Promise.all(
       landLayerRows().map((row) => ensureLandMapLayer(row.sourceId, row.layerKey)),
     );
@@ -2880,106 +3160,256 @@
     return [editBtn, deleteBtn];
   }
 
+  function buildLandFolderEyeBtn(folderId) {
+    const visible = isLandFolderVisible(folderId);
+    return makeEntityPanelActionBtn({
+      icon: visible ? "eye" : "eye-slash",
+      label: visible ? "Hide all layers in folder" : "Show all layers in folder",
+      active: visible,
+      onClick: () => {
+        setLandFolderVisible(folderId, !visible);
+      },
+    });
+  }
+
+  function buildLandFolderActionBtns(folderId) {
+    const renameBtn = makeEntityPanelActionBtn({
+      icon: "pen",
+      label: "Rename folder",
+      onClick: () => renameLandFolder(folderId),
+    });
+    const deleteBtn = makeEntityPanelActionBtn({
+      icon: "trash",
+      label: "Delete folder",
+      danger: true,
+      onClick: () => deleteLandFolder(folderId),
+    });
+    return [renameBtn, deleteBtn];
+  }
+
+  function buildLandFolderRow(folder) {
+    const collapsed = isLandFolderCollapsed(folder.id);
+    const el = document.createElement("div");
+    el.className = "entity-panel__land-folder";
+
+    const header = document.createElement("div");
+    header.className = "entity-panel__land-folder-header entity-panel__land-drop-row";
+    header.dataset.landDragKind = "folder";
+    header.dataset.landDragId = folder.id;
+
+    const collapseBtn = document.createElement("button");
+    collapseBtn.type = "button";
+    collapseBtn.className = "entity-panel__land-folder-collapse";
+    collapseBtn.title = collapsed ? "Expand folder" : "Collapse folder";
+    collapseBtn.setAttribute("aria-label", collapsed ? "Expand folder" : "Collapse folder");
+    collapseBtn.innerHTML = mapToolIcon(collapsed ? "chevron-right" : "chevron-down", "Toggle folder");
+    collapseBtn.addEventListener("click", () => {
+      setLandFolderCollapsed(folder.id, !collapsed);
+    });
+
+    header.appendChild(collapseBtn);
+    header.appendChild(
+      buildLandDragHandle({
+        kind: "folder",
+        id: folder.id,
+        label: "Drag to reorder folder",
+      }),
+    );
+
+    const title = document.createElement("div");
+    title.className = "entity-panel__land-folder-title";
+    title.textContent = folder.label;
+    title.title = folder.label;
+    header.appendChild(title);
+
+    const controls = document.createElement("div");
+    controls.className = "entity-panel__land-source-actions";
+    controls.appendChild(buildLandFolderEyeBtn(folder.id));
+    for (const btn of buildLandFolderActionBtns(folder.id)) controls.appendChild(btn);
+    header.appendChild(controls);
+    el.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "entity-panel__land-folder-body";
+    body.hidden = collapsed;
+    for (const sourceId of folder.sources) {
+      const group = buildLandSourceGroup(sourceId, { folderId: folder.id });
+      if (group) body.appendChild(group);
+    }
+    el.appendChild(body);
+    return el;
+  }
+
+  function buildLandSourceGroup(sourceId, { folderId = null } = {}) {
+    const source = landSourceRecord(sourceId);
+    if (!source) return null;
+    const displayTitles = landSourceDisplayTitles(landSources);
+    const sourceTitle = displayTitles.get(sourceId) || source.label || sourceId;
+    const layers = Array.isArray(source.layers) ? source.layers : [];
+    const singleLayer = layers.length === 1;
+    const singleSpec = singleLayer ? normalizeRegisteredLayer(layers[0]) : null;
+
+    const el = document.createElement("div");
+    el.className = "entity-panel__land-source-group";
+
+    const header = document.createElement("div");
+    header.className = "entity-panel__land-source entity-panel__land-source-draggable entity-panel__land-drop-row";
+    header.dataset.landDragKind = "source";
+    header.dataset.landDragId = sourceId;
+    if (folderId) header.dataset.landFolderId = folderId;
+    if (singleSpec) header.dataset.landKey = landLayerKey(sourceId, singleSpec.key);
+    if (singleSpec && !isLandLayerVisible(sourceId, singleSpec.key)) {
+      header.classList.add("entity-panel__row--hidden");
+    }
+
+    header.appendChild(
+      buildLandDragHandle({
+        kind: "source",
+        id: sourceId,
+        label: "Drag to move source",
+      }),
+    );
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "entity-panel__land-source-title-row";
+    if (singleSpec) appendLandLayerRoleBadge(titleRow, singleSpec.role);
+    const title = document.createElement("div");
+    title.className = "entity-panel__land-source-title";
+    title.textContent = sourceTitle;
+    title.title = sourceTitle;
+    titleRow.appendChild(title);
+    header.appendChild(titleRow);
+
+    const controls = document.createElement("div");
+    controls.className = "entity-panel__land-source-actions";
+    if (singleSpec) {
+      controls.appendChild(
+        buildLandLayerControls(sourceId, singleSpec.key, { labelField: singleSpec.labelField }),
+      );
+    }
+    for (const btn of buildLandSourceActionBtns(sourceId)) controls.appendChild(btn);
+    header.appendChild(controls);
+    el.appendChild(header);
+
+    if (singleSpec) {
+      const metaHost = document.createElement("div");
+      metaHost.className = "entity-panel__land-source-meta";
+      appendLandLayerMeta(metaHost, singleSpec);
+      if (metaHost.childNodes.length) el.appendChild(metaHost);
+    } else if (layers.length > 1) {
+      const layerList = document.createElement("div");
+      layerList.className = "entity-panel__land-source-layers";
+      for (const rawLayer of layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        layerList.appendChild(
+          buildLandEntityRow({
+            sourceId,
+            layerKey: spec.key,
+            spec,
+          }, { showName: true }),
+        );
+      }
+      el.appendChild(layerList);
+    }
+    return el;
+  }
+
+  function buildLandUnfiledSection({ showHeader = true } = {}) {
+    syncLandSidebarWithSources();
+    if (!landSidebar.unfiledSources.length && !showHeader) return null;
+    const el = document.createElement("div");
+    el.className = "entity-panel__land-unfiled";
+
+    if (showHeader) {
+      const header = document.createElement("div");
+      header.className = "entity-panel__land-unfiled-header entity-panel__land-drop-row";
+      header.dataset.landDragKind = "unfiled";
+      header.dataset.landDragId = "unfiled";
+      header.textContent = "Unfiled";
+      el.appendChild(header);
+    }
+
+    for (const sourceId of landSidebar.unfiledSources) {
+      const group = buildLandSourceGroup(sourceId);
+      if (group) el.appendChild(group);
+    }
+    return el;
+  }
+
   function renderLandPanel() {
     if (!entityPanelLandList) return;
+    syncLandSidebarWithSources();
     const rows = landLayerRows();
+    const sourceCount = orderedLandSourceIds().length;
     if (entityPanelLandCount) {
-      entityPanelLandCount.textContent =
-        rows.length === 0 ? "No land layers" : `${rows.length} layer${rows.length === 1 ? "" : "s"}`;
+      if (!sourceCount) {
+        entityPanelLandCount.textContent = "No land sources";
+      } else {
+        entityPanelLandCount.textContent = `${sourceCount} source${sourceCount === 1 ? "" : "s"}, ${rows.length} layer${rows.length === 1 ? "" : "s"}`;
+      }
     }
     entityPanelLandList.innerHTML = "";
-    if (!rows.length) {
+    if (!sourceCount) {
       const empty = document.createElement("div");
       empty.className = "entity-panel__empty";
       empty.textContent = "Import GDB layers from data/.";
       entityPanelLandList.appendChild(empty);
       return;
     }
-    const displayTitles = landSourceDisplayTitles(landSources);
-    const layerCountBySource = new Map();
-    for (const source of landSources) {
-      layerCountBySource.set(source.id, Array.isArray(source.layers) ? source.layers.length : 0);
+    const hasFolders = landSidebar.folders.length > 0;
+    for (const folder of landSidebar.folders) {
+      entityPanelLandList.appendChild(buildLandFolderRow(folder));
     }
-    const seenSourceActions = new Set();
-    for (const row of rows) {
-      const sourceTitle = displayTitles.get(row.sourceId) || row.label;
-      const layerCount = layerCountBySource.get(row.sourceId) || 1;
-      const singleLayerSource = layerCount === 1;
-      const showSourceActions = singleLayerSource || !seenSourceActions.has(row.sourceId);
-      seenSourceActions.add(row.sourceId);
-      entityPanelLandList.appendChild(
-        buildLandEntityRow(row, {
-          title: singleLayerSource ? sourceTitle : friendlyLandLayerName(row.spec.name),
-          subtitle: singleLayerSource ? null : sourceTitle,
-          showSourceActions,
-        }),
-      );
+    if (hasFolders) {
+      const unfiled = buildLandUnfiledSection({ showHeader: true });
+      if (unfiled) entityPanelLandList.appendChild(unfiled);
+    } else {
+      const unfiled = buildLandUnfiledSection({ showHeader: false });
+      if (unfiled) entityPanelLandList.appendChild(unfiled);
     }
   }
 
   function setLandSidebarRowLoading(sourceId, layerKey, loading) {
     if (!entityPanelLandList) return;
     const rowKey = landLayerKey(sourceId, layerKey);
-    const row = entityPanelLandList.querySelector(
-      `.entity-panel__row--land[data-land-key="${rowKey}"]`,
-    );
+    const row =
+      entityPanelLandList.querySelector(`.entity-panel__row--land[data-land-key="${rowKey}"]`) ||
+      entityPanelLandList.querySelector(`[data-land-key="${rowKey}"]`);
     if (!row) return;
     row.classList.toggle("entity-panel__row--land-loading", !!loading);
     const spinner = row.querySelector(".entity-panel__land-row-spinner");
     if (spinner) spinner.hidden = !loading;
   }
 
-  function buildLandEntityRow(row, { title, subtitle = null, showSourceActions = false } = {}) {
+  function buildLandEntityRow(row, { showName = false } = {}) {
     const rowKey = landLayerKey(row.sourceId, row.layerKey);
     const el = document.createElement("div");
-    el.className = "entity-panel__row entity-panel__row--land entity-panel__row--land-draggable";
-    if (showSourceActions) el.classList.add("entity-panel__row--land-source");
+    el.className = "entity-panel__row entity-panel__row--land entity-panel__row--land-nested";
     el.dataset.landKey = rowKey;
     const visible = isLandLayerVisible(row.sourceId, row.layerKey);
     if (!visible) el.classList.add("entity-panel__row--hidden");
 
-    el.appendChild(buildLandDragHandle(rowKey));
-
     const main = document.createElement("div");
     main.className = "entity-panel__main";
-    const titleRow = document.createElement("div");
-    titleRow.className = "entity-panel__land-title-row";
-    const name = document.createElement("div");
-    name.className = "entity-panel__name";
-    const nameText = title || friendlyLandLayerName(row.spec.name);
-    name.textContent = nameText;
-    name.title = nameText;
-    titleRow.appendChild(name);
-    main.appendChild(titleRow);
-    const badgeRow = document.createElement("div");
-    badgeRow.className = "entity-panel__land-badge-row";
-    appendLandLayerRoleBadge(badgeRow, row.spec.role);
-    main.appendChild(badgeRow);
-    if (subtitle) {
-      const sourceLabel = document.createElement("div");
-      sourceLabel.className = "entity-panel__land-subtitle";
-      sourceLabel.textContent = subtitle;
-      main.appendChild(sourceLabel);
+    if (showName) {
+      const titleRow = document.createElement("div");
+      titleRow.className = "entity-panel__land-title-row";
+      appendLandLayerRoleBadge(titleRow, row.spec.role);
+      const name = document.createElement("div");
+      name.className = "entity-panel__name";
+      const nameText = friendlyLandLayerName(row.spec.name);
+      name.textContent = nameText;
+      name.title = nameText;
+      titleRow.appendChild(name);
+      main.appendChild(titleRow);
     }
     appendLandLayerMeta(main, row.spec);
 
     const controls = document.createElement("div");
     controls.className = "entity-panel__controls";
-    const spinnerSlot = document.createElement("span");
-    spinnerSlot.className = "entity-panel__land-spinner-slot";
-    spinnerSlot.setAttribute("aria-hidden", "true");
-    const spinner = document.createElement("span");
-    spinner.className = "entity-panel__land-row-spinner pin-load-spinner";
-    spinner.hidden = true;
-    spinnerSlot.appendChild(spinner);
-    controls.appendChild(spinnerSlot);
-    controls.appendChild(buildLandLayerEyeBtn(row.sourceId, row.layerKey));
-    if (row.spec.labelField) {
-      controls.appendChild(buildLandLayerLabelBtn(row.sourceId, row.layerKey));
-    }
-    if (showSourceActions) {
-      for (const btn of buildLandSourceActionBtns(row.sourceId)) controls.appendChild(btn);
-    }
+    controls.appendChild(
+      buildLandLayerControls(row.sourceId, row.layerKey, { labelField: row.spec.labelField }),
+    );
 
     el.appendChild(main);
     el.appendChild(controls);
@@ -2993,6 +3423,8 @@
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) return;
       landSources = Array.isArray(payload.sources) ? payload.sources : [];
+      if (payload.sidebar) landSidebar = normalizeLandSidebarInput(payload.sidebar);
+      syncLandSidebarWithSources();
       const nextAoiDigest =
         typeof payload.aoiDigest === "string" ? payload.aoiDigest : "none";
       const aoiChanged = nextAoiDigest !== prevAoiDigest;
@@ -4078,7 +4510,7 @@
       entityPanelTab,
       landVisible: Object.fromEntries(landVisible),
       landLabelsVisible: Object.fromEntries(landLabelsVisible),
-      landLayerOrder: currentLandLayerOrder(),
+      landFoldersCollapsed: Object.fromEntries(landFoldersCollapsed),
     };
   }
 
@@ -6955,6 +7387,12 @@
       void openImportLandModal();
     });
   }
+  if (entityPanelAddLandFolder) {
+    entityPanelAddLandFolder.addEventListener("click", () => {
+      createLandFolder();
+    });
+  }
+  queueLandSidebarMigrationFromLayerOrder();
   for (const tabBtn of entityPanelTabs) {
     tabBtn.addEventListener("click", () => {
       setEntityTab(tabBtn.getAttribute("data-entity-tab") || "sites");

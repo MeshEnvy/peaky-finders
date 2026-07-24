@@ -12,7 +12,14 @@ ROOT="$(cd -P "$(dirname "$_script")" && pwd)"
 
 IMAGE="${PEAKY_DEV_IMAGE:-peaky:dev}"
 CACHE_DIR="${PEAKY_CACHE_DIR:-$HOME/.peaky/splat_cache}"
-PEAKY_HOME_DIR="${PEAKY_HOME:-$ROOT/peaky_home}"
+OPS_PEAKY_HOME="$ROOT/../../ops/peaky_home"
+if [ -n "${PEAKY_HOME:-}" ]; then
+  PEAKY_HOME_DIR="$PEAKY_HOME"
+elif [ -d "$OPS_PEAKY_HOME" ]; then
+  PEAKY_HOME_DIR="$OPS_PEAKY_HOME"
+else
+  PEAKY_HOME_DIR="$ROOT/peaky_home"
+fi
 mkdir -p "$PEAKY_HOME_DIR" "$CACHE_DIR"
 
 filtered=()

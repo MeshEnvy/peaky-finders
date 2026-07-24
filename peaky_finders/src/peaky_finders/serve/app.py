@@ -53,12 +53,13 @@ from peaky_finders.serve.kml_import import (
     parse_kmz_point_placemarks,
     serialize_kml_point,
 )
-from peaky_finders.core.preset import LandLayerEntry, load_preset
+from peaky_finders.core.preset import LandLayerEntry, LandSidebar, LandSidebarFolder, load_preset
 from peaky_finders.serve.land import (
     add_land_source,
     delete_land_source,
     list_land_payload,
     parse_land_layer_entries,
+    patch_land_sidebar,
     patch_land_source,
     read_layer_geojson_bytes,
 )
@@ -134,6 +135,9 @@ _API_PROJECT_LAND_IMPORT_PREVIEW_VALUES_RE = re.compile(
 )
 _API_PROJECT_LAND_PREVIEW_GEOJSON_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/land/preview/geojson/?$"
+)
+_API_PROJECT_LAND_SIDEBAR_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/land/sidebar/?$"
 )
 _API_PROJECT_LAND_SOURCE_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/land/sources/([a-zA-Z][a-zA-Z0-9_-]*)/?$"
@@ -275,6 +279,47 @@ def _parse_land_layer_entry_body(raw: Mapping[str, object], *, layer_name: str) 
         if src in raw and raw[src] is not None:
             payload[dst] = raw[src]
     return LandLayerEntry.model_validate(payload)
+
+
+def _parse_land_sidebar_body(raw: Mapping[str, object]) -> LandSidebar:
+    folders_raw = raw.get("folders")
+    if folders_raw is None:
+        folders_raw = []
+    if not isinstance(folders_raw, list):
+        raise ValueError("folders must be a list")
+    folders: list[LandSidebarFolder] = []
+    for item in folders_raw:
+        if not isinstance(item, dict):
+            raise ValueError("each folder must be an object")
+        folder_id = item.get("id")
+        label = item.get("label")
+        if folder_id is None or not str(folder_id).strip():
+            raise ValueError("folder id is required")
+        if label is None or not str(label).strip():
+            raise ValueError("folder label is required")
+        sources_raw = item.get("sources")
+        if sources_raw is None:
+            sources_raw = []
+        if not isinstance(sources_raw, list):
+            raise ValueError("folder sources must be a list")
+        folders.append(
+            LandSidebarFolder(
+                id=str(folder_id).strip(),
+                label=str(label).strip(),
+                sources=[str(s).strip() for s in sources_raw if str(s).strip()],
+            )
+        )
+    unfiled_raw = raw.get("unfiledSources")
+    if unfiled_raw is None:
+        unfiled_raw = raw.get("unfiled_sources")
+    if unfiled_raw is None:
+        unfiled_raw = []
+    if not isinstance(unfiled_raw, list):
+        raise ValueError("unfiledSources must be a list")
+    return LandSidebar(
+        folders=folders,
+        unfiled_sources=[str(s).strip() for s in unfiled_raw if str(s).strip()],
+    )
 
 
 def _parse_form_body(body: bytes) -> dict[str, str]:
@@ -995,6 +1040,7 @@ class ServeDispatcher:
                     land=land_payload["sources"],
                     land_data_gdbs=list_data_gdbs(project_dir),
                     land_aoi_digest=land_payload.get("aoiDigest"),
+                    land_sidebar=land_payload.get("sidebar"),
                 )
             )
             return
@@ -1834,6 +1880,41 @@ class ServeDispatcher:
                 return
             payload = json.dumps(
                 {"slug": project_slug, "site": site_row},
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
+        land_sidebar_match = _API_PROJECT_LAND_SIDEBAR_RE.match(path)
+        if land_sidebar_match:
+            project_slug = land_sidebar_match.group(1)
+            preset_path = self.projects_dir / project_slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = _parse_json_body(body)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": f"invalid JSON: {e}"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if not isinstance(raw, dict):
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "body must be a JSON object"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            try:
+                sidebar = _parse_land_sidebar_body(raw)
+                result = patch_land_sidebar(preset_path, sidebar)
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            payload = json.dumps(
+                {"slug": project_slug, "sidebar": result},
                 sort_keys=True,
             ).encode("utf-8")
             self._send_bytes(payload, "application/json", status=200)
