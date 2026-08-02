@@ -162,6 +162,35 @@ class ViewshedEngine:
         self._store_result(key, fp)
         return fp
 
+    def vectorize_site_footprint(
+        self,
+        project_dir: Path,
+        preset: Preset,
+        site: SiteEntry,
+        *,
+        sim: ViewshedSimOverrides | None = None,
+        verbose: bool = False,
+    ) -> BaseGeometry | None:
+        """Build ``splat.gpkg`` from cached ``output.ppm`` — never run splatter coverage."""
+        sim = sim or ViewshedSimOverrides()
+        digest = site_footprint_digest(preset, site, sim=sim)
+        key = footprint_cache_key(project_dir, digest)
+        cached = self._cached_result(key)
+        if cached is not None:
+            return cached
+        preset_path = Path(project_dir).expanduser().resolve() / "config.yaml"
+        viewshed_root = resolved_viewshed_root(preset_path)
+        workdir = resolved_viewshed_workdir_for_coords(
+            preset=preset,
+            viewshed_root=viewshed_root,
+            lat=float(site.lat),
+            lon=float(site.lon),
+            site=site,
+        )
+        fp = load_viewshed_footprint(workdir, preset=preset, verbose=verbose, ensure=True)
+        self._store_result(key, fp)
+        return fp
+
     def ensure_site_footprint(
         self,
         project_dir: Path,

@@ -72,3 +72,81 @@ def test_load_viewshed_footprint_ensure_false_skips_vectorize(tmp_path: Path) ->
         assert load_viewshed_footprint(wd, preset=object(), ensure=False) is None  # type: ignore[arg-type]
         ensure_gpkg.assert_not_called()
     assert not (wd / SPLAT_GPKG_NAME).is_file()
+
+
+def test_load_viewshed_footprint_ensure_false_rejects_stale_gpkg(tmp_path: Path) -> None:
+    import os
+    import time
+
+    wd = tmp_path / "ws"
+    wd.mkdir()
+    gpkg = wd / SPLAT_GPKG_NAME
+    png = wd / "splat.png"
+    gpkg.write_bytes(b"old")
+    png.write_bytes(b"new")
+    now = time.time()
+    os.utime(gpkg, (now - 10, now - 10))
+    os.utime(png, (now, now))
+    with patch("peaky_finders.core.links.viewshed.read_coverage_footprint") as read_fp:
+        assert load_viewshed_footprint(wd, preset=object(), ensure=False) is None  # type: ignore[arg-type]
+        read_fp.assert_not_called()
+
+
+class _StubGdf:
+    def __init__(self, geoms):
+        self.geometry = list(geoms)
+        self.empty = not geoms
+
+
+def test_read_coverage_footprint_wkb_sidecar_roundtrip(tmp_path: Path) -> None:
+    import os
+    import time
+
+    from peaky_finders.core.viewshed.footprint import FOOTPRINT_WKB_NAME, read_coverage_footprint
+
+    gpkg = tmp_path / SPLAT_GPKG_NAME
+    gpkg.write_bytes(b"fake")
+    geom = box(-120.0, 39.0, -119.0, 40.0)
+
+    with patch("peaky_finders.core.viewshed.footprint.pyogrio") as og:
+        og.read_dataframe.return_value = _StubGdf([geom])
+        first = read_coverage_footprint(gpkg)
+        assert first is not None and first.equals(geom)
+        og.read_dataframe.assert_called_once()
+
+    sidecar = tmp_path / FOOTPRINT_WKB_NAME
+    assert sidecar.is_file() and sidecar.stat().st_size > 0
+
+    # Fresh sidecar short-circuits the GPKG open entirely.
+    with patch("peaky_finders.core.viewshed.footprint.pyogrio") as og:
+        second = read_coverage_footprint(gpkg)
+        assert second is not None and second.equals(geom)
+        og.read_dataframe.assert_not_called()
+
+    # Newer GPKG invalidates the sidecar.
+    now = time.time()
+    os.utime(sidecar, (now - 10, now - 10))
+    os.utime(gpkg, (now, now))
+    other = box(-118.0, 38.0, -117.0, 39.0)
+    with patch("peaky_finders.core.viewshed.footprint.pyogrio") as og:
+        og.read_dataframe.return_value = _StubGdf([other])
+        third = read_coverage_footprint(gpkg)
+        assert third is not None and third.equals(other)
+        og.read_dataframe.assert_called_once()
+
+
+def test_read_coverage_footprint_wkb_sidecar_empty_marker(tmp_path: Path) -> None:
+    from peaky_finders.core.viewshed.footprint import FOOTPRINT_WKB_NAME, read_coverage_footprint
+
+    gpkg = tmp_path / SPLAT_GPKG_NAME
+    gpkg.write_bytes(b"fake")
+
+    with patch("peaky_finders.core.viewshed.footprint.pyogrio") as og:
+        og.read_dataframe.return_value = _StubGdf([])
+        assert read_coverage_footprint(gpkg) is None
+
+    assert (tmp_path / FOOTPRINT_WKB_NAME).is_file()
+
+    with patch("peaky_finders.core.viewshed.footprint.pyogrio") as og:
+        assert read_coverage_footprint(gpkg) is None
+        og.read_dataframe.assert_not_called()

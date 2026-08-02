@@ -103,6 +103,21 @@ def store_project_site_links_cache(
     preset: Preset | None = None,
 ) -> None:
     """Remember a warm-computed links payload for fast GET responses."""
+    if payload.get("status") != "ready":
+        return
+    features = payload.get("geojson")
+    feature_count = (
+        len(features.get("features", []))  # type: ignore[union-attr]
+        if isinstance(features, dict)
+        else 0
+    )
+    linked_count = sum(
+        1
+        for row in payload.get("links", [])
+        if isinstance(row, dict) and row.get("linked") is not False
+    )
+    if feature_count == 0 and linked_count == 0:
+        return
     preset = preset or _load_links_preset(project_dir)
     key = _project_cache_key(project_dir)
     entry = (links_input_fingerprint(sites, preset=preset), payload)
@@ -113,6 +128,13 @@ def store_project_site_links_cache(
 def reset_project_site_links_cache_for_tests() -> None:
     with _links_payload_cache_lock:
         _links_payload_cache.clear()
+
+
+def invalidate_project_site_links_cache(project_dir: Path) -> None:
+    """Drop warm cache so the next GET does not serve a stale partial mesh."""
+    key = _project_cache_key(project_dir)
+    with _links_payload_cache_lock:
+        _links_payload_cache.pop(key, None)
 
 
 def _cached_project_site_links(
@@ -337,6 +359,79 @@ def load_project_site_links(
         preset=preset,
         footprints={slug: None for slug in sites},
     )
+
+
+def compute_single_site_links(
+    project_dir: Path,
+    site_slug: str,
+    sites: Mapping[str, SiteEntry],
+    *,
+    preset: Preset | None = None,
+) -> dict[str, object]:
+    """Evaluate one site's links against in-range neighbors using existing footprints only.
+
+    Never runs splatter and never opens GPKGs for out-of-range sites, so it stays
+    fast on large projects. Neighbors without a cached footprint are listed in
+    ``missing`` instead of blocking.
+    """
+    slug = str(site_slug).strip()
+    if slug not in sites:
+        raise ServeLinksError(f"unknown site slug: {site_slug!r}")
+
+    preset = preset or _load_links_preset(project_dir)
+    manual_pairs = _manual_link_pairs(preset)
+    center = sites[slug]
+    lat_c, lon_c = float(center.lat), float(center.lon)
+
+    engine = get_viewshed_engine()
+    sim = ViewshedSimOverrides()
+    center_fp = engine.read_site_footprint(project_dir, preset, center, sim=sim)
+    if center_fp is None:
+        # Cheap CPU-only rebuild from cached PPM; still no splatter run.
+        center_fp = engine.vectorize_site_footprint(project_dir, preset, center, sim=sim)
+
+    records: list[dict[str, object]] = []
+    features: list[dict[str, object]] = []
+    missing: list[str] = []
+
+    for other_slug, other in sorted(sites.items()):
+        if other_slug == slug:
+            continue
+        pair = canonical_site_pair(slug, other_slug)
+        lat_o, lon_o = float(other.lat), float(other.lon)
+        if pair in manual_pairs:
+            records.append(_link_record(slug_a=slug, slug_b=other_slug, linked=True, manual=True))
+            features.append(
+                _line_feature(slug_a=slug, slug_b=other_slug, site_a=center, site_b=other, manual=True)
+            )
+            continue
+        if not _pair_within_hop_range(preset, lat_a=lat_c, lon_a=lon_c, lat_b=lat_o, lon_b=lon_o):
+            continue
+        if center_fp is None:
+            missing.append(other_slug)
+            continue
+        other_fp = engine.read_site_footprint(project_dir, preset, other, sim=sim)
+        if other_fp is None:
+            missing.append(other_slug)
+            continue
+        if not mutual_viewshed_link(
+            center_fp, other_fp, lat_a=lat_c, lon_a=lon_c, lat_b=lat_o, lon_b=lon_o
+        ):
+            continue
+        records.append(_link_record(slug_a=slug, slug_b=other_slug, linked=True, manual=False))
+        features.append(
+            _line_feature(slug_a=slug, slug_b=other_slug, site_a=center, site_b=other, manual=False)
+        )
+
+    records.sort(key=lambda row: (str(row["a"]), str(row["b"])))
+    return {
+        "status": "ready" if center_fp is not None and not missing else "partial",
+        "site": slug,
+        "center_footprint": center_fp is not None,
+        "links": records,
+        "geojson": {"type": "FeatureCollection", "features": features},
+        "missing": sorted(missing),
+    }
 
 
 def evaluate_site_pair_linked(

@@ -32,7 +32,12 @@ from peaky_finders.serve.home import (
     patch_modem_preset,
 )
 from peaky_finders.serve.html import home_settings_modal_html, landing_html, project_error_html, project_html
-from peaky_finders.serve.links import ServeLinksError, evaluate_site_pair_linked, load_project_site_links
+from peaky_finders.serve.links import (
+    ServeLinksError,
+    compute_single_site_links,
+    evaluate_site_pair_linked,
+    load_project_site_links,
+)
 from peaky_finders.serve.plss import apply_plss_from_loc_cache
 from peaky_finders.serve.site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
 from peaky_finders.serve.simulation import (
@@ -42,9 +47,10 @@ from peaky_finders.serve.simulation import (
 )
 from peaky_finders.serve.sites import (
     append_planned_site_to_preset,
-    bulk_merge_site_tags_in_preset,
+    bulk_merge_site_tags_in_preset_rows,
     delete_site_from_preset,
     import_sites_to_preset,
+    patch_site_tags_in_preset,
     update_site_in_preset,
 )
 from peaky_finders.serve.kml_import import (
@@ -73,7 +79,7 @@ from peaky_finders.serve.land_import import (
     serialize_layer_info,
 )
 from peaky_finders.serve.events import get_serve_event_hub
-from peaky_finders.serve.preset_cache import load_serve_project_context
+from peaky_finders.serve.preset_cache import load_serve_project_context, patch_serve_project_site_tags
 from peaky_finders.serve.viewshed import (
     DRAFT_VIEWSHED_SLUG,
     ServeViewshedError,
@@ -82,6 +88,13 @@ from peaky_finders.serve.viewshed import (
     site_viewshed_overlay_if_ready,
 )
 from peaky_finders.serve.viewshed_jobs import warm_coords_viewshed, warm_site_viewshed
+from peaky_finders.serve.project_warm_scheduler import (
+    PRIORITY_INTERACTIVE,
+    PRIORITY_VIEWPORT,
+    ensure_project_warm,
+    invalidate_site_coverage,
+    schedule_bump_project_priorities,
+)
 from peaky_finders.serve.viewshed_sim import ViewshedSimOverrides, parse_viewshed_sim_overrides
 from peaky_finders.core.preset import (
     Preset,
@@ -173,6 +186,12 @@ _API_PROJECT_LINK_PAIR_RE = re.compile(
 )
 _API_PROJECT_LINKS_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/links/?$")
 _API_PROJECT_LINKS_WARM_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/links/warm/?$")
+_API_PROJECT_SITE_LINKS_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/sites/([a-zA-Z][a-zA-Z0-9_-]*)/links/?$"
+)
+_API_PROJECT_WARM_PRIORITIES_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/warm/priorities/?$"
+)
 _API_PROJECT_SIMULATION_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/simulation/?$")
 _API_HOME_SIMULATION_RE = re.compile(r"^/api/home/simulation/?$")
 _API_HOME_MODEMS_RE = re.compile(r"^/api/home/modems/?$")
@@ -772,6 +791,45 @@ class ServeDispatcher:
             self._send_bytes(payload, "application/json")
             return
 
+        site_links_match = _API_PROJECT_SITE_LINKS_RE.match(path)
+        if site_links_match:
+            slug = site_links_match.group(1)
+            site_slug = site_links_match.group(2)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            try:
+                site_map = _load_project_sites(project_dir)
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": slug, "site": site_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            try:
+                result = compute_single_site_links(project_dir, site_slug, site_map)
+            except ServeLinksError as e:
+                payload = json.dumps({"slug": slug, "site": site_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": slug, "site": site_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            # Queue anything missing at interactive priority so a re-fetch completes.
+            pending = [site_slug] if not result.get("center_footprint") else []
+            pending += list(result.get("missing") or [])
+            if pending:
+                schedule_bump_project_priorities(
+                    slug,
+                    project_dir,
+                    pending,
+                    priority=PRIORITY_INTERACTIVE,
+                    verbose=bool(self.verbose),
+                )
+            payload = json.dumps({"project": slug, **result}).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
         link_pair_match = _API_PROJECT_LINK_PAIR_RE.match(path)
         if link_pair_match:
             slug = link_pair_match.group(1)
@@ -849,13 +907,12 @@ class ServeDispatcher:
                 payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=503)
                 return
-            if payload_obj.get("status") == "pending":
-                warm_project_site_links(
-                    slug,
-                    project_dir,
-                    site_map,
-                    verbose=verbose,
-                )
+            ensure_project_warm(
+                slug,
+                project_dir,
+                site_map,
+                verbose=verbose,
+            )
             payload = json.dumps({"project": slug, **payload_obj}).encode("utf-8")
             self._send_bytes(payload, "application/json")
             return
@@ -867,6 +924,11 @@ class ServeDispatcher:
             if not (project_dir / "config.yaml").is_file():
                 self.send_error(404)
                 return
+            try:
+                site_map = _load_project_sites(project_dir)
+                ensure_project_warm(slug, project_dir, site_map, verbose=bool(self.verbose))
+            except (ValueError, ValidationError):
+                pass
             self._send_sse_stream(slug)
             return
 
@@ -970,6 +1032,14 @@ class ServeDispatcher:
                 sim_overrides=sim_overrides,
             )
             if overlay is None:
+                warm_site_viewshed(
+                    slug,
+                    project_dir,
+                    site_slug,
+                    site_map[site_slug],
+                    sim_overrides=sim_overrides,
+                    priority=PRIORITY_INTERACTIVE,
+                )
                 self.send_error(404)
                 return
             payload = json.dumps({"project": slug, **overlay}).encode("utf-8")
@@ -1116,16 +1186,77 @@ class ServeDispatcher:
                 payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=422)
                 return
+            priority_slugs: list[str] | None = None
+            if body.strip():
+                try:
+                    raw = _parse_json_body(body)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    raw = None
+                if isinstance(raw, dict):
+                    slugs_raw = raw.get("priority_slugs")
+                    if isinstance(slugs_raw, list):
+                        priority_slugs = [str(s) for s in slugs_raw if str(s).strip()]
             verbose = bool(self.verbose)
             result = warm_project_site_links(
                 slug,
                 project_dir,
                 site_map,
                 verbose=verbose,
+                priority_slugs=priority_slugs,
             )
             status = 200 if result.get("status") == "ready" else 202
             payload = json.dumps(result).encode("utf-8")
             self._send_bytes(payload, "application/json", status=status)
+            return
+
+        warm_priorities_match = _API_PROJECT_WARM_PRIORITIES_RE.match(path)
+        if warm_priorities_match:
+            slug = warm_priorities_match.group(1)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = _parse_json_body(body)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                payload = json.dumps({"slug": slug, "error": f"invalid JSON: {e}"}).encode(
+                    "utf-8"
+                )
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if not isinstance(raw, dict):
+                payload = json.dumps(
+                    {"slug": slug, "error": "body must be a JSON object"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            slugs_raw = raw.get("slugs")
+            if not isinstance(slugs_raw, list):
+                payload = json.dumps(
+                    {"slug": slug, "error": "slugs must be a list of strings"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            slugs_list = [str(s).strip() for s in slugs_raw if str(s).strip()]
+            priority_raw = raw.get("priority", PRIORITY_VIEWPORT)
+            try:
+                priority = int(priority_raw)
+            except (TypeError, ValueError):
+                priority = PRIORITY_VIEWPORT
+            try:
+                result = schedule_bump_project_priorities(
+                    slug,
+                    project_dir,
+                    slugs_list,
+                    priority=priority,
+                    verbose=bool(self.verbose),
+                )
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            payload = json.dumps({"project": slug, **result}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=202)
             return
 
         # Prefetch warm must precede per-site warm — otherwise ``prefetch`` matches as a site slug.
@@ -1507,18 +1638,16 @@ class ServeDispatcher:
                     return
                 remove_tags_list = [str(t) for t in remove_tags_raw]
             try:
-                updated_slugs = bulk_merge_site_tags_in_preset(
+                site_rows = bulk_merge_site_tags_in_preset_rows(
                     preset_path,
                     slugs=slugs_list,
                     add_tags=add_tags_list,
                     remove_tags=remove_tags_list,
                 )
-                site_map = _load_project_sites(project_dir)
-                site_rows = [
-                    _serialize_project_sites({slug: site_map[slug]})[0]
-                    for slug in updated_slugs
-                    if slug in site_map
-                ]
+                patch_serve_project_site_tags(
+                    project_dir,
+                    {str(row["slug"]): row["tags"] for row in site_rows},
+                )
             except (ValueError, ValidationError) as e:
                 payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
                 self._send_bytes(payload, "application/json", status=422)
@@ -1853,20 +1982,38 @@ class ServeDispatcher:
                         self._send_bytes(payload, "application/json", status=422)
                         return
             try:
-                updated_slug = update_site_in_preset(
-                    preset_path,
-                    site_slug,
-                    name=name_str,
-                    lat=lat,
-                    lon=lon,
-                    tags=tags_list,
-                    **height_kw,
+                tags_only = (
+                    tags_list is not None
+                    and name_str is None
+                    and lat is None
+                    and lon is None
+                    and "height_m" not in raw
                 )
-                if lat is not None and lon is not None:
-                    apply_plss_from_loc_cache(preset_path, updated_slug, lat, lon)
-                site_map = _load_project_sites(project_dir)
-                site_entry = site_map[updated_slug]
-                site_row = _serialize_project_sites({updated_slug: site_entry})[0]
+                if tags_only:
+                    site_row = patch_site_tags_in_preset(preset_path, site_slug, tags_list)
+                    patch_serve_project_site_tags(project_dir, {site_slug: tags_list})
+                else:
+                    updated_slug = update_site_in_preset(
+                        preset_path,
+                        site_slug,
+                        name=name_str,
+                        lat=lat,
+                        lon=lon,
+                        tags=tags_list,
+                        **height_kw,
+                    )
+                    if lat is not None and lon is not None:
+                        apply_plss_from_loc_cache(preset_path, updated_slug, lat, lon)
+                    site_map = _load_project_sites(project_dir)
+                    site_entry = site_map[updated_slug]
+                    site_row = _serialize_project_sites({updated_slug: site_entry})[0]
+                    if lat is not None and lon is not None or "height_m" in raw:
+                        invalidate_site_coverage(
+                            project_slug,
+                            project_dir,
+                            updated_slug,
+                            site_entry,
+                        )
             except ValueError as e:
                 if "not found" in str(e):
                     self.send_error(404)

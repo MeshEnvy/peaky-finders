@@ -348,43 +348,42 @@ def ensure_site_viewshed_png(
         if regenerated is not None:
             return regenerated
 
-    with _coverage_slot(verbose=verbose, site_slug=site_slug):
-        with _workdir_lock(workdir):
-            cached = _cached_splat_png(workdir, expected_workspace_digest=digest)
-            if cached is not None:
-                return cached
+    with _workdir_lock(workdir):
+        cached = _cached_splat_png(workdir, expected_workspace_digest=digest)
+        if cached is not None:
+            return cached
 
-            regenerated = _regenerate_splat_png_from_ppm(
-                workdir,
-                expected_workspace_digest=digest,
-                site_label=site_label,
-                verbose=verbose,
+        regenerated = _regenerate_splat_png_from_ppm(
+            workdir,
+            expected_workspace_digest=digest,
+            site_label=site_label,
+            verbose=verbose,
+        )
+        if regenerated is not None:
+            return regenerated
+
+        if verbose:
+            print(
+                f"serve viewshed: coverage {site_slug} ({workdir.name})",
+                flush=True,
             )
-            if regenerated is not None:
-                return regenerated
+        rc = run_viewshed_coverage(
+            site_name=site_label,
+            provider=preset.simulation.provider,
+            data_dir=workdir,
+            coverage_verbose=verbose,
+        )
+        if rc != 0:
+            raise ServeViewshedError(f"coverage failed for site {site_slug!r}")
 
-            if verbose:
-                print(
-                    f"serve viewshed: coverage {site_slug} ({workdir.name})",
-                    flush=True,
-                )
-            rc = run_viewshed_coverage(
-                site_name=site_label,
-                provider=preset.simulation.provider,
-                data_dir=workdir,
-                coverage_verbose=verbose,
+        ensure_splat_raster_png(site_name=site_label, data_dir=workdir)
+        if not png.is_file():
+            raise ServeViewshedError(
+                f"missing splat.png after generation for {site_slug!r}"
             )
-            if rc != 0:
-                raise ServeViewshedError(f"coverage failed for site {site_slug!r}")
-
-            ensure_splat_raster_png(site_name=site_label, data_dir=workdir)
-            if not png.is_file():
-                raise ServeViewshedError(
-                    f"missing splat.png after generation for {site_slug!r}"
-                )
-            if verbose:
-                print(f"serve viewshed: done {site_slug} ({workdir.name})", flush=True)
-            return png.resolve()
+        if verbose:
+            print(f"serve viewshed: done {site_slug} ({workdir.name})", flush=True)
+        return png.resolve()
 
 
 def site_viewshed_overlay_if_ready(

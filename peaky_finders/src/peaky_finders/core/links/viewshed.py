@@ -50,6 +50,19 @@ def _ensure_footprint_gpkg(workdir: Path, *, preset: Preset, verbose: bool = Fal
     return gpkg
 
 
+def _footprint_polygon_stale(wd: Path) -> bool:
+    """True when raster coverage exists but the GPKG footprint is missing or older."""
+    gpkg = wd / SPLAT_GPKG_NAME
+    png = wd / "splat.png"
+    if footprint_vectorize_needed(wd):
+        return True
+    if not gpkg.is_file():
+        return png.is_file()
+    if png.is_file() and gpkg.stat().st_mtime < png.stat().st_mtime:
+        return True
+    return False
+
+
 def load_viewshed_footprint(
     workdir: Path,
     *,
@@ -66,7 +79,11 @@ def load_viewshed_footprint(
     wd = Path(workdir).expanduser().resolve()
     gpkg = wd / SPLAT_GPKG_NAME
     if gpkg.is_file() and not footprint_vectorize_needed(wd):
-        return read_coverage_footprint(gpkg)
+        if _footprint_polygon_stale(wd):
+            if not ensure:
+                return None
+        else:
+            return read_coverage_footprint(gpkg)
     if not ensure:
         return None
     if not (wd / SPLAT_OUTPUT_PPM_BASENAME).is_file():

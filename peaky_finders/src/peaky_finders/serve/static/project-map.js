@@ -296,12 +296,37 @@
   function sitesGeoJson() {
     return {
       type: "FeatureCollection",
-      features: sites.map((site) => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [site.lon, site.lat] },
-        properties: { name: site.name, slug: site.slug },
-      })),
+      features: sites
+        .filter((site) => Number.isFinite(site.lat) && Number.isFinite(site.lon))
+        .map((site) => ({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [site.lon, site.lat] },
+          properties: { name: site.name, slug: site.slug },
+        })),
     };
+  }
+
+  function normalizeSiteFromApi(site) {
+    if (!site || !site.slug) return null;
+    const lat = Number(site.lat);
+    const lon = Number(site.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return {
+      ...site,
+      slug: String(site.slug),
+      name: String(site.name || site.slug),
+      lat,
+      lon,
+      tags: Array.isArray(site.tags) ? site.tags.map(String).filter(Boolean) : [],
+    };
+  }
+
+  function ensureSiteVisibleAfterAdd(site) {
+    siteHidden.delete(site.slug);
+    if (!sitePassesTagFilter(site)) {
+      activeTagFilters.clear();
+      renderTagFilters();
+    }
   }
 
   const map = new maplibregl.Map({
@@ -352,8 +377,6 @@
   let pendingCreateLon = null;
   let draftMarker = null;
   let siteLinksPayload = null;
-  // Gate bulk viewshed warms until first links response settles (ready/error/timeout).
-  let initialViewshedsStarted = false;
   const viewshedVisible = new Map();
   if (savedMapState?.viewshedVisible && typeof savedMapState.viewshedVisible === "object") {
     for (const [slug, visible] of Object.entries(savedMapState.viewshedVisible)) {
@@ -621,8 +644,86 @@
     return `/api/p/${projectSlug}/links`;
   }
 
+  function siteLinksApiUrl(slug) {
+    return `/api/p/${projectSlug}/sites/${encodeURIComponent(slug)}/links`;
+  }
+
   function linksWarmApiUrl() {
     return `/api/p/${projectSlug}/links/warm`;
+  }
+
+  function warmPrioritiesApiUrl() {
+    return `/api/p/${projectSlug}/warm/priorities`;
+  }
+
+  const WARM_PRIORITY_INTERACTIVE = 0;
+  const WARM_PRIORITY_VIEWPORT = 10;
+  const WARM_VIEWPORT_SLUG_CAP = 48;
+  let warmPrioritiesTimer = null;
+
+  function warmPrioritySlugsInViewport() {
+    const slugs = [];
+    for (const site of sites) {
+      if (isSiteMapHidden(site.slug) || !isViewshedVisible(site.slug)) continue;
+      if (siteVisibleInMap(site)) slugs.push(site.slug);
+      if (slugs.length >= WARM_VIEWPORT_SLUG_CAP) break;
+    }
+    return slugs;
+  }
+
+  function bumpWarmPriorities(slugs, priority) {
+    const list = Array.isArray(slugs) ? slugs.filter(Boolean) : [];
+    if (!list.length) return;
+    fetch(warmPrioritiesApiUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slugs: list, priority }),
+    }).catch(() => {
+      /* background warm is best-effort */
+    });
+  }
+
+  function syncWarmPriorities() {
+    if (!mapReady) return;
+    const viewport = warmPrioritySlugsInViewport();
+    const slugs = new Set(viewport);
+    if (selectedSlug && isViewshedVisible(selectedSlug)) slugs.add(selectedSlug);
+    if (!slugs.size) return;
+    if (selectedSlug && slugs.has(selectedSlug)) {
+      void bumpWarmPriorities([selectedSlug], WARM_PRIORITY_INTERACTIVE);
+      slugs.delete(selectedSlug);
+    }
+    if (slugs.size) {
+      void bumpWarmPriorities([...slugs], WARM_PRIORITY_VIEWPORT);
+    }
+  }
+
+  function scheduleWarmPrioritiesSync() {
+    if (warmPrioritiesTimer) clearTimeout(warmPrioritiesTimer);
+    warmPrioritiesTimer = setTimeout(() => {
+      warmPrioritiesTimer = null;
+      syncWarmPriorities();
+    }, 300);
+  }
+
+  function onMapMoveEndForWarmPriorities() {
+    scheduleWarmPrioritiesSync();
+  }
+
+  const WA_DIALOG_WAIT_MS = 5000;
+
+  async function openWaDialog(dialog) {
+    if (!dialog) return;
+    if (!customElements.get("wa-dialog")) {
+      await Promise.race([
+        customElements.whenDefined("wa-dialog"),
+        new Promise((resolve) => setTimeout(resolve, WA_DIALOG_WAIT_MS)),
+      ]);
+    }
+    if (!customElements.get("wa-dialog")) {
+      dialog.classList.add("wa-dialog-force-show");
+    }
+    dialog.open = true;
   }
 
 
@@ -1481,10 +1582,19 @@
 
 
   function registerSite(site) {
-    sites.push(site);
-    siteBySlug.set(site.slug, site);
+    const row = normalizeSiteFromApi(site);
+    if (!row) return;
+    const ix = sites.findIndex((s) => s.slug === row.slug);
+    if (ix >= 0) sites[ix] = row;
+    else sites.push(row);
+    siteBySlug.set(row.slug, row);
+    ensureSiteVisibleAfterAdd(row);
     addSiteLayers();
+    applyEntityVisibility();
     renderEntityPanel();
+    updateSelectedLayer();
+    raiseSiteLayers();
+    scheduleSaveMapState();
   }
 
 
@@ -4577,25 +4687,59 @@
     try {
       const resp = await fetch(linksApiUrl());
       if (!resp.ok) {
-        flushDeferredViewshedLoads();
+        syncWarmPriorities();
         return;
       }
       const payload = await resp.json();
       applySiteLinksPayload(payload);
-      if (payload && payload.status === "pending") {
-        // Stagger viewshed warms briefly so link warm can start GDAL reads first.
-        void fetch(linksWarmApiUrl(), { method: "POST" });
-        setTimeout(() => flushDeferredViewshedLoads(), VIEWSHED_DEFER_AFTER_LINKS_PENDING_MS);
-      } else {
-        flushDeferredViewshedLoads();
-      }
+      syncWarmPriorities();
     } catch (_) {
-      flushDeferredViewshedLoads();
+      syncWarmPriorities();
     }
+  }
+
+  const singleSiteLinksInflight = new Set();
+
+  /** Fetch one site's links (existing footprints only) and merge into the mesh. */
+  async function loadSingleSiteLinks(slug) {
+    if (!slug || singleSiteLinksInflight.has(slug)) return;
+    singleSiteLinksInflight.add(slug);
+    try {
+      const resp = await fetch(siteLinksApiUrl(slug));
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      mergeSingleSiteLinks(slug, payload);
+    } catch (_) {
+      /* network */
+    } finally {
+      singleSiteLinksInflight.delete(slug);
+    }
+  }
+
+  function mergeSingleSiteLinks(slug, payload) {
+    if (!payload || !payload.geojson || !Array.isArray(payload.geojson.features)) return;
+    const base =
+      siteLinksPayload && siteLinksPayload.geojson && Array.isArray(siteLinksPayload.geojson.features)
+        ? siteLinksPayload
+        : { status: "pending", links: [], geojson: { type: "FeatureCollection", features: [] } };
+    const untouched = (props) => props.a !== slug && props.b !== slug;
+    const features = base.geojson.features
+      .filter((f) => untouched(f.properties || {}))
+      .concat(payload.geojson.features);
+    const links = (Array.isArray(base.links) ? base.links : [])
+      .filter((r) => untouched(r || {}))
+      .concat(Array.isArray(payload.links) ? payload.links : []);
+    siteLinksPayload = { ...base, links, geojson: { type: "FeatureCollection", features } };
+    addSiteLinksLayer(siteLinksPayload.geojson);
+    if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));
   }
 
   function applySiteLinksPayload(payload) {
     if (!payload) return;
+    const prevFeatures = siteLinksPayload?.geojson?.features;
+    const prevCount = Array.isArray(prevFeatures) ? prevFeatures.length : 0;
+    const nextFeatures = payload.geojson?.features;
+    const nextCount = Array.isArray(nextFeatures) ? nextFeatures.length : 0;
     // Keep showing a ready mesh while a re-warm is pending (e.g. rename bumps
     // config mtime but not link geometry). Empty pending payloads used to wipe
     // all RF lines until the slow warm finished.
@@ -4603,7 +4747,17 @@
       payload.status === "pending" &&
       siteLinksPayload &&
       siteLinksPayload.status === "ready" &&
-      siteLinksPayload.geojson
+      siteLinksPayload.geojson &&
+      prevCount > 0
+    ) {
+      return;
+    }
+    // Viewshed PNG warms can publish before GPKG footprints exist; do not wipe RF lines.
+    if (
+      payload.status === "ready" &&
+      siteLinksPayload?.status === "ready" &&
+      prevCount > 0 &&
+      nextCount === 0
     ) {
       return;
     }
@@ -4780,16 +4934,7 @@
   const viewshedPendingEpoch = new Map();
 
   function reconcilePendingViewsheds() {
-    for (const [slug, epoch] of viewshedPendingEpoch) {
-      if (slug === DRAFT_VIEWSHED_SLUG) {
-        if (draftPlacementLat != null && draftPlacementLon != null) {
-          void loadDraftViewshedAt(draftPlacementLat, draftPlacementLon, { refreshOnly: true });
-        }
-        continue;
-      }
-      const site = siteBySlug.get(slug);
-      if (site) enqueueViewshedLoad(site, epoch);
-    }
+    syncWarmPriorities();
   }
 
   function connectProjectEvents() {
@@ -4812,12 +4957,7 @@
       try {
         const data = JSON.parse(ev.data);
         if (!data) return;
-        if (data.status === "ready") {
-          applySiteLinksPayload(data);
-          flushDeferredViewshedLoads();
-        } else if (data.status === "running" || data.status === "error") {
-          flushDeferredViewshedLoads();
-        }
+        applySiteLinksPayload(data);
       } catch (_) {
         /* ignore malformed SSE payload */
       }
@@ -4938,12 +5078,6 @@
   }
 
   let viewshedLoadEpoch = 0;
-  const VIEWSHED_WARM_MAX_CONCURRENT = 6;
-  const VIEWSHED_WARM_POLL_MS = 1000;
-  const VIEWSHED_WARM_POLL_MAX = 180;
-  const VIEWSHED_DEFER_AFTER_LINKS_PENDING_MS = 3000;
-  const viewshedLoadQueue = [];
-  let viewshedLoadActive = 0;
 
   function bumpViewshedLoadEpoch() {
     viewshedLoadEpoch += 1;
@@ -4971,68 +5105,48 @@
     if (slug === selectedSlug) syncViewshedCheckbox();
   }
 
-  async function pollViewshedUntilReady(slug, epoch, coords) {
-    for (let attempt = 0; attempt < VIEWSHED_WARM_POLL_MAX; attempt += 1) {
-      if (viewshedPendingEpoch.get(slug) !== epoch) return;
-      await new Promise((resolve) => setTimeout(resolve, VIEWSHED_WARM_POLL_MS));
-      if (viewshedPendingEpoch.get(slug) !== epoch) return;
-      try {
-        const resp = await fetch(viewshedMetaUrl(slug, coords || {}));
-        if (!resp.ok) continue;
-        const overlay = await resp.json();
-        if (overlay.url && overlay.coordinates) {
-          handleViewshedReady({ ...overlay, slug, status: "ready" }, epoch);
-          return;
-        }
-      } catch (_) {
-        /* retry */
+  async function tryLoadViewshedFromCache(slug, coords) {
+    try {
+      const resp = await fetch(viewshedMetaUrl(slug, coords || {}));
+      if (!resp.ok) return false;
+      const overlay = await resp.json();
+      if (overlay.url && overlay.coordinates) {
+        acceptViewshedOverlay({ ...overlay, slug, status: "ready" });
+        return true;
       }
+    } catch (_) {
+      /* cache probe optional */
     }
-    if (viewshedPendingEpoch.get(slug) === epoch) {
-      clearViewshedLoadingState(slug);
-    }
-  }
-
-  function drainViewshedLoadQueue() {
-    while (viewshedLoadActive < VIEWSHED_WARM_MAX_CONCURRENT && viewshedLoadQueue.length > 0) {
-      const job = viewshedLoadQueue.shift();
-      const pendingEpoch = job ? viewshedPendingEpoch.get(job.site.slug) : undefined;
-      if (!job || pendingEpoch === undefined || pendingEpoch !== job.epoch) continue;
-      viewshedLoadActive += 1;
-      void loadViewshedForSite(job.site, job.epoch).finally(() => {
-        viewshedLoadActive -= 1;
-        drainViewshedLoadQueue();
-      });
-    }
-  }
-
-  function enqueueViewshedLoad(site, epoch) {
-    viewshedLoadQueue.push({ site, epoch });
-    drainViewshedLoadQueue();
+    return false;
   }
 
   function scheduleViewshedLoad(site) {
-    const epoch = viewshedLoadEpoch;
     removeViewshedLayer(site.slug);
     viewshedLoading.add(site.slug);
-    viewshedPendingEpoch.set(site.slug, epoch);
+    viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch);
     updatePinOverlays();
     if (site.slug === selectedSlug) syncViewshedCheckbox();
-    enqueueViewshedLoad(site, epoch);
+    const priority =
+      site.slug === selectedSlug ? WARM_PRIORITY_INTERACTIVE : WARM_PRIORITY_VIEWPORT;
+    void bumpWarmPriorities([site.slug], priority);
+    void tryLoadViewshedFromCache(site.slug);
   }
 
   function reloadViewshedsForSimChange() {
     bumpViewshedLoadEpoch();
-    viewshedLoadQueue.length = 0;
     for (const site of sites) {
       if (!isSiteMapHidden(site.slug) && isViewshedVisible(site.slug)) {
-        scheduleViewshedLoad(site);
+        removeViewshedLayer(site.slug);
+        viewshedLoading.add(site.slug);
+        viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch);
       } else {
         removeViewshedLayer(site.slug);
         viewshedLoading.delete(site.slug);
         viewshedPendingEpoch.delete(site.slug);
       }
     }
+    updatePinOverlays();
+    syncWarmPriorities();
     if (
       createMode &&
       draftPlacementLat != null &&
@@ -5183,8 +5297,6 @@
       if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return;
       if (vs && vs.status === "ready") {
         handleViewshedReady({ ...vs, slug: DRAFT_VIEWSHED_SLUG }, epoch);
-      } else if (vs && vs.status === "queued") {
-        void pollViewshedUntilReady(DRAFT_VIEWSHED_SLUG, epoch, { lat, lon });
       }
     } catch (_) {
       if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) === epoch) {
@@ -5320,56 +5432,6 @@
     }
     raiseSiteLayers();
   }
-
-  async function loadViewshedForSite(site, epoch) {
-    if (epoch != null) {
-      const pendingEpoch = viewshedPendingEpoch.get(site.slug);
-      if (pendingEpoch === undefined || pendingEpoch !== epoch) return;
-    }
-    try {
-      const resp = await fetch(viewshedWarmUrl(site.slug), { method: "POST" });
-      if (epoch != null) {
-        const pendingEpoch = viewshedPendingEpoch.get(site.slug);
-        if (pendingEpoch === undefined || pendingEpoch !== epoch) return;
-      }
-      if (!resp.ok) {
-        clearViewshedLoadingState(site.slug);
-        return;
-      }
-      const vs = await resp.json();
-      if (epoch != null) {
-        const pendingEpoch = viewshedPendingEpoch.get(site.slug);
-        if (pendingEpoch === undefined || pendingEpoch !== epoch) return;
-      }
-      if (vs && vs.status === "ready") {
-        handleViewshedReady(vs, epoch);
-      } else if (vs && vs.status === "queued") {
-        void pollViewshedUntilReady(site.slug, epoch);
-      } else {
-        clearViewshedLoadingState(site.slug);
-      }
-    } catch (_) {
-      if (viewshedPendingEpoch.get(site.slug) === epoch) {
-        clearViewshedLoadingState(site.slug);
-      }
-    }
-  }
-
-  function loadAllViewsheds() {
-    bumpViewshedLoadEpoch();
-    for (const site of sites) {
-      if (!isSiteMapHidden(site.slug) && isViewshedVisible(site.slug)) {
-        scheduleViewshedLoad(site);
-      }
-    }
-  }
-
-  function flushDeferredViewshedLoads() {
-    if (initialViewshedsStarted) return;
-    initialViewshedsStarted = true;
-    loadAllViewsheds();
-  }
-
 
   function addSiteLayers() {
     if (map.getSource(SITES_SOURCE)) {
@@ -5531,8 +5593,7 @@
     setAddPlacementMode(null);
     setEntityPanelOpen(true);
     resetAddSiteModal();
-    await customElements.whenDefined("wa-dialog");
-    addSiteModal.open = true;
+    await openWaDialog(addSiteModal);
     requestAnimationFrame(() => {
       addSiteName?.focus();
     });
@@ -6183,20 +6244,57 @@
     }
   }
 
+  const siteTagSaveQueue = new Map();
+
   async function patchSiteTags(slug, tags) {
-    const resp = await fetch(siteDeleteUrl(slug), {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tags }),
-    });
-    const payload = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      throw new Error(payload.error || `Tag update failed (${resp.status})`);
+    let state = siteTagSaveQueue.get(slug);
+    if (!state) {
+      state = { pendingTags: null, timer: null, inflight: false, waiters: [] };
+      siteTagSaveQueue.set(slug, state);
     }
-    const site = payload.site;
-    if (!site) throw new Error("Tag update returned no site");
-    applySiteRowUpdate(site);
-    return site;
+    state.pendingTags = tags;
+    const existing = siteBySlug.get(slug);
+    if (existing) {
+      applySiteRowUpdate({ ...existing, tags: [...tags] });
+    }
+    if (state.timer) clearTimeout(state.timer);
+    return new Promise((resolve, reject) => {
+      state.waiters.push({ resolve, reject });
+      state.timer = setTimeout(() => {
+        state.timer = null;
+        void flushSiteTagSave(slug);
+      }, 300);
+    });
+  }
+
+  async function flushSiteTagSave(slug) {
+    const state = siteTagSaveQueue.get(slug);
+    if (!state || state.inflight) return;
+    const tags = state.pendingTags;
+    if (tags == null) return;
+    state.pendingTags = null;
+    state.inflight = true;
+    const waiters = state.waiters.splice(0);
+    try {
+      const resp = await fetch(siteDeleteUrl(slug), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(payload.error || `Tag update failed (${resp.status})`);
+      }
+      const site = payload.site;
+      if (!site) throw new Error("Tag update returned no site");
+      applySiteRowUpdate(site);
+      for (const w of waiters) w.resolve(site);
+    } catch (err) {
+      for (const w of waiters) w.reject(err);
+    } finally {
+      state.inflight = false;
+      if (state.pendingTags != null) void flushSiteTagSave(slug);
+    }
   }
 
   function renderSiteTags(site) {
@@ -7039,13 +7137,18 @@
   }
 
   function applySiteRowUpdate(site) {
-    const ix = sites.findIndex((s) => s.slug === site.slug);
-    if (ix >= 0) sites[ix] = site;
-    else sites.push(site);
-    siteBySlug.set(site.slug, site);
+    const row = normalizeSiteFromApi(site);
+    if (!row) return;
+    const ix = sites.findIndex((s) => s.slug === row.slug);
+    if (ix >= 0) sites[ix] = row;
+    else sites.push(row);
+    siteBySlug.set(row.slug, row);
     if (map.getSource(SITES_SOURCE)) {
       map.getSource(SITES_SOURCE).setData(sitesGeoJson());
     }
+    applySiteLayerFilters();
+    updateSelectedLayer();
+    raiseSiteLayers();
   }
 
 
@@ -7105,6 +7208,8 @@
     updateSelectedLayer();
     raiseSiteLayers();
     renderEntityPanel();
+    syncWarmPriorities();
+    void loadSingleSiteLinks(slug);
   }
 
   function deselectSite() {
@@ -7239,6 +7344,7 @@
   });
   map.on("moveend", scheduleSaveMapState);
   map.on("moveend", onMapMoveEndForEntityPanel);
+  map.on("moveend", onMapMoveEndForWarmPriorities);
   map.on("rotateend", scheduleSaveMapState);
   map.on("move", updatePinOverlays);
   map.on("resize", updatePinOverlays);

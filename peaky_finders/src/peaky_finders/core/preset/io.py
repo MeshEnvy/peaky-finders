@@ -95,6 +95,7 @@ def update_preset_yaml_tree(
     mutator: Callable[[YAML, Any], Any],
     *,
     validate: bool = True,
+    prune: bool = True,
 ) -> Any:
     """Read, mutate, validate merged preset, prune defaults, and atomically write project YAML."""
     from peaky_finders.core.home.preset_defaults import (
@@ -103,17 +104,22 @@ def update_preset_yaml_tree(
         resolve_preset_raw,
     )
 
+    if validate:
+        prune = True
+
     with preset_yaml_transaction(path) as (yaml_rt, root):
         result = mutator(yaml_rt, root)
-        plain = yaml_plain_preset_value(root)
-        if not isinstance(plain, dict):
-            raise ValueError(f"preset YAML root must be a mapping at {path}")
-        if validate:
-            validate_project_preset_document(plain)
-            parse_preset_dict(resolve_preset_raw(plain))
-        defaults = load_preset_defaults()
-        pruned = prune_project_preset_dict(plain, defaults)
-        _replace_rt_mapping(root, pruned)
+        if validate or prune:
+            plain = yaml_plain_preset_value(root)
+            if not isinstance(plain, dict):
+                raise ValueError(f"preset YAML root must be a mapping at {path}")
+            if validate:
+                validate_project_preset_document(plain)
+                parse_preset_dict(resolve_preset_raw(plain))
+            if prune:
+                defaults = load_preset_defaults()
+                pruned = prune_project_preset_dict(plain, defaults)
+                _replace_rt_mapping(root, pruned)
         dump_preset_yaml_document(yaml_rt, root, path)
         return result
 

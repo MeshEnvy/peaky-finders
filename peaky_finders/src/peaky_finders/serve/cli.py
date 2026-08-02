@@ -22,11 +22,12 @@ from peaky_finders.core.preset import peaky_home as resolve_runtime_peaky_home
 SERVE_RELOAD_CHILD_ENV = "PEAKY_SERVE_RELOAD_CHILD"
 SERVE_RELOAD_POLL_S = 0.5
 SERVE_RELOAD_GRACE_S = 2.0
+SERVE_RELOAD_DEBOUNCE_S = 1.0
 SERVE_READY_TIMEOUT_S = 60.0
 SERVE_PORT_RELEASE_TIMEOUT_S = 10.0
 SERVE_READY_POLL_S = 0.1
 SERVE_CHANNEL_TIMEOUT_S = 30
-SERVE_THREADS = 8
+SERVE_THREADS = int(os.environ.get("PEAKY_SERVE_THREADS", "16") or "16")
 
 
 def resolve_serve_peaky_home() -> Path:
@@ -288,6 +289,14 @@ def _supervise_serve_reload(
                 if time.monotonic() - ready_at < SERVE_RELOAD_GRACE_S:
                     continue
                 if _reload_changed(fingerprints, roots):
+                    debounce_until = time.monotonic() + SERVE_RELOAD_DEBOUNCE_S
+                    while time.monotonic() < debounce_until and proc.poll() is None:
+                        time.sleep(poll_s)
+                        if _reload_changed(fingerprints, roots):
+                            fingerprints = _reload_fingerprints(roots)
+                            debounce_until = time.monotonic() + SERVE_RELOAD_DEBOUNCE_S
+                    if proc.poll() is not None:
+                        break
                     print("serve: source changed, restarting", flush=True)
                     _terminate_serve_child(proc)
                     if not _wait_for_port_release(host, port):
@@ -299,7 +308,15 @@ def _supervise_serve_reload(
                         _wait_for_port_release(host, port, timeout_s=SERVE_PORT_RELEASE_TIMEOUT_S * 2)
                     break
             else:
-                return int(proc.returncode or 0)
+                code = int(proc.returncode or 0)
+                if code != 0:
+                    print(f"serve: child exited ({code})", flush=True)
+                    print(
+                        "serve: if import/ModuleNotFoundError, stop and rerun "
+                        "./peaky serve (rebuilds .venv in Docker)",
+                        flush=True,
+                    )
+                return code
     except KeyboardInterrupt:
         print("serve: stopped", flush=True)
         if proc is not None:

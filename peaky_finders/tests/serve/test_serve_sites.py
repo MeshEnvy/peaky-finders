@@ -13,8 +13,14 @@ from peaky_finders.serve.sites import (
     bulk_merge_site_tags_in_preset,
     delete_site_from_preset,
     import_sites_to_preset,
+    patch_site_tags_in_preset,
     unique_site_slug,
     update_site_in_preset,
+)
+from peaky_finders.serve.preset_cache import (
+    load_serve_project_context,
+    patch_serve_project_site_tags,
+    reset_serve_preset_cache_for_tests,
 )
 from peaky_finders.serve.kml_import import KmlPointSite
 from peaky_finders.core.preset import load_preset, write_preset_document
@@ -292,6 +298,47 @@ def _seed_tagged_sites(preset_path: Path) -> tuple[str, str]:
         lon=-119.3,
     )
     return slug_a, slug_b
+
+
+def test_patch_site_tags_in_preset(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    preset_path = projects_dir / "demo" / "config.yaml"
+    slug = append_planned_site_to_preset(
+        preset_path,
+        name="Alpha Peak",
+        lat=39.6,
+        lon=-119.4,
+        tags=["hsc"],
+    )
+    row = patch_site_tags_in_preset(preset_path, slug, ["onx", "planned"])
+    assert row["slug"] == slug
+    assert row["tags"] == ["onx", "planned"]
+    preset = load_preset(preset_path)
+    assert preset.sites[slug].tags == ["onx", "planned"]
+
+
+def test_patch_serve_project_site_tags_updates_cache(tmp_path: Path) -> None:
+    reset_serve_preset_cache_for_tests()
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    project_dir = projects_dir / "demo"
+    preset_path = project_dir / "config.yaml"
+    slug = append_planned_site_to_preset(
+        preset_path,
+        name="Alpha Peak",
+        lat=39.6,
+        lon=-119.4,
+        tags=["hsc"],
+    )
+    ctx = load_serve_project_context(project_dir)
+    assert ctx.sites[slug].tags == ["hsc"]
+    patch_site_tags_in_preset(preset_path, slug, ["onx"])
+    patch_serve_project_site_tags(project_dir, {slug: ["onx"]})
+    ctx2 = load_serve_project_context(project_dir)
+    assert ctx2.sites[slug].tags == ["onx"]
 
 
 def test_bulk_merge_site_tags_add_only(tmp_path: Path) -> None:

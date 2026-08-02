@@ -53,9 +53,64 @@ Progressive shell over **`core/`** + **`serve/`** — not a batch build product.
 | Preset | `core/preset/` — slim YAML (simulation, display, sites, links, land) |
 | RF / viewshed | `core/rf/`, `core/viewshed/`, splatter |
 | Links | `core/links/` — mutual footprint + RF |
+| Background warm | `serve/coverage_queue.py`, `serve/project_warm_scheduler.py`, `serve/link_footprints.py` |
 | UI assets | `serve/static/` (`project-map.js`, …) |
 
+**Server-owned warm:** On first project touch (`GET …/links`, SSE `…/events`), the scheduler enqueues all missing site footprints at background priority (100). Client never POSTs per-site warm storms; it **bumps priority** via `POST …/warm/priorities` for viewport (10) and selection (0). Overlays and link mesh updates arrive over SSE as workers drain the shared coverage queue. Link-adjacent slugs within hop range auto-bump to priority 20.
+
+| Warm API | Role |
+|----------|------|
+| `POST /api/p/<slug>/warm/priorities` | Body `{slugs, priority}` — reorder queued footprint jobs |
+| `GET …/viewsheds/<site>` | Cache hit returns overlay; 404 bumps priority 0 (no blocking compute) |
+| `POST …/viewsheds/<site>/warm` | Deprecated → priority bump 0 |
+| `GET …/links` | Cached/partial mesh instantly; starts background warm if needed |
+| `POST …/links/warm` | Starts scheduler; optional `priority_slugs` in JSON body |
+
+Client (`project-map.js`): `syncWarmPriorities()` on load, select, and debounced `moveend`; SSE drives overlay display (no poll loops).
+
 On-demand cache under `<project>/.peaky/cache/viewsheds/`, `.peaky/cache/plss/`, and `.peaky/cache/land/`.
+
+## BLM export (planned — Orlando 299/POD)
+
+MeshEnvy ops drives this from `ops/initiatives/silver-triangle-backbone.md`. Sites carry `blm-{fo}` tags; each FO gets its own SF-299 + POD. Peaky supplies **GIS and site tables**, not narrative POD prose.
+
+### Target API
+
+| Route | Role |
+|-------|------|
+| `GET /api/p/<slug>/export/fo` | Query: `tag=blm-sierra` (required), optional `include=proposed,installed`, `fill_plss=1`. Response: zip download or JSON manifest with download URLs. |
+| `POST /api/p/<slug>/sites/plss/bulk` | Body: `{slugs}` or `{tag}` — CadNSDI fill missing `plss`, write preset. |
+
+### Export bundle (`export/fo`)
+
+```
+meshenvy-blm-sierra-sites.zip
+  sites.csv          # slug,name,lat,lon,plss,height_m,tags
+  sites.geojson
+  sites.kml
+  sites.shp          # (+ .shx .dbf .prj via pyogrio)
+  qa-sensitive.csv   # optional P1: sites hitting exclude layers
+```
+
+CSV + shapefile satisfy Andrea's pre-app ask and Susan's "maps and shapefiles" requirement. GeoJSON/KML for internal QA and Google Earth Attachment 2 drafts.
+
+### ADMU_NAME → tag map (Nevada)
+
+| `ADMU_NAME` (BLM FO boundary layer) | Site tag |
+|-------------------------------------|----------|
+| Sierra Front Field Office | `blm-sierra` |
+| Humboldt River Field Office | `blm-humboldt` |
+| Black Rock Field Office | `blm-black-rock` |
+| Tuscarora Field Office | `blm-tuscarora` |
+| Tonopah Field Office | `blm-tonopah` |
+| Caliente Field Office | `blm-caliente` |
+| Las Vegas Field Office | `blm-las-vegas` |
+
+Auto-tag (P1): point-in-polygon against `land.sources.blm-nv-field-office-boundary-polygons` / `admu_ofc_poly`.
+
+### Not in Peaky
+
+SF-299 PDF, POD Word templates, bylaws/EIN attachments, rent-waiver narrative — assembled manually from `ops/docs/` precedents.
 
 Global defaults: `$PEAKY_HOME/config.yaml`, `modems.yaml`, `environments.yaml`. Project: `$PEAKY_HOME/projects/<slug>/config.yaml`.
 
@@ -101,6 +156,8 @@ peaky_home/      # legacy local PEAKY_HOME (gitignored); MeshEnvy uses ../../ops
 |-----|------|
 | `PEAKY_HOME` | Global config + projects (default `../../ops/peaky_home` when present, else `<repo>/peaky_home`) |
 | `PEAKY_PROJECTS` | Projects root (default `<PEAKY_HOME>/projects`) |
+| `PEAKY_SERVE_THREADS` | Waitress thread pool (default `16`) |
+| `PEAKY_SERVE_COVERAGE_CONCURRENT` | Coverage queue worker count (default `1`) |
 | `SPLAT_CACHE` / `PEAKY_CACHE_DIR` | Skadi DEM mirror |
 | `PEAKY_DEV_IMAGE` | Docker tag (default `peaky:dev`) |
 

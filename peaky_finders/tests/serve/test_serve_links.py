@@ -11,7 +11,9 @@ from unittest.mock import patch
 from shapely.geometry import box
 
 from peaky_finders.serve.links import (
+    ServeLinksError,
     canonical_site_pair,
+    compute_single_site_links,
     evaluate_site_pair_linked,
     load_coords_site_links,
     load_project_site_links,
@@ -220,12 +222,77 @@ def test_warm_links_returns_cache_without_rerun(tmp_path: Path) -> None:
     }
     store_project_site_links_cache(project_dir, sites, ready)
 
-    with patch("peaky_finders.serve.link_jobs._read_existing_footprints") as mock_read:
+    with patch("peaky_finders.serve.link_jobs.ensure_project_warm") as mock_ensure:
         result = warm_project_site_links("sample", project_dir, sites)
 
     assert result["status"] == "ready"
     assert result["links"] == ready["links"]
-    mock_read.assert_not_called()
+    mock_ensure.assert_not_called()
+    reset_link_jobs_for_tests()
+
+
+def test_warm_links_starts_background_scheduler(tmp_path: Path) -> None:
+    from peaky_finders.serve.link_jobs import reset_link_jobs_for_tests, warm_project_site_links
+
+    reset_link_jobs_for_tests()
+    project_dir = _write_links_project(tmp_path / "sample")
+    sites = load_preset_sites(project_dir / "config.yaml")
+
+    with patch(
+        "peaky_finders.serve.link_jobs.ensure_project_warm",
+        return_value={"project": "sample", "status": "running", "enqueued": 4},
+    ) as mock_ensure:
+        result = warm_project_site_links("sample", project_dir, sites)
+
+    assert result["status"] == "running"
+    mock_ensure.assert_called_once()
+    reset_link_jobs_for_tests()
+
+
+def test_warm_links_publishes_once_after_footprints(tmp_path: Path) -> None:
+    from peaky_finders.serve.link_jobs import reset_link_jobs_for_tests, warm_project_site_links
+
+    reset_link_jobs_for_tests()
+    project_dir = _write_links_project(tmp_path / "sample")
+    sites = load_preset_sites(project_dir / "config.yaml")
+    ready = {
+        "status": "ready",
+        "links": [{"a": "hub", "b": "peer-a", "linked": True, "manual": False}],
+        "geojson": {"type": "FeatureCollection", "features": [{"type": "Feature"}]},
+    }
+    published: list[dict[str, object]] = []
+
+    with patch(
+        "peaky_finders.serve.project_warm_scheduler._publish_links",
+        side_effect=lambda _slug, payload: published.append(dict(payload)),
+    ):
+        with patch(
+            "peaky_finders.serve.project_warm_scheduler.read_existing_footprints",
+            return_value={slug: None for slug in sites},
+        ):
+            with patch(
+                "peaky_finders.serve.project_warm_scheduler.vectorize_missing_footprints",
+                side_effect=lambda *_a, **_k: {slug: object() for slug in sites},
+            ):
+                with patch(
+                    "peaky_finders.serve.project_warm_scheduler.compute_project_site_links",
+                    return_value=ready,
+                ) as compute:
+                    with patch(
+                        "peaky_finders.serve.project_warm_scheduler._enqueue_site_if_missing",
+                        return_value=False,
+                    ):
+                        result = warm_project_site_links("sample", project_dir, sites)
+                        assert result["status"] == "running"
+                        from peaky_finders.serve.project_warm_scheduler import (
+                            _refresh_project_links,
+                        )
+
+                        _refresh_project_links("sample", project_dir)
+
+    assert published
+    assert published[-1]["links"] == ready["links"]
+    compute.assert_called()
     reset_link_jobs_for_tests()
 
 
@@ -283,7 +350,87 @@ def _mock_engine(*, site_fp=_COVERING_FP, coords_fp=_COVERING_FP):
     inst = engine.return_value
     inst.ensure_site_footprint.return_value = site_fp
     inst.ensure_coords_footprint.return_value = coords_fp
+    inst.read_site_footprint.return_value = site_fp
+    inst.vectorize_site_footprint.return_value = site_fp
     return engine, inst
+
+
+def test_compute_single_site_links_ready(tmp_path: Path) -> None:
+    project_dir = _write_links_project(tmp_path / "sample")
+    sites = load_preset_sites(project_dir / "config.yaml")
+
+    mock_engine, inst = _mock_engine()
+    try:
+        result = compute_single_site_links(project_dir, "hub", sites)
+    finally:
+        mock_engine.stop()
+
+    assert result["status"] == "ready"
+    assert result["site"] == "hub"
+    assert result["center_footprint"] is True
+    assert result["missing"] == []
+    # Manual pairs (hub↔a/b/c) plus RF links via covering footprints.
+    slugs_linked = {row["b"] if row["a"] == "hub" else row["a"] for row in result["links"]}
+    assert slugs_linked == {"peer-a", "peer-b", "peer-c"}
+    assert len(result["geojson"]["features"]) == len(result["links"])
+    # Never runs splatter.
+    inst.ensure_site_footprint.assert_not_called()
+
+
+def test_compute_single_site_links_missing_neighbors(tmp_path: Path) -> None:
+    project_dir = _write_links_project(tmp_path / "sample")
+    sites = load_preset_sites(project_dir / "config.yaml")
+
+    mock_engine, inst = _mock_engine()
+
+    def read_fp(_pd, _preset, site, **_kw):
+        return _COVERING_FP if float(site.lat) == float(sites["peer-a"].lat) else None
+
+    inst.read_site_footprint.side_effect = read_fp
+    inst.vectorize_site_footprint.return_value = None
+    try:
+        result = compute_single_site_links(project_dir, "peer-a", sites)
+    finally:
+        mock_engine.stop()
+
+    assert result["status"] == "partial"
+    assert result["center_footprint"] is True
+    # Manual pair to hub still resolves; RF neighbors without footprints are reported.
+    assert {row["a"] for row in result["links"]} | {row["b"] for row in result["links"]} >= {"hub", "peer-a"}
+    assert result["missing"] == ["peer-b", "peer-c"]
+
+
+def test_compute_single_site_links_unknown_slug(tmp_path: Path) -> None:
+    project_dir = _write_links_project(tmp_path / "sample")
+    sites = load_preset_sites(project_dir / "config.yaml")
+    try:
+        compute_single_site_links(project_dir, "nope", sites)
+        raise AssertionError("expected ServeLinksError")
+    except ServeLinksError:
+        pass
+
+
+def test_api_single_site_links(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    _write_links_project(projects_dir / "sample")
+
+    mock_engine, _inst = _mock_engine()
+    server, host, port, _thread = _start_server(projects_dir)
+    try:
+        conn = HTTPConnection(host, port, timeout=10)
+        conn.request("GET", "/api/p/sample/sites/hub/links")
+        resp = conn.getresponse()
+        body = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert body["project"] == "sample"
+        assert body["site"] == "hub"
+        assert body["links"]
+        assert body["geojson"]["features"]
+    finally:
+        mock_engine.stop()
+        server.shutdown()
+        server.server_close()
 
 
 def test_load_coords_site_links_viewshed_batch(tmp_path: Path) -> None:

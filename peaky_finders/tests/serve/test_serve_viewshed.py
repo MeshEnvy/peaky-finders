@@ -373,14 +373,17 @@ def test_project_page_loads_viewsheds_on_demand(tmp_path: Path) -> None:
         js_resp = conn.getresponse()
         js_body = js_resp.read().decode("utf-8")
         assert js_resp.status == 200
-        assert "loadAllViewsheds" in js_body
+        assert "bumpWarmPriorities" in js_body
+        assert "syncWarmPriorities" in js_body
         assert "scheduleViewshedLoad" in js_body
         assert "connectProjectEvents" in js_body
         assert "reconcilePendingViewsheds" in js_body
-        assert "viewshedWarmUrl" in js_body
+        assert "warmPrioritiesApiUrl" in js_body
         assert "setViewshedVisible" in js_body
         assert "ensureViewshedLoadedForSlug" in js_body
-        assert "flushDeferredViewshedLoads" in js_body
+        assert "pollViewshedUntilReady" not in js_body
+        assert "loadAllViewsheds" not in js_body
+        assert "flushDeferredViewshedLoads" not in js_body
         assert "viewshed-sim-modal" in body or "home-settings-modal" in body
         assert "viewshed-sim-open" in js_body or "home-settings-modal" in body
         assert '"simulation"' in body

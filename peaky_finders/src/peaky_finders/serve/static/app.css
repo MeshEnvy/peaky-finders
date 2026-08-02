@@ -5,6 +5,20 @@ wa-dialog:not(:defined) {
   display: none;
 }
 
+wa-dialog.wa-dialog-force-show:not(:defined) {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  margin: auto;
+  max-width: min(28rem, calc(100vw - 2rem));
+  padding: var(--wa-space-l);
+  border: 1px solid var(--wa-color-neutral-20);
+  border-radius: var(--wa-border-radius-m);
+  background: var(--wa-color-neutral-10);
+  box-shadow: var(--wa-shadow-l);
+}
+
 .pf-page {
   padding: var(--wa-space-l);
 }

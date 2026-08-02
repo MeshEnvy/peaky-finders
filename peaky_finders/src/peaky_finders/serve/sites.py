@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,27 @@ from peaky_finders.core.preset import (
 from peaky_finders.serve.kml_import import KmlPointSite
 
 _UNSET: object = object()
+
+
+def site_row_from_yaml_ent(slug: str, ent: Mapping[str, Any]) -> dict[str, object]:
+    """Build a serve API site row from a YAML ``sites`` entry (no full preset load)."""
+    loc = ent.get("loc")
+    if not isinstance(loc, (list, tuple)) or len(loc) < 2:
+        raise ValueError(f"sites.{slug}.loc must be [lat, lon]")
+    row: dict[str, object] = {
+        "slug": slug,
+        "name": str(ent.get("name", slug)),
+        "lat": float(loc[0]),
+        "lon": float(loc[1]),
+        "tags": normalize_site_tags(ent.get("tags")),
+    }
+    if ent.get("height_m") is not None:
+        row["height_m"] = float(ent["height_m"])
+    for key in ("description", "plss"):
+        val = ent.get(key)
+        if val and str(val).strip():
+            row[key] = str(val).strip()
+    return row
 
 
 def unique_site_slug(existing: set[str], name: str) -> str:
@@ -197,14 +218,44 @@ def update_site_in_preset(
     return str(update_preset_yaml_tree(preset_path, mutator, validate=False))
 
 
-def bulk_merge_site_tags_in_preset(
+def patch_site_tags_in_preset(
+    preset_path: Path,
+    site_slug: str,
+    tags: list[str],
+) -> dict[str, object]:
+    """Replace one site's tags with a minimal YAML write (no prune / preset reload)."""
+    slug = str(site_slug).strip()
+    if not slug:
+        raise ValueError("site slug is required")
+    tags_value = normalize_site_tags(tags)
+
+    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> dict[str, object]:
+        sites_raw = root.get("sites")
+        if not isinstance(sites_raw, dict) or slug not in sites_raw:
+            raise ValueError(f"site not found: {slug!r}")
+        ent = sites_raw[slug]
+        if not isinstance(ent, dict):
+            raise ValueError(f"site entry must be a mapping: {slug!r}")
+        if "type" in ent:
+            raise ValueError(f"sites.{slug}.type is removed; use tags")
+        if tags_value:
+            ent["tags"] = list(tags_value)
+        else:
+            ent.pop("tags", None)
+        return site_row_from_yaml_ent(slug, ent)
+
+    row = update_preset_yaml_tree(preset_path, mutator, validate=False, prune=False)
+    return dict(row)
+
+
+def bulk_merge_site_tags_in_preset_rows(
     preset_path: Path,
     *,
     slugs: Sequence[str],
     add_tags: list[str] | None = None,
     remove_tags: list[str] | None = None,
-) -> list[str]:
-    """Merge tags on multiple existing sites in one YAML write; return slugs in request order."""
+) -> list[dict[str, object]]:
+    """Merge tags on multiple existing sites in one YAML write; return API site rows."""
     slug_list = [str(s).strip() for s in slugs]
     if not slug_list or not any(slug_list):
         raise ValueError("slugs must be a non-empty list")
@@ -215,11 +266,11 @@ def bulk_merge_site_tags_in_preset(
     add_set = set(add_value)
     remove_set = set(remove_value)
 
-    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> list[str]:
+    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> list[dict[str, object]]:
         sites_raw = root.get("sites")
         if not isinstance(sites_raw, dict):
             raise ValueError("preset sites must be a mapping")
-        updated: list[str] = []
+        updated: list[dict[str, object]] = []
         for slug in slug_list:
             if not slug:
                 raise ValueError("slug must not be empty")
@@ -237,10 +288,28 @@ def bulk_merge_site_tags_in_preset(
                 ent["tags"] = sorted(current)
             else:
                 ent.pop("tags", None)
-            updated.append(slug)
+            updated.append(site_row_from_yaml_ent(slug, ent))
         return updated
 
-    return list(update_preset_yaml_tree(preset_path, mutator, validate=False))
+    rows = update_preset_yaml_tree(preset_path, mutator, validate=False, prune=False)
+    return [dict(row) for row in rows]
+
+
+def bulk_merge_site_tags_in_preset(
+    preset_path: Path,
+    *,
+    slugs: Sequence[str],
+    add_tags: list[str] | None = None,
+    remove_tags: list[str] | None = None,
+) -> list[str]:
+    """Merge tags on multiple existing sites in one YAML write; return slugs in request order."""
+    rows = bulk_merge_site_tags_in_preset_rows(
+        preset_path,
+        slugs=slugs,
+        add_tags=add_tags,
+        remove_tags=remove_tags,
+    )
+    return [str(row["slug"]) for row in rows]
 
 
 def delete_site_from_preset(preset_path: Path, site_slug: str) -> str:
