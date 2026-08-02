@@ -67,6 +67,9 @@ def dump_preset_yaml_document(y: YAML, data: Any, path: Path) -> None:
 _preset_yaml_locks: dict[str, threading.Lock] = {}
 _preset_yaml_locks_mu = threading.Lock()
 
+_rt_cache: dict[str, tuple[float, YAML, Any]] = {}
+_rt_cache_mu = threading.Lock()
+
 
 def _preset_yaml_lock(path: Path) -> threading.Lock:
     key = str(Path(path).expanduser().resolve())
@@ -74,12 +77,52 @@ def _preset_yaml_lock(path: Path) -> threading.Lock:
         return _preset_yaml_locks.setdefault(key, threading.Lock())
 
 
+def _preset_path_key(path: Path) -> str:
+    return str(Path(path).expanduser().resolve())
+
+
+def _preset_file_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return -1.0
+
+
+def invalidate_preset_yaml_rt_cache(path: Path | None = None) -> None:
+    """Drop cached ruamel trees (all presets, or one path after a failed mutate)."""
+    with _rt_cache_mu:
+        if path is None:
+            _rt_cache.clear()
+        else:
+            _rt_cache.pop(_preset_path_key(path), None)
+
+
+def reset_preset_yaml_rt_cache_for_tests() -> None:
+    invalidate_preset_yaml_rt_cache(None)
+
+
+def _cache_rt_tree(path: Path, yaml_rt: YAML, root: Any) -> None:
+    with _rt_cache_mu:
+        _rt_cache[_preset_path_key(path)] = (_preset_file_mtime(path), yaml_rt, root)
+
+
+def _load_rt_tree(path: Path) -> tuple[YAML, Any]:
+    key = _preset_path_key(path)
+    mtime = _preset_file_mtime(path)
+    with _rt_cache_mu:
+        hit = _rt_cache.get(key)
+        if hit is not None and hit[0] == mtime:
+            return hit[1], hit[2]
+    yaml_rt, root = read_preset_yaml_tree(path)
+    return yaml_rt, root
+
+
 @contextmanager
 def preset_yaml_transaction(path: Path) -> Iterator[tuple[YAML, Any]]:
     """Hold the per-preset in-process lock while reading the round-trip YAML tree."""
     path = Path(path).expanduser().resolve()
     with _preset_yaml_lock(path):
-        yaml_rt, root = read_preset_yaml_tree(path)
+        yaml_rt, root = _load_rt_tree(path)
         yield yaml_rt, root
 
 
@@ -107,21 +150,27 @@ def update_preset_yaml_tree(
     if validate:
         prune = True
 
-    with preset_yaml_transaction(path) as (yaml_rt, root):
-        result = mutator(yaml_rt, root)
-        if validate or prune:
-            plain = yaml_plain_preset_value(root)
-            if not isinstance(plain, dict):
-                raise ValueError(f"preset YAML root must be a mapping at {path}")
-            if validate:
-                validate_project_preset_document(plain)
-                parse_preset_dict(resolve_preset_raw(plain))
-            if prune:
-                defaults = load_preset_defaults()
-                pruned = prune_project_preset_dict(plain, defaults)
-                _replace_rt_mapping(root, pruned)
-        dump_preset_yaml_document(yaml_rt, root, path)
-        return result
+    path = Path(path).expanduser().resolve()
+    try:
+        with preset_yaml_transaction(path) as (yaml_rt, root):
+            result = mutator(yaml_rt, root)
+            if validate or prune:
+                plain = yaml_plain_preset_value(root)
+                if not isinstance(plain, dict):
+                    raise ValueError(f"preset YAML root must be a mapping at {path}")
+                if validate:
+                    validate_project_preset_document(plain)
+                    parse_preset_dict(resolve_preset_raw(plain))
+                if prune:
+                    defaults = load_preset_defaults()
+                    pruned = prune_project_preset_dict(plain, defaults)
+                    _replace_rt_mapping(root, pruned)
+            dump_preset_yaml_document(yaml_rt, root, path)
+            _cache_rt_tree(path, yaml_rt, root)
+            return result
+    except Exception:
+        invalidate_preset_yaml_rt_cache(path)
+        raise
 
 
 def read_preset_document(path: Path) -> dict[str, Any]:
@@ -140,6 +189,7 @@ def write_preset_document(path: Path, payload: Mapping[str, Any]) -> None:
     with _preset_yaml_lock(path):
         y = _preset_yaml_typ_rt()
         dump_preset_yaml_document(y, dict(payload), path)
+        invalidate_preset_yaml_rt_cache(path)
 
 
 def parse_preset_sites_dict(raw: Mapping[str, Any]) -> dict[str, SiteEntry]:

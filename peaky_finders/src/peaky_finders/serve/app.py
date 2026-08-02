@@ -79,7 +79,11 @@ from peaky_finders.serve.land_import import (
     serialize_layer_info,
 )
 from peaky_finders.serve.events import get_serve_event_hub
-from peaky_finders.serve.preset_cache import load_serve_project_context, patch_serve_project_site_tags
+from peaky_finders.serve.preset_cache import (
+    load_serve_project_context,
+    patch_serve_project_site,
+    patch_serve_project_site_tags,
+)
 from peaky_finders.serve.viewshed import (
     DRAFT_VIEWSHED_SLUG,
     ServeViewshedError,
@@ -1993,7 +1997,7 @@ class ServeDispatcher:
                     site_row = patch_site_tags_in_preset(preset_path, site_slug, tags_list)
                     patch_serve_project_site_tags(project_dir, {site_slug: tags_list})
                 else:
-                    updated_slug = update_site_in_preset(
+                    site_row = update_site_in_preset(
                         preset_path,
                         site_slug,
                         name=name_str,
@@ -2002,12 +2006,18 @@ class ServeDispatcher:
                         tags=tags_list,
                         **height_kw,
                     )
+                    updated_slug = str(site_row["slug"])
                     if lat is not None and lon is not None:
-                        apply_plss_from_loc_cache(preset_path, updated_slug, lat, lon)
-                    site_map = _load_project_sites(project_dir)
-                    site_entry = site_map[updated_slug]
-                    site_row = _serialize_project_sites({updated_slug: site_entry})[0]
+                        plss = apply_plss_from_loc_cache(
+                            preset_path, updated_slug, lat, lon
+                        )
+                        if plss:
+                            site_row["plss"] = plss
+                    patch_serve_project_site(project_dir, site_row)
                     if lat is not None and lon is not None or "height_m" in raw:
+                        site_entry = load_serve_project_context(project_dir).sites[
+                            updated_slug
+                        ]
                         invalidate_site_coverage(
                             project_slug,
                             project_dir,

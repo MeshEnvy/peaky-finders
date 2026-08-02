@@ -43,3 +43,15 @@ def _reset_splatter_session() -> None:
     reset_session()
     yield
     reset_session()
+
+
+@pytest.fixture(autouse=True)
+def _reset_preset_caches() -> None:
+    from peaky_finders.core.preset.io import reset_preset_yaml_rt_cache_for_tests
+    from peaky_finders.serve.preset_cache import reset_serve_preset_cache_for_tests
+
+    reset_preset_yaml_rt_cache_for_tests()
+    reset_serve_preset_cache_for_tests()
+    yield
+    reset_preset_yaml_rt_cache_for_tests()
+    reset_serve_preset_cache_for_tests()

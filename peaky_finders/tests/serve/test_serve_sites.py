@@ -19,6 +19,7 @@ from peaky_finders.serve.sites import (
 )
 from peaky_finders.serve.preset_cache import (
     load_serve_project_context,
+    patch_serve_project_site,
     patch_serve_project_site_tags,
     reset_serve_preset_cache_for_tests,
 )
@@ -339,6 +340,41 @@ def test_patch_serve_project_site_tags_updates_cache(tmp_path: Path) -> None:
     patch_serve_project_site_tags(project_dir, {slug: ["onx"]})
     ctx2 = load_serve_project_context(project_dir)
     assert ctx2.sites[slug].tags == ["onx"]
+
+
+def test_patch_serve_project_site_updates_cache(tmp_path: Path) -> None:
+    reset_serve_preset_cache_for_tests()
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    project_dir = projects_dir / "demo"
+    preset_path = project_dir / "config.yaml"
+    slug = append_planned_site_to_preset(
+        preset_path,
+        name="Alpha Peak",
+        lat=39.6,
+        lon=-119.4,
+        tags=["hsc"],
+    )
+    ctx = load_serve_project_context(project_dir)
+    assert ctx.sites[slug].name == "Alpha Peak"
+    row = update_site_in_preset(
+        preset_path,
+        slug,
+        name="Renamed Peak",
+        lat=39.61,
+        lon=-119.41,
+        tags=["onx"],
+        height_m=12.0,
+    )
+    patch_serve_project_site(project_dir, row)
+    ctx2 = load_serve_project_context(project_dir)
+    entry = ctx2.sites[slug]
+    assert entry.name == "Renamed Peak"
+    assert entry.lat == 39.61
+    assert entry.lon == -119.41
+    assert entry.tags == ["onx"]
+    assert entry.height_m == 12.0
 
 
 def test_bulk_merge_site_tags_add_only(tmp_path: Path) -> None:

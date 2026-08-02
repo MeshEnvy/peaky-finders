@@ -173,8 +173,8 @@ def update_site_in_preset(
     lon: float | None = None,
     tags: list[str] | None = None,
     height_m: float | None | object = _UNSET,
-) -> str:
-    """Update an existing site in ``sites``; return slug."""
+) -> dict[str, object]:
+    """Update an existing site in ``sites``; return API site row."""
     slug = str(site_slug).strip()
     if not slug:
         raise ValueError("site slug is required")
@@ -190,7 +190,7 @@ def update_site_in_preset(
     if height_m is not _UNSET and height_m is not None:
         validate_site_height(float(height_m))
 
-    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> str:
+    def mutator(_yaml_rt: Any, root: dict[str, Any]) -> dict[str, object]:
         sites_raw = root.get("sites")
         if not isinstance(sites_raw, dict) or slug not in sites_raw:
             raise ValueError(f"site not found: {slug!r}")
@@ -213,9 +213,10 @@ def update_site_in_preset(
                 ent.pop("height_m", None)
             else:
                 ent["height_m"] = float(height_m)
-        return slug
+        return site_row_from_yaml_ent(slug, ent)
 
-    return str(update_preset_yaml_tree(preset_path, mutator, validate=False))
+    row = update_preset_yaml_tree(preset_path, mutator, validate=False, prune=False)
+    return dict(row)
 
 
 def patch_site_tags_in_preset(

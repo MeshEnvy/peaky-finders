@@ -67,6 +67,38 @@ def patch_serve_project_site_tags(
         _cache[key] = (mtime, ctx)
 
 
+def patch_serve_project_site(project_dir: Path, site_row: Mapping[str, object]) -> None:
+    """Patch one cached site after a minimal YAML write (skip full preset reparse)."""
+    slug = str(site_row.get("slug", "")).strip()
+    if not slug:
+        return
+    root = Path(project_dir).expanduser().resolve()
+    config = root / "config.yaml"
+    mtime = _config_mtime(config)
+    key = str(config)
+    with _guard:
+        hit = _cache.get(key)
+        if hit is None:
+            return
+        ctx = hit[1]
+        entry = ctx.sites.get(slug)
+        if entry is None:
+            return
+        if "name" in site_row:
+            entry.name = str(site_row["name"])
+        if "lat" in site_row and "lon" in site_row:
+            entry.loc = (float(site_row["lat"]), float(site_row["lon"]))
+        if "tags" in site_row:
+            entry.tags = normalize_site_tags(site_row["tags"])  # type: ignore[arg-type]
+        if "height_m" in site_row:
+            hm = site_row["height_m"]
+            entry.height_m = float(hm) if hm is not None else None
+        if "plss" in site_row:
+            plss = site_row["plss"]
+            entry.plss = str(plss).strip() if plss and str(plss).strip() else None
+        _cache[key] = (mtime, ctx)
+
+
 def reset_serve_preset_cache_for_tests() -> None:
     with _guard:
         _cache.clear()

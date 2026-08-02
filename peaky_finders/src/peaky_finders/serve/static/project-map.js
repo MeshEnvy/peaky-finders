@@ -6244,9 +6244,18 @@
     }
   }
 
+  function applySiteTagChange(slug) {
+    const site = siteBySlug.get(slug);
+    if (!site) return;
+    applySiteLayerFilters();
+    applyViewshedVisibilityForSite(slug);
+    renderTagFilters();
+    if (entityPanel && !entityPanel.hidden) renderEntityPanel();
+  }
+
   const siteTagSaveQueue = new Map();
 
-  async function patchSiteTags(slug, tags) {
+  async function patchSiteTags(slug, tags, { immediate = false } = {}) {
     let state = siteTagSaveQueue.get(slug);
     if (!state) {
       state = { pendingTags: null, timer: null, inflight: false, waiters: [] };
@@ -6255,16 +6264,22 @@
     state.pendingTags = tags;
     const existing = siteBySlug.get(slug);
     if (existing) {
-      applySiteRowUpdate({ ...existing, tags: [...tags] });
+      applySiteRowUpdate({ ...existing, tags: [...tags] }, { refreshGeoJson: false });
     }
     if (state.timer) clearTimeout(state.timer);
-    return new Promise((resolve, reject) => {
+    state.timer = null;
+    const resultPromise = new Promise((resolve, reject) => {
       state.waiters.push({ resolve, reject });
+    });
+    if (immediate) {
+      void flushSiteTagSave(slug);
+    } else {
       state.timer = setTimeout(() => {
         state.timer = null;
         void flushSiteTagSave(slug);
-      }, 300);
-    });
+      }, 75);
+    }
+    return resultPromise;
   }
 
   async function flushSiteTagSave(slug) {
@@ -6298,7 +6313,7 @@
   }
 
   function renderSiteTags(site) {
-    if (!sitePanelTags) return;
+    if (!sitePanelTags || !site) return;
     sitePanelTags.innerHTML = "";
     tagAddOpen = false;
     const tags = siteTags(site);
@@ -6317,12 +6332,15 @@
         ev.stopPropagation();
         void (async () => {
           try {
-            const next = tags.filter((t) => t !== tag);
-            const updated = await patchSiteTags(site.slug, next);
+            const current = siteTags(siteBySlug.get(site.slug) || site);
+            const next = current.filter((t) => t !== tag);
+            const updated = await patchSiteTags(site.slug, next, { immediate: true });
             if (selectedSlug === site.slug) renderSiteTags(updated);
-            applyEntityVisibility();
+            applySiteTagChange(site.slug);
           } catch (_) {
-            /* network / validation */
+            if (selectedSlug === site.slug) {
+              renderSiteTags(siteBySlug.get(site.slug) || site);
+            }
           }
         })();
       });
@@ -6373,14 +6391,15 @@
       if (!tagAddOpen) return;
       const tag = normalizeTagInput(input.value);
       tagAddOpen = false;
-      if (!tag || currentTags.includes(tag)) {
+      const current = siteTags(siteBySlug.get(site.slug) || site);
+      if (!tag || current.includes(tag)) {
         if (selectedSlug === site.slug) renderSiteTags(siteBySlug.get(site.slug) || site);
         return;
       }
       try {
-        const updated = await patchSiteTags(site.slug, [...currentTags, tag]);
+        const updated = await patchSiteTags(site.slug, [...current, tag], { immediate: true });
         if (selectedSlug === site.slug) renderSiteTags(updated);
-        applyEntityVisibility();
+        applySiteTagChange(site.slug);
       } catch (_) {
         if (selectedSlug === site.slug) renderSiteTags(siteBySlug.get(site.slug) || site);
       }
@@ -7136,19 +7155,21 @@
     }
   }
 
-  function applySiteRowUpdate(site) {
+  function applySiteRowUpdate(site, { refreshGeoJson = true } = {}) {
     const row = normalizeSiteFromApi(site);
     if (!row) return;
     const ix = sites.findIndex((s) => s.slug === row.slug);
     if (ix >= 0) sites[ix] = row;
     else sites.push(row);
     siteBySlug.set(row.slug, row);
-    if (map.getSource(SITES_SOURCE)) {
+    if (refreshGeoJson && map.getSource(SITES_SOURCE)) {
       map.getSource(SITES_SOURCE).setData(sitesGeoJson());
     }
-    applySiteLayerFilters();
-    updateSelectedLayer();
-    raiseSiteLayers();
+    if (refreshGeoJson) {
+      applySiteLayerFilters();
+      updateSelectedLayer();
+      raiseSiteLayers();
+    }
   }
 
 
