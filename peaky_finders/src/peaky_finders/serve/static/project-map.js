@@ -7227,6 +7227,66 @@
     updateSelectedLayer();
   }
 
+  const LONG_PRESS_MS = 500;
+  const LONG_PRESS_MOVE_PX = 12;
+  let longPressTimer = null;
+  let longPressStart = null;
+
+  function clearLongPressTimer() {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    longPressStart = null;
+  }
+
+  function lngLatFromClientPoint(clientX, clientY) {
+    const rect = map.getCanvas().getBoundingClientRect();
+    return map.unproject([clientX - rect.left, clientY - rect.top]);
+  }
+
+  function beginCreateAtMapPoint(lat, lon) {
+    if (editMode) return;
+    if (createMode) cancelCreate();
+    setAddPlacementMode(null);
+    openCreatePanel(lat, lon);
+  }
+
+  function wireMapLongPress() {
+    const canvas = map.getCanvas();
+    canvas.addEventListener(
+      "touchstart",
+      (ev) => {
+        if (editMode || ev.touches.length !== 1) return;
+        const touch = ev.touches[0];
+        longPressStart = { x: touch.clientX, y: touch.clientY };
+        clearLongPressTimer();
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          if (!longPressStart || !mapReady) return;
+          const { x, y } = longPressStart;
+          longPressStart = null;
+          const lngLat = lngLatFromClientPoint(x, y);
+          beginCreateAtMapPoint(lngLat.lat, lngLat.lng);
+        }, LONG_PRESS_MS);
+      },
+      { passive: true },
+    );
+    canvas.addEventListener(
+      "touchmove",
+      (ev) => {
+        if (!longPressStart || !longPressTimer || ev.touches.length !== 1) return;
+        const touch = ev.touches[0];
+        const dx = touch.clientX - longPressStart.x;
+        const dy = touch.clientY - longPressStart.y;
+        if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_PX) clearLongPressTimer();
+      },
+      { passive: true },
+    );
+    canvas.addEventListener("touchend", clearLongPressTimer);
+    canvas.addEventListener("touchcancel", clearLongPressTimer);
+  }
+
   function wireMapInteractions() {
     const siteLayerIds = [SITES_CIRCLE, SITES_LABELS];
     map.on("mousemove", () => {
@@ -7244,6 +7304,11 @@
         syncMapCursor();
       });
     }
+    map.on("contextmenu", (ev) => {
+      if (editMode) return;
+      ev.preventDefault();
+      beginCreateAtMapPoint(ev.lngLat.lat, ev.lngLat.lng);
+    });
     map.on("click", (ev) => {
       if (editMode) {
         sitePanelEditLat.value = formatCoord(ev.lngLat.lat);
@@ -7267,6 +7332,7 @@
       }
       deselectSite();
     });
+    wireMapLongPress();
   }
 
   function fitSites() {
