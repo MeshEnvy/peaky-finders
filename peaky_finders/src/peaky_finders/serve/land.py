@@ -30,7 +30,7 @@ from peaky_finders.serve.land_import import (
     gdf_to_feature_collection_geojson,
     land_layer_entry_digest,
     read_land_layer_gdf,
-    resolve_land_gdb_path,
+    resolve_land_source_path,
 )
 
 _GEOJSON_SIMPLIFY_TOLERANCE_DEG = 0.0001
@@ -248,8 +248,8 @@ def aoi_digest(preset_path: Path) -> str:
     parts: list[str] = []
     for source_id, layer in aoi_rows:
         source = preset.land.sources[source_id]
-        gdb_path = resolve_land_gdb_path(project_dir, source.path)
-        stat = gdb_path.stat()
+        data_path = resolve_land_source_path(project_dir, source.path)
+        stat = data_path.stat()
         parts.append(
             "|".join(
                 (
@@ -288,8 +288,8 @@ def build_uber_aoi_geometry(preset_path: Path) -> BaseGeometry | None:
     pieces: list[BaseGeometry] = []
     for source_id, layer in iter_aoi_layer_entries(preset):
         source = preset.land.sources[source_id]
-        gdb_path = resolve_land_gdb_path(project_dir, source.path)
-        gdf = read_land_layer_gdf(gdb_path, layer)
+        data_path = resolve_land_source_path(project_dir, source.path)
+        gdf = read_land_layer_gdf(data_path, layer)
         if gdf.empty:
             continue
         for geom in gdf.geometry:
@@ -475,7 +475,7 @@ def add_land_source(
     source_id: str | None = None,
 ) -> dict[str, Any]:
     project_dir = preset_path.parent
-    resolve_land_gdb_path(project_dir, path)
+    resolve_land_source_path(project_dir, path)
     layer_entries = _normalize_layer_entries(layers)
     gdb_stem = Path(path).stem
     prev_aoi_digest = aoi_digest(preset_path)
@@ -540,7 +540,7 @@ def patch_land_source(
 
         project_dir = preset_path.parent
         path = str(entry_raw.get("path", "")).strip()
-        resolve_land_gdb_path(project_dir, path)
+        resolve_land_source_path(project_dir, path)
 
         if layers is not None:
             layer_entries = _normalize_layer_entries(layers)
@@ -611,14 +611,14 @@ def _invalidate_removed_layer_caches(
 
 
 def _layer_digest(
-    gdb_path: Path,
+    data_path: Path,
     layer: LandLayerEntry,
     *,
     aoi_digest_value: str,
 ) -> str:
-    stat = gdb_path.stat()
+    stat = data_path.stat()
     spec = land_layer_entry_digest(layer)
-    payload = f"{gdb_path}|{layer.name}|{spec}|{stat.st_mtime_ns}|{stat.st_size}"
+    payload = f"{data_path}|{layer.name}|{spec}|{stat.st_mtime_ns}|{stat.st_size}"
     if layer.role != LandLayerRole.AOI:
         payload += f"|aoi:{aoi_digest_value}"
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
@@ -644,11 +644,11 @@ def ensure_layer_geojson(
         raise ValueError(f"layer key {key!r} not registered on source {sid!r}")
 
     project_dir = preset_path.parent
-    gdb_path = resolve_land_gdb_path(project_dir, source.path)
+    data_path = resolve_land_source_path(project_dir, source.path)
     cache_root = resolved_land_cache_dir(preset_path)
     out_path = _layer_cache_path(cache_root, sid, key)
     aoi_digest_value = aoi_digest(preset_path)
-    digest = _layer_digest(gdb_path, layer_entry, aoi_digest_value=aoi_digest_value)
+    digest = _layer_digest(data_path, layer_entry, aoi_digest_value=aoi_digest_value)
     manifest_key = f"{sid}/{slugify_files_segment(key) or 'layer'}"
     manifest = _read_manifest(cache_root)
     cached = manifest.get(manifest_key)
@@ -661,7 +661,7 @@ def ensure_layer_geojson(
         if isinstance(bbox, list) and len(bbox) == 4:
             return out_path, [float(x) for x in bbox], digest
 
-    gdf = read_land_layer_gdf(gdb_path, layer_entry)
+    gdf = read_land_layer_gdf(data_path, layer_entry)
     if layer_entry.role != LandLayerRole.AOI:
         aoi_geom = build_uber_aoi_geometry(preset_path)
         if aoi_geom is not None:

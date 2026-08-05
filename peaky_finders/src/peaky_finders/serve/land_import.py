@@ -44,8 +44,15 @@ def list_data_gdbs(project_dir: Path) -> list[str]:
     return out
 
 
-def resolve_land_gdb_path(project_dir: Path, rel_path: str) -> Path:
-    """Resolve and validate a GDB path under ``project_dir/data/``."""
+_LAND_GEOJSON_SUFFIXES = (".geojson", ".json")
+
+
+def is_land_geojson_path(path: Path | str) -> bool:
+    return str(path).lower().endswith(_LAND_GEOJSON_SUFFIXES)
+
+
+def resolve_land_source_path(project_dir: Path, rel_path: str) -> Path:
+    """Resolve a land data path under ``project_dir/data/`` (.gdb dir or GeoJSON file)."""
     root = Path(project_dir).expanduser().resolve()
     data_root = (root / "data").resolve()
     normalized = str(rel_path or "").strip().replace("\\", "/")
@@ -53,16 +60,28 @@ def resolve_land_gdb_path(project_dir: Path, rel_path: str) -> Path:
         raise ValueError("path is required")
     if normalized.startswith("/") or ".." in Path(normalized).parts:
         raise ValueError("path must be relative to the project directory")
-    if not normalized.lower().endswith(".gdb"):
-        raise ValueError("path must end with .gdb")
+    lower = normalized.lower()
+    if not (lower.endswith(".gdb") or lower.endswith(_LAND_GEOJSON_SUFFIXES)):
+        raise ValueError("path must end with .gdb, .geojson, or .json")
     resolved = (root / normalized).resolve()
-    if not resolved.is_dir():
-        raise ValueError(f"GDB not found: {normalized}")
+    if lower.endswith(".gdb"):
+        if not resolved.is_dir():
+            raise ValueError(f"GDB not found: {normalized}")
+    elif not resolved.is_file():
+        raise ValueError(f"GeoJSON not found: {normalized}")
     try:
         resolved.relative_to(data_root)
     except ValueError as e:
         raise ValueError("path must be under data/") from e
     return resolved
+
+
+def resolve_land_gdb_path(project_dir: Path, rel_path: str) -> Path:
+    """Resolve and validate a GDB path under ``project_dir/data/``."""
+    normalized = str(rel_path or "").strip().replace("\\", "/")
+    if not normalized.lower().endswith(".gdb"):
+        raise ValueError("path must end with .gdb")
+    return resolve_land_source_path(project_dir, normalized)
 
 
 def _column_sort_key(name: str) -> tuple[int, str]:
@@ -296,14 +315,16 @@ def gdf_to_feature_collection_geojson(
 
 
 def read_land_layer_gdf(
-    gdb_path: Path,
+    data_path: Path,
     entry: LandLayerEntry,
     *,
     max_features: int | None = None,
 ) -> gpd.GeoDataFrame:
-    path = Path(gdb_path).expanduser().resolve()
+    path = Path(data_path).expanduser().resolve()
     where = ogr_where_for_land_layer(entry)
-    kwargs: dict[str, Any] = {"layer": entry.name, "read_geometry": True}
+    kwargs: dict[str, Any] = {"read_geometry": True}
+    if not is_land_geojson_path(path):
+        kwargs["layer"] = entry.name
     if where:
         kwargs["where"] = where
     if max_features is not None:

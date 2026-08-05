@@ -42,6 +42,7 @@ from peaky_finders.serve.land_import import (
     list_layer_fields,
     ogr_where_for_land_layer,
     resolve_land_gdb_path,
+    resolve_land_source_path,
     resolved_land_preview_cache_dir,
 )
 from test_serve_cli import _start_server
@@ -213,6 +214,57 @@ def test_resolve_land_gdb_path_rejects_outside_data(tmp_path: Path) -> None:
         resolve_land_gdb_path(project_dir, "outside.gdb")
     with pytest.raises(ValueError, match="\\.gdb"):
         resolve_land_gdb_path(project_dir, "data/not-a-gdb")
+
+
+def _write_test_geojson(project_dir: Path) -> str:
+    data_dir = project_dir / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    rel = "data/test-fo.geojson"
+    gdf = gpd.GeoDataFrame(
+        {
+            "ADMU_NAME": ["Applegate Field Office", "Eagle Lake Field Office"],
+            "geometry": [
+                Polygon([(-120.0, 41.0), (-119.0, 41.0), (-119.0, 42.0), (-120.0, 42.0)]),
+                Polygon([(-121.0, 40.0), (-120.0, 40.0), (-120.0, 41.0), (-121.0, 41.0)]),
+            ],
+        },
+        crs="EPSG:4326",
+    )
+    gdf.to_file(project_dir / rel, driver="GeoJSON")
+    return rel
+
+
+def test_resolve_land_source_path_accepts_geojson(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo"
+    project_dir.mkdir()
+    rel = _write_test_geojson(project_dir)
+    resolved = resolve_land_source_path(project_dir, rel)
+    assert resolved.is_file()
+    assert resolved.name == "test-fo.geojson"
+
+
+def test_ensure_layer_geojson_from_geojson_source(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    scaffold_project("demo", parent=projects_dir)
+    project_dir = projects_dir / "demo"
+    preset_path = project_dir / "config.yaml"
+    rel = _write_test_geojson(project_dir)
+    add_land_source(
+        preset_path,
+        path=rel,
+        layers=[LandLayerEntry(name="logical_layer", label_field="ADMU_NAME")],
+        source_id="ca-fo",
+    )
+    out_path, bbox, digest = ensure_layer_geojson(preset_path, "ca-fo", "logical-layer")
+    assert out_path.is_file()
+    assert bbox[2] > bbox[0]
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert len(payload["features"]) == 2
+    assert payload["features"][0]["properties"]["label"] == "Applegate Field Office"
+    body, cached_digest = read_layer_geojson_bytes(preset_path, "ca-fo", "logical-layer")
+    assert cached_digest == digest
+    assert b"Applegate Field Office" in body
 
 
 def test_add_patch_delete_land_source(tmp_path: Path) -> None:
