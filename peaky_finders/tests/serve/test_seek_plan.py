@@ -8,7 +8,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 from peaky_finders.serve.app import make_serve_wsgi_app
-from peaky_finders.serve.seek_plan import patch_seek_plan, seek_plan_to_api
+from peaky_finders.serve.seek_plan import patch_seek_plan, seek_plan_to_api, convert_seek_plan_locs_to_sites
 from peaky_finders.core.preset import load_preset
 
 _SEEK_PROJECT_YAML = """
@@ -128,3 +128,65 @@ def test_api_seek_plan_delete(tmp_path: Path) -> None:
 
 def test_seek_plan_to_api_none() -> None:
     assert seek_plan_to_api(None) is None
+
+
+def test_convert_seek_plan_locs_to_sites(tmp_path: Path) -> None:
+    preset_path = _write_project(tmp_path / "sample")
+    patch_seek_plan(preset_path, _PLAN_BODY)
+    result = convert_seek_plan_locs_to_sites(
+        preset_path,
+        name_prefix="Relay",
+        tags=["seek", "relay"],
+    )
+    assert result["converted"] == 1
+    assert result["tagged"] == 2
+    assert len(result["sites"]) == 3
+    created = next(row for row in result["sites"] if row["name"] == "Relay 1")
+    assert result["plan"]["hops"][1] == {"site": created["slug"]}
+    preset = load_preset(preset_path)
+    assert preset.seek.plan is not None
+    assert preset.seek.plan.hops[1].site == created["slug"]
+    assert preset.seek.plan.hops[1].loc is None
+    slug = created["slug"]
+    assert preset.sites[slug].tags == ["seek", "relay"]
+    assert preset.sites[slug].height_m is None
+    assert set(preset.sites["start"].tags or []) >= {"seek", "relay"}
+    assert set(preset.sites["relay"].tags or []) >= {"seek", "relay"}
+
+
+def test_convert_seek_plan_no_loc_hops(tmp_path: Path) -> None:
+    preset_path = _write_project(tmp_path / "sample")
+    body = {
+        "start": "start",
+        "goal": [38.0, -117.0],
+        "complete": False,
+        "hops": [{"site": "start"}, {"site": "relay"}],
+    }
+    patch_seek_plan(preset_path, body)
+    try:
+        convert_seek_plan_locs_to_sites(preset_path, name_prefix="Relay", tags=["x"])
+        raise AssertionError("expected error")
+    except Exception as exc:
+        assert "no coordinate hops" in str(exc)
+
+
+def test_api_seek_plan_convert_to_sites(tmp_path: Path) -> None:
+    preset_path = _write_project(tmp_path / "sample")
+    patch_seek_plan(preset_path, _PLAN_BODY)
+    server, host, port = _start_server(tmp_path)
+    try:
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request(
+            "POST",
+            "/api/p/sample/seek/plan/convert-to-sites",
+            json.dumps({"name_prefix": "Hop", "tags": ["path"]}),
+            {"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        body = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert body["converted"] == 1
+        assert body["plan"]["hops"][1]["site"]
+        assert body["sites"][0]["tags"] == ["path"]
+    finally:
+        server.shutdown()

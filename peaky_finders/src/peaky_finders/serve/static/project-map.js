@@ -436,7 +436,17 @@
   const seekUndoBtn = document.getElementById("seek-undo-btn");
   const seekRedoBtn = document.getElementById("seek-redo-btn");
   const seekResetBtn = document.getElementById("seek-reset-btn");
+  const seekConvertSitesBtn = document.getElementById("seek-convert-sites-btn");
   const seekRefreshBtn = document.getElementById("seek-refresh-btn");
+  const seekConvertSitesModal = document.getElementById("seek-convert-sites-modal");
+  const seekConvertNamePrefix = document.getElementById("seek-convert-name-prefix");
+  const seekConvertHopCount = document.getElementById("seek-convert-hop-count");
+  const seekConvertTagsEl = document.getElementById("seek-convert-tags");
+  const seekConvertTagForm = document.getElementById("seek-convert-tag-form");
+  const seekConvertTagInput = document.getElementById("seek-convert-tag-input");
+  const seekConvertTagSuggestions = document.getElementById("seek-convert-tag-suggestions");
+  const seekConvertError = document.getElementById("seek-convert-sites-error");
+  const seekConvertSave = document.getElementById("seek-convert-save");
   const seekStatusEl = document.getElementById("seek-status");
   const seekProgressEl = document.getElementById("seek-progress");
   const seekProgressTrackEl = document.getElementById("seek-progress-track");
@@ -642,6 +652,7 @@
   let addSiteDraftTags = [];
   let createPanelDraftTags = [];
   let importDraftTags = [];
+  let seekConvertDraftTags = [];
   let importPreviewPoints = [];
   let importPreviewPayload = null;
   let importPreviewFileName = "";
@@ -1141,6 +1152,7 @@
       applyViewshedVisibilityForSite(site.slug);
     }
     refreshFilteredLinks();
+    if (seekState?.running) refreshSeekAncillaryLinksDisplay();
     renderEntityPanel();
   }
 
@@ -5047,6 +5059,10 @@
   function raiseSiteLayers() {
     raiseViewshedLayers();
     for (const id of [
+      SEEK_LINES_LAYER,
+      SEEK_LINES_LABELS_LAYER,
+      SEEK_PATH_LAYER,
+      SEEK_GOAL_LINE_LAYER,
       EDIT_HISTORY_LINKS_LAYER,
       EDIT_HISTORY_LINKS_LABELS_LAYER,
       DRAFT_LINKS_LAYER,
@@ -5055,6 +5071,8 @@
       SEEK_ANCILLARY_LINES_LABELS_LAYER,
       LINKS_LAYER,
       LINKS_LABELS_LAYER,
+      SEEK_CANDIDATES_LAYER,
+      SEEK_CANDIDATES_LABELS_LAYER,
       SITES_CIRCLE,
       SITES_LABELS,
       SITES_SELECTED,
@@ -7650,6 +7668,7 @@
   const seekHopCoordViewshedCoords = new Map();
   const seekHopViewshedGen = new Map();
   let seekAncillaryLinksGen = 0;
+  let seekAncillaryLinksRawFeatures = [];
   let seekAncillaryLinksTimer = null;
   let seekAncillaryLinksAbort = null;
 
@@ -8167,6 +8186,230 @@
     if (seekStartSelect) seekStartSelect.disabled = seekStartLocked;
     syncSeekGoalUi();
     syncSeekRefreshUi();
+    syncSeekConvertSitesBtn();
+  }
+
+  function countSeekLocHops() {
+    const plan = seekStateToYamlPlan(seekState) || config.seek?.plan;
+    if (!plan || !Array.isArray(plan.hops)) return 0;
+    return plan.hops.filter((hop) => hop && typeof hop === "object" && hop.loc && !hop.site).length;
+  }
+
+  function countSeekUniqueLocHops() {
+    const plan = seekStateToYamlPlan(seekState) || config.seek?.plan;
+    if (!plan || !Array.isArray(plan.hops)) return 0;
+    const seen = new Set();
+    let n = 0;
+    for (const hop of plan.hops) {
+      if (!hop || typeof hop !== "object" || hop.site || !Array.isArray(hop.loc) || hop.loc.length !== 2) continue;
+      const lat = Number(hop.loc[0]);
+      const lon = Number(hop.loc[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const hm = hop.height_m != null ? Number(hop.height_m) : null;
+      const key = `${lat.toFixed(6)},${lon.toFixed(6)},${hm != null && Number.isFinite(hm) ? hm.toFixed(1) : ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      n += 1;
+    }
+    return n;
+  }
+
+  function syncSeekConvertSitesBtn() {
+    if (!seekConvertSitesBtn) return;
+    const locHops = countSeekLocHops();
+    seekConvertSitesBtn.disabled = locHops === 0 || seekScanning;
+    seekConvertSitesBtn.title =
+      locHops > 0
+        ? `Create preset sites from ${locHops} coordinate hop(s) in the saved path`
+        : "No coordinate hops in the saved path";
+  }
+
+  function setSeekConvertError(text) {
+    if (!seekConvertError) return;
+    if (text) {
+      seekConvertError.textContent = text;
+      seekConvertError.hidden = false;
+    } else {
+      seekConvertError.textContent = "";
+      seekConvertError.hidden = true;
+    }
+  }
+
+  function effectiveSeekConvertDraftTags() {
+    const tags = [...seekConvertDraftTags];
+    const pending = seekConvertTagInput ? normalizeTagInput(seekConvertTagInput.value) : "";
+    if (pending && !tags.includes(pending)) tags.push(pending);
+    return tags;
+  }
+
+  function syncSeekConvertSaveButton() {
+    if (!seekConvertSave) return;
+    const uniqueSites = countSeekUniqueLocHops();
+    const ready =
+      uniqueSites > 0 &&
+      effectiveSeekConvertDraftTags().length > 0 &&
+      String(seekConvertNamePrefix?.value || "").trim().length > 0;
+    seekConvertSave.disabled = !ready;
+  }
+
+  function renderSeekConvertTags() {
+    if (!seekConvertTagsEl) return;
+    seekConvertTagsEl.innerHTML = "";
+    const known = allProjectTags();
+    const selected = new Set(seekConvertDraftTags);
+    const shown = new Set([...known, ...seekConvertDraftTags]);
+    for (const tag of [...shown].sort((a, b) => a.localeCompare(b))) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = selected.has(tag) ? "site-tag site-tag--toggle is-selected" : "site-tag site-tag--toggle";
+      chip.textContent = tag;
+      chip.setAttribute("aria-pressed", selected.has(tag) ? "true" : "false");
+      chip.title = selected.has(tag) ? `Remove tag ${tag}` : `Add tag ${tag}`;
+      chip.addEventListener("click", () => {
+        if (selected.has(tag)) {
+          seekConvertDraftTags = seekConvertDraftTags.filter((t) => t !== tag);
+        } else {
+          seekConvertDraftTags = [...seekConvertDraftTags, tag];
+        }
+        renderSeekConvertTags();
+        syncSeekConvertTagSuggestions();
+        syncSeekConvertSaveButton();
+      });
+      seekConvertTagsEl.appendChild(chip);
+    }
+  }
+
+  function syncSeekConvertTagSuggestions() {
+    if (!seekConvertTagSuggestions) return;
+    seekConvertTagSuggestions.innerHTML = "";
+    const selected = new Set(seekConvertDraftTags);
+    for (const tag of allProjectTags()) {
+      if (selected.has(tag)) continue;
+      const opt = document.createElement("option");
+      opt.value = tag;
+      seekConvertTagSuggestions.appendChild(opt);
+    }
+  }
+
+  function resetSeekConvertModal() {
+    setSeekConvertError("");
+    seekConvertDraftTags = [];
+    if (seekConvertTagInput) seekConvertTagInput.value = "";
+    if (seekConvertNamePrefix) seekConvertNamePrefix.value = "Relay";
+    const locHops = countSeekLocHops();
+    const uniqueSites = countSeekUniqueLocHops();
+    if (seekConvertHopCount) {
+      if (locHops === 0) {
+        seekConvertHopCount.textContent = "No coordinate hops in the saved path.";
+      } else if (uniqueSites === locHops) {
+        seekConvertHopCount.textContent = `${locHops} coordinate hop(s) will become ${uniqueSites} site(s). Names: prefix + number.`;
+      } else {
+        seekConvertHopCount.textContent = `${locHops} coordinate hop(s) will become ${uniqueSites} site(s) (duplicate coordinates reuse one site).`;
+      }
+    }
+    renderSeekConvertTags();
+    syncSeekConvertTagSuggestions();
+    syncSeekConvertSaveButton();
+  }
+
+  async function openSeekConvertModal() {
+    if (!seekConvertSitesModal) return;
+    if (countSeekLocHops() === 0) return;
+    resetSeekConvertModal();
+    await customElements.whenDefined("wa-dialog");
+    seekConvertSitesModal.open = true;
+    requestAnimationFrame(() => {
+      seekConvertNamePrefix?.focus();
+      seekConvertNamePrefix?.select();
+    });
+  }
+
+  function closeSeekConvertModal() {
+    if (!seekConvertSitesModal) return;
+    seekConvertSitesModal.open = false;
+  }
+
+  function addSeekConvertTagFromInput() {
+    if (!seekConvertTagInput) return;
+    const tag = normalizeTagInput(seekConvertTagInput.value);
+    seekConvertTagInput.value = "";
+    if (!tag) return;
+    if (!seekConvertDraftTags.includes(tag)) {
+      seekConvertDraftTags = [...seekConvertDraftTags, tag];
+      renderSeekConvertTags();
+      syncSeekConvertTagSuggestions();
+      syncSeekConvertSaveButton();
+    }
+  }
+
+  async function saveSeekConvertModal() {
+    addSeekConvertTagFromInput();
+    const namePrefix = String(seekConvertNamePrefix?.value || "").trim();
+    const tags = effectiveSeekConvertDraftTags();
+    if (!namePrefix) {
+      setSeekConvertError("Name prefix is required.");
+      return;
+    }
+    if (!tags.length) {
+      setSeekConvertError("Choose at least one tag.");
+      return;
+    }
+    if (countSeekLocHops() === 0) {
+      setSeekConvertError("No coordinate hops to convert.");
+      return;
+    }
+    setSeekConvertError("");
+    if (seekConvertSave) seekConvertSave.disabled = true;
+    try {
+      const resp = await fetch(`/api/p/${projectSlug}/seek/plan/convert-to-sites`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name_prefix: namePrefix, tags }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setSeekConvertError(payload.error || `Convert failed (${resp.status})`);
+        return;
+      }
+      const imported = Array.isArray(payload.sites) ? payload.sites : [];
+      const plan = payload.plan;
+      closeSeekConvertModal();
+      for (const site of imported) {
+        registerSite(site);
+      }
+      if (plan && config.seek && typeof config.seek === "object") {
+        config.seek.plan = plan;
+      }
+      const fromYaml = plan ? seekStateFromYamlPlan(plan) : null;
+      if (fromYaml) {
+        seekState = fromYaml;
+        if (seekState.goalLat != null && seekState.goalLon != null) {
+          seekPendingGoalLat = seekState.goalLat;
+          seekPendingGoalLon = seekState.goalLon;
+        }
+      }
+      saveSeekState({ immediatePlan: true });
+      const firstTag = tags[0];
+      if (firstTag) {
+        activeTagFilters.clear();
+        activeTagFilters.add(firstTag);
+        pruneActiveTagFilters();
+        renderEntityPanel();
+      }
+      syncSeekPanelUi();
+      updateSeekPathOverlay();
+      populateSeekStartSelect();
+      const converted = payload.converted ?? 0;
+      const tagged = payload.tagged ?? 0;
+      let status = `Converted ${converted} hop(s) to sites`;
+      if (tagged > 0) status += `; tagged ${tagged} existing site(s)`;
+      setSeekStatus(status);
+      if (imported[0]?.slug) selectSite(imported[0].slug);
+    } catch (err) {
+      setSeekConvertError(String(err));
+    } finally {
+      syncSeekConvertSaveButton();
+    }
   }
 
   function maybeAutoStartSeekFromSelects() {
@@ -8624,12 +8867,34 @@
     if (map.getSource(SEEK_ANCILLARY_LINES_SOURCE)) map.removeSource(SEEK_ANCILLARY_LINES_SOURCE);
   }
 
-  function addSeekAncillaryLinksLayer(geojson) {
-    if (!mapReady || !geojson?.features?.length) {
+  function seekAncillaryLinkFeatureVisible(feature) {
+    const props = feature?.properties || {};
+    if (props.a && props.b) {
+      return !isSiteMapHidden(String(props.a)) && !isSiteMapHidden(String(props.b));
+    }
+    const slug = props.slug;
+    if (slug) return !isSiteMapHidden(String(slug));
+    return true;
+  }
+
+  function refreshSeekAncillaryLinksDisplay() {
+    if (!seekAncillaryLinksRawFeatures.length) {
       removeSeekAncillaryLinksLayer();
       return;
     }
-    const labeled = linksGeoJsonWithLabels(geojson);
+    addSeekAncillaryLinksLayer({
+      type: "FeatureCollection",
+      features: seekAncillaryLinksRawFeatures,
+    });
+  }
+
+  function addSeekAncillaryLinksLayer(geojson) {
+    const features = (geojson?.features || []).filter(seekAncillaryLinkFeatureVisible);
+    if (!mapReady || !features.length) {
+      removeSeekAncillaryLinksLayer();
+      return;
+    }
+    const labeled = linksGeoJsonWithLabels({ type: "FeatureCollection", features });
     if (map.getSource(SEEK_ANCILLARY_LINES_SOURCE)) {
       map.getSource(SEEK_ANCILLARY_LINES_SOURCE).setData(labeled);
       raiseSiteLayers();
@@ -8692,8 +8957,10 @@
         if (signal?.aborted || gen !== seekAncillaryLinksGen) return null;
         for (const peerSlug of linkedPeersForSite(hop.site_slug)) {
           if (neighbors.has(`site:${peerSlug}`)) continue;
+          if (isSiteMapHidden(peerSlug)) continue;
           const linkFeature = findSiteLinkFeature(hop.site_slug, peerSlug);
           if (!linkFeature) continue;
+          if (!seekAncillaryLinkFeatureVisible(linkFeature)) continue;
           const props = linkFeature.properties || {};
           addFeature(linkFeature, canonicalSitePairKey(String(props.a), String(props.b)));
         }
@@ -8712,6 +8979,7 @@
           const slug = feature.properties?.slug;
           if (!slug) continue;
           if (neighbors.has(`site:${slug}`)) continue;
+          if (!seekAncillaryLinkFeatureVisible(feature)) continue;
           addFeature(feature, `${fromKey}|site:${slug}`);
         }
       } catch (err) {
@@ -8728,6 +8996,7 @@
     }
     cancelSeekAncillaryLinksFetch();
     if (!mapReady || !seekState?.running || !Array.isArray(seekState.hops) || !seekState.hops.length) {
+      seekAncillaryLinksRawFeatures = [];
       removeSeekAncillaryLinksLayer();
       return;
     }
@@ -8738,7 +9007,8 @@
     if (gen !== seekAncillaryLinksGen) return;
     seekAncillaryLinksAbort = null;
     if (features == null) return;
-    addSeekAncillaryLinksLayer({ type: "FeatureCollection", features });
+    seekAncillaryLinksRawFeatures = features;
+    addSeekAncillaryLinksLayer({ type: "FeatureCollection", features: seekAncillaryLinksRawFeatures });
   }
 
   function scheduleSeekAncillaryLinks() {
@@ -9551,6 +9821,25 @@
   }
   if (seekResetBtn) {
     seekResetBtn.addEventListener("click", () => resetSeekRun());
+  }
+  if (seekConvertSitesBtn) {
+    seekConvertSitesBtn.addEventListener("click", () => {
+      void openSeekConvertModal();
+    });
+  }
+  if (seekConvertNamePrefix) {
+    seekConvertNamePrefix.addEventListener("input", () => syncSeekConvertSaveButton());
+  }
+  if (seekConvertTagForm) {
+    seekConvertTagForm.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      addSeekConvertTagFromInput();
+    });
+  }
+  if (seekConvertSave) {
+    seekConvertSave.addEventListener("click", () => {
+      void saveSeekConvertModal();
+    });
   }
   if (seekRefreshBtn) {
     seekRefreshBtn.addEventListener("click", () => {

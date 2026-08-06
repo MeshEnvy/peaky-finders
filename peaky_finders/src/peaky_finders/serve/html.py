@@ -512,6 +512,16 @@ def project_html(
         </div>
         <wa-button id="seek-reset-btn" appearance="outlined" size="s" type="button">Reset</wa-button>
         <wa-button
+          id="seek-convert-sites-btn"
+          appearance="outlined"
+          size="s"
+          type="button"
+          title="Create preset sites from coordinate hops in the saved path"
+          disabled
+        >
+          Convert to sites
+        </wa-button>
+        <wa-button
           id="seek-refresh-btn"
           appearance="outlined"
           size="s"
@@ -783,6 +793,26 @@ def project_html(
   </div>
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
   <wa-button slot="footer" id="import-sites-save" variant="brand" size="s" type="button" disabled>Import</wa-button>
+</wa-dialog>
+<wa-dialog id="seek-convert-sites-modal" label="Convert path hops to sites" style="--width: 32rem" with-footer light-dismiss>
+  <wa-callout id="seek-convert-sites-error" variant="danger" hidden></wa-callout>
+  <div class="pf-form-grid">
+    <div class="pf-form-field pf-form-field--full">
+      <label for="seek-convert-name-prefix" class="pf-label">Name prefix</label>
+      <input id="seek-convert-name-prefix" type="text" autocomplete="off" placeholder="Relay" maxlength="64">
+      <p class="wa-caption pf-muted" id="seek-convert-hop-count">No coordinate hops in the saved path.</p>
+    </div>
+    <div class="pf-form-field pf-form-field--full">
+      <span class="pf-label" id="seek-convert-tags-label">Tags</span>
+      <div class="site-tags import-sites-tags" id="seek-convert-tags" role="group" aria-labelledby="seek-convert-tags-label"></div>
+      <form class="site-tag-add-form import-sites-tag-form" id="seek-convert-tag-form">
+        <input id="seek-convert-tag-input" type="text" list="seek-convert-tag-suggestions" placeholder="add tag" autocomplete="off" maxlength="32" aria-label="Add tag">
+        <datalist id="seek-convert-tag-suggestions"></datalist>
+      </form>
+    </div>
+  </div>
+  <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
+  <wa-button slot="footer" id="seek-convert-save" variant="brand" size="s" type="button" disabled>Convert</wa-button>
 </wa-dialog>
 <wa-dialog id="import-land-modal" label="Import land layers" style="--width: 46rem" with-footer light-dismiss>
   <wa-callout id="import-land-error" variant="danger" hidden></wa-callout>

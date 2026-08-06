@@ -43,6 +43,7 @@ from peaky_finders.serve.seek import ServeSeekError, enqueue_seek_candidates
 from peaky_finders.serve.seek_plan import (
     ServeSeekPlanError,
     clear_seek_plan,
+    convert_seek_plan_locs_to_sites,
     load_seek_plan_payload,
     patch_seek_plan,
     seek_plan_to_api,
@@ -212,6 +213,9 @@ _API_PROJECT_SEEK_SCAN_PROGRESS_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/seek/scan-progress/?$"
 )
 _API_PROJECT_SEEK_PLAN_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/seek/plan/?$")
+_API_PROJECT_SEEK_PLAN_CONVERT_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/seek/plan/convert-to-sites/?$"
+)
 _API_PROJECT_SIMULATION_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/simulation/?$")
 _API_HOME_SIMULATION_RE = re.compile(r"^/api/home/simulation/?$")
 _API_HOME_MODEMS_RE = re.compile(r"^/api/home/modems/?$")
@@ -1853,6 +1857,78 @@ class ServeDispatcher:
                 sort_keys=True,
             ).encode("utf-8")
             self._send_bytes(payload, "application/json", status=201)
+            return
+
+        seek_plan_convert_match = _API_PROJECT_SEEK_PLAN_CONVERT_RE.match(path)
+        if seek_plan_convert_match:
+            project_slug = seek_plan_convert_match.group(1)
+            project_dir = self.projects_dir / project_slug
+            preset_path = project_dir / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = _parse_json_body(body)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": f"invalid JSON: {e}"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            if not isinstance(raw, dict):
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "body must be a JSON object"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            name_prefix_raw = raw.get("name_prefix")
+            name_prefix = str(name_prefix_raw).strip() if name_prefix_raw is not None else ""
+            tags_raw = raw.get("tags")
+            if not isinstance(tags_raw, list) or not tags_raw:
+                payload = json.dumps(
+                    {"slug": project_slug, "error": "tags must be a non-empty list of strings"}
+                ).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            tags_list = [str(t) for t in tags_raw]
+            try:
+                result = convert_seek_plan_locs_to_sites(
+                    preset_path,
+                    name_prefix=name_prefix,
+                    tags=tags_list,
+                )
+                for row in result["sites"]:
+                    apply_plss_from_loc_cache(
+                        preset_path,
+                        str(row["slug"]),
+                        float(row["lat"]),
+                        float(row["lon"]),
+                    )
+                site_map = _load_project_sites(project_dir)
+                site_rows = [
+                    _serialize_project_sites({slug: site_map[slug]})[0]
+                    for row in result["sites"]
+                    if (slug := str(row["slug"])) in site_map
+                ]
+            except ServeSeekPlanError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {
+                    "project": project_slug,
+                    "sites": site_rows,
+                    "plan": result["plan"],
+                    "converted": result["converted"],
+                    "tagged": result.get("tagged", 0),
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
             return
 
         sites_match = _API_PROJECT_SITES_RE.match(path)
