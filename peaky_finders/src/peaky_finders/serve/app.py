@@ -39,6 +39,15 @@ from peaky_finders.serve.links import (
     load_project_site_links,
 )
 from peaky_finders.serve.plss import apply_plss_from_loc_cache
+from peaky_finders.serve.seek import ServeSeekError, enqueue_seek_candidates
+from peaky_finders.serve.seek_plan import (
+    ServeSeekPlanError,
+    clear_seek_plan,
+    load_seek_plan_payload,
+    patch_seek_plan,
+    seek_plan_to_api,
+)
+from peaky_finders.serve.seek_progress import seek_scan_poll
 from peaky_finders.serve.site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
 from peaky_finders.serve.simulation import (
     get_project_simulation_payload,
@@ -196,6 +205,13 @@ _API_PROJECT_SITE_LINKS_RE = re.compile(
 _API_PROJECT_WARM_PRIORITIES_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/warm/priorities/?$"
 )
+_API_PROJECT_SEEK_CANDIDATES_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/seek/candidates/?$"
+)
+_API_PROJECT_SEEK_SCAN_PROGRESS_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/seek/scan-progress/?$"
+)
+_API_PROJECT_SEEK_PLAN_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/seek/plan/?$")
 _API_PROJECT_SIMULATION_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/simulation/?$")
 _API_HOME_SIMULATION_RE = re.compile(r"^/api/home/simulation/?$")
 _API_HOME_MODEMS_RE = re.compile(r"^/api/home/modems/?$")
@@ -425,6 +441,14 @@ def _serialize_project_sites(sites: dict[str, SiteEntry]) -> list[dict[str, obje
                 row[key] = str(val).strip()
         out.append(row)
     return out
+
+
+def _serialize_seek_config(preset: Preset) -> dict[str, object]:
+    return {
+        "peak_bin_size_m": preset.seek.peak_bin_size_m,
+        "max_candidates": preset.seek.max_candidates,
+        "plan": seek_plan_to_api(preset.seek.plan),
+    }
 
 
 @dataclass
@@ -795,6 +819,100 @@ class ServeDispatcher:
             self._send_bytes(payload, "application/json")
             return
 
+        seek_progress_match = _API_PROJECT_SEEK_SCAN_PROGRESS_RE.match(path)
+        if seek_progress_match:
+            slug = seek_progress_match.group(1)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            progress = seek_scan_poll(slug)
+            payload = json.dumps({"project": slug, **progress}).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
+        seek_plan_match = _API_PROJECT_SEEK_PLAN_RE.match(path)
+        if seek_plan_match:
+            slug = seek_plan_match.group(1)
+            preset_path = self.projects_dir / slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                plan = load_seek_plan_payload(preset_path)
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            payload = json.dumps({"project": slug, "plan": plan}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
+        seek_match = _API_PROJECT_SEEK_CANDIDATES_RE.match(path)
+        if seek_match:
+            slug = seek_match.group(1)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            qs = parse_qs(parsed_url.query)
+            try:
+                from_lat = float(qs.get("from_lat", [""])[0])
+                from_lon = float(qs.get("from_lon", [""])[0])
+                goal_lat = float(qs.get("goal_lat", [""])[0])
+                goal_lon = float(qs.get("goal_lon", [""])[0])
+                bbox = str(qs.get("bbox", [""])[0]).strip()
+                if not bbox:
+                    raise ValueError("bbox required")
+            except (TypeError, ValueError) as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            exclude_raw = str(qs.get("exclude", [""])[0]).strip() or None
+            exclude_slugs_raw = str(qs.get("exclude_slugs", [""])[0]).strip() or None
+            goal_elev_m: float | None = None
+            peak_bin_size_m: float | None = None
+            goal_elev_raw = str(qs.get("goal_elev_m", [""])[0]).strip()
+            if goal_elev_raw:
+                try:
+                    goal_elev_m = float(goal_elev_raw)
+                except ValueError:
+                    payload = json.dumps({"slug": slug, "error": "goal_elev_m must be a number"}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+            peak_bin_raw = str(qs.get("peak_bin_size_m", [""])[0]).strip()
+            if peak_bin_raw:
+                try:
+                    peak_bin_size_m = float(peak_bin_raw)
+                except ValueError:
+                    payload = json.dumps({"slug": slug, "error": "peak_bin_size_m must be a number"}).encode("utf-8")
+                    self._send_bytes(payload, "application/json", status=422)
+                    return
+            verbose = bool(self.verbose)
+            try:
+                scan_gen = enqueue_seek_candidates(
+                    project_dir,
+                    from_lat=from_lat,
+                    from_lon=from_lon,
+                    goal_lat=goal_lat,
+                    goal_lon=goal_lon,
+                    bbox=bbox,
+                    exclude_raw=exclude_raw,
+                    exclude_slugs_raw=exclude_slugs_raw,
+                    goal_elev_m=goal_elev_m,
+                    peak_bin_size_m=peak_bin_size_m,
+                    verbose=verbose,
+                )
+            except ServeSeekError as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            payload = json.dumps(
+                {"project": slug, "status": "pending", "gen": scan_gen},
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=202)
+            return
+
         site_links_match = _API_PROJECT_SITE_LINKS_RE.match(path)
         if site_links_match:
             slug = site_links_match.group(1)
@@ -1111,6 +1229,7 @@ class ServeDispatcher:
                     project_dir,
                     _serialize_project_sites(sites),
                     simulation=_serialize_serve_simulation(preset),
+                    seek=_serialize_seek_config(preset),
                     land=land_payload["sources"],
                     land_data_gdbs=list_data_gdbs(project_dir),
                     land_aoi_digest=land_payload.get("aoiDigest"),
@@ -1924,6 +2043,31 @@ class ServeDispatcher:
             self._send_bytes(payload, "application/json", status=200)
             return
 
+        seek_plan_match = _API_PROJECT_SEEK_PLAN_RE.match(path)
+        if seek_plan_match:
+            project_slug = seek_plan_match.group(1)
+            preset_path = self.projects_dir / project_slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                raw = self._parse_entity_patch_body(body)
+                plan = patch_seek_plan(preset_path, raw)
+            except ServeSeekPlanError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps(
+                {"project": project_slug, "plan": plan},
+                sort_keys=True,
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
+
         site_match = _API_PROJECT_SITE_SLUG_RE.match(path)
         if site_match:
             project_slug = site_match.group(1)
@@ -2141,6 +2285,27 @@ class ServeDispatcher:
     def _do_delete(self, parsed: ParseResult) -> None:
         parsed_url = parsed
         path = parsed_url.path
+
+        seek_plan_match = _API_PROJECT_SEEK_PLAN_RE.match(path)
+        if seek_plan_match:
+            project_slug = seek_plan_match.group(1)
+            preset_path = self.projects_dir / project_slug / "config.yaml"
+            if not preset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                clear_seek_plan(preset_path)
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            except OSError as e:
+                payload = json.dumps({"slug": project_slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=500)
+                return
+            payload = json.dumps({"project": project_slug, "deleted": True}, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json", status=200)
+            return
 
         home_modem_match = _API_HOME_MODEM_NAME_RE.match(path)
         if home_modem_match:

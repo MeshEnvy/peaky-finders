@@ -5,7 +5,8 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from shapely.geometry.base import BaseGeometry
 
@@ -254,14 +255,16 @@ class ViewshedEngine:
         lon: float,
         sim: ViewshedSimOverrides | None = None,
         verbose: bool = False,
+        progress: Callable[[str], None] | None = None,
     ) -> BaseGeometry | None:
         sim = sim or ViewshedSimOverrides()
         site = _preview_site_at(lat, lon)
         digest = coords_footprint_digest(preset, lat=lat, lon=lon, sim=sim)
         key = footprint_cache_key(project_dir, digest)
-        preset_path = Path(project_dir).expanduser().resolve() / "config.yaml"
 
         def _runner() -> BaseGeometry | None:
+            if progress is not None:
+                progress("Running SPLAT coverage")
             ensure_site_viewshed_png(
                 project_dir,
                 "_draft",
@@ -269,6 +272,8 @@ class ViewshedEngine:
                 sim_overrides=sim,
                 verbose=verbose,
             )
+            if progress is not None:
+                progress("Building footprint polygon")
             workdir = resolve_site_viewshed_workdir(
                 project_dir,
                 preset,

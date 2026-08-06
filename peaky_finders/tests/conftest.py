@@ -46,6 +46,18 @@ def _reset_splatter_session() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _reset_seek_scan_progress() -> None:
+    from peaky_finders.serve.seek_jobs import reset_seek_queue_for_tests
+    from peaky_finders.serve.seek_progress import reset_seek_scan_for_tests
+
+    reset_seek_scan_for_tests()
+    reset_seek_queue_for_tests()
+    yield
+    reset_seek_scan_for_tests()
+    reset_seek_queue_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _reset_preset_caches() -> None:
     from peaky_finders.core.preset.io import reset_preset_yaml_rt_cache_for_tests
     from peaky_finders.serve.preset_cache import reset_serve_preset_cache_for_tests

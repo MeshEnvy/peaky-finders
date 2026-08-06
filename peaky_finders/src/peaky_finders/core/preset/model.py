@@ -83,6 +83,65 @@ class ViewshedPolygonStyle(BaseModel):
         return s.lower()
 
 
+class SeekPlanHop(BaseModel):
+    """One committed hop in a saved goal-seek plan."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    site: str | None = None
+    loc: tuple[float, float] | None = None
+    height_m: float | None = Field(default=None, ge=0)
+
+    @field_validator("loc", mode="before")
+    @classmethod
+    def _coerce_loc(cls, v: Any) -> tuple[float, float] | None:
+        if v is None:
+            return None
+        return _coerce_map_point_loc(v)
+
+    @model_validator(mode="after")
+    def _site_or_loc(self) -> SeekPlanHop:
+        if self.site and self.loc is not None:
+            raise ValueError("seek hop must have either site or loc, not both")
+        if not self.site and self.loc is None:
+            raise ValueError("seek hop must have site or loc")
+        return self
+
+
+class SeekPlan(BaseModel):
+    """Saved goal-seek path under ``seek.plan`` in project YAML."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    start: str
+    goal: tuple[float, float]
+    complete: bool = False
+    hops: list[SeekPlanHop] = Field(default_factory=list)
+
+    @field_validator("goal", mode="before")
+    @classmethod
+    def _coerce_goal(cls, v: Any) -> tuple[float, float]:
+        return _coerce_map_point_loc(v)
+
+    @field_validator("start")
+    @classmethod
+    def _start_non_empty(cls, v: str) -> str:
+        slug = str(v).strip()
+        if not slug:
+            raise ValueError("seek.plan.start is required")
+        return slug
+
+
+class SeekConfig(BaseModel):
+    """Interactive goal-seek peak scan tunables."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    peak_bin_size_m: float = Field(default=1500.0, ge=500.0)
+    max_candidates: int = Field(default=48, ge=1, le=256)
+    plan: SeekPlan | None = None
+
+
 class DisplayConfig(BaseModel):
     """Viewshed raster styling."""
 
@@ -630,6 +689,7 @@ class Preset(BaseModel):
     sites: dict[str, SiteEntry]
     links: list[tuple[str, str]] = Field(default_factory=list)
     land: LandConfig = Field(default_factory=LandConfig)
+    seek: SeekConfig = Field(default_factory=SeekConfig)
 
     @field_validator("links", mode="before")
     @classmethod
@@ -647,6 +707,17 @@ class Preset(BaseModel):
         if not self.sites:
             raise ValueError("sites must contain at least one entry")
         _validate_preset_links(self.sites, self.links)
+        plan = self.seek.plan
+        if plan is not None:
+            if plan.start not in self.sites:
+                raise ValueError(f"seek.plan.start references unknown site {plan.start!r}")
+            if not plan.hops:
+                raise ValueError("seek.plan.hops must contain at least one hop")
+            for idx, hop in enumerate(plan.hops):
+                if hop.site is not None and hop.site not in self.sites:
+                    raise ValueError(
+                        f"seek.plan.hops[{idx}] references unknown site {hop.site!r}"
+                    )
         return self
 
 

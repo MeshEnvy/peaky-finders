@@ -37,14 +37,44 @@ def mutual_viewshed_link(
     )
 
 
+def _discard_footprint_gpkg(gpkg: Path) -> None:
+    """Remove footprint artifacts so vectorize can recreate them."""
+    wd = gpkg.parent
+    for name in (SPLAT_GPKG_NAME, f"{SPLAT_GPKG_NAME}-journal", "splat.wkb"):
+        path = wd / name if name != f"{SPLAT_GPKG_NAME}-journal" else Path(f"{gpkg}-journal")
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _footprint_needs_vectorize(wd: Path) -> bool:
+    """True when ``output.ppm`` should be (re)vectorized to ``splat.gpkg``."""
+    if footprint_vectorize_needed(wd):
+        return True
+    if _footprint_polygon_stale(wd):
+        return True
+    gpkg = wd / SPLAT_GPKG_NAME
+    if not gpkg.is_file():
+        return (wd / SPLAT_OUTPUT_PPM_BASENAME).is_file()
+    try:
+        return read_coverage_footprint(gpkg) is None
+    except Exception:
+        return True
+
+
 def _ensure_footprint_gpkg(workdir: Path, *, preset: Preset, verbose: bool = False) -> Path:
     """Return ``splat.gpkg`` path, vectorizing from ``output.ppm`` when needed."""
     wd = Path(workdir).expanduser().resolve()
     gpkg = wd / SPLAT_GPKG_NAME
-    if footprint_vectorize_needed(wd):
-        style = resolved_viewshed_polygon_style(preset.display)
-        if verbose:
-            print(f"links: vectorize footprint {wd.name}", flush=True)
+    if not _footprint_needs_vectorize(wd):
+        return gpkg
+    style = resolved_viewshed_polygon_style(preset.display)
+    if verbose:
+        print(f"links: vectorize footprint {wd.name}", flush=True)
+    _discard_footprint_gpkg(gpkg)
+    if not write_coverage_footprints(data_dir=wd, polygon_style=style):
+        _discard_footprint_gpkg(gpkg)
         if not write_coverage_footprints(data_dir=wd, polygon_style=style):
             raise RuntimeError(f"footprint vectorize failed under {wd}")
     return gpkg
@@ -78,16 +108,21 @@ def load_viewshed_footprint(
     """
     wd = Path(workdir).expanduser().resolve()
     gpkg = wd / SPLAT_GPKG_NAME
-    if gpkg.is_file() and not footprint_vectorize_needed(wd):
-        if _footprint_polygon_stale(wd):
+    if gpkg.is_file() and not _footprint_needs_vectorize(wd):
+        try:
+            return read_coverage_footprint(gpkg)
+        except Exception:
             if not ensure:
                 return None
-        else:
-            return read_coverage_footprint(gpkg)
     if not ensure:
         return None
     if not (wd / SPLAT_OUTPUT_PPM_BASENAME).is_file():
-        return read_coverage_footprint(gpkg) if gpkg.is_file() else None
+        if not gpkg.is_file():
+            return None
+        try:
+            return read_coverage_footprint(gpkg)
+        except Exception:
+            return None
     gpkg = _ensure_footprint_gpkg(wd, preset=preset, verbose=verbose)
     return read_coverage_footprint(gpkg)
 
