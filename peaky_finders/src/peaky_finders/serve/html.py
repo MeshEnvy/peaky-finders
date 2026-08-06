@@ -389,6 +389,7 @@ def project_html(
     sites: list[dict[str, object]],
     *,
     simulation: dict[str, object] | None = None,
+    seek: dict[str, object] | None = None,
     land: list[dict[str, object]] | None = None,
     land_data_gdbs: list[str] | None = None,
     land_aoi_digest: str | None = None,
@@ -399,6 +400,7 @@ def project_html(
             "slug": slug,
             "sites": sites,
             "simulation": simulation or {},
+            "seek": seek or {},
             "land": {
                 "sources": land or [],
                 "dataGdbPaths": land_data_gdbs or [],
@@ -468,6 +470,74 @@ def project_html(
     <wa-icon name="chevron-right" label=""></wa-icon>
   </button>
   <div id="map"></div>
+  <aside id="seek-panel" class="seek-panel" hidden aria-label="Goal seek">
+    <div class="seek-panel__header">
+      <h2 class="seek-panel__title">Goal seek</h2>
+      <wa-button id="seek-panel-close" appearance="plain" size="s" type="button" title="Close" aria-label="Close">
+        <wa-icon name="xmark" label="Close"></wa-icon>
+      </wa-button>
+    </div>
+    <div class="seek-panel__body">
+      <label class="seek-panel__field" for="seek-start-site">
+        <span class="site-panel__label">Start</span>
+        <select id="seek-start-site" class="pf-mono"></select>
+      </label>
+      <div class="seek-panel__field">
+        <span class="site-panel__label">Goal</span>
+        <div class="seek-panel__goal-row">
+          <p id="seek-goal-coords" class="seek-panel__goal-coords pf-mono pf-muted">Not set</p>
+          <wa-button
+            id="seek-set-goal-btn"
+            appearance="outlined"
+            size="s"
+            type="button"
+            title="Click map to set goal"
+            aria-label="Set goal on map"
+            aria-pressed="false"
+          >
+            <wa-icon name="crosshairs" label="Set goal"></wa-icon>
+          </wa-button>
+        </div>
+        <p class="seek-panel__hint pf-muted wa-caption">Set goal, then click the map to fix lat/lng</p>
+      </div>
+      <div class="seek-panel__actions">
+        <button id="seek-finish-btn" class="seek-panel__finish-btn" type="button" disabled hidden>Finish at goal</button>
+        <div class="seek-panel__history-actions">
+          <wa-button id="seek-undo-btn" appearance="plain" size="s" type="button" title="Undo hop" aria-label="Undo hop" disabled>
+            <wa-icon name="arrow-rotate-left" label="Undo hop"></wa-icon>
+          </wa-button>
+          <wa-button id="seek-redo-btn" appearance="plain" size="s" type="button" title="Redo hop" aria-label="Redo hop" disabled>
+            <wa-icon name="arrow-rotate-right" label="Redo hop"></wa-icon>
+          </wa-button>
+        </div>
+        <wa-button id="seek-reset-btn" appearance="outlined" size="s" type="button">Reset</wa-button>
+        <wa-button
+          id="seek-refresh-btn"
+          appearance="outlined"
+          size="s"
+          type="button"
+          title="Refresh peak candidates using overhead scan area"
+          hidden
+        >
+          Refresh candidates
+        </wa-button>
+      </div>
+      <p id="seek-status" class="seek-panel__status pf-muted wa-caption"></p>
+      <div id="seek-progress" class="seek-panel__progress" hidden>
+        <div
+          id="seek-progress-track"
+          class="seek-panel__progress-track"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        >
+          <div id="seek-progress-bar" class="seek-panel__progress-bar seek-panel__progress-bar--indeterminate"></div>
+        </div>
+        <p id="seek-progress-detail" class="seek-panel__progress-detail pf-muted wa-caption"></p>
+      </div>
+    </div>
+  </aside>
   <div id="pin-load-overlays" class="pin-load-overlays" aria-hidden="true"></div>
   <aside id="site-panel" class="site-panel" hidden>
     <div class="site-panel__body">

@@ -24,6 +24,32 @@
   const EDIT_HISTORY_LINKS_SOURCE = "edit-history-links";
   const EDIT_HISTORY_LINKS_LAYER = "edit-history-links-line";
   const EDIT_HISTORY_LINKS_LABELS_LAYER = "edit-history-links-label";
+  const SEEK_CANDIDATES_SOURCE = "seek-candidates";
+  const SEEK_CANDIDATES_LAYER = "seek-candidates-circle";
+  const SEEK_CANDIDATES_LABELS_LAYER = "seek-candidates-label";
+  const SEEK_LINES_SOURCE = "seek-candidate-lines";
+  const SEEK_LINES_LAYER = "seek-candidate-lines-line";
+  const SEEK_LINES_LABELS_LAYER = "seek-candidate-lines-label";
+  const SEEK_PATH_SOURCE = "seek-path";
+  const SEEK_PATH_LAYER = "seek-path-line";
+  const SEEK_GOAL_LINE_SOURCE = "seek-goal-line";
+  const SEEK_GOAL_LINE_LAYER = "seek-goal-line";
+  const SEEK_ANCILLARY_LINES_SOURCE = "seek-ancillary-lines";
+  const SEEK_ANCILLARY_LINES_LAYER = "seek-ancillary-lines-line";
+  const SEEK_ANCILLARY_LINES_LABELS_LAYER = "seek-ancillary-lines-label";
+  const SEEK_ANCILLARY_LINKS_DEBOUNCE_MS = 450;
+  const SEEK_STATE_KEY = `peaky.seek.v1.${projectSlug}`;
+  const SEEK_REDO_KEY = `peaky.seek.redo.v1.${projectSlug}`;
+  const SEEK_PLAN_SAVE_MS = 400;
+  const SEEK_FETCH_DEBOUNCE_MS = 300;
+  const SEEK_PEAK_BIN_MIN_M = 500;
+  const SEEK_PEAK_BIN_MAX_M = 1500;
+  const SEEK_PEAK_BINS_ACROSS_VIEWPORT = 20;
+  const SEEK_SCAN_PIN = "__seek_scan__";
+  const SEEK_PROGRESS_POLL_MS = 400;
+  const SEEK_VIEWSHED_RETRY_MAX = 6;
+  const SEEK_GOAL_SAME_AS_START_M = 50;
+  const SEEK_HOP_VIEWSHED_PREFIX = "_seek_hop_";
   const LAND_DEFAULT_FILL_COLOR = "#4a6cf7";
   const LAND_DEFAULT_FILL_OPACITY = 0.48;
   const LAND_DEFAULT_LINE_COLOR = "#1e40af";
@@ -84,6 +110,16 @@
     }
     basemapDropdown.insertBefore(basemapBtn, basemapDropdown.firstChild);
 
+    const seekBtn = document.createElement("button");
+    seekBtn.type = "button";
+    seekBtn.id = "map-tool-seek";
+    seekBtn.className = "map-toolbar-tool";
+    seekBtn.setAttribute("aria-pressed", "false");
+    seekBtn.setAttribute("aria-controls", "seek-panel");
+    seekBtn.setAttribute("aria-label", "Goal seek");
+    seekBtn.title = "Goal seek";
+    seekBtn.innerHTML = mapToolIcon("route", "Goal seek");
+
     const sitesBtn = document.createElement("button");
     sitesBtn.type = "button";
     sitesBtn.id = "map-tool-sites";
@@ -138,7 +174,7 @@
     opacityDropdown.appendChild(opacityBtn);
     opacityDropdown.appendChild(opacityMenu);
 
-    for (const el of [basemapDropdown, sitesBtn, opacityDropdown, settingsBtn]) {
+    for (const el of [basemapDropdown, seekBtn, sitesBtn, opacityDropdown, settingsBtn]) {
       navGroup.appendChild(el);
     }
 
@@ -146,6 +182,7 @@
 
     return {
       mapBasemapMenu: basemapDropdown,
+      mapToolSeek: seekBtn,
       mapToolSites: sitesBtn,
       viewshedOpacityInput: opacitySlider,
       mapToolSettings: settingsBtn,
@@ -292,6 +329,43 @@
     return { latDelta, lonDelta };
   }
 
+  /** True when the map is pitched into 3D terrain view. */
+  function isMapTiltedView(mapInstance = map) {
+    return Boolean(mapInstance && mapReady && mapInstance.getPitch() >= PITCH_TERRAIN_ON);
+  }
+
+  /** Geographic bounds for the same center/zoom as overhead view (ignores pitch/bearing). */
+  function mapOverheadEquivalentBounds(mapInstance) {
+    const center = mapInstance.getCenter();
+    const zoom = mapInstance.getZoom();
+    const canvas = mapInstance.getCanvas();
+    const w = Math.max(1, canvas.clientWidth);
+    const h = Math.max(1, canvas.clientHeight);
+    const latRad = (center.lat * Math.PI) / 180;
+    const worldSize = 512 * 2 ** zoom;
+    const metersPerPixel = (40_075_016.686 * Math.cos(latRad)) / worldSize;
+    const halfWidthM = (w / 2) * metersPerPixel;
+    const halfHeightM = (h / 2) * metersPerPixel;
+    const latDelta = halfHeightM / 111_320;
+    const lonDelta = halfWidthM / (111_320 * Math.max(1e-6, Math.cos(latRad)));
+    const west = center.lng - lonDelta;
+    const east = center.lng + lonDelta;
+    const south = center.lat - latDelta;
+    const north = center.lat + latDelta;
+    return {
+      getWest: () => west,
+      getEast: () => east,
+      getSouth: () => south,
+      getNorth: () => north,
+    };
+  }
+
+  /** Bounds used for seek scans, warm priorities, and sidebar "in view" filters. */
+  function mapDataViewportBounds(mapInstance = map) {
+    if (isMapTiltedView(mapInstance)) return mapOverheadEquivalentBounds(mapInstance);
+    return mapInstance.getBounds();
+  }
+
 
   function sitesGeoJson() {
     return {
@@ -350,8 +424,24 @@
   }
   const mapToolbarRefs = installMapToolbar(navControl._container);
   const mapBasemapMenu = mapToolbarRefs.mapBasemapMenu;
+  const mapToolSeek = mapToolbarRefs.mapToolSeek;
   const mapToolSites = mapToolbarRefs.mapToolSites;
   const viewshedOpacityInput = mapToolbarRefs.viewshedOpacityInput;
+  const seekPanel = document.getElementById("seek-panel");
+  const seekPanelClose = document.getElementById("seek-panel-close");
+  const seekStartSelect = document.getElementById("seek-start-site");
+  const seekGoalCoordsEl = document.getElementById("seek-goal-coords");
+  const seekSetGoalBtn = document.getElementById("seek-set-goal-btn");
+  const seekFinishBtn = document.getElementById("seek-finish-btn");
+  const seekUndoBtn = document.getElementById("seek-undo-btn");
+  const seekRedoBtn = document.getElementById("seek-redo-btn");
+  const seekResetBtn = document.getElementById("seek-reset-btn");
+  const seekRefreshBtn = document.getElementById("seek-refresh-btn");
+  const seekStatusEl = document.getElementById("seek-status");
+  const seekProgressEl = document.getElementById("seek-progress");
+  const seekProgressTrackEl = document.getElementById("seek-progress-track");
+  const seekProgressBarEl = document.getElementById("seek-progress-bar");
+  const seekProgressDetailEl = document.getElementById("seek-progress-detail");
   const compassButton = navControl._container.querySelector(".maplibregl-ctrl-compass");
   if (compassButton) {
     compassButton.addEventListener(
@@ -713,6 +803,7 @@
   }
 
   function onMapMoveEndForWarmPriorities() {
+    if (isMapTiltedView()) return;
     scheduleWarmPrioritiesSync();
   }
 
@@ -873,7 +964,8 @@
 
   function syncMapCursor() {
     if (!mapReady) return;
-    map.getCanvas().style.cursor = addPlacementMode || editMode ? "crosshair" : "";
+    map.getCanvas().style.cursor =
+      addPlacementMode || editMode || seekGoalPlacementMode ? "crosshair" : "";
   }
 
   function setAddPlacementMode(kind) {
@@ -1093,6 +1185,10 @@
 
   function coordVisibleInMapViewport(mapInstance, lon, lat) {
     if (!mapInstance || lon == null || lat == null) return true;
+    if (isMapTiltedView(mapInstance)) {
+      const b = mapOverheadEquivalentBounds(mapInstance);
+      return lon >= b.getWest() && lon <= b.getEast() && lat >= b.getSouth() && lat <= b.getNorth();
+    }
     const projected = mapInstance.project([lon, lat]);
     if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y))
       return false;
@@ -1110,7 +1206,11 @@
   }
 
   function isEphemeralViewshedSlug(slug) {
-    return slug === DRAFT_VIEWSHED_SLUG || String(slug).startsWith("_edit_hist_");
+    return (
+      slug === DRAFT_VIEWSHED_SLUG ||
+      String(slug).startsWith("_edit_hist_") ||
+      String(slug).startsWith(SEEK_HOP_VIEWSHED_PREFIX)
+    );
   }
 
   function isSiteMapHidden(slug) {
@@ -1118,6 +1218,7 @@
     if (siteHidden.has(slug)) return true;
     const site = siteBySlug.get(slug);
     if (!site) return true;
+    if (isSiteInSeekPlan(slug)) return false;
     if (tagFilterBypassSlugs.has(slug)) return false;
     return !sitePassesTagFilter(site);
   }
@@ -1142,6 +1243,7 @@
     pruneActiveTagFilters();
     applyEntityVisibility();
     ensureViewshedsForNewlyVisibleSites();
+    refreshSeekStartSelectIfOpen();
     scheduleSaveMapState();
   }
 
@@ -1151,6 +1253,7 @@
     tagFilterMode = next;
     applyEntityVisibility();
     renderEntityPanel();
+    refreshSeekStartSelectIfOpen();
     scheduleSaveMapState();
   }
 
@@ -1177,6 +1280,27 @@
   }
 
 
+  function purgeSiteLinksForSlug(slug) {
+    if (!slug || !siteLinksPayload) return;
+    const touches = (props) => props.a === slug || props.b === slug;
+    const geojson = siteLinksPayload.geojson;
+    if (!geojson || !Array.isArray(geojson.features)) {
+      refreshFilteredLinks();
+      return;
+    }
+    siteLinksPayload = {
+      ...siteLinksPayload,
+      geojson: {
+        type: "FeatureCollection",
+        features: geojson.features.filter((f) => !touches(f.properties || {})),
+      },
+      links: Array.isArray(siteLinksPayload.links)
+        ? siteLinksPayload.links.filter((r) => !touches(r || {}))
+        : siteLinksPayload.links,
+    };
+    addSiteLinksLayer(siteLinksPayload.geojson);
+  }
+
   function unregisterSite(slug) {
     const idx = sites.findIndex((s) => s.slug === slug);
     if (idx >= 0) sites.splice(idx, 1);
@@ -1185,6 +1309,7 @@
     tagFilterBypassSlugs.delete(slug);
     viewshedVisible.delete(slug);
     removeViewshedLayer(slug);
+    purgeSiteLinksForSlug(slug);
     if (selectedSlug === slug) deselectSite();
     addSiteLayers();
     renderEntityPanel();
@@ -1735,6 +1860,50 @@
     };
   }
 
+  function seekSiteCandidateLabelsLayerSpec(layerId, sourceId) {
+    return {
+      id: layerId,
+      type: "symbol",
+      source: sourceId,
+      filter: [
+        "all",
+        ["boolean", ["get", "is_site"], false],
+        ["has", "site_name"],
+        ["!=", ["get", "site_name"], ""],
+      ],
+      layout: {
+        "text-field": ["get", "site_name"],
+        "text-size": 12,
+        "text-offset": [0, -1.4],
+        "text-anchor": "bottom",
+        "text-font": MAP_LABEL_FONT,
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+        visibility: "visible",
+      },
+      paint: {
+        "text-color": "#e8eaed",
+        "text-halo-color": "#1a1a1a",
+        "text-halo-width": 2,
+      },
+    };
+  }
+
+  function createSeekSiteHopMarkerElement(siteName) {
+    const wrap = document.createElement("div");
+    wrap.className = "seek-hop-marker-wrap";
+    if (siteName) {
+      const label = document.createElement("div");
+      label.className = "seek-hop-marker-label";
+      label.textContent = siteName;
+      wrap.appendChild(label);
+    }
+    const dot = document.createElement("div");
+    dot.className = "seek-hop-marker seek-hop-marker--site";
+    wrap.appendChild(dot);
+    return wrap;
+  }
+
   function linkLabelsLayerSpec(layerId, sourceId, visibility) {
     return {
       id: layerId,
@@ -2248,6 +2417,20 @@
         label: "AOI",
         className: "entity-panel__land-role-badge entity-panel__land-role-badge--aoi",
         title: "Area of interest — unioned clip boundary for other layers",
+      };
+    }
+    if (normalized === "include") {
+      return {
+        label: "Include",
+        className: "entity-panel__land-role-badge entity-panel__land-role-badge--include",
+        title: "Eligible land for goal seek (include − exclude)",
+      };
+    }
+    if (normalized === "exclude") {
+      return {
+        label: "Exclude",
+        className: "entity-panel__land-role-badge entity-panel__land-role-badge--exclude",
+        title: "Subtracted from include layers for goal seek",
       };
     }
     return null;
@@ -3784,8 +3967,8 @@
     for (const [value, label] of [
       ["", "Default"],
       ["aoi", "AOI (clip boundary)"],
-      ["include", "Include (reserved)"],
-      ["exclude", "Exclude (reserved)"],
+      ["include", "Include"],
+      ["exclude", "Exclude"],
     ]) {
       const opt = document.createElement("option");
       opt.value = value;
@@ -4837,6 +5020,7 @@
       ...sites.map((site) => site.slug),
       DRAFT_VIEWSHED_SLUG,
       ...editCoordHistory.map((entry) => editHistorySlug(entry.id)),
+      ...seekHopCoordViewshedSlugs,
     ];
   }
 
@@ -4867,6 +5051,8 @@
       EDIT_HISTORY_LINKS_LABELS_LAYER,
       DRAFT_LINKS_LAYER,
       DRAFT_LINKS_LABELS_LAYER,
+      SEEK_ANCILLARY_LINES_LAYER,
+      SEEK_ANCILLARY_LINES_LABELS_LAYER,
       LINKS_LAYER,
       LINKS_LABELS_LAYER,
       SITES_CIRCLE,
@@ -5137,6 +5323,42 @@
       el.style.top = `${pt.y}px`;
       el.hidden = false;
     }
+    for (const slug of seekHopCoordViewshedSlugs) {
+      if (!viewshedLoading.has(slug)) continue;
+      const coords = seekHopCoordViewshedCoords.get(slug);
+      if (!coords) continue;
+      active.add(slug);
+      let el = pinSpinners.get(slug);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "pin-load-spinner";
+        el.setAttribute("data-slug", slug);
+        pinLoadOverlays.appendChild(el);
+        pinSpinners.set(slug, el);
+      }
+      const pt = map.project([coords.lon, coords.lat]);
+      el.style.left = `${pt.x}px`;
+      el.style.top = `${pt.y}px`;
+      el.hidden = false;
+    }
+    if (seekScanning && seekSessionActive()) {
+      const from = seekCurrentFrom();
+      if (from) {
+        active.add(SEEK_SCAN_PIN);
+        let el = pinSpinners.get(SEEK_SCAN_PIN);
+        if (!el) {
+          el = document.createElement("div");
+          el.className = "pin-load-spinner";
+          el.setAttribute("data-slug", SEEK_SCAN_PIN);
+          pinLoadOverlays.appendChild(el);
+          pinSpinners.set(SEEK_SCAN_PIN, el);
+        }
+        const pt = map.project([from.lon, from.lat]);
+        el.style.left = `${pt.x}px`;
+        el.style.top = `${pt.y}px`;
+        el.hidden = false;
+      }
+    }
     for (const [slug, el] of pinSpinners) {
       if (!active.has(slug)) el.hidden = true;
     }
@@ -5227,6 +5449,7 @@
     ) {
       void loadDraftViewshedAt(draftPlacementLat, draftPlacementLon, { refreshOnly: true });
     }
+    if (seekState?.running) syncSeekHopViewsheds();
   }
 
 
@@ -5342,19 +5565,23 @@
     syncEditViewshedCheckbox();
   }
 
-  async function tryLoadDraftViewshedFromCache(lat, lon) {
+  async function tryLoadCoordViewshedFromCache(slug, lat, lon) {
     try {
       const resp = await fetch(viewshedPrefetchMetaUrl(lat, lon));
       if (!resp.ok) return false;
       const overlay = await resp.json();
       if (overlay.url && overlay.coordinates) {
-        acceptViewshedOverlay({ ...overlay, slug: DRAFT_VIEWSHED_SLUG, status: "ready" });
+        acceptViewshedOverlay({ ...overlay, slug, status: "ready" });
         return true;
       }
     } catch (_) {
       /* cache probe optional */
     }
     return false;
+  }
+
+  async function tryLoadDraftViewshedFromCache(lat, lon) {
+    return tryLoadCoordViewshedFromCache(DRAFT_VIEWSHED_SLUG, lat, lon);
   }
 
   async function loadDraftViewshedAt(lat, lon, options) {
@@ -7409,14 +7636,1604 @@
     canvas.addEventListener("touchcancel", clearLongPressTimer);
   }
 
+  let seekPanelOpen = false;
+  let seekRunning = false;
+  let seekFetchTimer = null;
+  let seekFetchEpoch = 0;
+  let seekGoalPlacementMode = false;
+  let seekGoalMarker = null;
+  let seekPendingGoalLat = null;
+  let seekPendingGoalLon = null;
+  let seekSiteCandidateSlugs = new Set();
+  let seekActiveFetchKey = null;
+  let seekHopCoordViewshedSlugs = new Set();
+  const seekHopCoordViewshedCoords = new Map();
+  const seekHopViewshedGen = new Map();
+  let seekAncillaryLinksGen = 0;
+  let seekAncillaryLinksTimer = null;
+  let seekAncillaryLinksAbort = null;
+
+  function abortSeekInFlight() {
+    const ac = seekFetchAbort;
+    seekFetchAbort = null;
+    if (ac) ac.abort();
+  }
+
+  function invalidateSeekFetch() {
+    abortSeekInFlight();
+    seekFetchEpoch += 1;
+    if (seekFetchTimer) window.clearTimeout(seekFetchTimer);
+    seekFetchTimer = null;
+  }
+
+  function cancelSeekScanUi() {
+    invalidateSeekFetch();
+    setSeekScanning(false);
+  }
+
+  function beginSeekFetch() {
+    abortSeekInFlight();
+    seekFetchEpoch += 1;
+    const epoch = seekFetchEpoch;
+    const ac = new AbortController();
+    seekFetchAbort = ac;
+    return { epoch, signal: ac.signal };
+  }
+
+  function seekSessionActive() {
+    return Boolean(seekState?.running && !seekState?.complete);
+  }
+
+  function seekGoalFromState() {
+    if (seekState?.goalLat != null && seekState?.goalLon != null) {
+      return { lat: seekState.goalLat, lon: seekState.goalLon };
+    }
+    if (seekPendingGoalLat != null && seekPendingGoalLon != null) {
+      return { lat: seekPendingGoalLat, lon: seekPendingGoalLon };
+    }
+    return null;
+  }
+
+  function migrateSeekStateGoal(parsed) {
+    if (!parsed || typeof parsed !== "object") return parsed;
+    if (parsed.goalLat != null && parsed.goalLon != null) return parsed;
+    if (parsed.goalSlug) {
+      const site = sites.find((s) => s.slug === parsed.goalSlug);
+      if (site) {
+        parsed.goalLat = site.lat;
+        parsed.goalLon = site.lon;
+      }
+      delete parsed.goalSlug;
+    }
+    return parsed;
+  }
+
+  function seekGoalCoords() {
+    return seekGoalFromState();
+  }
+
+  function seekHopMatchesGoal(hop) {
+    const goal = seekGoalCoords();
+    if (!goal || !hop) return false;
+    return haversineMeters(hop.lat, hop.lon, goal.lat, goal.lon) <= SEEK_GOAL_SAME_AS_START_M;
+  }
+
+  function updateSeekGoalCoordsDisplay() {
+    const goal = seekGoalCoords();
+    if (seekGoalCoordsEl) {
+      seekGoalCoordsEl.textContent = goal
+        ? `${formatCoord(goal.lat)}, ${formatCoord(goal.lon)}`
+        : "Not set";
+    }
+  }
+
+  function removeSeekGoalMarker() {
+    if (seekGoalMarker) {
+      seekGoalMarker.remove();
+      seekGoalMarker = null;
+    }
+  }
+
+  function syncSeekGoalMarker() {
+    if (!mapReady) return;
+    const goal = seekGoalCoords();
+    if (!goal) {
+      removeSeekGoalMarker();
+      return;
+    }
+    if (!seekGoalMarker) {
+      const el = document.createElement("div");
+      el.className = "seek-goal-marker";
+      el.setAttribute("aria-hidden", "true");
+      seekGoalMarker = new maplibregl.Marker({ element: el, anchor: "center" });
+    }
+    seekGoalMarker.setLngLat([goal.lon, goal.lat]).addTo(map);
+  }
+
+  function setSeekGoalPlacementMode(active) {
+    seekGoalPlacementMode = active;
+    if (mapShell) mapShell.classList.toggle("seek-goal-placement-mode", active);
+    if (seekSetGoalBtn) {
+      seekSetGoalBtn.setAttribute("aria-pressed", active ? "true" : "false");
+      seekSetGoalBtn.classList.toggle("active", active);
+    }
+    syncMapCursor();
+    if (active) {
+      setSeekStatus("Click the map to set goal");
+    } else if (seekPanelOpen && !seekSessionActive()) {
+      const goal = seekGoalCoords();
+      if (!goal) setSeekStatus("Pick a start site and set goal on the map");
+      else setSeekStatus("Pick a start site to begin");
+    }
+  }
+
+  function setSeekGoalAt(lat, lon, { refresh = true } = {}) {
+    const prev = seekGoalCoords();
+    const moved =
+      !prev || Math.abs(prev.lat - lat) > 1e-7 || Math.abs(prev.lon - lon) > 1e-7;
+    seekPendingGoalLat = lat;
+    seekPendingGoalLon = lon;
+    if (seekState?.running) {
+      seekState.goalLat = lat;
+      seekState.goalLon = lon;
+      if (moved) {
+        clearSeekRedoStack();
+        seekState.complete = false;
+        saveSeekState({ immediatePlan: true });
+      }
+    }
+    setSeekGoalPlacementMode(false);
+    updateSeekGoalCoordsDisplay();
+    syncSeekGoalMarker();
+    if (refresh && seekSessionActive()) scheduleSeekRefresh();
+    else maybeAutoStartSeekFromSelects();
+  }
+
+  function syncSeekGoalUi() {
+    updateSeekGoalCoordsDisplay();
+    syncSeekGoalMarker();
+    if (seekSetGoalBtn) {
+      seekSetGoalBtn.disabled = !seekPanelOpen || seekScanning;
+    }
+  }
+
+  function loadSeekRedoStack() {
+    try {
+      const raw = localStorage.getItem(SEEK_REDO_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveSeekRedoStack() {
+    if (!seekState?.redoStack?.length) {
+      localStorage.removeItem(SEEK_REDO_KEY);
+      return;
+    }
+    localStorage.setItem(SEEK_REDO_KEY, JSON.stringify(seekState.redoStack));
+  }
+
+  function seekStateFromYamlPlan(plan) {
+    if (!plan || typeof plan !== "object") return null;
+    const startSlug = String(plan.start || "").trim();
+    const startSite = siteBySlug.get(startSlug);
+    if (!startSite) return null;
+    const goal = plan.goal;
+    if (!Array.isArray(goal) || goal.length !== 2) return null;
+    const goalLat = Number(goal[0]);
+    const goalLon = Number(goal[1]);
+    if (!Number.isFinite(goalLat) || !Number.isFinite(goalLon)) return null;
+    const hops = [];
+    for (const item of plan.hops || []) {
+      if (!item || typeof item !== "object") return null;
+      if (item.site) {
+        const site = siteBySlug.get(String(item.site));
+        if (!site) return null;
+        hops.push({
+          lat: site.lat,
+          lon: site.lon,
+          elev_m: site.height_m ?? null,
+          site_slug: site.slug,
+          site_name: site.name,
+        });
+        continue;
+      }
+      const loc = item.loc;
+      if (!Array.isArray(loc) || loc.length !== 2) return null;
+      const lat = Number(loc[0]);
+      const lon = Number(loc[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      hops.push({
+        lat,
+        lon,
+        elev_m: item.height_m != null ? Number(item.height_m) : null,
+      });
+    }
+    if (!hops.length) return null;
+    const last = hops[hops.length - 1];
+    return {
+      running: true,
+      startSlug,
+      goalLat,
+      goalLon,
+      hops,
+      currentFrom: { lat: last.lat, lon: last.lon },
+      complete: Boolean(plan.complete),
+      redoStack: loadSeekRedoStack(),
+    };
+  }
+
+  function seekStateToYamlPlan(state) {
+    if (!state?.running || !state.startSlug) return null;
+    if (state.goalLat == null || state.goalLon == null) return null;
+    if (!Array.isArray(state.hops) || !state.hops.length) return null;
+    return {
+      start: state.startSlug,
+      goal: [state.goalLat, state.goalLon],
+      complete: Boolean(state.complete),
+      hops: state.hops.map((hop) => {
+        if (hop.site_slug) return { site: hop.site_slug };
+        const row = { loc: [hop.lat, hop.lon] };
+        if (hop.elev_m != null && Number.isFinite(Number(hop.elev_m))) {
+          row.height_m = Number(hop.elev_m);
+        }
+        return row;
+      }),
+    };
+  }
+
+  let seekPlanSaveTimer = null;
+  let seekPlanSaveSeq = 0;
+
+  async function flushSeekPlanToYaml({ immediate = false } = {}) {
+    if (seekPlanSaveTimer) {
+      window.clearTimeout(seekPlanSaveTimer);
+      seekPlanSaveTimer = null;
+    }
+    const seq = ++seekPlanSaveSeq;
+    if (!seekState) {
+      try {
+        const resp = await fetch(`/api/p/${projectSlug}/seek/plan`, { method: "DELETE" });
+        if (seq !== seekPlanSaveSeq) return;
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({}));
+          setSeekStatus(body.error || `Failed to clear seek plan (${resp.status})`);
+          return;
+        }
+        if (config.seek && typeof config.seek === "object") {
+          config.seek.plan = null;
+        }
+      } catch (err) {
+        if (seq !== seekPlanSaveSeq) return;
+        setSeekStatus(String(err));
+      }
+      return;
+    }
+    const plan = seekStateToYamlPlan(seekState);
+    if (!plan) return;
+    try {
+      const resp = await fetch(`/api/p/${projectSlug}/seek/plan`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(plan),
+      });
+      if (seq !== seekPlanSaveSeq) return;
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        setSeekStatus(body.error || `Failed to save seek plan (${resp.status})`);
+        return;
+      }
+      if (config.seek && typeof config.seek === "object") {
+        config.seek.plan = plan;
+      }
+    } catch (err) {
+      if (seq !== seekPlanSaveSeq) return;
+      setSeekStatus(String(err));
+    }
+  }
+
+  function persistSeekPlanToYaml({ immediate = false } = {}) {
+    if (seekPlanSaveTimer) window.clearTimeout(seekPlanSaveTimer);
+    if (immediate) {
+      void flushSeekPlanToYaml({ immediate: true });
+      return;
+    }
+    seekPlanSaveTimer = window.setTimeout(() => {
+      seekPlanSaveTimer = null;
+      void flushSeekPlanToYaml();
+    }, SEEK_PLAN_SAVE_MS);
+  }
+
+  function loadSeekStateFromLocalStorage() {
+    try {
+      const raw = localStorage.getItem(SEEK_STATE_KEY);
+      if (!raw) return null;
+      const parsed = migrateSeekStateGoal(JSON.parse(raw));
+      if (!parsed || typeof parsed !== "object") return null;
+      if (!Array.isArray(parsed.redoStack)) parsed.redoStack = loadSeekRedoStack();
+      return parsed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function rehydrateSeekStateFromConfig() {
+    if (seekState?.running) return seekState;
+    const fromYaml = config.seek?.plan ? seekStateFromYamlPlan(config.seek.plan) : null;
+    if (!fromYaml) return null;
+    seekState = fromYaml;
+    if (seekState.goalLat != null && seekState.goalLon != null) {
+      seekPendingGoalLat = seekState.goalLat;
+      seekPendingGoalLon = seekState.goalLon;
+    }
+    return seekState;
+  }
+
+  function initSeekState() {
+    const yamlPlan = config.seek?.plan;
+    const fromYaml = yamlPlan ? seekStateFromYamlPlan(yamlPlan) : null;
+    if (fromYaml) {
+      localStorage.removeItem(SEEK_STATE_KEY);
+      return fromYaml;
+    }
+    return loadSeekStateFromLocalStorage();
+  }
+
+  function loadSeekState() {
+    return initSeekState();
+  }
+
+  let seekState = loadSeekState();
+  if (seekState?.goalLat != null && seekState?.goalLon != null) {
+    seekPendingGoalLat = seekState.goalLat;
+    seekPendingGoalLon = seekState.goalLon;
+  }
+  let seekMarkers = [];
+  let seekGoalInRange = false;
+  let seekGoalRfViable = false;
+  let seekScanning = false;
+  let seekProgressPollTimer = null;
+  let seekProgressTickTimer = null;
+  let lastSeekProgress = null;
+  let seekViewshedRetryCount = 0;
+  let seekScanStartedAt = 0;
+  let seekFetchAbort = null;
+  let seekSelectsHydrating = false;
+
+  function clearSeekRedoStack() {
+    if (seekState && Array.isArray(seekState.redoStack) && seekState.redoStack.length) {
+      seekState.redoStack = [];
+    }
+  }
+
+  function saveSeekState({ immediatePlan = false } = {}) {
+    saveSeekRedoStack();
+    if (!seekState) {
+      localStorage.removeItem(SEEK_STATE_KEY);
+      persistSeekPlanToYaml({ immediate: immediatePlan });
+      return;
+    }
+    persistSeekPlanToYaml({ immediate: immediatePlan });
+  }
+
+  function setSeekStatus(text) {
+    if (seekStatusEl) seekStatusEl.textContent = text || "";
+  }
+
+  function updateSeekProgressUi(prog) {
+    if (!seekProgressEl) return;
+    lastSeekProgress = prog || null;
+    const phase = prog?.phase || "starting";
+    const done = Number(prog?.done) || 0;
+    const total = Number(prog?.total) || 0;
+    let detail = prog?.detail || "";
+    if (!detail) {
+      if (phase === "peaks" && total > 0) detail = `Scanning Skadi tiles ${done}/${total}`;
+      else if (phase === "filter") detail = done > 0 && total > 0 ? `Filtering peaks ${done}/${total}` : "Filtering peaks in view…";
+      else if (phase === "eligible_land") detail = "Building eligible land…";
+      else if (phase === "viewshed") detail = "Loading viewshed…";
+      else if (phase === "rf") detail = "Checking RF links…";
+      else detail = "Scanning peaks…";
+    }
+    const elapsed = seekScanStartedAt ? Math.floor((Date.now() - seekScanStartedAt) / 1000) : 0;
+    const detailWithElapsed = elapsed > 0 ? `${detail} (${elapsed}s)` : detail;
+    if (seekProgressDetailEl) {
+      seekProgressDetailEl.textContent = detailWithElapsed;
+    }
+    if (seekScanning) {
+      setSeekStatus(detailWithElapsed);
+    }
+    if (seekProgressBarEl && seekProgressTrackEl) {
+      if (total > 0) {
+        seekProgressBarEl.classList.remove("seek-panel__progress-bar--indeterminate");
+        const pct = Math.min(100, Math.round((done / total) * 100));
+        seekProgressBarEl.style.width = `${pct}%`;
+        seekProgressTrackEl.setAttribute("aria-valuenow", String(pct));
+      } else {
+        seekProgressBarEl.classList.add("seek-panel__progress-bar--indeterminate");
+        seekProgressBarEl.style.width = "";
+        seekProgressTrackEl.setAttribute("aria-valuenow", "0");
+      }
+    }
+  }
+
+  function startSeekProgressTick() {
+    stopSeekProgressTick();
+    seekProgressTickTimer = window.setInterval(() => {
+      if (!seekScanning) return;
+      updateSeekProgressUi(lastSeekProgress || { phase: "starting", detail: "Scanning peaks…" });
+    }, 1000);
+  }
+
+  function stopSeekProgressTick() {
+    if (seekProgressTickTimer) window.clearInterval(seekProgressTickTimer);
+    seekProgressTickTimer = null;
+  }
+
+  function stopSeekProgressPoll() {
+    if (seekProgressPollTimer) window.clearInterval(seekProgressPollTimer);
+    seekProgressPollTimer = null;
+  }
+
+  function stopSeekProgressUi() {
+    stopSeekProgressPoll();
+    stopSeekProgressTick();
+    lastSeekProgress = null;
+  }
+
+  function sleepMs(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  async function pollSeekUntilDone(expectedGen, signal, epoch) {
+    for (;;) {
+      if (signal?.aborted) return { cancelled: true };
+      if (epoch !== seekFetchEpoch) return { cancelled: true };
+      let resp;
+      try {
+        resp = await fetch(`/api/p/${projectSlug}/seek/scan-progress`, { signal });
+      } catch (err) {
+        if (err?.name === "AbortError") return { cancelled: true };
+        await sleepMs(SEEK_PROGRESS_POLL_MS);
+        continue;
+      }
+      if (!resp.ok) {
+        await sleepMs(SEEK_PROGRESS_POLL_MS);
+        continue;
+      }
+      const body = await resp.json().catch(() => ({}));
+      if (body?.gen != null && body.gen !== expectedGen) return { cancelled: true };
+      if (body?.progress) updateSeekProgressUi(body.progress);
+      if (body?.status === "done" && body?.result) {
+        return { payload: { project: body.project, ...body.result } };
+      }
+      if (body?.status === "cancelled") return { cancelled: true };
+      if (body?.status === "error") {
+        return {
+          error: body.error || "Seek failed",
+          errorStatus: body.error_status || 422,
+          notReady: body.error_status === 503,
+        };
+      }
+      await sleepMs(SEEK_PROGRESS_POLL_MS);
+    }
+  }
+
+  function setSeekScanning(active) {
+    seekScanning = active;
+    if (seekProgressEl) seekProgressEl.hidden = !active;
+    if (active) {
+      seekScanStartedAt = Date.now();
+      updateSeekProgressUi({ phase: "starting", detail: "Scanning peaks…" });
+      startSeekProgressTick();
+    } else {
+      stopSeekProgressUi();
+      seekScanStartedAt = 0;
+    }
+    updatePinOverlays();
+    syncSeekPanelUi();
+  }
+
+  function syncSeekPanelUi() {
+    if (mapToolSeek) {
+      mapToolSeek.classList.toggle("map-toolbar-tool--active", seekPanelOpen);
+      mapToolSeek.setAttribute("aria-pressed", seekPanelOpen ? "true" : "false");
+    }
+    if (seekPanel) seekPanel.hidden = !seekPanelOpen;
+    if (seekUndoBtn) {
+      const canUndo = Boolean(
+        seekState?.running && Array.isArray(seekState.hops) && seekState.hops.length > 1,
+      );
+      seekUndoBtn.disabled = !canUndo;
+    }
+    if (seekRedoBtn) {
+      const canRedo = Boolean(
+        seekState?.running && Array.isArray(seekState.redoStack) && seekState.redoStack.length,
+      );
+      seekRedoBtn.disabled = !canRedo;
+    }
+    if (seekFinishBtn) {
+      const showFinish = Boolean(seekSessionActive() && seekGoalRfViable);
+      seekFinishBtn.hidden = !showFinish;
+      seekFinishBtn.disabled = !showFinish;
+      if (showFinish) {
+        seekFinishBtn.textContent = "Finish at goal";
+      }
+    }
+    const seekStartLocked = Boolean(seekState?.running) || seekScanning;
+    if (seekStartSelect) seekStartSelect.disabled = seekStartLocked;
+    syncSeekGoalUi();
+    syncSeekRefreshUi();
+  }
+
+  function maybeAutoStartSeekFromSelects() {
+    if (seekSelectsHydrating) return;
+    if (seekState?.running) return;
+    const startSlug = seekStartSelect?.value;
+    if (!startSlug) {
+      setSeekStatus("Pick a start site and set goal on the map");
+      return;
+    }
+    const startSite = siteBySlug.get(startSlug);
+    const goal = seekGoalCoords();
+    if (!startSite || !goal) {
+      if (!goal) setSeekStatus("Set goal on the map, then pick start site");
+      return;
+    }
+    if (haversineMeters(startSite.lat, startSite.lon, goal.lat, goal.lon) <= SEEK_GOAL_SAME_AS_START_M) {
+      setSeekStatus("Goal overlaps start site — pick a different point");
+      return;
+    }
+    startSeekRun();
+  }
+
+  function populateSeekStartSelect() {
+    if (!seekStartSelect) return;
+    seekSelectsHydrating = true;
+    const eligible = sites
+      .filter((site) => sitePassesTagFilter(site))
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (!eligible.length) {
+      seekStartSelect.innerHTML = '<option value="">No sites match tags</option>';
+      seekSelectsHydrating = false;
+      return;
+    }
+    const opts = eligible
+      .map((site) => `<option value="${site.slug}">${site.name}</option>`)
+      .join("");
+    seekStartSelect.innerHTML = opts;
+    const eligibleSlugs = new Set(eligible.map((site) => site.slug));
+    if (seekState?.startSlug && eligibleSlugs.has(seekState.startSlug)) {
+      seekStartSelect.value = seekState.startSlug;
+    } else if (eligibleSlugs.has(seekStartSelect.value)) {
+      /* keep current pick */
+    } else {
+      seekStartSelect.selectedIndex = 0;
+    }
+    seekSelectsHydrating = false;
+  }
+
+  function refreshSeekStartSelectIfOpen() {
+    if (seekPanelOpen) populateSeekStartSelect();
+  }
+
+  function seekPanHintText() {
+    const hop = seekState?.hops?.length || 1;
+    if (isMapTiltedView()) {
+      return `Hop ${hop} — 3D view: click Refresh candidates after moving`;
+    }
+    return `Hop ${hop} — pan map to refresh candidates`;
+  }
+
+  function toggleSeekPanel(force) {
+    const nextOpen = typeof force === "boolean" ? force : !seekPanelOpen;
+    if (seekPanelOpen && !nextOpen) {
+      setSeekGoalPlacementMode(false);
+      if (seekScanning) {
+        cancelSeekScanUi();
+        if (seekSessionActive()) {
+          setSeekStatus(seekPanHintText());
+        }
+      }
+    }
+    seekPanelOpen = nextOpen;
+    if (seekPanelOpen) {
+      populateSeekStartSelect();
+      if (seekState?.goalLat != null && seekState?.goalLon != null) {
+        seekPendingGoalLat = seekState.goalLat;
+        seekPendingGoalLon = seekState.goalLon;
+      }
+      syncSeekGoalUi();
+      if (seekState?.running && !seekState?.complete) {
+        seekRunning = true;
+        if (!seekScanning) {
+          setSeekStatus(seekPanHintText());
+          if (!isMapTiltedView()) scheduleSeekRefresh();
+        }
+      } else if (!seekState?.running) {
+        setSeekStatus("Pick a start site and set goal on the map");
+      }
+    } else {
+      syncSeekGoalUi();
+    }
+    syncSeekPanelUi();
+  }
+
+  function clearSeekMarkers() {
+    for (const marker of seekMarkers) marker.remove();
+    seekMarkers = [];
+  }
+
+  function removeSeekCandidateLayers() {
+    const layerIds = [
+      SEEK_LINES_LABELS_LAYER,
+      SEEK_LINES_LAYER,
+      SEEK_CANDIDATES_LABELS_LAYER,
+      SEEK_CANDIDATES_LAYER,
+      SEEK_GOAL_LINE_LAYER,
+    ];
+    for (const id of layerIds) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    }
+    for (const src of [SEEK_LINES_SOURCE, SEEK_CANDIDATES_SOURCE, SEEK_GOAL_LINE_SOURCE]) {
+      if (map.getSource(src)) map.removeSource(src);
+    }
+  }
+
+  function removeSeekLayers() {
+    removeSeekCandidateLayers();
+    if (map.getLayer(SEEK_PATH_LAYER)) map.removeLayer(SEEK_PATH_LAYER);
+    if (map.getSource(SEEK_PATH_SOURCE)) map.removeSource(SEEK_PATH_SOURCE);
+    clearSeekMarkers();
+  }
+
+  function seekLinesGeoJsonWithLabels(geojson) {
+    if (!geojson || !geojson.features) return geojson;
+    return {
+      type: geojson.type || "FeatureCollection",
+      features: geojson.features.map((feature) => {
+        const props = feature.properties || {};
+        const dist = formatLinkDistanceKm(props.distance_km);
+        const bearing = props.bearing_deg != null ? `${Math.round(Number(props.bearing_deg))}°` : "";
+        const label = dist && bearing ? `${dist} · ${bearing}` : dist || bearing || "";
+        return { ...feature, properties: { ...props, label } };
+      }),
+    };
+  }
+
+  function seekCandidatesGeoJsonForDisplay(candidates) {
+    if (!candidates?.features) return candidates;
+    return {
+      type: candidates.type || "FeatureCollection",
+      features: candidates.features.map((feature) => {
+        const props = feature.properties || {};
+        const slug = props.site_slug;
+        if (!props.is_site || !slug) return feature;
+        const siteName = props.site_name || siteBySlug.get(slug)?.name || "";
+        const labelName = isSiteMapHidden(slug) ? siteName : "";
+        return { ...feature, properties: { ...props, site_name: labelName } };
+      }),
+    };
+  }
+
+  function applySeekLayers(payload) {
+    if (!mapReady || !payload) return;
+    removeSeekCandidateLayers();
+    seekSiteCandidateSlugs = new Set(payload.meta?.site_candidate_slugs || []);
+
+    const lines = payload.lines;
+    if (lines && lines.features && lines.features.length) {
+      const labeled = seekLinesGeoJsonWithLabels(lines);
+      map.addSource(SEEK_LINES_SOURCE, { type: "geojson", data: labeled });
+      map.addLayer(
+        {
+          id: SEEK_LINES_LAYER,
+          type: "line",
+          source: SEEK_LINES_SOURCE,
+          paint: {
+            "line-color": [
+              "case",
+              ["boolean", ["get", "is_goal"], false],
+              "#22c55e",
+              ["boolean", ["get", "is_site"], false],
+              "#2563eb",
+              ["case", ["get", "rf_viable"], "#4a6cf7", "#94a3b8"],
+            ],
+            "line-width": [
+              "case",
+              ["boolean", ["get", "is_goal"], false],
+              3.5,
+              ["boolean", ["get", "is_site"], false],
+              3,
+              2.5,
+            ],
+            "line-opacity": 0.9,
+            "line-dasharray": [
+              "case",
+              ["boolean", ["get", "is_goal"], false],
+              ["case", ["get", "rf_viable"], ["literal", [1, 0]], ["literal", [2, 2]]],
+              ["case", ["get", "rf_viable"], ["literal", [1, 0]], ["literal", [2, 2]]],
+            ],
+          },
+          layout: { "line-cap": "round", "line-join": "round" },
+        },
+        SITES_CIRCLE,
+      );
+      map.addLayer(linkLabelsLayerSpec(SEEK_LINES_LABELS_LAYER, SEEK_LINES_SOURCE, "visible"), SITES_CIRCLE);
+    }
+
+    const candidates = seekCandidatesGeoJsonForDisplay(payload.candidates);
+    if (candidates && candidates.features && candidates.features.length) {
+      map.addSource(SEEK_CANDIDATES_SOURCE, { type: "geojson", data: candidates });
+      map.addLayer(
+        {
+          id: SEEK_CANDIDATES_LAYER,
+          type: "circle",
+          source: SEEK_CANDIDATES_SOURCE,
+          paint: {
+            "circle-radius": [
+              "case",
+              ["boolean", ["get", "is_goal"], false],
+              10,
+              ["boolean", ["get", "is_site"], false],
+              7,
+              7,
+            ],
+            "circle-color": [
+              "case",
+              ["boolean", ["get", "is_goal"], false],
+              "#22c55e",
+              ["boolean", ["get", "is_site"], false],
+              "#4a6cf7",
+              "#fb923c",
+            ],
+            "circle-stroke-color": [
+              "case",
+              ["boolean", ["get", "is_site"], false],
+              "#ffffff",
+              "#1a1a1a",
+            ],
+            "circle-stroke-width": ["case", ["boolean", ["get", "is_site"], false], 2, 1.5],
+          },
+        },
+        SITES_CIRCLE,
+      );
+      map.addLayer(seekSiteCandidateLabelsLayerSpec(SEEK_CANDIDATES_LABELS_LAYER, SEEK_CANDIDATES_SOURCE), SITES_CIRCLE);
+    }
+
+    if (seekState?.running && Array.isArray(seekState.hops)) {
+      updateSeekPathOverlay();
+    }
+
+    if (payload.goal_line) {
+      map.addSource(SEEK_GOAL_LINE_SOURCE, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [payload.goal_line] },
+      });
+      map.addLayer(
+        {
+          id: SEEK_GOAL_LINE_LAYER,
+          type: "line",
+          source: SEEK_GOAL_LINE_SOURCE,
+          paint: {
+            "line-color": "#22c55e",
+            "line-width": 2,
+            "line-opacity": 0.75,
+            "line-dasharray": [4, 3],
+          },
+          layout: { "line-cap": "round", "line-join": "round" },
+        },
+        SITES_CIRCLE,
+      );
+    }
+    raiseSiteLayers();
+  }
+
+  function seekViewportBbox() {
+    const b = mapDataViewportBounds();
+    return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((v) => v.toFixed(6)).join(",");
+  }
+
+  /** Peak bin size (m) from map zoom: ~20 bins across viewport width, clamped 500–1500 m. */
+  function seekPeakBinSizeM() {
+    const b = mapDataViewportBounds();
+    const centerLat = (b.getNorth() + b.getSouth()) / 2;
+    const lngSpan = Math.abs(b.getEast() - b.getWest());
+    const metersPerDegLng = 111320 * Math.cos((centerLat * Math.PI) / 180);
+    const viewportWidthM = lngSpan * metersPerDegLng;
+    const raw = viewportWidthM / SEEK_PEAK_BINS_ACROSS_VIEWPORT;
+    return Math.round(Math.max(SEEK_PEAK_BIN_MIN_M, Math.min(SEEK_PEAK_BIN_MAX_M, raw)));
+  }
+
+  function seekExcludeParam() {
+    if (!seekState || !Array.isArray(seekState.hops)) return "";
+    return seekState.hops.map((hop) => `${hop.lat},${hop.lon}`).join(";");
+  }
+
+  function seekExcludeSlugsParam() {
+    const slugs = new Set();
+    if (seekState?.startSlug) slugs.add(seekState.startSlug);
+    for (const hop of seekState?.hops || []) {
+      if (hop.site_slug) slugs.add(hop.site_slug);
+    }
+    return [...slugs].join(";");
+  }
+
+  function seekPathSiteSlugs() {
+    const slugs = new Set();
+    if (seekState?.startSlug) slugs.add(seekState.startSlug);
+    for (const hop of seekState?.hops || []) {
+      if (hop.site_slug) slugs.add(hop.site_slug);
+    }
+    return slugs;
+  }
+
+  function isSiteInSeekPlan(slug) {
+    return Boolean(seekState?.running && seekPathSiteSlugs().has(slug));
+  }
+
+  function seekHopCoordViewshedSlug(lat, lon) {
+    return `${SEEK_HOP_VIEWSHED_PREFIX}${Number(lat).toFixed(5)}_${Number(lon).toFixed(5)}`;
+  }
+
+  function cancelSeekHopViewshedLoad(slug) {
+    seekHopViewshedGen.set(slug, (seekHopViewshedGen.get(slug) || 0) + 1);
+    viewshedPendingEpoch.delete(slug);
+    viewshedLoading.delete(slug);
+  }
+
+  function clearSeekHopViewshed(slug) {
+    cancelSeekHopViewshedLoad(slug);
+    removeViewshedLayer(slug);
+    seekHopCoordViewshedSlugs.delete(slug);
+    seekHopCoordViewshedCoords.delete(slug);
+    viewshedVisible.delete(slug);
+  }
+
+  function clearAllSeekHopViewsheds() {
+    for (const slug of [...seekHopCoordViewshedSlugs]) {
+      clearSeekHopViewshed(slug);
+    }
+    seekHopCoordViewshedSlugs.clear();
+    seekHopCoordViewshedCoords.clear();
+  }
+
+  async function loadSeekHopCoordViewshed(slug, lat, lon) {
+    if (!String(slug).startsWith(SEEK_HOP_VIEWSHED_PREFIX)) return;
+    const gen = (seekHopViewshedGen.get(slug) || 0) + 1;
+    seekHopViewshedGen.set(slug, gen);
+    viewshedVisible.set(slug, true);
+    seekHopCoordViewshedCoords.set(slug, { lat, lon });
+    if (await tryLoadCoordViewshedFromCache(slug, lat, lon)) return;
+    removeViewshedLayer(slug);
+    viewshedLoading.add(slug);
+    const epoch = viewshedLoadEpoch;
+    viewshedPendingEpoch.set(slug, epoch);
+    updatePinOverlays();
+    try {
+      const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), { method: "POST" });
+      if ((seekHopViewshedGen.get(slug) || 0) !== gen) return;
+      if (viewshedPendingEpoch.get(slug) !== epoch) return;
+      if (!resp.ok) {
+        cancelSeekHopViewshedLoad(slug);
+        updatePinOverlays();
+        return;
+      }
+      const vs = await resp.json();
+      if ((seekHopViewshedGen.get(slug) || 0) !== gen) return;
+      if (viewshedPendingEpoch.get(slug) !== epoch) return;
+      if (vs && vs.status === "ready") {
+        handleViewshedReady({ ...vs, slug }, epoch);
+      }
+    } catch (_) {
+      if ((seekHopViewshedGen.get(slug) || 0) === gen) {
+        cancelSeekHopViewshedLoad(slug);
+        updatePinOverlays();
+      }
+    }
+  }
+
+  function syncSeekHopViewsheds() {
+    if (!mapReady || !seekState?.running || !Array.isArray(seekState.hops)) {
+      clearAllSeekHopViewsheds();
+      cancelSeekAncillaryLinksFetch();
+      seekAncillaryLinksGen += 1;
+      removeSeekAncillaryLinksLayer();
+      return;
+    }
+    const wantedCoordSlugs = new Set();
+    for (const hop of seekState.hops) {
+      if (hop.site_slug) {
+        viewshedVisible.set(hop.site_slug, true);
+        ensureViewshedLoadedForSlug(hop.site_slug);
+        if (map.getLayer(viewshedLayerId(hop.site_slug))) {
+          applyViewshedVisibilityForSite(hop.site_slug);
+        }
+        continue;
+      }
+      const slug = seekHopCoordViewshedSlug(hop.lat, hop.lon);
+      wantedCoordSlugs.add(slug);
+      seekHopCoordViewshedSlugs.add(slug);
+      viewshedVisible.set(slug, true);
+      if (!map.getLayer(viewshedLayerId(slug)) && !viewshedLoading.has(slug)) {
+        void loadSeekHopCoordViewshed(slug, hop.lat, hop.lon);
+      } else if (map.getLayer(viewshedLayerId(slug))) {
+        map.setLayoutProperty(viewshedLayerId(slug), "visibility", "visible");
+      }
+    }
+    for (const slug of [...seekHopCoordViewshedSlugs]) {
+      if (!wantedCoordSlugs.has(slug)) {
+        clearSeekHopViewshed(slug);
+      }
+    }
+    raiseViewshedLayers();
+    scheduleSeekAncillaryLinks();
+  }
+
+  function seekHopEndpointKey(hop) {
+    if (hop.site_slug) return `site:${hop.site_slug}`;
+    return `coord:${Number(hop.lat).toFixed(5)}_${Number(hop.lon).toFixed(5)}`;
+  }
+
+  function seekChainNeighborKeys(hopIndex) {
+    const hops = seekState?.hops;
+    const keys = new Set();
+    if (!hops || hopIndex < 0 || hopIndex >= hops.length) return keys;
+    if (hopIndex > 0) keys.add(seekHopEndpointKey(hops[hopIndex - 1]));
+    if (hopIndex < hops.length - 1) keys.add(seekHopEndpointKey(hops[hopIndex + 1]));
+    return keys;
+  }
+
+  function canonicalSitePairKey(slugA, slugB) {
+    return slugA <= slugB ? `${slugA}|${slugB}` : `${slugB}|${slugA}`;
+  }
+
+  function findSiteLinkFeature(slugA, slugB) {
+    const features = siteLinksPayload?.geojson?.features;
+    if (!features) return null;
+    for (const feature of features) {
+      const props = feature.properties || {};
+      if (
+        (props.a === slugA && props.b === slugB) ||
+        (props.a === slugB && props.b === slugA)
+      ) {
+        return feature;
+      }
+    }
+    return null;
+  }
+
+  async function ensureSiteLinksForSlug(slug) {
+    if (!slug) return;
+    const hasLinks = (siteLinksPayload?.links || []).some(
+      (row) => row.linked && (row.a === slug || row.b === slug),
+    );
+    if (hasLinks) return;
+    await loadSingleSiteLinks(slug);
+  }
+
+  function removeSeekAncillaryLinksLayer() {
+    if (map.getLayer(SEEK_ANCILLARY_LINES_LABELS_LAYER)) {
+      map.removeLayer(SEEK_ANCILLARY_LINES_LABELS_LAYER);
+    }
+    if (map.getLayer(SEEK_ANCILLARY_LINES_LAYER)) map.removeLayer(SEEK_ANCILLARY_LINES_LAYER);
+    if (map.getSource(SEEK_ANCILLARY_LINES_SOURCE)) map.removeSource(SEEK_ANCILLARY_LINES_SOURCE);
+  }
+
+  function addSeekAncillaryLinksLayer(geojson) {
+    if (!mapReady || !geojson?.features?.length) {
+      removeSeekAncillaryLinksLayer();
+      return;
+    }
+    const labeled = linksGeoJsonWithLabels(geojson);
+    if (map.getSource(SEEK_ANCILLARY_LINES_SOURCE)) {
+      map.getSource(SEEK_ANCILLARY_LINES_SOURCE).setData(labeled);
+      raiseSiteLayers();
+      return;
+    }
+    map.addSource(SEEK_ANCILLARY_LINES_SOURCE, { type: "geojson", data: labeled });
+    map.addLayer(
+      {
+        id: SEEK_ANCILLARY_LINES_LAYER,
+        type: "line",
+        source: SEEK_ANCILLARY_LINES_SOURCE,
+        paint: {
+          "line-color": ["case", ["get", "manual"], "#0d9488", "#4a6cf7"],
+          "line-width": 2.5,
+          "line-opacity": 0.75,
+        },
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+          visibility: "visible",
+        },
+      },
+      SITES_CIRCLE,
+    );
+    map.addLayer(
+      linkLabelsLayerSpec(SEEK_ANCILLARY_LINES_LABELS_LAYER, SEEK_ANCILLARY_LINES_SOURCE, "visible"),
+      SITES_CIRCLE,
+    );
+    raiseSiteLayers();
+  }
+
+  function cancelSeekAncillaryLinksFetch() {
+    if (seekAncillaryLinksAbort) {
+      seekAncillaryLinksAbort.abort();
+      seekAncillaryLinksAbort = null;
+    }
+  }
+
+  async function collectSeekAncillaryLinkFeatures(signal, gen) {
+    const hops = seekState?.hops;
+    if (!hops?.length) return [];
+    const seen = new Set();
+    const features = [];
+
+    const addFeature = (feature, dedupeKey) => {
+      if (!feature || seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      features.push(feature);
+    };
+
+    for (let hopIndex = 0; hopIndex < hops.length; hopIndex += 1) {
+      if (signal?.aborted || gen !== seekAncillaryLinksGen) return null;
+      if (seekSessionActive() && hopIndex === hops.length - 1) continue;
+
+      const hop = hops[hopIndex];
+      const neighbors = seekChainNeighborKeys(hopIndex);
+
+      if (hop.site_slug) {
+        await ensureSiteLinksForSlug(hop.site_slug);
+        if (signal?.aborted || gen !== seekAncillaryLinksGen) return null;
+        for (const peerSlug of linkedPeersForSite(hop.site_slug)) {
+          if (neighbors.has(`site:${peerSlug}`)) continue;
+          const linkFeature = findSiteLinkFeature(hop.site_slug, peerSlug);
+          if (!linkFeature) continue;
+          const props = linkFeature.properties || {};
+          addFeature(linkFeature, canonicalSitePairKey(String(props.a), String(props.b)));
+        }
+        continue;
+      }
+
+      try {
+        const resp = await fetch(sitesPrefetchUrl(hop.lat, hop.lon), { signal });
+        if (signal?.aborted || gen !== seekAncillaryLinksGen) return null;
+        if (!resp.ok) continue;
+        const payload = await resp.json();
+        const geojson = payload?.links_geojson;
+        if (!geojson?.features?.length) continue;
+        const fromKey = seekHopEndpointKey(hop);
+        for (const feature of geojson.features) {
+          const slug = feature.properties?.slug;
+          if (!slug) continue;
+          if (neighbors.has(`site:${slug}`)) continue;
+          addFeature(feature, `${fromKey}|site:${slug}`);
+        }
+      } catch (err) {
+        if (err?.name === "AbortError") return null;
+      }
+    }
+    return features;
+  }
+
+  async function flushSeekAncillaryLinks() {
+    if (seekAncillaryLinksTimer) {
+      window.clearTimeout(seekAncillaryLinksTimer);
+      seekAncillaryLinksTimer = null;
+    }
+    cancelSeekAncillaryLinksFetch();
+    if (!mapReady || !seekState?.running || !Array.isArray(seekState.hops) || !seekState.hops.length) {
+      removeSeekAncillaryLinksLayer();
+      return;
+    }
+    const gen = ++seekAncillaryLinksGen;
+    const ac = new AbortController();
+    seekAncillaryLinksAbort = ac;
+    const features = await collectSeekAncillaryLinkFeatures(ac.signal, gen);
+    if (gen !== seekAncillaryLinksGen) return;
+    seekAncillaryLinksAbort = null;
+    if (features == null) return;
+    addSeekAncillaryLinksLayer({ type: "FeatureCollection", features });
+  }
+
+  function scheduleSeekAncillaryLinks() {
+    if (seekAncillaryLinksTimer) window.clearTimeout(seekAncillaryLinksTimer);
+    seekAncillaryLinksTimer = window.setTimeout(() => {
+      seekAncillaryLinksTimer = null;
+      void flushSeekAncillaryLinks();
+    }, SEEK_ANCILLARY_LINKS_DEBOUNCE_MS);
+  }
+
+  function appendSeekHopMarkers() {
+    if (!seekState || !Array.isArray(seekState.hops)) return;
+    seekState.hops.forEach((hop, idx) => {
+      if (idx === 0) return;
+      if (hop.site_slug) {
+        if (isSiteMapHidden(hop.site_slug)) {
+          const siteName = hop.site_name || siteBySlug.get(hop.site_slug)?.name || hop.site_slug;
+          const el = createSeekSiteHopMarkerElement(siteName);
+          seekMarkers.push(
+            new maplibregl.Marker({ element: el, anchor: "bottom" }).setLngLat([hop.lon, hop.lat]).addTo(map),
+          );
+        }
+        return;
+      }
+      let peakNum = 0;
+      for (let i = 1; i <= idx; i += 1) {
+        if (!seekState.hops[i].site_slug) peakNum += 1;
+      }
+      const el = document.createElement("div");
+      el.className = "seek-hop-marker";
+      el.textContent = String(peakNum);
+      seekMarkers.push(new maplibregl.Marker({ element: el }).setLngLat([hop.lon, hop.lat]).addTo(map));
+    });
+  }
+
+  function updateSeekPathOverlay() {
+    syncSeekHopViewsheds();
+    if (!mapReady || !seekState || !Array.isArray(seekState.hops) || seekState.hops.length < 2) {
+      if (map.getLayer(SEEK_PATH_LAYER)) map.removeLayer(SEEK_PATH_LAYER);
+      if (map.getSource(SEEK_PATH_SOURCE)) map.removeSource(SEEK_PATH_SOURCE);
+      clearSeekMarkers();
+      return;
+    }
+    const coords = seekState.hops.map((hop) => [hop.lon, hop.lat]);
+    const pathGeoJson = {
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: coords },
+      properties: {},
+    };
+    if (map.getSource(SEEK_PATH_SOURCE)) {
+      map.getSource(SEEK_PATH_SOURCE).setData(pathGeoJson);
+    } else {
+      map.addSource(SEEK_PATH_SOURCE, { type: "geojson", data: pathGeoJson });
+      map.addLayer(
+        {
+          id: SEEK_PATH_LAYER,
+          type: "line",
+          source: SEEK_PATH_SOURCE,
+          paint: { "line-color": "#fbbf24", "line-width": 3, "line-opacity": 0.85 },
+          layout: { "line-cap": "round", "line-join": "round" },
+        },
+        SITES_CIRCLE,
+      );
+    }
+    clearSeekMarkers();
+    appendSeekHopMarkers();
+    applySiteLayerFilters();
+    raiseSiteLayers();
+  }
+
+  function seekNewPeakHopCount() {
+    if (!seekState?.hops?.length) return 0;
+    return seekState.hops.filter((hop, idx) => idx > 0 && !hop.site_slug).length;
+  }
+
+  function seekCurrentFrom() {
+    if (seekState?.currentFrom) return seekState.currentFrom;
+    const startSlug = seekState?.startSlug || seekStartSelect?.value;
+    const startSite = startSlug ? siteBySlug.get(startSlug) : null;
+    if (!startSite) return null;
+    return { lat: startSite.lat, lon: startSite.lon };
+  }
+
+  function seekFetchParamsKey() {
+    if (!seekSessionActive()) return null;
+    const from = seekCurrentFrom();
+    const goal = seekGoalCoords();
+    if (!from || !goal) return null;
+    return [
+      from.lat.toFixed(6),
+      from.lon.toFixed(6),
+      goal.lat.toFixed(6),
+      goal.lon.toFixed(6),
+      seekViewportBbox(),
+      String(seekPeakBinSizeM()),
+      seekExcludeParam(),
+      seekExcludeSlugsParam(),
+    ].join("|");
+  }
+
+  function applySeekCandidatePayload(payload) {
+    seekGoalInRange = Boolean(payload.meta?.goal_in_viewshed ?? payload.meta?.goal_reachable);
+    seekGoalRfViable = Boolean(payload.meta?.goal_rf_viable);
+    applySeekLayers(payload);
+    syncSeekPanelUi();
+    const n = payload.meta?.n_candidates ?? payload.candidates?.features?.length ?? 0;
+    const nSites = payload.meta?.n_site_candidates ?? 0;
+    let statusText;
+    if (seekGoalRfViable) {
+      statusText = `${n} peak(s)${nSites ? `, ${nSites} site(s)` : ""} — RF link to goal: use Finish`;
+    } else if (payload.meta?.goal_finish_eligible) {
+      statusText = `${n} peak(s)${nSites ? `, ${nSites} site(s)` : ""} — no RF link to goal (${payload.meta.goal_distance_km ?? "?"} km)`;
+    } else if (payload.meta?.goal_in_hop_range === false) {
+      const maxKm = payload.meta?.hop_range_km ?? "?";
+      statusText = `${n} peak(s)${nSites ? `, ${nSites} site(s)` : ""} — goal out of hop range (${payload.meta.goal_distance_km ?? "?"} km, max ${maxKm} km)`;
+    } else if (payload.meta?.goal_hop_eligible) {
+      statusText = `${n} peak(s)${nSites ? `, ${nSites} site(s)` : ""} — goal visible but not a valid hop target`;
+    } else {
+      statusText = `${n} peak(s)${nSites ? `, ${nSites} site(s)` : ""} in view — click peak or site to commit hop`;
+    }
+    if (payload.meta?.peaks_cache === "build" && payload.meta?.n_peaks_total) {
+      statusText += ` · cached ${payload.meta.n_peaks_total} peaks`;
+    }
+    if (isMapTiltedView()) {
+      statusText += " · 3D view (overhead scan area)";
+    }
+    setSeekStatus(statusText);
+    resetSeekViewshedRetries();
+  }
+
+  async function warmDraftViewshedForSeek(lat, lon, signal) {
+    viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
+    if (await tryLoadDraftViewshedFromCache(lat, lon)) return true;
+    try {
+      const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), { method: "POST", signal });
+      if (!resp.ok) return false;
+      const vs = await resp.json().catch(() => null);
+      if (vs?.status === "ready" && vs.url && vs.coordinates) {
+        handleViewshedReady({ ...vs, slug: DRAFT_VIEWSHED_SLUG }, viewshedLoadEpoch);
+        return true;
+      }
+    } catch (err) {
+      if (err?.name === "AbortError") throw err;
+    }
+    return false;
+  }
+
+  function resetSeekViewshedRetries() {
+    seekViewshedRetryCount = 0;
+  }
+
+  function scheduleSeekViewshedRetry(from, errorText, epoch) {
+    seekViewshedRetryCount += 1;
+    if (seekViewshedRetryCount > SEEK_VIEWSHED_RETRY_MAX) {
+      setSeekStatus(errorText || "Viewshed failed — click Refresh candidates");
+      return false;
+    }
+    const delayMs = Math.min(15000, 1500 * seekViewshedRetryCount);
+    const attempt = `${seekViewshedRetryCount}/${SEEK_VIEWSHED_RETRY_MAX}`;
+    const detail = `${errorText || "Viewshed not ready"} — retry ${attempt} in ${Math.round(delayMs / 1000)}s`;
+    updateSeekProgressUi({ phase: "viewshed", detail });
+    setSeekStatus(detail);
+    window.setTimeout(() => {
+      if (epoch !== seekFetchEpoch) return;
+      void refreshSeekCandidates();
+    }, delayMs);
+    return true;
+  }
+
+  async function refreshSeekCandidates() {
+    if (!seekSessionActive() || !mapReady) return;
+    const from = seekCurrentFrom();
+    const goal = seekGoalCoords();
+    if (!from || !goal) return;
+    const fetchKey = seekFetchParamsKey();
+    if (!fetchKey) return;
+    seekActiveFetchKey = fetchKey;
+    const { epoch, signal } = beginSeekFetch();
+    let seekRetryScheduled = false;
+    setSeekScanning(true);
+    setSeekStatus("Warming viewshed for current hop…");
+    viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
+    try {
+      await warmDraftViewshedForSeek(from.lat, from.lon, signal);
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+    }
+    if (epoch !== seekFetchEpoch) return;
+    setSeekStatus("Scanning peaks…");
+    const params = new URLSearchParams({
+      from_lat: String(from.lat),
+      from_lon: String(from.lon),
+      goal_lat: String(goal.lat),
+      goal_lon: String(goal.lon),
+      bbox: seekViewportBbox(),
+      peak_bin_size_m: String(seekPeakBinSizeM()),
+    });
+    const exclude = seekExcludeParam();
+    if (exclude) params.set("exclude", exclude);
+    const excludeSlugs = seekExcludeSlugsParam();
+    if (excludeSlugs) params.set("exclude_slugs", excludeSlugs);
+    try {
+      const resp = await fetch(`/api/p/${projectSlug}/seek/candidates?${params}`, { signal });
+      const kickoff = await resp.json().catch(() => ({}));
+      if (epoch !== seekFetchEpoch) return;
+      if (!resp.ok) {
+        seekGoalInRange = false;
+        seekGoalRfViable = false;
+        syncSeekPanelUi();
+        setSeekStatus(kickoff.error || `Seek failed (${resp.status})`);
+        return;
+      }
+      if (resp.status !== 202 || kickoff.gen == null) {
+        setSeekStatus("Unexpected seek response");
+        return;
+      }
+      const outcome = await pollSeekUntilDone(kickoff.gen, signal, epoch);
+      if (epoch !== seekFetchEpoch) return;
+      if (outcome.cancelled) return;
+      if (outcome.error) {
+        seekGoalInRange = false;
+        seekGoalRfViable = false;
+        syncSeekPanelUi();
+        if (outcome.notReady) {
+          seekRetryScheduled = scheduleSeekViewshedRetry(from, outcome.error, epoch);
+        } else {
+          resetSeekViewshedRetries();
+          setSeekStatus(outcome.error);
+        }
+        return;
+      }
+      resetSeekViewshedRetries();
+      applySeekCandidatePayload(outcome.payload);
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      if (epoch !== seekFetchEpoch) return;
+      seekGoalInRange = false;
+      seekGoalRfViable = false;
+      syncSeekPanelUi();
+      setSeekStatus(String(err));
+    } finally {
+      if (epoch === seekFetchEpoch) seekFetchAbort = null;
+      if (epoch === seekFetchEpoch && !seekRetryScheduled) setSeekScanning(false);
+    }
+  }
+
+  function scheduleSeekRefresh({ force = false } = {}) {
+    if (!seekSessionActive()) return;
+    if (seekFetchTimer) window.clearTimeout(seekFetchTimer);
+    seekFetchTimer = window.setTimeout(() => {
+      seekFetchTimer = null;
+      const key = seekFetchParamsKey();
+      if (!key) return;
+      if (!force && seekScanning && key === seekActiveFetchKey) return;
+      void refreshSeekCandidates();
+    }, SEEK_FETCH_DEBOUNCE_MS);
+  }
+
+  function onMapMoveEndForSeek() {
+    if (isMapTiltedView()) {
+      syncSeekRefreshUi();
+      return;
+    }
+    scheduleSeekRefresh();
+  }
+
+  function syncSeekRefreshUi() {
+    const tilted = isMapTiltedView();
+    const showRefresh = Boolean(seekSessionActive() && !seekState?.complete && tilted);
+    if (seekRefreshBtn) {
+      seekRefreshBtn.hidden = !showRefresh;
+      seekRefreshBtn.disabled = seekScanning || !seekSessionActive();
+    }
+  }
+
+  function startSeekRun() {
+    const startSlug = seekStartSelect?.value;
+    const goal = seekGoalCoords();
+    if (!startSlug || !goal) {
+      setSeekStatus("Pick a start site and set goal on the map");
+      return;
+    }
+    const startSite = siteBySlug.get(startSlug);
+    if (!startSite) return;
+    if (haversineMeters(startSite.lat, startSite.lon, goal.lat, goal.lon) <= SEEK_GOAL_SAME_AS_START_M) {
+      setSeekStatus("Goal overlaps start site — pick a different point");
+      return;
+    }
+    seekRunning = true;
+    seekState = {
+      running: true,
+      startSlug,
+      goalLat: goal.lat,
+      goalLon: goal.lon,
+      hops: [
+        {
+          lat: startSite.lat,
+          lon: startSite.lon,
+          elev_m: startSite.height_m ?? null,
+          site_slug: startSlug,
+        },
+      ],
+      currentFrom: { lat: startSite.lat, lon: startSite.lon },
+      complete: false,
+      redoStack: [],
+    };
+    saveSeekState({ immediatePlan: true });
+    syncSeekPanelUi();
+    updateSeekPathOverlay();
+    scheduleSeekRefresh();
+  }
+
+  function markSeekComplete() {
+    if (!seekState) return;
+    seekState.complete = true;
+    seekState.running = true;
+    seekRunning = false;
+    seekGoalInRange = false;
+    seekGoalRfViable = false;
+    saveSeekState({ immediatePlan: true });
+    applySeekLayers({
+      candidates: { type: "FeatureCollection", features: [] },
+      lines: { type: "FeatureCollection", features: [] },
+    });
+    syncSeekPanelUi();
+    const peakHops = seekNewPeakHopCount();
+    setSeekStatus(`Path complete — ${peakHops} new peak hop(s) toward goal`);
+  }
+
+  function commitSeekCandidate(feature) {
+    if (!seekSessionActive() || !feature?.geometry?.coordinates) return;
+    const props = feature.properties || {};
+    if (props.is_goal && !props.rf_viable && props.rf_viable !== undefined) return;
+    abortSeekInFlight();
+    clearSeekRedoStack();
+    const [lon, lat] = feature.geometry.coordinates;
+    const hop = {
+      lat,
+      lon,
+      elev_m: props.elev_m ?? null,
+    };
+    if (props.site_slug) {
+      hop.site_slug = props.site_slug;
+      hop.site_name = props.site_name || null;
+    }
+    seekState.hops.push(hop);
+    seekState.currentFrom = { lat, lon };
+    if (props.is_goal) {
+      markSeekComplete();
+      return;
+    }
+    saveSeekState({ immediatePlan: true });
+    syncSeekPanelUi();
+    updateSeekPathOverlay();
+    scheduleSeekRefresh({ force: true });
+  }
+
+  function finishSeekAtGoal() {
+    if (!seekSessionActive() || !seekGoalRfViable) return;
+    const goal = seekGoalCoords();
+    if (!goal) return;
+    commitSeekCandidate({
+      geometry: { type: "Point", coordinates: [goal.lon, goal.lat] },
+      properties: {
+        is_goal: true,
+        rf_viable: true,
+        elev_m: null,
+      },
+    });
+  }
+
+  function undoSeekHop() {
+    if (!seekState || !Array.isArray(seekState.hops) || seekState.hops.length <= 1) return;
+    if (seekScanning) cancelSeekScanUi();
+    seekState.complete = false;
+    seekRunning = true;
+    if (!Array.isArray(seekState.redoStack)) seekState.redoStack = [];
+    const removed = seekState.hops.pop();
+    seekState.redoStack.push(removed);
+    const last = seekState.hops[seekState.hops.length - 1];
+    seekState.currentFrom = { lat: last.lat, lon: last.lon };
+    saveSeekState({ immediatePlan: true });
+    syncSeekPanelUi();
+    applySeekLayers({
+      candidates: { type: "FeatureCollection", features: [] },
+      lines: { type: "FeatureCollection", features: [] },
+    });
+    scheduleSeekRefresh();
+  }
+
+  function redoSeekHop() {
+    if (!seekState?.redoStack?.length) return;
+    if (seekScanning) cancelSeekScanUi();
+    const hop = seekState.redoStack.pop();
+    seekState.hops.push(hop);
+    seekState.currentFrom = { lat: hop.lat, lon: hop.lon };
+    if (seekHopMatchesGoal(hop)) {
+      saveSeekState({ immediatePlan: true });
+      markSeekComplete();
+      return;
+    }
+    seekState.complete = false;
+    seekRunning = true;
+    saveSeekState({ immediatePlan: true });
+    syncSeekPanelUi();
+    applySeekLayers({
+      candidates: { type: "FeatureCollection", features: [] },
+      lines: { type: "FeatureCollection", features: [] },
+    });
+    scheduleSeekRefresh();
+  }
+
+  function resetSeekRun() {
+    seekRunning = false;
+    seekGoalInRange = false;
+    seekGoalRfViable = false;
+    seekSiteCandidateSlugs = new Set();
+    seekActiveFetchKey = null;
+    seekPendingGoalLat = null;
+    seekPendingGoalLon = null;
+    setSeekGoalPlacementMode(false);
+    cancelSeekScanUi();
+    cancelSeekAncillaryLinksFetch();
+    seekAncillaryLinksGen += 1;
+    if (seekAncillaryLinksTimer) {
+      window.clearTimeout(seekAncillaryLinksTimer);
+      seekAncillaryLinksTimer = null;
+    }
+    seekState = null;
+    saveSeekState({ immediatePlan: true });
+    removeSeekLayers();
+    clearAllSeekHopViewsheds();
+    removeSeekAncillaryLinksLayer();
+    removeSeekGoalMarker();
+    setViewshedVisible(DRAFT_VIEWSHED_SLUG, false);
+    setSeekStatus("");
+    syncSeekPanelUi();
+  }
+
+  function restoreSeekSessionIfAny() {
+    rehydrateSeekStateFromConfig();
+    if (!seekState?.running) return;
+    if (!config.seek?.plan) {
+      const plan = seekStateToYamlPlan(seekState);
+      if (plan) persistSeekPlanToYaml({ immediate: true });
+    }
+    applySiteLayerFilters();
+    seekRunning = !seekState.complete;
+    seekPanelOpen = true;
+    if (seekState.goalLat != null && seekState.goalLon != null) {
+      seekPendingGoalLat = seekState.goalLat;
+      seekPendingGoalLon = seekState.goalLon;
+    }
+    populateSeekStartSelect();
+    syncSeekGoalUi();
+    syncSeekPanelUi();
+    updateSeekPathOverlay();
+    if (!seekState.complete) scheduleSeekRefresh();
+    else {
+      applySeekLayers({
+        candidates: { type: "FeatureCollection", features: [] },
+        lines: { type: "FeatureCollection", features: [] },
+      });
+    }
+  }
+
   function wireMapInteractions() {
     const siteLayerIds = [SITES_CIRCLE, SITES_LABELS];
-    map.on("mousemove", () => {
-      if (addPlacementMode || editMode) map.getCanvas().style.cursor = "crosshair";
+    map.on("mousemove", (ev) => {
+      if (addPlacementMode || editMode || seekGoalPlacementMode) {
+        map.getCanvas().style.cursor = "crosshair";
+        return;
+      }
+      if (seekSessionActive()) {
+        if (map.getLayer(SEEK_CANDIDATES_LAYER)) {
+          const seekFeats = map.queryRenderedFeatures(ev.point, { layers: [SEEK_CANDIDATES_LAYER] });
+          if (seekFeats.length) {
+            map.getCanvas().style.cursor = "pointer";
+            return;
+          }
+        }
+        const siteFeats = map.queryRenderedFeatures(ev.point, { layers: siteLayerIds });
+        if (siteFeats.length) {
+          const slug = siteFeats[0].properties?.slug;
+          if (slug && seekSiteCandidateSlugs.has(slug)) {
+            map.getCanvas().style.cursor = "pointer";
+            return;
+          }
+        }
+      }
+      syncMapCursor();
     });
     for (const layerId of siteLayerIds) {
       map.on("mouseenter", layerId, () => {
-        if (addPlacementMode || editMode) {
+        if (addPlacementMode || editMode || seekGoalPlacementMode) {
           map.getCanvas().style.cursor = "crosshair";
           return;
         }
@@ -7437,6 +9254,41 @@
         sitePanelEditLon.value = formatCoord(ev.lngLat.lng);
         onEditCoordsChanged();
         return;
+      }
+      if (seekGoalPlacementMode && seekPanelOpen) {
+        setSeekGoalAt(ev.lngLat.lat, ev.lngLat.lng);
+        return;
+      }
+      if (seekSessionActive()) {
+        if (map.getLayer(SEEK_CANDIDATES_LAYER)) {
+          const seekFeats = map.queryRenderedFeatures(ev.point, { layers: [SEEK_CANDIDATES_LAYER] });
+          if (seekFeats.length) {
+            const props = seekFeats[0].properties || {};
+            if (!props.is_goal) {
+              commitSeekCandidate(seekFeats[0]);
+            }
+            return;
+          }
+        }
+        const siteSeekFeats = map.queryRenderedFeatures(ev.point, { layers: siteLayerIds });
+        if (siteSeekFeats.length) {
+          const slug = siteSeekFeats[0].properties?.slug;
+          if (slug && seekSiteCandidateSlugs.has(slug)) {
+            const site = siteBySlug.get(slug);
+            if (site) {
+              commitSeekCandidate({
+                geometry: { type: "Point", coordinates: [site.lon, site.lat] },
+                properties: {
+                  is_site: true,
+                  site_slug: slug,
+                  site_name: site.name,
+                  elev_m: site.height_m ?? null,
+                },
+              });
+              return;
+            }
+          }
+        }
       }
       const feats = map.queryRenderedFeatures(ev.point, { layers: siteLayerIds });
       if (feats.length) {
@@ -7523,16 +9375,22 @@
       fitSites();
     }
     void refreshLandMapLayers();
+    restoreSeekSessionIfAny();
     restoring = false;
   });
 
   map.on("pitch", () => {
     syncTerrainFromPitch();
     scheduleSaveMapState();
+    syncSeekRefreshUi();
+    if (!isMapTiltedView() && seekSessionActive() && !seekState?.complete) {
+      scheduleSeekRefresh();
+    }
   });
   map.on("moveend", scheduleSaveMapState);
   map.on("moveend", onMapMoveEndForEntityPanel);
   map.on("moveend", onMapMoveEndForWarmPriorities);
+  map.on("moveend", onMapMoveEndForSeek);
   map.on("rotateend", scheduleSaveMapState);
   map.on("move", updatePinOverlays);
   map.on("resize", updatePinOverlays);
@@ -7665,6 +9523,39 @@
       entityPanelFilterByViewport = !!entityPanelFilterVisible.checked;
       renderEntityPanel();
       scheduleSaveMapState();
+    });
+  }
+  if (mapToolSeek) {
+    mapToolSeek.addEventListener("click", () => toggleSeekPanel());
+  }
+  if (seekPanelClose) {
+    seekPanelClose.addEventListener("click", () => toggleSeekPanel(false));
+  }
+  if (seekStartSelect) {
+    seekStartSelect.addEventListener("change", () => maybeAutoStartSeekFromSelects());
+  }
+  if (seekSetGoalBtn) {
+    seekSetGoalBtn.addEventListener("click", () => {
+      if (!seekPanelOpen || seekScanning) return;
+      setSeekGoalPlacementMode(!seekGoalPlacementMode);
+    });
+  }
+  if (seekFinishBtn) {
+    seekFinishBtn.addEventListener("click", () => finishSeekAtGoal());
+  }
+  if (seekUndoBtn) {
+    seekUndoBtn.addEventListener("click", () => undoSeekHop());
+  }
+  if (seekRedoBtn) {
+    seekRedoBtn.addEventListener("click", () => redoSeekHop());
+  }
+  if (seekResetBtn) {
+    seekResetBtn.addEventListener("click", () => resetSeekRun());
+  }
+  if (seekRefreshBtn) {
+    seekRefreshBtn.addEventListener("click", () => {
+      if (!seekSessionActive() || seekScanning) return;
+      scheduleSeekRefresh({ force: true });
     });
   }
   if (mapToolSites) {
@@ -7914,6 +9805,15 @@
     if (ev.key !== "Escape") return;
     if (createMode) {
       cancelCreate();
+      return;
+    }
+    if (seekPanelOpen && seekRunning) {
+      resetSeekRun();
+      toggleSeekPanel(false);
+      return;
+    }
+    if (seekPanelOpen) {
+      toggleSeekPanel(false);
       return;
     }
     if (editMode) {

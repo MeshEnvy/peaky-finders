@@ -2060,3 +2060,234 @@ wa-dialog wa-callout[hidden] {
   border-color: rgba(74, 108, 247, 0.55);
   color: #c7d2fe;
 }
+
+.map-toolbar-tool--active {
+  background: rgba(74, 108, 247, 0.25);
+  color: #c7d2fe;
+}
+
+.seek-goal-marker {
+  width: 22px;
+  height: 22px;
+  position: relative;
+  pointer-events: none;
+}
+
+.seek-goal-marker::before,
+.seek-goal-marker::after {
+  content: "";
+  position: absolute;
+  background: #22c55e;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.65);
+}
+
+.seek-goal-marker::before {
+  left: 50%;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  transform: translateX(-50%);
+}
+
+.seek-goal-marker::after {
+  top: 50%;
+  left: 2px;
+  right: 2px;
+  height: 2px;
+  transform: translateY(-50%);
+}
+
+.map-shell.seek-goal-placement-mode #map,
+.map-shell.seek-goal-placement-mode .maplibregl-canvas {
+  cursor: crosshair;
+}
+
+.seek-panel {
+  position: absolute;
+  top: 4.5rem;
+  right: 3.5rem;
+  z-index: 4;
+  width: min(18rem, calc(100vw - 2rem));
+  padding: 0.75rem;
+  border-radius: var(--wa-border-radius-m);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(18, 18, 20, 0.92);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.seek-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.seek-panel__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.seek-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.65rem;
+}
+
+.seek-panel__field select {
+  width: 100%;
+}
+
+.seek-panel__goal-coords {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.seek-panel__goal-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.seek-panel__goal-row wa-button[aria-pressed="true"] {
+  --wa-color-brand-fill-loud: rgba(34, 197, 94, 0.25);
+}
+
+.seek-panel__hint {
+  margin: 0.15rem 0 0;
+  line-height: 1.35;
+}
+
+.seek-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.seek-panel__history-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.seek-panel__history-actions wa-icon {
+  font-size: 0.95rem;
+}
+
+.seek-panel__finish-btn {
+  appearance: none;
+  border: 1px solid rgb(34 197 94 / 0.45);
+  border-radius: var(--wa-border-radius-s);
+  background: rgb(34 197 94 / 0.18);
+  color: #bbf7d0;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--wa-font-size-s);
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 0.35rem 0.65rem;
+}
+
+.seek-panel__finish-btn:hover:not(:disabled) {
+  background: rgb(34 197 94 / 0.28);
+}
+
+.seek-panel__finish-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.seek-panel__status {
+  margin: 0;
+  min-height: 1.25rem;
+}
+
+.seek-panel__progress {
+  margin-top: 0.35rem;
+}
+
+.seek-panel__progress-track {
+  position: relative;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.08);
+  overflow: hidden;
+}
+
+.seek-panel__progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4a6cf7, #60a5fa);
+  width: 0%;
+  transition: width 0.25s ease-out;
+}
+
+.seek-panel__progress-bar--indeterminate {
+  width: 40%;
+  animation: seek-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes seek-progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+
+.seek-panel__progress-detail {
+  margin: 0.35rem 0 0;
+  min-height: 1rem;
+}
+
+.seek-hop-marker {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 999px;
+  background: #fbbf24;
+  color: #1a1a1a;
+  font-size: 0.65rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #1a1a1a;
+}
+
+.seek-hop-marker--site {
+  background: #4a6cf7;
+  color: #fff;
+  border-color: #fff;
+}
+
+.seek-hop-marker-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  pointer-events: none;
+}
+
+.seek-hop-marker-label {
+  max-width: 9rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  background: rgba(26, 26, 26, 0.82);
+  color: #e8eaed;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
