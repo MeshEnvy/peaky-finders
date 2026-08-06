@@ -62,6 +62,25 @@ def test_bump_reorders_before_lower_priority() -> None:
     assert order == ["slow", "fast", "medium"]
 
 
+def test_ensure_submitted_reuses_inflight_future() -> None:
+    queue = reset_coverage_queue_for_tests()
+    started = threading.Event()
+    proceed = threading.Event()
+
+    def _fn() -> str:
+        started.set()
+        assert proceed.wait(timeout=2.0)
+        return "done"
+
+    first = queue.ensure_submitted("draft", _fn, priority=0)
+    assert started.wait(timeout=2.0)
+    second = queue.ensure_submitted("draft", _fn, priority=0)
+    assert second is first
+    proceed.set()
+    assert first.result(timeout=2.0) == "done"
+    assert second.result(timeout=2.0) == "done"
+
+
 def test_bump_many_counts() -> None:
     queue = reset_coverage_queue_for_tests()
     for slug in ("a", "b", "c"):

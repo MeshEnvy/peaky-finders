@@ -43,6 +43,7 @@ class CoverageWorkQueue:
         self._heap: list[_HeapEntry] = []
         self._jobs: dict[str, _JobState] = {}
         self._inflight: set[str] = set()
+        self._inflight_futures: dict[str, Future[Any]] = {}
         self._started = False
         self._worker_threads: list[threading.Thread] = []
 
@@ -90,6 +91,7 @@ class CoverageWorkQueue:
             key = state.key
             with self._cond:
                 self._inflight.add(key)
+                self._inflight_futures[key] = state.future
 
             try:
                 if not state.cancelled and not state.future.cancelled():
@@ -102,6 +104,7 @@ class CoverageWorkQueue:
             finally:
                 with self._cond:
                     self._inflight.discard(key)
+                    self._inflight_futures.pop(key, None)
                     self._jobs.pop(key, None)
                     self._cond.notify_all()
 
@@ -118,16 +121,9 @@ class CoverageWorkQueue:
             existing = self._jobs.get(key)
             if existing is not None and not existing.cancelled:
                 return existing.future
-            if key in self._inflight:
-                # Rare race: job popped but not yet in _inflight from worker view.
-                # Wait briefly and retry via ensure_submitted pattern at call site.
-                future: Future[_T] = Future()
-                seq = self._next_seq()
-                state = _JobState(key=key, fn=fn, future=future, priority=priority, seq=seq)
-                self._jobs[key] = state
-                self._push_job(state)
-                self._cond.notify()
-                return future
+            inflight = self._inflight_futures.get(key)
+            if inflight is not None:
+                return inflight
 
             future = Future()
             seq = self._next_seq()
@@ -147,12 +143,12 @@ class CoverageWorkQueue:
         """Submit only when *key* is not queued or inflight."""
         self._ensure_workers()
         with self._cond:
-            if key in self._inflight or key in self._jobs:
-                existing = self._jobs.get(key)
-                if existing is not None:
-                    return existing.future
-                future: Future[_T] = Future()
-                return future
+            existing = self._jobs.get(key)
+            if existing is not None and not existing.cancelled:
+                return existing.future
+            inflight = self._inflight_futures.get(key)
+            if inflight is not None:
+                return inflight
         return self.submit(key, fn, priority=priority)
 
     def bump(self, key: str, priority: int) -> bool:
@@ -201,6 +197,7 @@ class CoverageWorkQueue:
             self._jobs.clear()
             self._heap.clear()
             self._inflight.clear()
+            self._inflight_futures.clear()
             self._seq = 0
 
 
