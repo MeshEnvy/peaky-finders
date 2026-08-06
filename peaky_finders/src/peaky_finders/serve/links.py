@@ -24,7 +24,7 @@ from peaky_finders.core.preset import (
 )
 from peaky_finders.core.rf.mapping import resolved_site_tx_height_m
 from peaky_finders.serve.viewshed_engine import get_viewshed_engine
-from peaky_finders.serve.viewshed_sim import ViewshedSimOverrides
+from peaky_finders.serve.viewshed_sim import SERVE_VIEWSHED_PREVIEW_RASTER_DIMENSION, ViewshedSimOverrides
 
 _links_eval_lock = threading.Lock()
 
@@ -520,7 +520,7 @@ def load_coords_site_links(
         return []
 
     engine = get_viewshed_engine()
-    sim = ViewshedSimOverrides()
+    preview_sim = ViewshedSimOverrides(raster_dimension=SERVE_VIEWSHED_PREVIEW_RASTER_DIMENSION)
     records: list[dict[str, object]] = []
     with _links_eval_lock:
         if verbose:
@@ -528,23 +528,38 @@ def load_coords_site_links(
                 f"serve links prefetch: {len(candidates)} viewshed pair(s) at ({lat:.6f}, {lon:.6f})",
                 flush=True,
             )
-        draft_fp = engine.ensure_coords_footprint(
+        draft_fp = engine.read_coords_footprint(
             project_dir,
             preset,
             lat=lat,
             lon=lon,
-            sim=sim,
+            sim=preview_sim,
             verbose=verbose,
         )
-        for slug, site_lat, site_lon in candidates:
-            site_fp = engine.ensure_site_footprint(
+        if draft_fp is None:
+            draft_fp = engine.ensure_coords_footprint(
                 project_dir,
                 preset,
-                slug,
-                sites[slug],
-                sim=sim,
+                lat=lat,
+                lon=lon,
+                sim=preview_sim,
                 verbose=verbose,
             )
+        for slug, site_lat, site_lon in candidates:
+            site_fp = engine.read_site_footprint(
+                project_dir,
+                preset,
+                sites[slug],
+                verbose=verbose,
+            )
+            if site_fp is None:
+                site_fp = engine.ensure_site_footprint(
+                    project_dir,
+                    preset,
+                    slug,
+                    sites[slug],
+                    verbose=verbose,
+                )
             if not mutual_viewshed_link(
                 draft_fp,
                 site_fp,

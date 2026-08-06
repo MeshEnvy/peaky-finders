@@ -324,8 +324,7 @@
   function ensureSiteVisibleAfterAdd(site) {
     siteHidden.delete(site.slug);
     if (!sitePassesTagFilter(site)) {
-      activeTagFilters.clear();
-      renderTagFilters();
+      tagFilterBypassSlugs.add(site.slug);
     }
   }
 
@@ -409,6 +408,10 @@
   const sitePanelClose = document.getElementById("site-panel-close");
   const sitePanelCreateClose = document.getElementById("site-panel-create-close");
   const sitePanelCreateName = document.getElementById("site-panel-create-name");
+  const sitePanelCreateTagsEl = document.getElementById("site-panel-create-tags");
+  const sitePanelCreateTagForm = document.getElementById("site-panel-create-tag-form");
+  const sitePanelCreateTagInput = document.getElementById("site-panel-create-tag-input");
+  const sitePanelCreateTagSuggestions = document.getElementById("site-panel-create-tag-suggestions");
   const sitePanelSlugPreview = document.getElementById("site-panel-slug-preview");
   const sitePanelCreateCoords = document.getElementById("site-panel-create-coords");
   const sitePanelCreateError = document.getElementById("site-panel-create-error");
@@ -540,11 +543,14 @@
       : [],
   );
   let tagFilterMode = savedMapState?.tagFilterMode === "or" ? "or" : "and";
+  /** Sites that stay visible/listable despite active tag filters (e.g. just created). */
+  const tagFilterBypassSlugs = new Set();
   let entityPanelOpen = savedMapState?.entityPanelOpen === true;
   let entityPanelTab = savedMapState?.entityPanelTab === "land" ? "land" : "sites";
   let entityPanelFilterByViewport = savedMapState?.filterByViewport === true;
   let tagAddOpen = false;
   let addSiteDraftTags = [];
+  let createPanelDraftTags = [];
   let importDraftTags = [];
   let importPreviewPoints = [];
   let importPreviewPayload = null;
@@ -747,7 +753,7 @@
 
   function entityPanelSites() {
     return sites
-      .filter((site) => sitePassesTagFilter(site))
+      .filter((site) => sitePassesTagFilter(site) || tagFilterBypassSlugs.has(site.slug))
       .filter((site) => !entityPanelFilterByViewport || siteVisibleInMap(site));
   }
 
@@ -1021,6 +1027,12 @@
     if (isSiteMapHidden(slug) || !isViewshedVisible(slug)) return;
     if (map.getLayer(viewshedLayerId(slug))) return;
     if (viewshedLoading.has(slug) || viewshedPendingEpoch.has(slug)) return;
+    if (slug === DRAFT_VIEWSHED_SLUG) {
+      const lat = draftPlacementLat ?? pendingCreateLat;
+      const lon = draftPlacementLon ?? pendingCreateLon;
+      if (lat != null && lon != null) void loadDraftViewshedAt(lat, lon);
+      return;
+    }
     const site = siteBySlug.get(slug);
     if (site) scheduleViewshedLoad(site);
   }
@@ -1097,10 +1109,16 @@
     return coordVisibleInMapViewport(map, site.lon, site.lat);
   }
 
+  function isEphemeralViewshedSlug(slug) {
+    return slug === DRAFT_VIEWSHED_SLUG || String(slug).startsWith("_edit_hist_");
+  }
+
   function isSiteMapHidden(slug) {
+    if (isEphemeralViewshedSlug(slug)) return siteHidden.has(slug);
     if (siteHidden.has(slug)) return true;
     const site = siteBySlug.get(slug);
     if (!site) return true;
+    if (tagFilterBypassSlugs.has(slug)) return false;
     return !sitePassesTagFilter(site);
   }
 
@@ -1164,6 +1182,7 @@
     if (idx >= 0) sites.splice(idx, 1);
     siteBySlug.delete(slug);
     siteHidden.delete(slug);
+    tagFilterBypassSlugs.delete(slug);
     viewshedVisible.delete(slug);
     removeViewshedLayer(slug);
     if (selectedSlug === slug) deselectSite();
@@ -1603,6 +1622,49 @@
     sitePanelSlugPreview.textContent = previewSlugForName(name);
   }
 
+  function renderCreatePanelTags() {
+    renderTagToggleChips(sitePanelCreateTagsEl, createPanelDraftTags, allProjectTags(), (tag, wasSelected) => {
+      if (wasSelected) {
+        createPanelDraftTags = createPanelDraftTags.filter((t) => t !== tag);
+      } else {
+        createPanelDraftTags = [...createPanelDraftTags, tag];
+      }
+      renderCreatePanelTags();
+      syncCreatePanelTagSuggestions();
+    });
+  }
+
+  function syncCreatePanelTagSuggestions() {
+    if (!sitePanelCreateTagSuggestions) return;
+    sitePanelCreateTagSuggestions.innerHTML = "";
+    const selected = new Set(createPanelDraftTags);
+    for (const tag of allProjectTags()) {
+      if (selected.has(tag)) continue;
+      const opt = document.createElement("option");
+      opt.value = tag;
+      sitePanelCreateTagSuggestions.appendChild(opt);
+    }
+  }
+
+  function resetCreatePanelTags() {
+    createPanelDraftTags = [];
+    if (sitePanelCreateTagInput) sitePanelCreateTagInput.value = "";
+    renderCreatePanelTags();
+    syncCreatePanelTagSuggestions();
+  }
+
+  function addCreatePanelTagFromInput() {
+    if (!sitePanelCreateTagInput) return;
+    const tag = normalizeTagInput(sitePanelCreateTagInput.value);
+    sitePanelCreateTagInput.value = "";
+    if (!tag) return;
+    if (!createPanelDraftTags.includes(tag)) {
+      createPanelDraftTags = [...createPanelDraftTags, tag];
+      renderCreatePanelTags();
+      syncCreatePanelTagSuggestions();
+    }
+  }
+
   function syncCreatePanelForKind() {
     if (sitePanelCreateTitle) sitePanelCreateTitle.textContent = "New site";
     if (sitePanelCreateBadge) {
@@ -1619,6 +1681,7 @@
     setCreateError("");
     sitePanelCreateName.value = "";
     sitePanelCreateCoords.textContent = `${formatCoord(lat)}, ${formatCoord(lon)}`;
+    resetCreatePanelTags();
     syncCreateSlugPreview();
     syncCreatePanelForKind();
     resetCreatePrefetchUI();
@@ -1633,7 +1696,6 @@
     viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
     syncCreateViewshedCheckbox();
     void loadDraftViewshedAt(lat, lon);
-    void loadPlacementPrefetchAt(lat, lon);
     sitePanelCreateName.focus();
   }
 
@@ -1916,6 +1978,7 @@
     removeDraftMarker();
     removeDraftViewshed();
     resetCreatePrefetchUI();
+    resetCreatePanelTags();
     setCreateError("");
     if (selectedSlug) {
       sitePanel.hidden = false;
@@ -1943,14 +2006,16 @@
     setCreateError("");
     sitePanelCreateSave.disabled = true;
     try {
+      const body = {
+        name,
+        lat: pendingCreateLat,
+        lon: pendingCreateLon,
+      };
+      if (createPanelDraftTags.length) body.tags = [...createPanelDraftTags];
       const resp = await fetch(sitesApiUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          lat: pendingCreateLat,
-          lon: pendingCreateLon,
-        }),
+        body: JSON.stringify(body),
       });
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) {
@@ -5093,6 +5158,13 @@
     return `/api/p/${projectSlug}/viewsheds/${siteSlug}?${params}`;
   }
 
+  function viewshedPrefetchMetaUrl(lat, lon) {
+    const params = viewshedPreviewSimQueryParams();
+    params.set("lat", String(lat));
+    params.set("lon", String(lon));
+    return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
+  }
+
   function clearViewshedLoadingState(slug) {
     viewshedPendingEpoch.delete(slug);
     viewshedLoading.delete(slug);
@@ -5270,6 +5342,21 @@
     syncEditViewshedCheckbox();
   }
 
+  async function tryLoadDraftViewshedFromCache(lat, lon) {
+    try {
+      const resp = await fetch(viewshedPrefetchMetaUrl(lat, lon));
+      if (!resp.ok) return false;
+      const overlay = await resp.json();
+      if (overlay.url && overlay.coordinates) {
+        acceptViewshedOverlay({ ...overlay, slug: DRAFT_VIEWSHED_SLUG, status: "ready" });
+        return true;
+      }
+    } catch (_) {
+      /* cache probe optional */
+    }
+    return false;
+  }
+
   async function loadDraftViewshedAt(lat, lon, options) {
     const refreshOnly = Boolean(options && options.refreshOnly);
     if (refreshOnly) {
@@ -5286,6 +5373,15 @@
     updatePinOverlays();
     syncCreateViewshedCheckbox();
     syncEditViewshedCheckbox();
+    if (await tryLoadDraftViewshedFromCache(lat, lon)) {
+      if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) === epoch) {
+        viewshedPendingEpoch.delete(DRAFT_VIEWSHED_SLUG);
+        draftViewshedLoading = false;
+        syncCreateViewshedCheckbox();
+        syncEditViewshedCheckbox();
+      }
+      return;
+    }
     try {
       const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), { method: "POST" });
       if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return;
@@ -5427,8 +5523,12 @@
     updatePinOverlays();
     if (vs.slug === selectedSlug) syncViewshedCheckbox();
     if (vs.slug === DRAFT_VIEWSHED_SLUG) {
+      draftViewshedLoading = false;
       syncCreateViewshedCheckbox();
       syncEditViewshedCheckbox();
+      if (draftPlacementLat != null && draftPlacementLon != null) {
+        void loadPlacementPrefetchAt(draftPlacementLat, draftPlacementLon);
+      }
     }
     raiseSiteLayers();
   }
@@ -6247,6 +6347,7 @@
   function applySiteTagChange(slug) {
     const site = siteBySlug.get(slug);
     if (!site) return;
+    if (sitePassesTagFilter(site)) tagFilterBypassSlugs.delete(slug);
     applySiteLayerFilters();
     applyViewshedVisibilityForSite(slug);
     renderTagFilters();
@@ -7544,6 +7645,12 @@
       void saveNewPlacement();
     }
   });
+  if (sitePanelCreateTagForm) {
+    sitePanelCreateTagForm.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      addCreatePanelTagFromInput();
+    });
+  }
   if (entityPanelToggle) {
     entityPanelToggle.addEventListener("click", () => {
       if (entityPanelOpen) {
@@ -7797,7 +7904,10 @@
   }
   if (sitePanelCreateViewshed) {
     sitePanelCreateViewshed.addEventListener("change", (ev) => {
-      if (createMode) setViewshedVisible(DRAFT_VIEWSHED_SLUG, ev.target.checked);
+      if (!createMode) return;
+      const visible = ev.target.checked;
+      setViewshedVisible(DRAFT_VIEWSHED_SLUG, visible);
+      if (!visible) removeDraftViewshed();
     });
   }
   document.addEventListener("keydown", (ev) => {

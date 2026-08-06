@@ -602,6 +602,14 @@ def project_html(
           <input id="site-panel-create-name" type="text" required>
         </div>
         <div class="site-panel__section">
+          <span class="site-panel__label" id="site-panel-create-tags-label">Tags</span>
+          <div class="site-tags add-site-tags" id="site-panel-create-tags" role="group" aria-labelledby="site-panel-create-tags-label"></div>
+          <form class="site-tag-add-form add-site-tag-form" id="site-panel-create-tag-form">
+            <input id="site-panel-create-tag-input" type="text" list="site-panel-create-tag-suggestions" placeholder="add tag" autocomplete="off" maxlength="32" aria-label="Add tag">
+            <datalist id="site-panel-create-tag-suggestions"></datalist>
+          </form>
+        </div>
+        <div class="site-panel__section">
           <span class="site-panel__label">Slug</span>
           <p class="site-panel__value pf-mono pf-muted" id="site-panel-slug-preview"></p>
         </div>

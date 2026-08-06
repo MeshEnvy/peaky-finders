@@ -21,6 +21,7 @@ from peaky_finders.serve.viewshed import (
     ServeViewshedError,
     _preview_site_at,
     ensure_site_viewshed_png,
+    resolve_site_viewshed_workdir,
 )
 from peaky_finders.serve.viewshed_sim import ViewshedSimOverrides
 
@@ -191,6 +192,26 @@ class ViewshedEngine:
         self._store_result(key, fp)
         return fp
 
+    def read_coords_footprint(
+        self,
+        project_dir: Path,
+        preset: Preset,
+        *,
+        lat: float,
+        lon: float,
+        sim: ViewshedSimOverrides | None = None,
+        verbose: bool = False,
+    ) -> BaseGeometry | None:
+        """Return an existing draft-coordinate footprint — never generate coverage."""
+        site = _preview_site_at(lat, lon)
+        return self.read_site_footprint(
+            project_dir,
+            preset,
+            site,
+            sim=sim,
+            verbose=verbose,
+        )
+
     def ensure_site_footprint(
         self,
         project_dir: Path,
@@ -214,13 +235,11 @@ class ViewshedEngine:
                 sim_overrides=sim,
                 verbose=verbose,
             )
-            viewshed_root = resolved_viewshed_root(preset_path)
-            workdir = resolved_viewshed_workdir_for_coords(
-                preset=preset,
-                viewshed_root=viewshed_root,
-                lat=float(site.lat),
-                lon=float(site.lon),
-                site=site,
+            workdir = resolve_site_viewshed_workdir(
+                project_dir,
+                preset,
+                site,
+                sim_overrides=sim,
             )
             return load_viewshed_footprint(workdir, preset=preset, verbose=verbose)
 
@@ -250,12 +269,11 @@ class ViewshedEngine:
                 sim_overrides=sim,
                 verbose=verbose,
             )
-            viewshed_root = resolved_viewshed_root(preset_path)
-            workdir = resolved_viewshed_workdir_for_coords(
-                preset=preset,
-                viewshed_root=viewshed_root,
-                lat=float(lat),
-                lon=float(lon),
+            workdir = resolve_site_viewshed_workdir(
+                project_dir,
+                preset,
+                site,
+                sim_overrides=sim,
             )
             return load_viewshed_footprint(workdir, preset=preset, verbose=verbose)
 

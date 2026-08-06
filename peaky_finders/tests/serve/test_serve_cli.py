@@ -560,8 +560,11 @@ def test_api_sites_prefetch(tmp_path: Path) -> None:
             patch("peaky_finders.serve.links.get_viewshed_engine") as mock_engine,
         ):
             inst = mock_engine.return_value
-            inst.ensure_site_footprint.return_value = box(-120.0, 39.0, -119.0, 41.0)
-            inst.ensure_coords_footprint.return_value = box(-120.0, 39.0, -119.0, 41.0)
+            covering = box(-120.0, 39.0, -119.0, 41.0)
+            inst.read_coords_footprint.return_value = covering
+            inst.read_site_footprint.return_value = covering
+            inst.ensure_site_footprint.return_value = covering
+            inst.ensure_coords_footprint.return_value = covering
             conn = HTTPConnection(host, port, timeout=2)
             conn.request("GET", "/api/p/sample/sites/prefetch?lat=39.5&lon=-119.5")
             resp = conn.getresponse()
@@ -727,6 +730,8 @@ def test_project_page_includes_add_controls(tmp_path: Path) -> None:
         assert 'id="add-site-modal"' in body
         assert 'id="add-site-coords"' in body
         assert 'id="site-panel-create"' in body
+        assert 'id="site-panel-create-tags"' in body
+        assert 'id="site-panel-create-tag-input"' in body
         assert 'id="site-panel-create-viewshed"' in body
         assert 'id="site-panel-slug-preview"' in body
     finally:

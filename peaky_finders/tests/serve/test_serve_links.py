@@ -350,6 +350,7 @@ def _mock_engine(*, site_fp=_COVERING_FP, coords_fp=_COVERING_FP):
     inst = engine.return_value
     inst.ensure_site_footprint.return_value = site_fp
     inst.ensure_coords_footprint.return_value = coords_fp
+    inst.read_coords_footprint.return_value = coords_fp
     inst.read_site_footprint.return_value = site_fp
     inst.vectorize_site_footprint.return_value = site_fp
     return engine, inst
@@ -495,6 +496,8 @@ def test_api_sites_prefetch_exclude_site(tmp_path: Path) -> None:
             patch("peaky_finders.serve.links.get_viewshed_engine") as mock_engine,
         ):
             inst = mock_engine.return_value
+            inst.read_coords_footprint.return_value = _COVERING_FP
+            inst.read_site_footprint.return_value = _COVERING_FP
             inst.ensure_site_footprint.return_value = _COVERING_FP
             inst.ensure_coords_footprint.return_value = _COVERING_FP
             conn = HTTPConnection(host, port, timeout=2)
