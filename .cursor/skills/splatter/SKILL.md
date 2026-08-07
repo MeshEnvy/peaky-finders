@@ -77,8 +77,21 @@ Pairwise hops (same physics as raster, no viewshed):
 
 ```python
 session.ensure_tiles_for_points([(lat, lon), ...], buffer_m=5000.0)
+session.ensure_tiles_for_bounds(minx, miny, maxx, maxy)
+session.missing_tiles_for_bounds(minx, miny, maxx, maxy)  # inventory only
+session.mirror_tile_gz_bytes("N40W119.hgt.gz")  # after ensure; legacy SPLAT SDF glue
 session.link_mutual_viable(lat_a, lon_a, lat_b, lon_b, rf_json)
 session.link_mutual_batch(pairs, rf_json)  # rayon parallel inside Rust
+```
+
+Goal seek peak candidates (binned local maxima + mutual RF, elevation-ranked walk):
+
+```python
+session.linkable_binned_peaks(
+    source_lat, source_lon, tx_height_agl,
+    eligible_geojson, rf_json,
+    limit=48, bin_size_m=1500.0, min_bin_m=500.0,
+)  # -> [(lon, lat, terrain_elev_m), ...]
 ```
 
 `rf_json` = `preset_to_request(...).model_dump_json()` — position fields ignored for link eval; `radius` caps max hop range.
@@ -123,9 +136,12 @@ CLI smoke: `splatter/test-los.sh` (Docker, needs workspace with `request.json`).
 
 | Module | Role |
 |--------|------|
-| `engine.rs` | Coverage raster, batch orchestration, SPLAT outputs |
+| `engine.rs` | Coverage raster, batch orchestration, SPLAT outputs, tile bounds |
 | `propagate.rs` | Point-to-point link eval, mutual hop |
 | `session.rs` | Shared DEM session (PyO3 + library) |
+| `peaks.rs` | GeoJSON polygon mask, binned local maxima |
+| `peak_links.rs` | Ranked mutual-RF peak walk for seek |
+| `skadi_fetch.rs` | Skadi S3 fetch-on-miss, mirror inventory |
 | `hash.rs` | Request schema, normalize, `splat_input_sha256` |
 | `lora.rs` | LoRa sensitivity, reliability margin |
 | `dem.rs` | Skadi HGT mosaic |

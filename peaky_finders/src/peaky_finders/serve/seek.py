@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from shapely.geometry import Point, box
+import pyproj
+from shapely.geometry import Point, box, mapping
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import transform
 
-from peaky_finders.core.dem.eligible_peaks_cache import load_or_build_eligible_peaks
 from peaky_finders.serve.eligible_land import EligibleLandError, load_or_build_eligible_geometry
 from peaky_finders.core.links.rf import mutual_hop_batch, rf_json_for_preset, splatter_session
 from peaky_finders.core.preset import Preset, load_preset_for_coverage
-from peaky_finders.serve.viewshed_engine import get_viewshed_engine
-from peaky_finders.serve.viewshed import ServeViewshedError
-from peaky_finders.serve.viewshed_sim import SERVE_VIEWSHED_PREVIEW_RASTER_DIMENSION, ViewshedSimOverrides
+from peaky_finders.core.rf.mapping import preset_to_request
 from peaky_finders.serve.seek_progress import (
     SeekScanHeartbeat,
     seek_scan_active,
@@ -128,16 +128,33 @@ def _near_excluded(lat: float, lon: float, exclude: list[SeekPoint]) -> bool:
     return False
 
 
-def _intersect_scan_region(
+def _hop_disc_wgs84(lat: float, lon: float, radius_m: float) -> BaseGeometry:
+    aeqd = pyproj.CRS.from_proj4(
+        f"+proj=aeqd +lat_0={lat} +lon_0={lon} +datum=WGS84 +units=m +no_defs"
+    )
+    wgs84 = pyproj.CRS.from_epsg(4326)
+    to_aeqd = pyproj.Transformer.from_crs(wgs84, aeqd, always_xy=True)
+    to_wgs84 = pyproj.Transformer.from_crs(aeqd, wgs84, always_xy=True)
+    local = transform(to_aeqd.transform, Point(float(lon), float(lat)))
+    return transform(to_wgs84.transform, local.buffer(float(radius_m)))
+
+
+def _seek_search_geometry(
     *,
     eligible: BaseGeometry,
-    footprint: BaseGeometry,
-    viewport: BaseGeometry,
+    from_lat: float,
+    from_lon: float,
+    radius_km: float,
+    west: float,
+    south: float,
+    east: float,
+    north: float,
 ) -> BaseGeometry:
-    region = eligible.intersection(footprint).intersection(viewport)
-    if region.is_empty:
-        return region
-    return region
+    hop_m = float(radius_km) * 1000.0
+    search = eligible.intersection(_hop_disc_wgs84(from_lat, from_lon, hop_m))
+    if search.is_empty:
+        return search
+    return search.intersection(box(west, south, east, north))
 
 
 def _candidate_line_feature(
@@ -183,18 +200,6 @@ def _goal_on_eligible(eligible: BaseGeometry, goal_lat: float, goal_lon: float) 
     if eligible.is_empty:
         return False
     return eligible.intersects(_goal_point(goal_lon, goal_lat))
-
-
-def _goal_in_viewshed(
-    eligible: BaseGeometry,
-    footprint: BaseGeometry,
-    goal_lat: float,
-    goal_lon: float,
-) -> bool:
-    hop_region = eligible.intersection(footprint)
-    if hop_region.is_empty:
-        return False
-    return hop_region.intersects(_goal_point(goal_lon, goal_lat))
 
 
 def _goal_in_hop_range(
@@ -256,36 +261,10 @@ def _goal_finish_eligible(
     )
 
 
-def _goal_reachable(
-    *,
-    preset: Preset,
-    eligible: BaseGeometry,
-    footprint: BaseGeometry,
-    from_lat: float,
-    from_lon: float,
-    goal_lat: float,
-    goal_lon: float,
-    exclude: list[SeekPoint],
-) -> bool:
-    """Goal is inside the current hop viewshed on eligible land (line-of-sight filter)."""
-    if not _goal_hop_eligible(
-        preset=preset,
-        eligible=eligible,
-        from_lat=from_lat,
-        from_lon=from_lon,
-        goal_lat=goal_lat,
-        goal_lon=goal_lon,
-        exclude=exclude,
-    ):
-        return False
-    return _goal_in_viewshed(eligible, footprint, goal_lat, goal_lon)
-
-
 def _collect_reachable_site_rows(
     *,
     preset: Preset,
     eligible: BaseGeometry,
-    footprint: BaseGeometry,
     from_lat: float,
     from_lon: float,
     goal_lat: float,
@@ -293,7 +272,7 @@ def _collect_reachable_site_rows(
     exclude: list[SeekPoint],
     exclude_slugs: set[str],
 ) -> list[tuple[str, str, float, float, float]]:
-    """Preset sites in hop range, on eligible land, and in viewshed — sorted toward goal."""
+    """Preset sites in hop range on eligible land — sorted toward goal."""
     rows: list[tuple[str, str, float, float, float, float]] = []
     for slug, site in preset.sites.items():
         if slug in exclude_slugs:
@@ -304,8 +283,6 @@ def _collect_reachable_site_rows(
         if _near_excluded(lat, lon, exclude):
             continue
         if not _goal_on_eligible(eligible, lat, lon):
-            continue
-        if not _goal_in_viewshed(eligible, footprint, lat, lon):
             continue
         elev = float(site.height_m) if site.height_m is not None else 0.0
         dist_goal = _haversine_m(lat, lon, goal_lat, goal_lon)
@@ -584,115 +561,56 @@ def _load_seek_candidates_body(
     except EligibleLandError as e:
         raise ServeSeekError(str(e)) from e
 
-    max_workers = max(1, int(preset.simulation.max_workers.splatter or 1))
-
-    def _tile_progress(done: int, total: int) -> None:
-        _ensure_scan_active()
-        seek_scan_update(
-            slug,
-            scan_gen,
-            phase="peaks",
-            done=done,
-            total=total,
-            detail=f"Scanning Skadi tiles {done}/{total}",
+    hop_km = float(preset.simulation.radius_km)
+    search = _seek_search_geometry(
+        eligible=eligible,
+        from_lat=from_lat,
+        from_lon=from_lon,
+        radius_km=hop_km,
+        west=west,
+        south=south,
+        east=east,
+        north=north,
+    )
+    if search.is_empty:
+        linkable: list[tuple[float, float, float]] = []
+        n_peaks_scanned = 0
+    else:
+        seek_scan_update(slug, scan_gen, phase="peak_links", detail="Finding linkable peaks…")
+        session = splatter_session(verbose=verbose)
+        tx_height = float(preset_to_request(preset, from_lat, from_lon).tx_height)
+        rf_json = rf_json_for_preset(preset)
+        cap = int(seek_cfg.max_candidates)
+        linkable = session.linkable_binned_peaks(
+            from_lat,
+            from_lon,
+            tx_height,
+            json.dumps(mapping(search)),
+            rf_json,
+            limit=cap,
+            bin_size_m=peak_bin_m,
         )
+        n_peaks_scanned = len(linkable)
 
-    seek_scan_update(slug, scan_gen, phase="peaks", detail="Loading eligible peaks…")
-    peaks, peaks_meta = load_or_build_eligible_peaks(
-        preset_path,
-        eligible_digest=eligible_digest,
-        eligible_ll=eligible,
-        bin_size_m=peak_bin_m,
-        max_workers=max_workers,
-        verbose=verbose,
-        tile_progress=_tile_progress,
-    )
-    if peaks_meta.get("cache") == "hit":
-        seek_scan_update(
-            slug,
-            scan_gen,
-            phase="peaks",
-            done=1,
-            total=1,
-            detail=f"Eligible peaks cached ({peaks_meta.get('n_peaks', len(peaks))})",
-        )
-
-    seek_scan_update(slug, scan_gen, phase="viewshed", detail="Loading viewshed…")
-    engine = get_viewshed_engine()
-    preview_sim = ViewshedSimOverrides(raster_dimension=SERVE_VIEWSHED_PREVIEW_RASTER_DIMENSION)
-    radius_km = float(preset.simulation.radius_km)
-    raster_px = SERVE_VIEWSHED_PREVIEW_RASTER_DIMENSION
-    seek_scan_update(
-        slug,
-        scan_gen,
-        phase="viewshed",
-        detail=f"Checking viewshed cache ({radius_km:g} km, {raster_px}px)",
-    )
-    footprint = engine.read_coords_footprint(
-        project_dir,
-        preset,
-        lat=from_lat,
-        lon=from_lon,
-        sim=preview_sim,
-        verbose=verbose,
-    )
-    if footprint is None:
-        with SeekScanHeartbeat(
-            slug,
-            scan_gen,
-            phase="viewshed",
-            detail=f"SPLAT coverage ({radius_km:g} km, {raster_px}px)",
-        ) as viewshed_hb:
-
-            def _viewshed_progress(step: str) -> None:
-                viewshed_hb.set_detail(f"{step} ({radius_km:g} km, {raster_px}px)")
-
-            try:
-                footprint = engine.ensure_coords_footprint(
-                    project_dir,
-                    preset,
-                    lat=from_lat,
-                    lon=from_lon,
-                    sim=preview_sim,
-                    verbose=verbose,
-                    progress=_viewshed_progress,
-                )
-            except ServeViewshedError as exc:
-                raise ServeSeekNotReadyError(str(exc)) from exc
-            except RuntimeError as exc:
-                raise ServeSeekNotReadyError(str(exc)) from exc
-    if footprint is None:
-        raise ServeSeekNotReadyError("viewshed footprint for current hop is not ready")
-
-    seek_scan_update(slug, scan_gen, phase="filter", detail="Filtering peaks in view…")
-    viewport = box(west, south, east, north)
-    scan_region = _intersect_scan_region(eligible=eligible, footprint=footprint, viewport=viewport)
-
-    filtered: list[tuple[float, float, float]] = []
-    for lon, lat, elev_m in peaks:
-        if not scan_region.covers(Point(float(lon), float(lat))):
-            continue
-        if not _pair_within_hop_range(preset, lat_a=from_lat, lon_a=from_lon, lat_b=lat, lon_b=lon):
-            continue
-        if _near_excluded(lat, lon, exclude):
-            continue
-        filtered.append((lon, lat, elev_m))
-
-    seek_scan_update(
-        slug,
-        scan_gen,
-        phase="filter",
-        done=len(filtered),
-        total=len(peaks),
-        detail=f"Filtered {len(filtered)} of {len(peaks)} eligible peak(s)",
-    )
-
+    filtered = [
+        (lon, lat, elev_m)
+        for lon, lat, elev_m in linkable
+        if not _near_excluded(lat, lon, exclude)
+    ]
     filtered.sort(key=lambda p: _haversine_m(p[1], p[0], goal_lat, goal_lon))
+
+    seek_scan_update(
+        slug,
+        scan_gen,
+        phase="peak_links",
+        done=len(filtered),
+        total=max(n_peaks_scanned, 1),
+        detail=f"Found {len(filtered)} linkable peak(s)",
+    )
 
     site_rows = _collect_reachable_site_rows(
         preset=preset,
         eligible=eligible,
-        footprint=footprint,
         from_lat=from_lat,
         from_lon=from_lon,
         goal_lat=goal_lat,
@@ -723,10 +641,7 @@ def _load_seek_candidates_body(
         goal_lat=goal_lat,
         goal_lon=goal_lon,
     )
-    goal_in_viewshed = (
-        _goal_in_viewshed(eligible, footprint, goal_lat, goal_lon) if goal_in_hop_range else False
-    )
-    goal_reachable = goal_hop_eligible and goal_in_viewshed
+    goal_reachable = goal_hop_eligible
     goal_elev = float(goal_elev_m) if goal_elev_m is not None else 0.0
     goal_row: tuple[float, float, float] | None = None
     if goal_finish_eligible:
@@ -775,13 +690,23 @@ def _load_seek_candidates_body(
 
     rf_pairs = [(from_lat, from_lon, row.lat, row.lon) for row in rf_candidates]
     rf_viable: list[bool] = []
+    peak_candidate_start = len(rf_candidates) - len(capped)
     if rf_pairs:
         seek_scan_update(slug, scan_gen, phase="rf", detail="Checking RF links…")
         session = splatter_session(verbose=verbose)
-        points = [(from_lat, from_lon)] + [(row.lat, row.lon) for row in rf_candidates]
-        session.ensure_tiles_for_points(points, float(preset.simulation.radius_km) * 1000.0)
-        rf_json = rf_json_for_preset(preset)
-        rf_viable = mutual_hop_batch(session, rf_pairs, rf_json=rf_json)
+        site_goal_candidates = rf_candidates[:peak_candidate_start]
+        if site_goal_candidates:
+            points = [(from_lat, from_lon)] + [(row.lat, row.lon) for row in site_goal_candidates]
+            session.ensure_tiles_for_points(points, float(preset.simulation.radius_km) * 1000.0)
+            rf_json = rf_json_for_preset(preset)
+            site_goal_viable = mutual_hop_batch(
+                session,
+                [(from_lat, from_lon, row.lat, row.lon) for row in site_goal_candidates],
+                rf_json=rf_json,
+            )
+        else:
+            site_goal_viable = []
+        rf_viable = list(site_goal_viable) + [True] * len(capped)
 
     candidate_features: list[dict[str, object]] = []
     line_features: list[dict[str, object]] = []
@@ -853,8 +778,8 @@ def _load_seek_candidates_body(
             goal_lon=goal_lon,
         ),
         "meta": {
-            "n_peaks_total": len(peaks),
-            "n_peaks_filtered": len(filtered),
+            "n_peaks_linkable": len(filtered),
+            "n_peaks_tested": n_peaks_scanned,
             "n_candidates": sum(1 for row in rf_candidates if not row.is_goal and not row.is_site),
             "n_site_candidates": len(site_candidate_slugs),
             "site_candidate_slugs": site_candidate_slugs,
@@ -864,14 +789,11 @@ def _load_seek_candidates_body(
             "goal_near_prior_hop": goal_near_prior_hop,
             "goal_hop_eligible": goal_hop_eligible,
             "goal_finish_eligible": goal_finish_eligible,
-            "goal_in_viewshed": goal_in_viewshed,
             "goal_reachable": goal_reachable,
             "goal_rf_viable": goal_rf_viable,
             "goal_distance_km": round(_haversine_m(from_lat, from_lon, goal_lat, goal_lon) / 1000.0, 1),
-            "hop_range_km": float(preset.simulation.radius_km),
+            "hop_range_km": hop_km,
             "peak_bin_size_m": peak_bin_m,
             "scan_ms": int((time.monotonic() - scan_t0) * 1000),
-            "peaks_cache": peaks_meta.get("cache"),
-            "peaks_build_ms": peaks_meta.get("build_ms"),
         },
     }

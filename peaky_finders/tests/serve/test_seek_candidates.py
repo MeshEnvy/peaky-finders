@@ -16,8 +16,6 @@ from peaky_finders.serve.seek import (
     _collect_reachable_site_rows,
     _goal_finish_eligible,
     _goal_hop_eligible,
-    _goal_in_viewshed,
-    _goal_reachable,
     _parse_bbox,
     _parse_exclude_points,
     _parse_exclude_slugs,
@@ -109,11 +107,9 @@ def test_collect_reachable_site_rows(tmp_path: Path) -> None:
     project_dir = _write_seek_project(tmp_path / "site-rows")
     preset = load_preset(project_dir / "config.yaml")
     eligible = box(-120.0, 39.0, -119.0, 41.0)
-    footprint = box(-120.0, 39.0, -119.0, 41.0)
     rows = _collect_reachable_site_rows(
         preset=preset,
         eligible=eligible,
-        footprint=footprint,
         from_lat=40.0,
         from_lon=-119.5,
         goal_lat=40.5,
@@ -135,27 +131,24 @@ def test_resolve_seek_peak_bin_size_m() -> None:
     assert resolve_seek_peak_bin_size_m(cfg, 3000.0) == 1500.0
 
 
-def test_goal_reachable_helper(tmp_path: Path) -> None:
+def test_goal_hop_eligible_helper(tmp_path: Path) -> None:
     from peaky_finders.core.preset import load_preset
 
     project_dir = _write_seek_project(tmp_path / "goal-check")
     preset = load_preset(project_dir / "config.yaml")
     eligible = box(-120.0, 39.0, -119.0, 41.0)
-    footprint = box(-120.0, 39.0, -119.0, 41.0)
-    assert _goal_reachable(
+    assert _goal_hop_eligible(
         preset=preset,
         eligible=eligible,
-        footprint=footprint,
         from_lat=40.0,
         from_lon=-119.5,
         goal_lat=40.5,
         goal_lon=-119.0,
         exclude=[],
     )
-    assert not _goal_reachable(
+    assert not _goal_hop_eligible(
         preset=preset,
         eligible=eligible,
-        footprint=footprint,
         from_lat=40.0,
         from_lon=-119.5,
         goal_lat=41.5,
@@ -170,22 +163,10 @@ def test_goal_hop_eligible_without_viewshed(tmp_path: Path) -> None:
     project_dir = _write_seek_project(tmp_path / "goal-hop")
     preset = load_preset(project_dir / "config.yaml")
     eligible = box(-120.0, 39.0, -119.0, 41.0)
-    footprint = box(-119.8, 39.8, -119.6, 40.2)
     goal_lat, goal_lon = 40.5, -119.0
     assert _goal_hop_eligible(
         preset=preset,
         eligible=eligible,
-        from_lat=40.0,
-        from_lon=-119.5,
-        goal_lat=goal_lat,
-        goal_lon=goal_lon,
-        exclude=[],
-    )
-    assert not _goal_in_viewshed(eligible, footprint, goal_lat, goal_lon)
-    assert not _goal_reachable(
-        preset=preset,
-        eligible=eligible,
-        footprint=footprint,
         from_lat=40.0,
         from_lon=-119.5,
         goal_lat=goal_lat,
@@ -229,18 +210,14 @@ def test_load_seek_candidates_mocked_direct(tmp_path: Path) -> None:
     peaks = [(-119.4, 40.05, 2100.0), (-119.35, 40.08, 2200.0)]
     with (
         patch("peaky_finders.serve.seek.load_or_build_eligible_geometry") as mock_elig,
-        patch("peaky_finders.serve.seek.load_or_build_eligible_peaks") as mock_peaks,
-        patch("peaky_finders.serve.seek.get_viewshed_engine") as mock_engine,
         patch("peaky_finders.serve.seek.splatter_session") as mock_session,
         patch("peaky_finders.serve.seek.mutual_hop_batch") as mock_rf,
     ):
         from peaky_finders.serve.seek import load_seek_candidates
 
         mock_elig.return_value = (_COVERING_FP, "abc123")
-        mock_peaks.return_value = (peaks, {"cache": "hit", "build_ms": None, "n_peaks": len(peaks)})
-        inst = mock_engine.return_value
-        inst.read_coords_footprint.return_value = _COVERING_FP
-        mock_rf.return_value = [True, True, True, False]
+        mock_session.return_value.linkable_binned_peaks.return_value = peaks
+        mock_rf.return_value = [True, True]
         mock_session.return_value.ensure_tiles_for_points.return_value = None
         body = load_seek_candidates(
             project_dir,
@@ -262,16 +239,12 @@ def test_api_seek_candidates_mocked(tmp_path: Path) -> None:
         peaks = [(-119.4, 40.05, 2100.0), (-119.35, 40.08, 2200.0)]
         with (
             patch("peaky_finders.serve.seek.load_or_build_eligible_geometry") as mock_elig,
-            patch("peaky_finders.serve.seek.load_or_build_eligible_peaks") as mock_peaks,
-            patch("peaky_finders.serve.seek.get_viewshed_engine") as mock_engine,
             patch("peaky_finders.serve.seek.splatter_session") as mock_session,
             patch("peaky_finders.serve.seek.mutual_hop_batch") as mock_rf,
         ):
             mock_elig.return_value = (_COVERING_FP, "abc123")
-            mock_peaks.return_value = (peaks, {"cache": "hit", "build_ms": None, "n_peaks": len(peaks)})
-            inst = mock_engine.return_value
-            inst.read_coords_footprint.return_value = _COVERING_FP
-            mock_rf.return_value = [True, True, True, False]
+            mock_session.return_value.linkable_binned_peaks.return_value = peaks
+            mock_rf.return_value = [True, True]
             mock_session.return_value.ensure_tiles_for_points.return_value = None
 
             qs = (
@@ -292,8 +265,8 @@ def test_api_seek_candidates_mocked(tmp_path: Path) -> None:
             assert body["meta"]["peak_bin_size_m"] == 750.0
             assert body["meta"]["n_site_candidates"] == 1
             assert body["meta"]["site_candidate_slugs"] == ["relay"]
-            mock_peaks.assert_called_once()
-            assert mock_peaks.call_args.kwargs["bin_size_m"] == 750.0
+            mock_session.return_value.linkable_binned_peaks.assert_called_once()
+            assert mock_session.return_value.linkable_binned_peaks.call_args.kwargs["bin_size_m"] == 750.0
             site_lines = [
                 f for f in body["lines"]["features"] if f["properties"].get("site_slug") == "relay"
             ]
@@ -305,7 +278,6 @@ def test_api_seek_candidates_mocked(tmp_path: Path) -> None:
             assert len(body["candidates"]["features"]) <= 6
             assert body["meta"]["goal_finish_eligible"] is True
             assert body["meta"]["goal_hop_eligible"] is True
-            assert body["meta"]["goal_in_viewshed"] is True
             assert body["meta"]["goal_reachable"] is True
             assert body["meta"]["goal_rf_viable"] is True
             goal_candidates = [

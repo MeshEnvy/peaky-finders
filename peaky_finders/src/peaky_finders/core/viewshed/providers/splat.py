@@ -30,13 +30,8 @@ from peaky_finders.core.viewshed.input_hash import (
 )
 from peaky_finders.core.viewshed.providers.protocol import ViewshedCoverageProvider
 from peaky_finders.core.viewshed.skadi_mirror import (
-    DEFAULT_SKADI_BUCKET,
-    DEFAULT_SKADI_PREFIX,
-    fetch_skadi_hgt_gzip_bytes,
     skadi_mirror_resolve_root,
     skadi_mirror_sdf_path,
-    skadi_mirror_tile_gz_path,
-    skadi_unsigned_s3_client,
     skadi_write_bytes_atomic,
 )
 
@@ -50,8 +45,6 @@ class SplatEngine:
         self,
         splat_path: str,
         cache_dir: str | Path,
-        bucket_name: str = DEFAULT_SKADI_BUCKET,
-        bucket_prefix: str = DEFAULT_SKADI_PREFIX,
     ) -> None:
         if not os.path.isdir(splat_path):
             raise FileNotFoundError(f"SPLAT path {splat_path!r} is not a directory")
@@ -71,9 +64,16 @@ class SplatEngine:
                 raise FileNotFoundError(f"{label!r} not found or not executable at {bin_path!r}")
 
         self.mirror_root = skadi_mirror_resolve_root(cache_dir)
-        self.s3 = skadi_unsigned_s3_client()
-        self.bucket_name = bucket_name
-        self.bucket_prefix = bucket_prefix
+
+    def _splatter_session(self):
+        from splatter import get_session
+
+        return get_session(mirror_root=str(self.mirror_root), verbose=False)
+
+    def _download_terrain_tile(self, tile_name: str) -> bytes:
+        session = self._splatter_session()
+        session.preload_tiles([tile_name])
+        return bytes(session.mirror_tile_gz_bytes(tile_name))
 
     def run_coverage_to_workdir(
         self,
@@ -290,19 +290,6 @@ class SplatEngine:
         for value, rgb in zip(cmap_values, rgb_colors):
             contents += f"{int(value):+4d}: {rgb[0]:3d}, {rgb[1]:3d}, {rgb[2]:3d}\n"
         return contents.encode("utf-8")
-
-    def _download_terrain_tile(self, tile_name: str) -> bytes:
-        gz = skadi_mirror_tile_gz_path(self.mirror_root, tile_name)
-        if gz.is_file():
-            return gz.read_bytes()
-        tile_data = fetch_skadi_hgt_gzip_bytes(
-            self.s3,
-            tile_name,
-            bucket_name=self.bucket_name,
-            bucket_prefix=self.bucket_prefix,
-        )
-        skadi_write_bytes_atomic(gz, tile_data)
-        return tile_data
 
     @staticmethod
     def _hgt_filename_to_sdf_filename(hgt_filename: str, high_resolution: bool = False) -> str:

@@ -40,6 +40,7 @@ Rule: `.cursor/rules/sites-and-tags.mdc`. Skill: `peaky-preset`.
 |---------|------|
 | `./peaky serve` | Local web UI — MapLibre map, on-demand viewsheds/links, preset editor |
 | `./peaky test` | Pytest in `peaky:dev` Docker image |
+| `./peaky run …` | Arbitrary command from host cwd (`/project`); skips splatter rebuild; for ops scripts |
 
 Entry: `peaky_finders.serve.cli:main` (`peaky` or `peaky serve`).
 
@@ -74,47 +75,25 @@ Client (`project-map.js`): after the basemap reaches idle, fetches `GET …/view
 
 On-demand cache under `<project>/.peaky/cache/viewsheds/`, `.peaky/cache/plss/`, and `.peaky/cache/land/`.
 
-## BLM export (planned — Orlando 299/POD)
+## Land point queries (`serve/land_query.py`)
 
-MeshEnvy ops drives this from `ops/initiatives/silver-triangle-backbone.md`. Sites carry `blm-{fo}` tags; each FO gets its own SF-299 + POD. Peaky supplies **GIS and site tables**, not narrative POD prose.
+Point-in-polygon against preset **`land.sources`** layers (GDB/GeoJSON under `projects/<slug>/data/`). Used by MeshEnvy ops scripts for BLM tagging; generic — no SF-299 semantics in Peaky.
 
-### Target API
+| API | Role |
+|-----|------|
+| `load_land_layer_index(preset_path, source_id, layer_name?, entry?)` | Build STRtree for repeated queries |
+| `query_land_layer_index(index, lat, lon, smallest_only=…)` | → `[LandPointHit]` (`.properties`, `.area`) |
+| `point_hits(preset_path, lat, lon, source_id, …)` | One-shot; returns attribute dicts |
 
-| Route | Role |
-|-------|------|
-| `GET /api/p/<slug>/export/fo` | Query: `tag=blm-sierra` (required), optional `include=proposed,installed`, `fill_plss=1`. Response: zip download or JSON manifest with download URLs. |
-| `POST /api/p/<slug>/sites/plss/bulk` | Body: `{slugs}` or `{tag}` — CadNSDI fill missing `plss`, write preset. |
+Pass a custom `LandLayerEntry` to override preset filters (e.g. `ABBR=BLM` only for land tag, not eligible-land exclude set).
 
-### Export bundle (`export/fo`)
+**Ops:** `ops/peaky_home/scripts/tag_blm_field_offices.py` maps `ADMU_NAME` → `blm-{fo}` and SMA `ABBR=BLM` → `blm`. Run via `./peaky run python3 …` from `ops/`.
 
-```
-meshenvy-blm-sierra-sites.zip
-  sites.csv          # slug,name,lat,lon,plss,height_m,tags
-  sites.geojson
-  sites.kml
-  sites.shp          # (+ .shx .dbf .prj via pyogrio)
-  qa-sensitive.csv   # optional P1: sites hitting exclude layers
-```
+## BLM GIS (ops-owned)
 
-CSV + shapefile satisfy Andrea's pre-app ask and Susan's "maps and shapefiles" requirement. GeoJSON/KML for internal QA and Google Earth Attachment 2 drafts.
+MeshEnvy SF-299/POD Attachment 2 export lives in **`ops/peaky_home/scripts/export_blm_fo_packet.py`** (`me` ∩ `blm-{fo}` → CSV/KML/GeoJSON). Narrative POD / SF-299 PDF stay in `ops/docs/`.
 
-### ADMU_NAME → tag map (Nevada)
-
-| `ADMU_NAME` (BLM FO boundary layer) | Site tag |
-|-------------------------------------|----------|
-| Sierra Front Field Office | `blm-sierra` |
-| Humboldt River Field Office | `blm-humboldt` |
-| Black Rock Field Office | `blm-black-rock` |
-| Tuscarora Field Office | `blm-tuscarora` |
-| Tonopah Field Office | `blm-tonopah` |
-| Caliente Field Office | `blm-caliente` |
-| Las Vegas Field Office | `blm-las-vegas` |
-
-Auto-tag (P1): point-in-polygon against `land.sources.blm-nv-field-office-boundary-polygons` / `admu_ofc_poly`.
-
-### Not in Peaky
-
-SF-299 PDF, POD Word templates, bylaws/EIN attachments, rent-waiver narrative — assembled manually from `ops/docs/` precedents.
+Not in Peaky: per-FO HTTP export route, Word merge, corporate attachments.
 
 Global defaults: `$PEAKY_HOME/config.yaml`, `modems.yaml`, `environments.yaml`. Project: `$PEAKY_HOME/projects/<slug>/config.yaml`.
 
@@ -145,7 +124,7 @@ Land panel (v2): informational GDB/GeoJSON overlays from `projects/<slug>/data/*
 
 ### Goal seek mode
 
-Interactive hop-by-hop path planning toward a clicked goal bearing. Toolbar **Goal seek** opens a panel: pick **Start** site; **Set goal** (crosshairs button) enters click-to-place mode, then a map click fixes **goal lat/lng** (green pin marker). Seek auto-starts when start and goal are both set. **Start** locks for the run (**Reset** to change). **Set goal** anytime to reposition; live session retargets on the next candidate refresh. From the current hop, the server scans Skadi binned peaks on **eligible land** (`include − exclude`, AOI-clipped) inside the hop viewshed ∩ map viewport, and **always** includes reachable **preset sites** (hop range + viewshed + eligible land; not viewport-limited; blue guide lines; click the site pin or seek-layer blue marker). **`GET /seek/candidates` enqueues work on a background worker and returns `202` immediately** (`{status: "pending", gen}`); the client polls **`GET /seek/scan-progress`** until `{status: "done", result}` (or `error` / superseded `cancelled`). HTTP threads stay free for viewshed tiles and other API calls during long scans. Peak bin size scales with map zoom (~20 bins across viewport width; client sends `peak_bin_size_m`, server clamps to `[500 m, seek.peak_bin_size_m]`). **Tilted 3D view (pitch ≥ 12°):** seek scans use an **overhead-equivalent bbox** (center + zoom, ignoring pitch) instead of the horizon-expanded `getBounds()`; auto-refresh on pan/rotate is paused and a **Refresh candidates** button appears in the seek panel. Sidebar “in view” filters and viewshed warm priorities use the same overhead-equivalent area in 3D. While scanning, the panel shows a progress bar (tile counts on first peak-cache build) and a spinner on the current hop; superseded fetches abort via `AbortController`, stale peak clicks are ignored, and closing the panel cancels the in-flight scan (session kept). Prior candidate overlays stay clickable while a refresh runs; pan/zoom skips duplicate in-flight requests and superseded server-side Skadi tile scans stop cooperatively. Server scan progress uses a generation counter so overlapping requests do not clobber each other. Orange peak markers + LoS lines (distance + bearing labels; solid blue = RF viable, dashed gray = visible but no RF link). Site candidates render as blue markers on the seek layer (always visible even when sidebar tag filters hide preset site pins); **named sites show their preset name** on the seek layer when the regular site pin is hidden (no duplicate label when the pin is visible). **Committed path sites** (start + site hops) bypass sidebar tag filters while seek is active so their pins stay visible on the yellow path; manually hidden sites get a labeled blue path marker instead. Candidate markers draw above guide lines so endpoints stay visible. Path hops through existing sites use the site pin (no yellow hop number); yellow numbers count **new peak hops only**. When the goal point is within hop range and has a viable RF link, **Finish at goal** commits the final hop (only via that button). A dashed **green guide line** to the goal is always shown during seek (bearing/distance, including off-screen). Session path in `localStorage` `peaky.seek.v1.<slug>` (`goalLat`/`goalLon`; legacy `goalSlug` migrated on load); undo/redo icon buttons (hop history stack); reset clears session. **Committed path** (start, goal, hops) persists to project YAML under ``seek.plan`` via ``PATCH /api/p/<slug>/seek/plan``; page load embeds it in ``PEAKY_PROJECT.seek.plan`` and restores the yellow path. Ephemeral undo/redo stack stays in browser localStorage only. **Convert to sites** in the seek panel creates preset sites from coordinate hops (`{loc}` entries) with a name prefix and tags; rewrites the saved path to `{site}` refs via ``POST …/seek/plan/convert-to-sites``.
+Interactive hop-by-hop path planning toward a clicked goal bearing. Toolbar **Goal seek** opens a panel: pick **Start** site; **Set goal** (crosshairs button) enters click-to-place mode, then a map click fixes **goal lat/lng** (green pin marker). Seek auto-starts when start and goal are both set. **Start** locks for the run (**Reset** to change). **Set goal** anytime to reposition; live session retargets on the next candidate refresh. From the current hop, the server finds Skadi **binned local maxima** on **eligible land** (`include − exclude`, AOI-clipped) intersected with hop disc and map viewport, ranked by elevation, filtered by **mutual RF link** to the source (`splatter.Session.linkable_binned_peaks`). **Preset sites** within hop range on eligible land are always included (not viewport-limited; blue guide lines). **`GET /seek/candidates` enqueues work on a background worker and returns `202` immediately** (`{status: "pending", gen}`); the client polls **`GET /seek/scan-progress`** until `{status: "done", result}` (or `error` / superseded `cancelled`). HTTP threads stay free for viewshed tiles and other API calls during long scans. Peak bin size scales with map zoom (~20 bins across viewport width; client sends `peak_bin_size_m`, server clamps to `[500 m, seek.peak_bin_size_m]`). **Tilted 3D view (pitch ≥ 12°):** seek scans use an **overhead-equivalent bbox** (center + zoom, ignoring pitch) instead of the horizon-expanded `getBounds()`; auto-refresh on pan/rotate is paused and a **Refresh candidates** button appears in the seek panel. Sidebar “in view” filters and viewshed warm priorities use the same overhead-equivalent area in 3D. While scanning, the panel shows a progress bar and a spinner on the current hop; superseded fetches abort via `AbortController`, stale peak clicks are ignored, and closing the panel cancels the in-flight scan (session kept). Prior candidate overlays stay clickable while a refresh runs; pan/zoom skips duplicate in-flight requests. Server scan progress uses a generation counter so overlapping requests do not clobber each other. Orange peak markers + LoS lines (distance + bearing labels; solid blue = RF viable, dashed gray = visible but no RF link). Site candidates render as blue markers on the seek layer (always visible even when sidebar tag filters hide preset site pins); **named sites show their preset name** on the seek layer when the regular site pin is hidden (no duplicate label when the pin is visible). **Committed path sites** (start + site hops) bypass sidebar tag filters while seek is active so their pins stay visible on the yellow path; manually hidden sites get a labeled blue path marker instead. Candidate markers draw above guide lines so endpoints stay visible. Path hops through existing sites use the site pin (no yellow hop number); yellow numbers count **new peak hops only**. When the goal point is within hop range and has a viable RF link, **Finish at goal** commits the final hop (only via that button). A dashed **green guide line** to the goal is always shown during seek (bearing/distance, including off-screen). Session path in `localStorage` `peaky.seek.v1.<slug>` (`goalLat`/`goalLon`; legacy `goalSlug` migrated on load); undo/redo icon buttons (hop history stack); reset clears session. **Committed path** (start, goal, hops) persists to project YAML under ``seek.plan`` via ``PATCH /api/p/<slug>/seek/plan``; page load embeds it in ``PEAKY_PROJECT.seek.plan`` and restores the yellow path. Ephemeral undo/redo stack stays in browser localStorage only. **Convert to sites** in the seek panel creates preset sites from coordinate hops (`{loc}` entries) with a name prefix and tags; rewrites the saved path to `{site}` refs via ``POST …/seek/plan/convert-to-sites``.
 
 Requires at least one land layer with `role: include`.
 
@@ -158,11 +137,13 @@ Requires at least one land layer with `role: include`.
 | `POST /api/p/<slug>/seek/plan/convert-to-sites` | Body `{name_prefix, tags}` → create sites from coordinate hops (no `height_m`; hop peak elevation is not antenna AGL); rewrite hops as `{site}` refs; merge `tags` onto all plan path sites (start + hops) that already existed |
 | `DELETE /api/p/<slug>/seek/plan` | Clear saved plan from project YAML |
 
-Cache: `.peaky/cache/land/eligible/<digest>/union.wkb`, `.peaky/cache/seek/eligible_peaks/<digest>.json`.
+Cache: `.peaky/cache/land/eligible/<digest>/union.wkb` only (no global eligible-peaks JSON cache).
 
 Preset tunables (`seek:`): `peak_bin_size_m` (default 1500), `max_candidates` (default 48).
 
-Modules: `serve/seek.py`, `serve/seek_jobs.py`, `serve/seek_plan.py`, `serve/seek_progress.py`, `serve/eligible_land.py`, `core/dem/peaks.py`, `core/dem/eligible_peaks_cache.py`.
+Modules: `serve/seek.py`, `serve/seek_jobs.py`, `serve/seek_plan.py`, `serve/seek_progress.py`, `serve/eligible_land.py`. Peak scan + mutual RF filter: `splatter.Session.linkable_binned_peaks` (Rust).
+
+**Skadi DEM mirror:** Rust-only fetch-on-miss (`splatter` `ensure_mirror_tile`). Python passes `mirror_root` via `get_session`; use `ensure_tiles_for_bounds`, `missing_tiles_for_bounds`, `mirror_tile_gz_bytes` — no direct `.hgt.gz` reads or boto3 Skadi fetch in Python.
 
 ## Repo layout
 
@@ -172,7 +153,7 @@ peaky_finders/src/peaky_finders/
   serve/         # HTTP UI + static assets; serve/cli.py is the `peaky` entry
 splatter/        # Rust/PyO3 RF engine
 peaky_home/      # legacy local PEAKY_HOME (gitignored); MeshEnvy uses ../../ops/peaky_home
-./peaky          # Docker runner: serve | test (auto-detects ops/peaky_home)
+./peaky          # Docker runner: serve | test | run (auto-detects ops/peaky_home)
 ```
 
 ## Environment

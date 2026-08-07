@@ -1,16 +1,8 @@
-"""Skadi HGT tile mirror helpers for legacy SPLAT! coverage."""
+"""Skadi HGT tile mirror path helpers (fetch-on-miss owned by splatter Rust)."""
 
 from __future__ import annotations
 
 from pathlib import Path
-
-import boto3
-from botocore import UNSIGNED
-from botocore.config import Config
-from botocore.exceptions import ClientError
-
-DEFAULT_SKADI_BUCKET = "elevation-tiles-prod"
-DEFAULT_SKADI_PREFIX = "v2/skadi"
 
 SKADI_MIRROR_SDF_SUBPARTS = Path("_peaky_derived") / "sdf"
 
@@ -42,25 +34,3 @@ def skadi_write_bytes_atomic(path: Path, data: bytes) -> None:
     tmp = path.with_name(path.name + ".partial")
     tmp.write_bytes(data)
     tmp.replace(path)
-
-
-def skadi_unsigned_s3_client():  # type: ignore[no-untyped-def]
-    return boto3.client("s3", config=Config(signature_version=UNSIGNED))
-
-
-def fetch_skadi_hgt_gzip_bytes(
-    s3_client,
-    tile_name: str,
-    *,
-    bucket_name: str = DEFAULT_SKADI_BUCKET,
-    bucket_prefix: str = DEFAULT_SKADI_PREFIX,
-) -> bytes:
-    tile_dir_prefix = tile_name[:3]
-    s3_key = f"{bucket_prefix}/{tile_dir_prefix}/{tile_name}"
-    try:
-        return s3_client.get_object(Bucket=bucket_name, Key=s3_key)["Body"].read()
-    except ClientError as e:
-        if e.response["Error"]["Code"] != "NoSuchKey":
-            raise
-    s3_key = f"skadi/{tile_dir_prefix}/{tile_name}"
-    return s3_client.get_object(Bucket=bucket_name, Key=s3_key)["Body"].read()
