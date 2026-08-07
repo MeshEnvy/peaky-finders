@@ -410,6 +410,7 @@
     maxPitch: 85,
     bearing: savedMapState ? savedMapState.bearing || 0 : 0,
     pitch: savedMapState ? savedMapState.pitch || 0 : 0,
+    maxParallelImageRequests: 64,
     attributionControl: { compact: true },
   });
   const navControl = new maplibregl.NavigationControl({ visualizePitch: true });
@@ -483,6 +484,10 @@
     }
   }
   const viewshedLoading = new Set();
+  const siteViewshedReady = new Set();
+  const siteOutboundLinksReady = new Set();
+  const OUTBOUND_LINKS_PARALLEL = 3;
+  const VIEWSHED_OVERLAY_BATCH = 3;
   const pinLoadOverlays = document.getElementById("pin-load-overlays");
   const pinSpinners = new Map();
   let draftPlacementLat = null;
@@ -1129,7 +1134,7 @@
   function ensureViewshedLoadedForSlug(slug) {
     if (isSiteMapHidden(slug) || !isViewshedVisible(slug)) return;
     if (map.getLayer(viewshedLayerId(slug))) return;
-    if (viewshedLoading.has(slug) || viewshedPendingEpoch.has(slug)) return;
+    if (sitePinSpinning(slug) || viewshedPendingEpoch.has(slug)) return;
     if (slug === DRAFT_VIEWSHED_SLUG) {
       const lat = draftPlacementLat ?? pendingCreateLat;
       const lon = draftPlacementLon ?? pendingCreateLon;
@@ -1140,9 +1145,50 @@
     if (site) scheduleViewshedLoad(site);
   }
 
+  function resetSiteProgress(slug) {
+    siteViewshedReady.delete(slug);
+    siteOutboundLinksReady.delete(slug);
+  }
+
+  function markSiteViewshedReady(slug) {
+    siteViewshedReady.add(slug);
+    viewshedLoading.delete(slug);
+    viewshedPendingEpoch.delete(slug);
+    updatePinOverlays();
+    if (slug === selectedSlug) syncViewshedCheckbox();
+  }
+
+  function markSiteOutboundLinksReady(slug) {
+    siteOutboundLinksReady.add(slug);
+    updatePinOverlays();
+  }
+
+  function sitePinSpinning(slug) {
+    if (isSiteMapHidden(slug)) return false;
+    return !siteViewshedReady.has(slug) || !siteOutboundLinksReady.has(slug);
+  }
+
+  /** Parallel cache probe only — one warm-priority bump for the batch. */
+  function probeViewshedCacheForSite(site) {
+    removeViewshedLayer(site.slug);
+    resetSiteProgress(site.slug);
+    viewshedLoading.add(site.slug);
+    viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch);
+    void tryLoadViewshedFromCache(site.slug);
+  }
+
   function ensureViewshedsForNewlyVisibleSites() {
+    let queued = false;
     for (const site of sites) {
-      ensureViewshedLoadedForSlug(site.slug);
+      if (isSiteMapHidden(site.slug) || !isViewshedVisible(site.slug)) continue;
+      if (map.getLayer(viewshedLayerId(site.slug))) continue;
+      if (sitePinSpinning(site.slug) || viewshedPendingEpoch.has(site.slug)) continue;
+      probeViewshedCacheForSite(site);
+      queued = true;
+    }
+    if (queued) {
+      updatePinOverlays();
+      syncWarmPriorities();
     }
   }
 
@@ -4903,6 +4949,27 @@
     if (map.getLayer(LINKS_LABELS_LAYER)) map.setLayoutProperty(LINKS_LABELS_LAYER, "visibility", vis);
   }
 
+  function siteLinksLinePaint() {
+    return {
+      "line-color": [
+        "case",
+        ["get", "manual"],
+        "#0d9488",
+        ["==", ["get", "strength"], "weak"],
+        "#ef4444",
+        "#4a6cf7",
+      ],
+      "line-width": 2.5,
+      "line-opacity": 0.85,
+      "line-dasharray": [
+        "case",
+        ["==", ["get", "strength"], "weak"],
+        ["literal", [4, 3]],
+        ["literal", [1, 0]],
+      ],
+    };
+  }
+
   function addSiteLinksLayer(geojson) {
     const filtered = filterSiteLinksGeoJson(geojson);
     if (!filtered || !filtered.features || !filtered.features.length) {
@@ -4914,8 +4981,14 @@
     }
     const labeled = linksGeoJsonWithLabels(filtered);
     const linkVisibility = showSiteLinks ? "visible" : "none";
+    const linePaint = siteLinksLinePaint();
     if (map.getSource(LINKS_SOURCE)) {
       map.getSource(LINKS_SOURCE).setData(labeled);
+      if (map.getLayer(LINKS_LAYER)) {
+        for (const [key, val] of Object.entries(linePaint)) {
+          map.setPaintProperty(LINKS_LAYER, key, val);
+        }
+      }
       setSiteLinksVisible(showSiteLinks);
       raiseSiteLayers();
       return;
@@ -4926,11 +4999,7 @@
         id: LINKS_LAYER,
         type: "line",
         source: LINKS_SOURCE,
-        paint: {
-          "line-color": ["case", ["get", "manual"], "#0d9488", "#4a6cf7"],
-          "line-width": 2.5,
-          "line-opacity": 0.85,
-        },
+        paint: linePaint,
         layout: {
           "line-cap": "round",
           "line-join": "round",
@@ -4991,11 +5060,18 @@
       .concat(Array.isArray(payload.links) ? payload.links : []);
     siteLinksPayload = { ...base, links, geojson: { type: "FeatureCollection", features } };
     addSiteLinksLayer(siteLinksPayload.geojson);
+    if (payload.outbound_ready !== false) {
+      markSiteOutboundLinksReady(slug);
+    }
     if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));
   }
 
   function applySiteLinksPayload(payload) {
     if (!payload) return;
+    if (payload.partial && payload.site) {
+      mergeSingleSiteLinks(payload.site, payload);
+      return;
+    }
     const prevFeatures = siteLinksPayload?.geojson?.features;
     const prevCount = Array.isArray(prevFeatures) ? prevFeatures.length : 0;
     const nextFeatures = payload.geojson?.features;
@@ -5240,7 +5316,6 @@
     }
     const pendingEpoch = viewshedPendingEpoch.get(vs.slug);
     if (epoch != null && pendingEpoch != null && pendingEpoch !== epoch) return;
-    viewshedPendingEpoch.delete(vs.slug);
     if (vs.slug === DRAFT_VIEWSHED_SLUG) {
       draftViewshedLoading = false;
       syncCreateViewshedCheckbox();
@@ -5249,15 +5324,25 @@
     if (String(vs.slug).startsWith("_edit_hist_")) {
       renderEditCoordHistory();
     }
+    markSiteViewshedReady(vs.slug);
     addViewshedLayer(vs);
+    if (!isEphemeralViewshedSlug(vs.slug)) {
+      void loadSingleSiteLinks(vs.slug);
+    } else {
+      markSiteOutboundLinksReady(vs.slug);
+    }
   }
 
   function acceptViewshedOverlay(vs) {
     if (!vs || !vs.slug || !vs.url || !vs.coordinates) return;
     if (isSiteMapHidden(vs.slug) || !isViewshedVisible(vs.slug)) return;
-    viewshedPendingEpoch.delete(vs.slug);
-    viewshedLoading.delete(vs.slug);
+    markSiteViewshedReady(vs.slug);
     addViewshedLayer(vs);
+    if (!isEphemeralViewshedSlug(vs.slug)) {
+      void loadSingleSiteLinks(vs.slug);
+    } else {
+      markSiteOutboundLinksReady(vs.slug);
+    }
   }
 
   function handleViewshedEvent(data) {
@@ -5290,7 +5375,7 @@
     if (!pinLoadOverlays || !mapReady) return;
     const active = new Set();
     for (const site of sites) {
-      if (!viewshedLoading.has(site.slug) || isSiteMapHidden(site.slug)) continue;
+      if (!sitePinSpinning(site.slug)) continue;
       active.add(site.slug);
       let el = pinSpinners.get(site.slug);
       if (!el) {
@@ -5382,6 +5467,35 @@
     }
   }
 
+  function waitForMapIdle(maxMs = 120) {
+    return new Promise((resolve) => {
+      if (!mapReady) {
+        window.setTimeout(resolve, 0);
+        return;
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      map.once("idle", finish);
+      window.setTimeout(finish, maxMs);
+    });
+  }
+
+  async function applyViewshedOverlaysBatched(overlays) {
+    for (let i = 0; i < overlays.length; i += VIEWSHED_OVERLAY_BATCH) {
+      const batch = overlays.slice(i, i + VIEWSHED_OVERLAY_BATCH);
+      for (const overlay of batch) {
+        acceptViewshedOverlay(overlay);
+      }
+      if (i + VIEWSHED_OVERLAY_BATCH < overlays.length) {
+        await waitForMapIdle();
+      }
+    }
+  }
+
   let viewshedLoadEpoch = 0;
 
   function bumpViewshedLoadEpoch() {
@@ -5432,8 +5546,61 @@
     return false;
   }
 
+  function viewshedIndexUrl() {
+    const params = viewshedSimQueryParams();
+    return `/api/p/${projectSlug}/viewsheds/index?${params}`;
+  }
+
+  async function fetchOutboundLinksParallel(slugs) {
+    if (!slugs.length) return;
+    let cursor = 0;
+    async function worker() {
+      while (cursor < slugs.length) {
+        const slug = slugs[cursor];
+        cursor += 1;
+        await loadSingleSiteLinks(slug);
+      }
+    }
+    const workers = Math.min(OUTBOUND_LINKS_PARALLEL, slugs.length);
+    await Promise.all(Array.from({ length: workers }, () => worker()));
+  }
+
+  async function loadViewshedIndex() {
+    try {
+      const resp = await fetch(viewshedIndexUrl());
+      if (!resp.ok) {
+        ensureViewshedsForNewlyVisibleSites();
+        return;
+      }
+      const index = await resp.json();
+      const siteEntries = index.sites || {};
+      const readySlugs = [];
+      const readyOverlays = [];
+      const missing = [];
+      for (const site of sites) {
+        if (isSiteMapHidden(site.slug) || !isViewshedVisible(site.slug)) continue;
+        const entry = siteEntries[site.slug];
+        if (entry && entry.ready && entry.url && entry.coordinates) {
+          readyOverlays.push({ slug: site.slug, url: entry.url, coordinates: entry.coordinates });
+          readySlugs.push(site.slug);
+        } else {
+          missing.push(site);
+        }
+      }
+      await applyViewshedOverlaysBatched(readyOverlays);
+      void fetchOutboundLinksParallel(readySlugs);
+      for (const site of missing) {
+        scheduleViewshedLoad(site);
+      }
+      if (missing.length) syncWarmPriorities();
+    } catch (_) {
+      ensureViewshedsForNewlyVisibleSites();
+    }
+  }
+
   function scheduleViewshedLoad(site) {
     removeViewshedLayer(site.slug);
+    resetSiteProgress(site.slug);
     viewshedLoading.add(site.slug);
     viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch);
     updatePinOverlays();
@@ -5447,6 +5614,7 @@
   function reloadViewshedsForSimChange() {
     bumpViewshedLoadEpoch();
     for (const site of sites) {
+      resetSiteProgress(site.slug);
       if (!isSiteMapHidden(site.slug) && isViewshedVisible(site.slug)) {
         removeViewshedLayer(site.slug);
         viewshedLoading.add(site.slug);
@@ -5458,7 +5626,7 @@
       }
     }
     updatePinOverlays();
-    syncWarmPriorities();
+    void loadViewshedIndex();
     if (
       createMode &&
       draftPlacementLat != null &&
@@ -5677,7 +5845,7 @@
     sitePanelViewshedToggle.setAttribute("aria-pressed", visible ? "true" : "false");
     sitePanelViewshedToggle.classList.toggle("site-panel__action--active", visible);
     if (sitePanelViewshedHint) {
-      sitePanelViewshedHint.textContent = viewshedLoading.has(slug) ? "Loading…" : "";
+      sitePanelViewshedHint.textContent = sitePinSpinning(slug) ? "Loading…" : "";
     }
   }
 
@@ -9630,8 +9798,6 @@
     addSiteLayers();
     wireMapInteractions();
     connectProjectEvents();
-    // Links first: cold warm re-reads many GPKGs; defer bulk viewshed warms until ready.
-    void loadSiteLinks();
     renderEntityPanel();
     renderLandPanel();
     setEntityTab(entityPanelTab);
@@ -9647,6 +9813,10 @@
     void refreshLandMapLayers();
     restoreSeekSessionIfAny();
     restoring = false;
+    map.once("idle", () => {
+      void loadViewshedIndex();
+      void loadSiteLinks();
+    });
   });
 
   map.on("pitch", () => {

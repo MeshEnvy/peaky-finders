@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from shapely.geometry.base import BaseGeometry
@@ -11,6 +11,8 @@ from peaky_finders.core.preset import Preset, SiteEntry
 from peaky_finders.serve.viewshed_engine import get_viewshed_engine
 from peaky_finders.serve.viewshed_sim import ViewshedSimOverrides
 
+FootprintProgressFn = Callable[[str, int, int, str], None]
+
 
 def read_existing_footprints(
     project_dir: Path,
@@ -18,6 +20,7 @@ def read_existing_footprints(
     sites: Mapping[str, SiteEntry],
     *,
     verbose: bool = False,
+    progress: FootprintProgressFn | None = None,
 ) -> dict[str, BaseGeometry | None]:
     """Read footprints from memory/disk — sequential GPKG opens (SQLite-safe)."""
     engine = get_viewshed_engine()
@@ -27,13 +30,16 @@ def read_existing_footprints(
     if not slugs:
         return footprints
 
+    total = len(slugs)
     if verbose:
         print(
-            f"link footprints: read {len(slugs)} existing footprint(s)",
+            f"link footprints: read {total} existing footprint(s)",
             flush=True,
         )
 
-    for slug in slugs:
+    for idx, slug in enumerate(slugs):
+        if progress is not None:
+            progress("read_footprints", idx + 1, total, slug)
         try:
             footprints[slug] = engine.read_site_footprint(
                 project_dir,
@@ -54,6 +60,7 @@ def vectorize_missing_footprints(
     footprints: dict[str, BaseGeometry | None],
     *,
     verbose: bool = False,
+    progress: FootprintProgressFn | None = None,
 ) -> dict[str, BaseGeometry | None]:
     """Build GPKG footprints from cached PPM artifacts — never run splatter."""
     engine = get_viewshed_engine()
@@ -63,13 +70,16 @@ def vectorize_missing_footprints(
     if not missing:
         return out
 
+    total = len(missing)
     if verbose:
         print(
-            f"link footprints: vectorize {len(missing)} missing footprint(s)",
+            f"link footprints: vectorize {total} missing footprint(s)",
             flush=True,
         )
 
-    for slug in missing:
+    for idx, slug in enumerate(missing):
+        if progress is not None:
+            progress("vectorize_footprints", idx + 1, total, slug)
         fp = engine.vectorize_site_footprint(
             project_dir,
             preset,

@@ -61,12 +61,16 @@ Progressive shell over **`core/`** + **`serve/`** — not a batch build product.
 | Warm API | Role |
 |----------|------|
 | `POST /api/p/<slug>/warm/priorities` | Body `{slugs, priority}` — reorder queued footprint jobs |
+| `GET /api/p/<slug>/warm/status` | Poll snapshot: coverage queue depth, link warm phase/progress, links cache status |
 | `GET …/viewsheds/<site>` | Cache hit returns overlay; 404 bumps priority 0 (no blocking compute) |
+| `GET …/viewsheds/index` | Bulk cache index: bounds + immutable digest PNG URLs for all sites |
+| `GET …/cache/viewsheds/<digest>/splat.png` | Browser-cacheable PNG bytes (`Cache-Control: immutable`) |
 | `POST …/viewsheds/<site>/warm` | Deprecated → priority bump 0 |
 | `GET …/links` | Cached/partial mesh instantly; starts background warm if needed |
+| `GET …/sites/<site>/links` | One site's outbound weak/strong edges (progressive merge) |
 | `POST …/links/warm` | Starts scheduler; optional `priority_slugs` in JSON body |
 
-Client (`project-map.js`): `syncWarmPriorities()` on load, select, and debounced `moveend`; SSE drives overlay display (no poll loops).
+Client (`project-map.js`): after the basemap reaches idle, fetches `GET …/viewsheds/index` (one round trip), applies cached overlays in small batches (so satellite tiles are not starved), then fetches per-site outbound links. **Weak links** (one-way cover) render dashed **red**; **strong** (mutual) solid blue. Pin spinner until both viewshed and outbound link pass complete for that site. SSE `links` events with `"partial": true` merge per-site updates.
 
 On-demand cache under `<project>/.peaky/cache/viewsheds/`, `.peaky/cache/plss/`, and `.peaky/cache/land/`.
 

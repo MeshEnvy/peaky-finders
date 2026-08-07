@@ -21,6 +21,7 @@ from peaky_finders.serve.links import (
     ServeLinksError,
     _haversine_m,
     compute_project_site_links,
+    compute_single_site_links,
     invalidate_project_site_links_cache,
     store_project_site_links_cache,
 )
@@ -46,6 +47,8 @@ _links_refresh_timers: dict[str, threading.Timer] = {}
 _links_refresh_guard = threading.Lock()
 _last_links_payload: dict[str, str] = {}
 _last_links_guard = threading.Lock()
+_links_warm_progress: dict[str, dict[str, object]] = {}
+_links_warm_guard = threading.Lock()
 _bump_timers: dict[str, threading.Timer] = {}
 _bump_pending: dict[str, tuple[set[str], int]] = {}
 _bump_guard = threading.Lock()
@@ -64,6 +67,21 @@ def _site_coverage_key(project_dir: Path, preset: Preset, site: SiteEntry) -> st
     return footprint_cache_key(project_dir, digest)
 
 
+def _read_footprints_with_progress(fn, *args, progress, verbose=False, **kwargs):
+    """Call footprint helper; tolerate stale modules during serve hot reload."""
+    try:
+        return fn(*args, **kwargs, verbose=verbose, progress=progress)
+    except TypeError as exc:
+        if "progress" not in str(exc):
+            raise
+        if verbose:
+            print(
+                "link footprints: progress callback unavailable (serve reload); continuing",
+                flush=True,
+            )
+        return fn(*args, **kwargs, verbose=verbose)
+
+
 def _site_coverage_artifacts_exist(
     project_dir: Path,
     preset: Preset,
@@ -76,6 +94,30 @@ def _site_coverage_artifacts_exist(
     if (wd / "splat.png").is_file():
         return True
     return (wd / SPLAT_OUTPUT_PPM_BASENAME).is_file()
+
+
+def _set_links_warm_progress(project_slug: str, *, phase: str, done: int, total: int, detail: str) -> None:
+    with _links_warm_guard:
+        if total <= 0 and phase == "idle":
+            _links_warm_progress.pop(project_slug, None)
+            return
+        _links_warm_progress[project_slug] = {
+            "phase": phase,
+            "done": int(done),
+            "total": int(total),
+            "detail": str(detail),
+        }
+
+
+def get_links_warm_progress(project_slug: str) -> dict[str, object] | None:
+    with _links_warm_guard:
+        row = _links_warm_progress.get(project_slug)
+        return dict(row) if row else None
+
+
+def is_project_warm_active(project_slug: str) -> bool:
+    with _running_guard:
+        return project_slug in _running
 
 
 def _publish_viewshed(project_slug: str, payload: dict[str, object]) -> None:
@@ -118,20 +160,45 @@ def _refresh_project_links(
         preset = ctx.preset
         sites = dict(ctx.sites)
         if not sites:
+            _set_links_warm_progress(project_slug, phase="idle", done=0, total=0, detail="")
             return
 
-        footprints = read_existing_footprints(
+        total = len(sites)
+
+        def _footprint_progress(phase: str, done: int, phase_total: int, detail: str) -> None:
+            _set_links_warm_progress(
+                project_slug,
+                phase=phase,
+                done=done,
+                total=phase_total if phase_total > 0 else total,
+                detail=detail,
+            )
+
+        _footprint_progress("read_footprints", 0, total, "Reading cached footprints")
+        footprints = _read_footprints_with_progress(
+            read_existing_footprints,
             project_dir,
             preset,
             sites,
             verbose=verbose,
+            progress=_footprint_progress,
         )
-        footprints = vectorize_missing_footprints(
+        _footprint_progress("vectorize_footprints", 0, total, "Building missing footprints")
+        footprints = _read_footprints_with_progress(
+            vectorize_missing_footprints,
             project_dir,
             preset,
             sites,
             footprints,
             verbose=verbose,
+            progress=_footprint_progress,
+        )
+        _set_links_warm_progress(
+            project_slug,
+            phase="compute_links",
+            done=total,
+            total=total,
+            detail="Computing mutual RF links",
         )
         complete = all(footprints.get(slug) is not None for slug in sites)
         payload = compute_project_site_links(
@@ -150,10 +217,15 @@ def _refresh_project_links(
         digest = json.dumps(wire, sort_keys=True, separators=(",", ":"))
         with _last_links_guard:
             if _last_links_payload.get(project_slug) == digest:
+                _set_links_warm_progress(project_slug, phase="idle", done=0, total=0, detail="")
                 return
             _last_links_payload[project_slug] = digest
         _publish_links(project_slug, wire)
-    except (ServeLinksError, OSError, ValueError) as exc:
+        _set_links_warm_progress(project_slug, phase="idle", done=0, total=0, detail="")
+    except (ServeLinksError, OSError, ValueError, TypeError) as exc:
+        _set_links_warm_progress(project_slug, phase="idle", done=0, total=0, detail="")
+        if verbose:
+            print(f"link warm failed: {exc}", flush=True)
         _publish_links(
             project_slug,
             {"project": project_slug, "status": "error", "error": str(exc)},
@@ -177,6 +249,26 @@ def _schedule_links_refresh(
         timer.daemon = True
         _links_refresh_timers[project_slug] = timer
         timer.start()
+
+
+def _publish_site_outbound_links(
+    project_slug: str,
+    project_dir: Path,
+    site_slug: str,
+    sites: Mapping[str, SiteEntry],
+    *,
+    verbose: bool = False,
+) -> None:
+    """Push one site's weak/strong outbound edges as soon as its footprint exists."""
+    del verbose
+    try:
+        payload = compute_single_site_links(project_dir, site_slug, sites)
+    except ServeLinksError:
+        return
+    if not payload.get("outbound_ready"):
+        return
+    wire = {"project": project_slug, "partial": True, **payload}
+    _publish_links(project_slug, wire)
 
 
 def _warm_site_job(
@@ -210,6 +302,14 @@ def _warm_site_job(
             project_slug,
             {"project": project_slug, "status": "ready", **overlay},
         )
+    ctx = _project_context(project_dir)
+    _publish_site_outbound_links(
+        project_slug,
+        project_dir,
+        site_slug,
+        ctx.sites,
+        verbose=verbose,
+    )
     _schedule_links_refresh(project_slug, project_dir, verbose=verbose)
 
 
@@ -303,6 +403,8 @@ def _run_project_warm(
             )
         _schedule_links_refresh(project_slug, project_dir, verbose=verbose)
     except (ServeViewshedError, OSError, ValueError):
+        pass
+    finally:
         with _running_guard:
             _running.discard(project_slug)
 

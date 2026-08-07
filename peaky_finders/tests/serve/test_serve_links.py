@@ -83,7 +83,7 @@ def test_evaluate_site_pair_manual_link_skips_viewshed(tmp_path: Path) -> None:
     with patch("peaky_finders.serve.links.get_viewshed_engine") as mock_engine:
         result = evaluate_site_pair_linked(project_dir, "hub", "peer-a", sites)
 
-    assert result == {"a": "hub", "b": "peer-a", "linked": True, "manual": True}
+    assert result == {"a": "hub", "b": "peer-a", "linked": True, "manual": True, "strength": "strong"}
     mock_engine.assert_not_called()
 
 
@@ -119,7 +119,7 @@ links: []
     with patch("peaky_finders.serve.links.get_viewshed_engine") as mock_engine:
         result = evaluate_site_pair_linked(project_dir, "a", "b", sites)
 
-    assert result == {"a": "a", "b": "b", "linked": False, "manual": False}
+    assert result == {"a": "a", "b": "b", "linked": False, "manual": False, "strength": "strong"}
     mock_engine.assert_not_called()
 
 
@@ -142,8 +142,9 @@ def test_load_project_site_links_minimal_preset(tmp_path: Path) -> None:
 
 
 def test_load_project_site_links_uses_warm_cache(tmp_path: Path) -> None:
-    from peaky_finders.serve.links import store_project_site_links_cache
+    from peaky_finders.serve.links import reset_project_site_links_cache_for_tests, store_project_site_links_cache
 
+    reset_project_site_links_cache_for_tests()
     project_dir = _write_links_project(tmp_path / "sample")
     sites = load_preset_sites(project_dir / "config.yaml")
     ready = {
@@ -152,6 +153,39 @@ def test_load_project_site_links_uses_warm_cache(tmp_path: Path) -> None:
         "geojson": {"type": "FeatureCollection", "features": []},
     }
     store_project_site_links_cache(project_dir, sites, ready)
+
+    with patch("peaky_finders.serve.links.compute_project_site_links") as mock_compute:
+        payload = load_project_site_links(project_dir, sites)
+
+    assert payload == ready
+    mock_compute.assert_not_called()
+
+
+def test_load_project_site_links_reads_disk_cache(tmp_path: Path) -> None:
+    from peaky_finders.serve.links import reset_project_site_links_cache_for_tests, store_project_site_links_cache
+
+    reset_project_site_links_cache_for_tests()
+    project_dir = _write_links_project(tmp_path / "sample")
+    sites = load_preset_sites(project_dir / "config.yaml")
+    ready = {
+        "status": "ready",
+        "links": [{"a": "hub", "b": "peer-a", "linked": True, "manual": False}],
+        "geojson": {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[-119.0, 39.0], [-119.1, 39.1]],
+                    },
+                    "properties": {"a": "hub", "b": "peer-a", "manual": False, "distance_km": 12.3},
+                }
+            ],
+        },
+    }
+    store_project_site_links_cache(project_dir, sites, ready)
+    reset_project_site_links_cache_for_tests()
 
     with patch("peaky_finders.serve.links.compute_project_site_links") as mock_compute:
         payload = load_project_site_links(project_dir, sites)
@@ -338,6 +372,7 @@ def test_api_project_link_pair_manual(tmp_path: Path) -> None:
             "b": "peer-b",
             "linked": True,
             "manual": True,
+            "strength": "strong",
         }
         mock_fp.assert_not_called()
     finally:
@@ -394,11 +429,14 @@ def test_compute_single_site_links_missing_neighbors(tmp_path: Path) -> None:
     finally:
         mock_engine.stop()
 
-    assert result["status"] == "partial"
+    assert result["status"] == "ready"
     assert result["center_footprint"] is True
-    # Manual pair to hub still resolves; RF neighbors without footprints are reported.
+    assert result["outbound_ready"] is True
+    # Manual pair to hub; weak RF links to peers inside footprint without their GPKGs.
     assert {row["a"] for row in result["links"]} | {row["b"] for row in result["links"]} >= {"hub", "peer-a"}
-    assert result["missing"] == ["peer-b", "peer-c"]
+    assert result["missing"] == []
+    weak = [f for f in result["geojson"]["features"] if f["properties"].get("strength") == "weak"]
+    assert weak
 
 
 def test_compute_single_site_links_unknown_slug(tmp_path: Path) -> None:

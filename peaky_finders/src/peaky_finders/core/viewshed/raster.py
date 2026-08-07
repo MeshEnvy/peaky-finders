@@ -220,6 +220,19 @@ def splat_png_is_valid(png_path: Path) -> bool:
         return False
 
 
+def splat_png_is_valid_fast(png_path: Path, *, min_bytes: int = 8) -> bool:
+    """Header + size check for serve hot path on cached ``splat.png`` artifacts."""
+    if not png_path.is_file():
+        return False
+    try:
+        if png_path.stat().st_size < min_bytes:
+            return False
+        with png_path.open("rb") as handle:
+            return handle.read(8) == b"\x89PNG\r\n\x1a\n"
+    except OSError:
+        return False
+
+
 def write_splat_png_from_ppm(*, ppm_path: Path, png_path: Path) -> None:
     """No-RF (white SPLAT pixels) → transparent RGBA; optional downscale for overlay limits."""
     import numpy as np

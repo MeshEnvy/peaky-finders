@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import threading
 from itertools import combinations
@@ -13,6 +14,7 @@ from shapely.geometry.base import BaseGeometry
 
 from peaky_finders.core.links.manual import manual_link_slug_pairs
 from peaky_finders.core.links.viewshed import (
+    footprint_covers_point,
     load_coords_viewshed_footprint,
     load_site_viewshed_footprint,
     mutual_viewshed_link,
@@ -22,6 +24,7 @@ from peaky_finders.core.preset import (
     SiteEntry,
     load_preset_for_coverage,
 )
+from peaky_finders.core.preset.paths import resolved_preset_cache_dir
 from peaky_finders.core.rf.mapping import resolved_site_tx_height_m
 from peaky_finders.serve.viewshed_engine import get_viewshed_engine
 from peaky_finders.serve.viewshed_sim import SERVE_VIEWSHED_PREVIEW_RASTER_DIMENSION, ViewshedSimOverrides
@@ -53,6 +56,66 @@ def _load_links_preset(project_dir: Path) -> Preset:
 
 def _project_cache_key(project_dir: Path) -> str:
     return str(Path(project_dir).expanduser().resolve())
+
+
+def _links_disk_cache_path(project_dir: Path) -> Path:
+    return resolved_preset_cache_dir(project_dir / "config.yaml") / "links" / "mesh.json"
+
+
+def _fingerprint_json(fingerprint: tuple[object, ...]) -> str:
+    return json.dumps(fingerprint, default=str, separators=(",", ":"))
+
+
+def _write_disk_links_cache(
+    project_dir: Path,
+    fingerprint: tuple[object, ...],
+    payload: dict[str, object],
+) -> None:
+    path = _links_disk_cache_path(project_dir)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps(
+                {"fingerprint": _fingerprint_json(fingerprint), "payload": payload},
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+def _read_disk_links_cache(
+    project_dir: Path,
+    fingerprint: tuple[object, ...],
+) -> dict[str, object] | None:
+    path = _links_disk_cache_path(project_dir)
+    if not path.is_file():
+        return None
+    try:
+        wire = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(wire, dict):
+        return None
+    if wire.get("fingerprint") != _fingerprint_json(fingerprint):
+        return None
+    payload = wire.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("status") != "ready":
+        return None
+    return payload
+
+
+def _delete_disk_links_cache(project_dir: Path) -> None:
+    path = _links_disk_cache_path(project_dir)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def links_input_fingerprint(
@@ -123,6 +186,7 @@ def store_project_site_links_cache(
     entry = (links_input_fingerprint(sites, preset=preset), payload)
     with _links_payload_cache_lock:
         _links_payload_cache[key] = entry
+    _write_disk_links_cache(project_dir, entry[0], payload)
 
 
 def reset_project_site_links_cache_for_tests() -> None:
@@ -135,6 +199,7 @@ def invalidate_project_site_links_cache(project_dir: Path) -> None:
     key = _project_cache_key(project_dir)
     with _links_payload_cache_lock:
         _links_payload_cache.pop(key, None)
+    _delete_disk_links_cache(project_dir)
 
 
 def _cached_project_site_links(
@@ -148,14 +213,16 @@ def _cached_project_site_links(
     fingerprint = links_input_fingerprint(sites, preset=preset)
     with _links_payload_cache_lock:
         hit = _links_payload_cache.get(key)
-        if hit is None:
-            return None
-        cached_fp, payload = hit
-        if cached_fp != fingerprint:
-            return None
-        if payload.get("status") != "ready":
-            return None
-        return payload
+        if hit is not None:
+            cached_fp, payload = hit
+            if cached_fp == fingerprint and payload.get("status") == "ready":
+                return payload
+    disk = _read_disk_links_cache(project_dir, fingerprint)
+    if disk is not None:
+        with _links_payload_cache_lock:
+            _links_payload_cache[key] = (fingerprint, disk)
+        return disk
+    return None
 
 
 def get_cached_project_site_links(
@@ -203,9 +270,29 @@ def _link_record(
     slug_b: str,
     linked: bool,
     manual: bool,
+    strength: str = "strong",
 ) -> dict[str, object]:
     a, b = canonical_site_pair(slug_a, slug_b)
-    return {"a": a, "b": b, "linked": linked, "manual": manual}
+    return {"a": a, "b": b, "linked": linked, "manual": manual, "strength": strength}
+
+
+def _pair_link_strength(
+    fp_a: BaseGeometry | None,
+    fp_b: BaseGeometry | None,
+    *,
+    lat_a: float,
+    lon_a: float,
+    lat_b: float,
+    lon_b: float,
+) -> str | None:
+    """``strong`` when mutual cover, ``weak`` when one-way, else ``None``."""
+    a_sees_b = fp_a is not None and footprint_covers_point(fp_a, lat=lat_b, lon=lon_b)
+    b_sees_a = fp_b is not None and footprint_covers_point(fp_b, lat=lat_a, lon=lon_a)
+    if a_sees_b and b_sees_a:
+        return "strong"
+    if a_sees_b or b_sees_a:
+        return "weak"
+    return None
 
 
 def _line_feature(
@@ -215,6 +302,7 @@ def _line_feature(
     site_a: SiteEntry,
     site_b: SiteEntry,
     manual: bool,
+    strength: str = "strong",
 ) -> dict[str, object]:
     a, b = canonical_site_pair(slug_a, slug_b)
     lat_a, lon_a = float(site_a.lat), float(site_a.lon)
@@ -229,7 +317,13 @@ def _line_feature(
                 [lon_b, lat_b],
             ],
         },
-        "properties": {"a": a, "b": b, "manual": manual, "distance_km": distance_km},
+        "properties": {
+            "a": a,
+            "b": b,
+            "manual": manual,
+            "strength": strength,
+            "distance_km": distance_km,
+        },
     }
 
 
@@ -280,7 +374,9 @@ def compute_project_site_links(
     for slug_a, slug_b in combinations(slug_list, 2):
         key = canonical_site_pair(slug_a, slug_b)
         if key in manual_pairs:
-            records.append(_link_record(slug_a=slug_a, slug_b=slug_b, linked=True, manual=True))
+            records.append(
+                _link_record(slug_a=slug_a, slug_b=slug_b, linked=True, manual=True, strength="strong")
+            )
             features.append(
                 _line_feature(
                     slug_a=slug_a,
@@ -288,6 +384,7 @@ def compute_project_site_links(
                     site_a=sites[slug_a],
                     site_b=sites[slug_b],
                     manual=True,
+                    strength="strong",
                 )
             )
             continue
@@ -301,19 +398,26 @@ def compute_project_site_links(
 
         fp_a = fp.get(slug_a)
         fp_b = fp.get(slug_b)
-        if fp_a is None or fp_b is None:
-            continue
-        if not mutual_viewshed_link(
+        strength = _pair_link_strength(
             fp_a,
             fp_b,
             lat_a=lat_a,
             lon_a=lon_a,
             lat_b=lat_b,
             lon_b=lon_b,
-        ):
+        )
+        if strength is None:
             continue
 
-        records.append(_link_record(slug_a=slug_a, slug_b=slug_b, linked=True, manual=False))
+        records.append(
+            _link_record(
+                slug_a=slug_a,
+                slug_b=slug_b,
+                linked=True,
+                manual=False,
+                strength=strength,
+            )
+        )
         features.append(
             _line_feature(
                 slug_a=slug_a,
@@ -321,6 +425,7 @@ def compute_project_site_links(
                 site_a=site_a,
                 site_b=site_b,
                 manual=False,
+                strength=strength,
             )
         )
 
@@ -387,7 +492,6 @@ def compute_single_site_links(
     sim = ViewshedSimOverrides()
     center_fp = engine.read_site_footprint(project_dir, preset, center, sim=sim)
     if center_fp is None:
-        # Cheap CPU-only rebuild from cached PPM; still no splatter run.
         center_fp = engine.vectorize_site_footprint(project_dir, preset, center, sim=sim)
 
     records: list[dict[str, object]] = []
@@ -400,9 +504,18 @@ def compute_single_site_links(
         pair = canonical_site_pair(slug, other_slug)
         lat_o, lon_o = float(other.lat), float(other.lon)
         if pair in manual_pairs:
-            records.append(_link_record(slug_a=slug, slug_b=other_slug, linked=True, manual=True))
+            records.append(
+                _link_record(slug_a=slug, slug_b=other_slug, linked=True, manual=True, strength="strong")
+            )
             features.append(
-                _line_feature(slug_a=slug, slug_b=other_slug, site_a=center, site_b=other, manual=True)
+                _line_feature(
+                    slug_a=slug,
+                    slug_b=other_slug,
+                    site_a=center,
+                    site_b=other,
+                    manual=True,
+                    strength="strong",
+                )
             )
             continue
         if not _pair_within_hop_range(preset, lat_a=lat_c, lon_a=lon_c, lat_b=lat_o, lon_b=lon_o):
@@ -411,23 +524,43 @@ def compute_single_site_links(
             missing.append(other_slug)
             continue
         other_fp = engine.read_site_footprint(project_dir, preset, other, sim=sim)
-        if other_fp is None:
-            missing.append(other_slug)
+        strength = _pair_link_strength(
+            center_fp,
+            other_fp,
+            lat_a=lat_c,
+            lon_a=lon_c,
+            lat_b=lat_o,
+            lon_b=lon_o,
+        )
+        if strength is None:
             continue
-        if not mutual_viewshed_link(
-            center_fp, other_fp, lat_a=lat_c, lon_a=lon_c, lat_b=lat_o, lon_b=lon_o
-        ):
-            continue
-        records.append(_link_record(slug_a=slug, slug_b=other_slug, linked=True, manual=False))
+        records.append(
+            _link_record(
+                slug_a=slug,
+                slug_b=other_slug,
+                linked=True,
+                manual=False,
+                strength=strength,
+            )
+        )
         features.append(
-            _line_feature(slug_a=slug, slug_b=other_slug, site_a=center, site_b=other, manual=False)
+            _line_feature(
+                slug_a=slug,
+                slug_b=other_slug,
+                site_a=center,
+                site_b=other,
+                manual=False,
+                strength=strength,
+            )
         )
 
     records.sort(key=lambda row: (str(row["a"]), str(row["b"])))
+    outbound_ready = center_fp is not None
     return {
-        "status": "ready" if center_fp is not None and not missing else "partial",
+        "status": "ready" if outbound_ready else "partial",
         "site": slug,
         "center_footprint": center_fp is not None,
+        "outbound_ready": outbound_ready,
         "links": records,
         "geojson": {"type": "FeatureCollection", "features": features},
         "missing": sorted(missing),
@@ -453,14 +586,14 @@ def evaluate_site_pair_linked(
     preset = _load_links_preset(project_dir)
 
     if (a_slug, b_slug) in _manual_link_pairs(preset):
-        return _link_record(slug_a=a_slug, slug_b=b_slug, linked=True, manual=True)
+        return _link_record(slug_a=a_slug, slug_b=b_slug, linked=True, manual=True, strength="strong")
 
     site_a = sites[a_slug]
     site_b = sites[b_slug]
     lat_a, lon_a = float(site_a.lat), float(site_a.lon)
     lat_b, lon_b = float(site_b.lat), float(site_b.lon)
     if not _pair_within_hop_range(preset, lat_a=lat_a, lon_a=lon_a, lat_b=lat_b, lon_b=lon_b):
-        return _link_record(slug_a=a_slug, slug_b=b_slug, linked=False, manual=False)
+        return _link_record(slug_a=a_slug, slug_b=b_slug, linked=False, manual=False, strength="strong")
 
     engine = get_viewshed_engine()
     sim = ViewshedSimOverrides()
@@ -473,7 +606,7 @@ def evaluate_site_pair_linked(
         fp_b = engine.ensure_site_footprint(
             project_dir, preset, b_slug, site_b, sim=sim, verbose=verbose
         )
-        linked = mutual_viewshed_link(
+        strength = _pair_link_strength(
             fp_a,
             fp_b,
             lat_a=lat_a,
@@ -481,7 +614,9 @@ def evaluate_site_pair_linked(
             lat_b=lat_b,
             lon_b=lon_b,
         )
-    return _link_record(slug_a=a_slug, slug_b=b_slug, linked=linked, manual=False)
+        linked = strength is not None
+        link_strength = strength if strength is not None else "strong"
+    return _link_record(slug_a=a_slug, slug_b=b_slug, linked=linked, manual=False, strength=link_strength)
 
 
 def load_coords_site_links(

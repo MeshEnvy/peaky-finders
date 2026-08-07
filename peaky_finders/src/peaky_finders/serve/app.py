@@ -50,6 +50,7 @@ from peaky_finders.serve.seek_plan import (
 )
 from peaky_finders.serve.seek_progress import seek_scan_poll
 from peaky_finders.serve.site_prefetch import ServeSitePrefetchError, load_site_placement_prefetch
+from peaky_finders.serve.warm_status import project_warm_status_payload
 from peaky_finders.serve.simulation import (
     get_project_simulation_payload,
     patch_project_simulation,
@@ -102,6 +103,7 @@ from peaky_finders.serve.viewshed import (
     site_viewshed_overlay_if_ready,
 )
 from peaky_finders.serve.viewshed_jobs import warm_coords_viewshed, warm_site_viewshed
+from peaky_finders.serve.viewshed_index import build_viewshed_index, resolve_viewshed_cache_png
 from peaky_finders.serve.project_warm_scheduler import (
     PRIORITY_INTERACTIVE,
     PRIORITY_VIEWPORT,
@@ -191,6 +193,12 @@ _API_PROJECT_VIEWSHED_WARM_RE = re.compile(
 _API_PROJECT_VIEWSHED_PREFETCH_WARM_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/prefetch/warm/?$"
 )
+_API_PROJECT_VIEWSHED_INDEX_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/index/?$"
+)
+_API_PROJECT_VIEWSHED_CACHE_PNG_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/cache/viewsheds/([a-f0-9]{64})/splat\.png$"
+)
 _API_PROJECT_VIEWSHED_META_RE = re.compile(r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/?$")
 _API_PROJECT_VIEWSHED_PNG_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/viewsheds/([a-zA-Z][a-zA-Z0-9_-]*)/splat\.png$"
@@ -205,6 +213,9 @@ _API_PROJECT_SITE_LINKS_RE = re.compile(
 )
 _API_PROJECT_WARM_PRIORITIES_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/warm/priorities/?$"
+)
+_API_PROJECT_WARM_STATUS_RE = re.compile(
+    r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/warm/status/?$"
 )
 _API_PROJECT_SEEK_CANDIDATES_RE = re.compile(
     r"^/api/p/([a-zA-Z][a-zA-Z0-9_-]*)/seek/candidates/?$"
@@ -835,6 +846,23 @@ class ServeDispatcher:
             self._send_bytes(payload, "application/json")
             return
 
+        warm_status_match = _API_PROJECT_WARM_STATUS_RE.match(path)
+        if warm_status_match:
+            slug = warm_status_match.group(1)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            try:
+                status = project_warm_status_payload(slug, project_dir)
+            except (OSError, ValueError, ValidationError) as e:
+                payload = json.dumps({"project": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            payload = json.dumps(status, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
         seek_plan_match = _API_PROJECT_SEEK_PLAN_RE.match(path)
         if seek_plan_match:
             slug = seek_plan_match.group(1)
@@ -1121,6 +1149,55 @@ class ServeDispatcher:
                 "utf-8"
             )
             self._send_bytes(payload, "application/json")
+            return
+
+        viewshed_index_match = _API_PROJECT_VIEWSHED_INDEX_RE.match(path)
+        if viewshed_index_match:
+            slug = viewshed_index_match.group(1)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            try:
+                ctx = load_serve_project_context(project_dir)
+                sim_overrides = _parse_viewshed_sim_query(parsed_url.query)
+            except (ValueError, ValidationError) as e:
+                payload = json.dumps({"slug": slug, "error": str(e)}).encode("utf-8")
+                self._send_bytes(payload, "application/json", status=422)
+                return
+            index = build_viewshed_index(
+                slug,
+                project_dir,
+                ctx.sites,
+                preset=ctx.preset,
+                sim=sim_overrides,
+            )
+            payload = json.dumps(index, sort_keys=True).encode("utf-8")
+            self._send_bytes(payload, "application/json")
+            return
+
+        viewshed_cache_png_match = _API_PROJECT_VIEWSHED_CACHE_PNG_RE.match(path)
+        if viewshed_cache_png_match:
+            slug = viewshed_cache_png_match.group(1)
+            digest = viewshed_cache_png_match.group(2)
+            project_dir = self.projects_dir / slug
+            if not (project_dir / "config.yaml").is_file():
+                self.send_error(404)
+                return
+            png_path = resolve_viewshed_cache_png(project_dir, digest)
+            if png_path is None:
+                self.send_error(404)
+                return
+            try:
+                body = png_path.read_bytes()
+            except OSError:
+                self.send_error(503)
+                return
+            self._send_bytes(
+                body,
+                "image/png",
+                extra_headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            )
             return
 
         viewshed_meta_match = _API_PROJECT_VIEWSHED_META_RE.match(path)

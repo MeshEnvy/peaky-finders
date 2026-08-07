@@ -16,7 +16,12 @@ from peaky_finders.core.rf.mapping import preset_to_request
 from peaky_finders.core.viewshed.kml import load_bounds_from_manifest, parse_lat_lon_box
 from peaky_finders.core.viewshed.pipeline import ensure_splat_raster_png, run_viewshed_coverage
 from peaky_finders.core.viewshed.polygonize import SPLAT_OUTPUT_PPM_BASENAME
-from peaky_finders.core.viewshed.raster import bbox_rotation_normalized, fraction_to_lat_lon, splat_png_is_valid
+from peaky_finders.core.viewshed.raster import (
+    bbox_rotation_normalized,
+    fraction_to_lat_lon,
+    splat_png_is_valid,
+    splat_png_is_valid_fast,
+)
 from peaky_finders.core.viewshed.workspace import (
     resolved_viewshed_workdir,
     viewshed_request_digest_matches,
@@ -98,6 +103,16 @@ def viewshed_png_api_path(
 def viewshed_meta_api_path(project_slug: str, site_slug: str) -> str:
     """URL path for MapLibre overlay metadata (bounds + PNG URL)."""
     return f"/api/p/{project_slug}/viewsheds/{site_slug}"
+
+
+def viewshed_index_api_path(project_slug: str) -> str:
+    """URL path for bulk cached viewshed overlay metadata."""
+    return f"/api/p/{project_slug}/viewsheds/index"
+
+
+def viewshed_cache_png_api_path(project_slug: str, digest: str) -> str:
+    """Immutable digest-keyed PNG URL (browser-cacheable)."""
+    return f"/api/p/{project_slug}/cache/viewsheds/{digest}/splat.png"
 
 
 def viewshed_prefetch_png_api_path(
@@ -276,7 +291,12 @@ def _viewshed_request(
     )
 
 
-def _cached_splat_png(workdir: Path, *, expected_workspace_digest: str) -> Path | None:
+def _cached_splat_png(
+    workdir: Path,
+    *,
+    expected_workspace_digest: str,
+    quick_png_check: bool = False,
+) -> Path | None:
     """Return cached ``splat.png`` when digest matches and the PNG is complete."""
     png = workdir / "splat.png"
     if not png.is_file():
@@ -285,7 +305,8 @@ def _cached_splat_png(workdir: Path, *, expected_workspace_digest: str) -> Path 
         workdir, expected_workspace_digest=expected_workspace_digest
     ):
         return None
-    if not splat_png_is_valid(png):
+    png_ok = splat_png_is_valid_fast(png) if quick_png_check else splat_png_is_valid(png)
+    if not png_ok:
         return None
     return png.resolve()
 
@@ -404,7 +425,11 @@ def site_viewshed_overlay_if_ready(
     digest = viewshed_workspace_digest(
         request=_viewshed_request(preset, site, sim_overrides=sim_overrides)
     )
-    png = _cached_splat_png(workdir, expected_workspace_digest=digest)
+    png = _cached_splat_png(
+        workdir,
+        expected_workspace_digest=digest,
+        quick_png_check=True,
+    )
     if png is None:
         return None
 
@@ -413,9 +438,8 @@ def site_viewshed_overlay_if_ready(
         return None
     return {
         "slug": site_slug,
-        "url": _viewshed_overlay_png_url(
-            project_slug, site_slug, site, sim_overrides=sim_overrides
-        ),
+        "digest": digest,
+        "url": viewshed_cache_png_api_path(project_slug, digest),
         "coordinates": image_coordinates_from_bbox(bounds),
     }
 
@@ -437,7 +461,11 @@ def read_site_viewshed_png_if_ready(
     digest = viewshed_workspace_digest(
         request=_viewshed_request(preset, site, sim_overrides=sim_overrides)
     )
-    return _cached_splat_png(workdir, expected_workspace_digest=digest)
+    return _cached_splat_png(
+        workdir,
+        expected_workspace_digest=digest,
+        quick_png_check=True,
+    )
 
 
 def ensure_site_viewshed_overlay(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from shapely.geometry import Point
@@ -13,6 +14,19 @@ from peaky_finders.core.viewshed.footprint import read_coverage_footprint
 from peaky_finders.core.viewshed.pipeline import footprint_vectorize_needed, write_coverage_footprints
 from peaky_finders.core.viewshed.polygonize import SPLAT_GPKG_NAME, SPLAT_OUTPUT_PPM_BASENAME
 from peaky_finders.core.viewshed.workspace import resolved_viewshed_workdir_for_coords
+
+_vectorize_locks: dict[str, threading.Lock] = {}
+_vectorize_locks_guard = threading.Lock()
+
+
+def _workdir_vectorize_lock(workdir: Path) -> threading.Lock:
+    key = str(Path(workdir).expanduser().resolve())
+    with _vectorize_locks_guard:
+        lock = _vectorize_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _vectorize_locks[key] = lock
+        return lock
 
 
 def footprint_covers_point(footprint: BaseGeometry | None, *, lat: float, lon: float) -> bool:
@@ -69,14 +83,17 @@ def _ensure_footprint_gpkg(workdir: Path, *, preset: Preset, verbose: bool = Fal
     gpkg = wd / SPLAT_GPKG_NAME
     if not _footprint_needs_vectorize(wd):
         return gpkg
-    style = resolved_viewshed_polygon_style(preset.display)
-    if verbose:
-        print(f"links: vectorize footprint {wd.name}", flush=True)
-    _discard_footprint_gpkg(gpkg)
-    if not write_coverage_footprints(data_dir=wd, polygon_style=style):
+    with _workdir_vectorize_lock(wd):
+        if not _footprint_needs_vectorize(wd):
+            return gpkg
+        style = resolved_viewshed_polygon_style(preset.display)
+        if verbose:
+            print(f"links: vectorize footprint {wd.name}", flush=True)
         _discard_footprint_gpkg(gpkg)
         if not write_coverage_footprints(data_dir=wd, polygon_style=style):
-            raise RuntimeError(f"footprint vectorize failed under {wd}")
+            _discard_footprint_gpkg(gpkg)
+            if not write_coverage_footprints(data_dir=wd, polygon_style=style):
+                raise RuntimeError(f"footprint vectorize failed under {wd}")
     return gpkg
 
 

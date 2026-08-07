@@ -188,6 +188,16 @@ class CoverageWorkQueue:
         with self._cond:
             return key in self._jobs or key in self._inflight
 
+    def snapshot(self) -> dict[str, int]:
+        """Counts for status UI (queued = waiting, inflight = running)."""
+        with self._cond:
+            queued = sum(1 for state in self._jobs.values() if not state.cancelled)
+            return {
+                "workers": self._workers,
+                "queued": queued,
+                "inflight": len(self._inflight),
+            }
+
     def reset_for_tests(self) -> None:
         with self._cond:
             for state in self._jobs.values():

@@ -103,7 +103,8 @@ def test_draft_overlay_if_ready_uses_prefetch_png_url(
     )
     assert overlay is not None
     assert overlay["slug"] == DRAFT_VIEWSHED_SLUG
-    assert overlay["url"] == "/api/p/demo/viewsheds/prefetch/splat.png?lat=39.6&lon=-119.4"
+    assert overlay["url"].startswith("/api/p/demo/cache/viewsheds/")
+    assert overlay["url"].endswith("/splat.png")
     assert "_draft/splat.png" not in str(overlay["url"])
 
 
