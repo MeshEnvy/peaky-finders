@@ -8,6 +8,7 @@ projects/
 **/.peaky/
 **/.DS_Store
 peaky_finders/tests/
+peaky_finders/.venv/
 splatter/target/
 *.md
 .cursor/
