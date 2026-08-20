@@ -1,0 +1,22 @@
+<div class="landing-container pf-page">
+  {err}
+  <div class="landing-header">
+    <div>
+      <h1 class="wa-heading">Peaky</h1>
+    </div>
+    <wa-button id="home-settings-open" appearance="outlined" size="s" data-dialog="open home-settings-modal" title="Settings" aria-label="Settings">
+      <wa-icon name="gear" label="Settings"></wa-icon>
+    </wa-button>
+  </div>
+  {project_block}
+  <wa-card>
+    <form method="post" action="/projects" class="pf-stack pf-gap-m">
+      <div class="pf-form-field">
+        <label for="slug" class="pf-label">New project</label>
+        <input id="slug" name="slug" type="text" placeholder="my-region" required autofocus>
+      </div>
+      <wa-button type="submit" variant="brand">Create empty template</wa-button>
+    </form>
+  </wa-card>
+</div>
+<script type="module" src="/static/home-settings.js"></script>

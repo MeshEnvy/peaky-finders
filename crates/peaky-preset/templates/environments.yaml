@@ -1,0 +1,85 @@
+# Global RF environment profiles — copied to ``$PEAKY_HOME/environments.yaml`` on first use.
+#
+# Projects select a preset by name: ``simulation.environment: nevada-desert``
+# (or inline overrides: ``simulation.environment: { preset: nevada-desert, clutter_height_m: 12 }``).
+#
+# Each entry under ``environment_presets:`` defines propagation pessimism for a terrain /
+# clutter scenario. Antenna heights and viewshed grid size stay in the project preset
+# (``simulation.transmitter`` / ``receiver``, ``radius_km``, ``viewshed_quality``).
+#
+# ── Field reference ───────────────────────────────────────────────────────────
+#
+# description
+#   Free-text label for humans (UI, docs). Not used in RF math.
+#
+# climate
+#   SPLAT-style radio climate name (stored in request hash).
+#   Allowed:
+#     equatorial | continental_subtropical | maritime_subtropical | desert |
+#     continental_temperate | maritime_temperate_land | maritime_temperate_sea
+#   Note: splatter propagation today uses FSPL + knife-edge + clutter bump; this field
+#   is not yet wired into the diffraction engine (hash / forward-compat only).
+#
+# polarization
+#   Antenna polarization label (stored in request hash).
+#   Allowed: vertical | horizontal
+#   Note: not yet used in splatter propagation math (hash only).
+#
+# clutter_height_m
+#   Uniform ground-clutter height added to Skadi DEM along every ray profile (m).
+#   Allowed: ≥ 0. Typical: 1 open desert, 8–15 suburban/forest (calibrate to field).
+#   Used for: knife-edge obstruction (raises effective terrain).
+#
+# fresnel_clearance_fraction
+#   Fraction of 1st Fresnel zone (F₁) that must stay clear below line-of-sight before
+#   excess diffraction loss applies.
+#   Allowed: 0.0 – 1.0. Higher = more conservative (0.6 default; 0.25 very permissive).
+#   Used for: ITU-R P.526-style knife-edge loss in splatter.
+#
+# coverage_pessimism_db
+#   Extra decode margin (dB) for conservative coverage maps.
+#   Allowed: ≥ 0. Added to ``implementation_margin_db`` only in emitted ``request.json``
+#   (modem catalog stays datasheet-spec).
+#   Used for: tightens ``signal_threshold`` without editing modem presets.
+#
+# situation_pct
+#   Location variability percentile for fade/reliability margin (SPLAT-style).
+#   Allowed: 1 – 100. Higher = larger margin (95 is common).
+#   Used for: Gaussian quantile folded into ``signal_threshold``.
+#
+# time_pct
+#   Time variability percentile for fade/reliability margin (SPLAT-style).
+#   Allowed: 1 – 100. Higher = larger margin (95 is common).
+#   Used for: Gaussian quantile folded into ``signal_threshold`` (RSS-combined with situation).
+#
+# ground_dielectric_v_m
+#   Ground relative permittivity εᵣ (SPLAT-shaped request field).
+#   Allowed: ≥ 1. Typical dry soil: ~15.
+#   Note: not yet used in splatter propagation math (hash only).
+#
+# ground_conductivity_s_m
+#   Ground conductivity in S/m (SPLAT-shaped request field).
+#   Allowed: ≥ 0. Typical dry soil: ~0.005.
+#   Note: not yet used in splatter propagation math (hash only).
+#
+# atmosphere_bending_n
+#   Atmospheric bending factor N-units (SPLAT default 301).
+#   Allowed: ≥ 0.
+#   Note: splatter uses fixed 4/3 Earth radius for curvature; this field is hash only.
+#
+# ── Example preset (fully annotated) ────────────────────────────────────────
+
+environment_presets:
+
+  nevada-desert:
+    description: Great Basin arid open terrain — minimal foliage clutter
+    climate: desert
+    polarization: vertical
+    clutter_height_m: 1.0
+    fresnel_clearance_fraction: 0.25
+    coverage_pessimism_db: 0.0
+    situation_pct: 95.0
+    time_pct: 95.0
+    ground_dielectric_v_m: 15.0
+    ground_conductivity_s_m: 0.005
+    atmosphere_bending_n: 301.0

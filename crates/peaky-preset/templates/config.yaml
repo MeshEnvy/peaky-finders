@@ -1,0 +1,28 @@
+# Peaky global preset defaults — seeded to ``$PEAKY_HOME/config.yaml`` on first use.
+# Per-project presets at ``projects/<slug>/config.yaml`` override these sections;
+# only differing keys are persisted in project YAML (``sites``, ``links`` always project-local).
+# Modem/environment names resolve via ``$PEAKY_HOME/modems.yaml`` and ``environments.yaml``.
+#
+simulation:
+  radius_km: 50.0
+  viewshed_quality: 3
+  modem: meshcore-us
+  environment: nevada-desert
+  transmitter:
+    height_m: 2.0
+    gain_dbi: 3.0
+    loss_db: 2.0
+  receiver:
+    height_m: 2.0
+    gain_dbi: 3.0
+    loss_db: 2.0
+display:
+  colormap: plasma
+  transparency: 50
+  min_dbm: -130.0
+  max_dbm: -80.0
+  polygon:
+    line: '00000000'
+    fill: 9900ff00
+    fill_polygons: true
+    line_width: 0

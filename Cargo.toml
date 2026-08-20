@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "splatter",
+    "crates/peaky-preset",
+    "crates/peaky-geo",
+    "crates/peaky-serve",
+    "crates/peaky-finder",
+    "cmd/peaky",
+]
+
+[workspace.package]
+version = "0.5.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+async-stream = "0.3"
+axum = { version = "0.8", features = ["macros", "form", "query"] }
+clap = { version = "4", features = ["derive"] }
+csv = "1"
+geozero = { version = "0.14", default-features = false, features = ["with-geo", "with-wkb"] }
+geo = "0.28"
+geojson = { version = "0.24", features = ["geo-types"] }
+parking_lot = "0.12"
+peaky-geo = { path = "crates/peaky-geo" }
+peaky-preset = { path = "crates/peaky-preset" }
+peaky-serve = { path = "crates/peaky-serve" }
+peaky-finder = { path = "crates/peaky-finder" }
+quick-xml = "0.37"
+rstar = "0.12"
+rust-embed = "8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+splatter = { path = "splatter" }
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "set-header"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zip = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1

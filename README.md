@@ -1,39 +1,40 @@
-# Peaky Finders
+# Peaky Finders v5
 
-LoRa mesh RF planning on a local map — sites, goals, viewsheds, mesh links. **Docker only.**
+Pure Rust LoRa mesh site planner. Greenfield replacement for v4 (Python + Docker + PyO3 splatter).
 
-## Quickstart
-
-```bash
-docker run --rm -p 8080:8080 \
-  -v "$HOME/.peaky:/.peaky" \
-  peaky-finders serve
-```
-## CLI
-
-KMZ export. `-w` must be the project dir for preset commands (CLI reads `./config.yaml` from cwd):
+## Build
 
 ```bash
-docker run --rm -v "$HOME/.peaky:/.peaky" \
-  -w /.peaky/projects/my-region peaky-finders build
+cargo build --release
 ```
 
-## Developers
+Binary: `target/release/peaky`
 
-Clone with submodules. From repo root: `./peaky serve`, `./peaky test`. See [MEMORY.md](MEMORY.md).
-
-## Shell helper
-
-Optional shortcut — add to your shell profile:
+## Serve
 
 ```bash
-peaky() {
-  local workdir="/.peaky"
-  case "$PWD" in
-    "$HOME/.peaky"|"$HOME/.peaky"/*) workdir="/.peaky${PWD#"$HOME/.peaky"}" ;;
-  esac
-  docker run --rm -v "$HOME/.peaky:/.peaky" -w "$workdir" peaky-finders "$@"
-}
+export PEAKY_HOME=/path/to/peaky_home   # default: ../../ops/peaky_home when present
+cargo run -p peaky -- serve --port 8080
 ```
 
-Then: `peaky serve`, `peaky new my-region`, `cd ~/.peaky/projects/my-region && peaky build`.
+Open `http://127.0.0.1:8080/` and pick a project (e.g. Nevada).
+
+## Ops (BLM tags / FO export)
+
+BLM inventory tagging and FO export live in **ops**, not this repo:
+
+```bash
+# from ops/
+python3 peaky_home/scripts/tag_public_land.py --dry-run
+python3 peaky_home/scripts/export_blm_fo_packet.py --fo blm-sierra-fo --dry-run
+```
+
+## Test
+
+```bash
+cargo test
+```
+
+## Layout
+
+See [MEMORY.md](MEMORY.md) for architecture and agent contract.

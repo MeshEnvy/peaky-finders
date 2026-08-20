@@ -1,0 +1,8 @@
+{
+  "format": "bundle_resolve/v2",
+  "clips_root": "/app/peaky_finders/tests/fixtures/peaky_home/projects/sample/build/clips",
+  "aoi": "252c6122d6f40f63",
+  "include": "0b83979858dd4d68",
+  "exclude": "45a5d18e568e9dec",
+  "eligible": "f2bd66a2fa1990ca"
+}

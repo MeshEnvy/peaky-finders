@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en" class="wa-dark wa-theme-default wa-brand-blue">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Peaky</title>
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
+  <meta name="theme-color" content="#111820" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.8.0/dist/styles/webawesome.css" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.8.0/dist/styles/native.css" crossorigin="anonymous">
+  <link rel="stylesheet" href="/static/app.css">
+  
+</head>
+<body>
+<div class="landing-container pf-page">
+  
+  <div class="landing-header">
+    <div>
+      <h1 class="wa-heading">Peaky</h1>
+    </div>
+    <wa-button id="home-settings-open" appearance="outlined" size="s" data-dialog="open home-settings-modal" title="Settings" aria-label="Settings">
+  <wa-icon name="gear" label="Settings"></wa-icon>
+</wa-button>
+  </div>
+  <div class="project-list">
+    <a class="project-list__item" href="/p/nevada/">nevada</a>
+    <a class="project-list__item" href="/p/sample/">sample</a>
+  </div>
+  <wa-card>
+    <form method="post" action="/projects" class="pf-stack pf-gap-m">
+      <div class="pf-form-field">
+        <label for="slug" class="pf-label">New project</label>
+        <input id="slug" name="slug" type="text" placeholder="my-region" required autofocus>
+      </div>
+      <wa-button type="submit" variant="brand">Create empty template</wa-button>
+    </form>
+  </wa-card>
+</div>
+<wa-dialog id="home-settings-modal" label="Settings" style="--width: 56rem" with-footer>
+  <wa-callout id="home-settings-error" variant="danger" hidden></wa-callout>
+  <p class="wa-caption pf-muted" id="home-settings-project-hint">Simulation tab edits global defaults shared by all projects. Open a project map to override per project.</p>
+  <wa-tab-group id="home-settings-tabs" active="simulation">
+    <wa-tab slot="nav" panel="simulation">Simulation</wa-tab>
+    <wa-tab slot="nav" panel="modems">Modems</wa-tab>
+    <wa-tab slot="nav" panel="environments">Environments</wa-tab>
+    <wa-tab-panel name="simulation">
+      <div class="home-sim-grid">
+                      <div class="home-sim-field home-sim-col" data-override-key="modem">
+                <div class="pf-field-head">
+                  <span class="pf-label">Modem preset</span>
+                  <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="modem" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+                </div>
+                <select id="home-sim-modem"></select>
+              </div>
+                      <div class="home-sim-field home-sim-col" data-override-key="environment">
+                <div class="pf-field-head">
+                  <span class="pf-label">Environment preset</span>
+                  <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="environment" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+                </div>
+                <select id="home-sim-environment"></select>
+              </div>
+        <div class="home-sim-field home-sim-col" data-override-key="radius_km">
+          <div class="pf-field-head">
+            <span class="pf-label">Radius (km)</span>
+            <div class="pf-field-head__meta">
+              <span id="home-sim-radius-km-value" class="pf-mono pf-muted home-sim-field__value-label">50</span>
+              <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="radius_km" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+            </div>
+          </div>
+          <input id="home-sim-radius-km" type="range" class="pf-range" min="1" max="100" value="50">
+        </div>
+        <div class="home-sim-field home-sim-col" data-override-key="viewshed_quality">
+          <div class="pf-field-head">
+            <span class="pf-label">Viewshed quality</span>
+            <div class="pf-field-head__meta">
+              <span id="home-sim-viewshed-quality-value" class="pf-mono pf-muted home-sim-field__value-label">3 · 512 px</span>
+              <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="viewshed_quality" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+            </div>
+          </div>
+          <input id="home-sim-viewshed-quality" type="range" class="pf-range" min="1" max="5" value="3">
+        </div>
+                      <div class="home-sim-col">
+                <div class="home-sim-chain">
+                  <div class="home-sim-chain__title">Transmitter</div>
+                  <div class="home-sim-chain__fields">
+                  <div class="home-sim-field home-sim-field--inline" data-override-key="transmitter.height_m">
+                    <label class="home-sim-inline-label" title="Height (m)">Height</label>
+                    <input id="home-sim-tx-height" type="number" step="0.1">
+                    <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="transmitter.height_m" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+                  </div>                  <div class="home-sim-field home-sim-field--inline" data-override-key="transmitter.gain_dbi">
+                    <label class="home-sim-inline-label" title="Gain (dBi)">Gain</label>
+                    <input id="home-sim-tx-gain" type="number" step="0.1">
+                    <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="transmitter.gain_dbi" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+                  </div>                  <div class="home-sim-field home-sim-field--inline" data-override-key="transmitter.loss_db">
+                    <label class="home-sim-inline-label" title="Loss (dB)">Loss</label>
+                    <input id="home-sim-tx-loss" type="number" step="0.1">
+                    <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="transmitter.loss_db" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+                  </div>
+                  </div>
+                </div>
+              </div>
+                      <div class="home-sim-col">
+                <div class="home-sim-chain">
+                  <div class="home-sim-chain__title">Receiver</div>
+                  <div class="home-sim-chain__fields">
+                  <div class="home-sim-field home-sim-field--inline" data-override-key="receiver.height_m">
+                    <label class="home-sim-inline-label" title="Height (m)">Height</label>
+                    <input id="home-sim-rx-height" type="number" step="0.1">
+                    <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="receiver.height_m" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+                  </div>                  <div class="home-sim-field home-sim-field--inline" data-override-key="receiver.gain_dbi">
+                    <label class="home-sim-inline-label" title="Gain (dBi)">Gain</label>
+                    <input id="home-sim-rx-gain" type="number" step="0.1">
+                    <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="receiver.gain_dbi" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+                  </div>                  <div class="home-sim-field home-sim-field--inline" data-override-key="receiver.loss_db">
+                    <label class="home-sim-inline-label" title="Loss (dB)">Loss</label>
+                    <input id="home-sim-rx-loss" type="number" step="0.1">
+                    <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="receiver.loss_db" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+                  </div>
+                  </div>
+                </div>
+              </div>
+                      <div class="home-sim-field home-sim-col" data-override-key="max_workers.splatter">
+                <div class="pf-field-head">
+                  <span class="pf-label">Splatter workers</span>
+                  <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="max_workers.splatter" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+                </div>
+                <input id="home-sim-splatter-workers" type="number" min="1" step="1" class="home-sim-field--narrow">
+              </div>
+      </div>
+    </wa-tab-panel>
+    <wa-tab-panel name="modems">
+      <div class="home-settings-split">
+        <div class="home-settings-split__list">
+          <div class="pf-button-row">
+            <wa-button id="home-modem-add" appearance="outlined" size="s" type="button">Add</wa-button>
+            <wa-button id="home-modem-duplicate" appearance="outlined" size="s" type="button">Duplicate</wa-button>
+            <wa-button id="home-modem-delete" appearance="outlined" size="s" variant="danger" type="button">Delete</wa-button>
+          </div>
+          <div id="home-modem-list" class="home-settings-list"></div>
+        </div>
+        <div class="home-settings-split__form pf-form-grid">
+          <div class="pf-form-field">
+            <label for="home-modem-name" class="pf-label">Name</label>
+            <input id="home-modem-name" type="text" readonly>
+          </div>
+          <div class="pf-form-field">
+            <label for="home-modem-frequency" class="pf-label">Frequency (MHz)</label>
+            <input id="home-modem-frequency" type="number" step="0.001">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-modem-bandwidth" class="pf-label">Bandwidth (kHz)</label>
+            <input id="home-modem-bandwidth" type="number" step="0.1">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-modem-sf" class="pf-label">Spreading factor</label>
+            <input id="home-modem-sf" type="number" min="6" max="12" step="1">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-modem-cr" class="pf-label">Coding rate</label>
+            <input id="home-modem-cr" type="number" min="5" max="8" step="1">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-modem-margin" class="pf-label">Implementation margin (dB)</label>
+            <input id="home-modem-margin" type="number" step="0.1">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-modem-power" class="pf-label">Power (dBm)</label>
+            <input id="home-modem-power" type="number" step="0.1">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-modem-sensitivity" class="pf-label">Sensitivity (dBm)</label>
+            <input id="home-modem-sensitivity" type="number" step="0.1">
+          </div>
+        </div>
+      </div>
+    </wa-tab-panel>
+    <wa-tab-panel name="environments">
+      <div class="home-settings-split">
+        <div class="home-settings-split__list">
+          <div class="pf-button-row">
+            <wa-button id="home-env-add" appearance="outlined" size="s" type="button">Add</wa-button>
+            <wa-button id="home-env-duplicate" appearance="outlined" size="s" type="button">Duplicate</wa-button>
+            <wa-button id="home-env-delete" appearance="outlined" size="s" variant="danger" type="button">Delete</wa-button>
+          </div>
+          <div id="home-env-list" class="home-settings-list"></div>
+        </div>
+        <div class="home-settings-split__form pf-form-grid">
+          <div class="pf-form-field pf-form-field--full">
+            <label for="home-env-name" class="pf-label">Name</label>
+            <input id="home-env-name" type="text" readonly>
+          </div>
+          <div class="pf-form-field pf-form-field--full">
+            <label for="home-env-description" class="pf-label">Description</label>
+            <input id="home-env-description" type="text">
+          </div>
+          <div class="pf-form-field">
+            <label for="home-env-climate" class="pf-label">Climate</label>
+            <select id="home-env-climate">
+              <option value="equatorial">equatorial</option>
+              <option value="continental_subtropical">continental subtropical</option>
+              <option value="maritime_subtropical">maritime subtropical</option>
+              <option value="desert">desert</option>
+              <option value="continental_temperate">continental temperate</option>
+              <option value="maritime_temperate_land">maritime temperate land</option>
+              <option value="maritime_temperate_sea">maritime temperate sea</option>
+            </select>
+          </div>
+          <div class="pf-form-field">
+            <label for="home-env-polarization" class="pf-label">Polarization</label>
+            <select id="home-env-polarization">
+              <option value="vertical">vertical</option>
+              <option value="horizontal">horizontal</option>
+            </select>
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-env-clutter" class="pf-label">Clutter height (m)</label>
+            <input id="home-env-clutter" type="number" step="0.1" min="0">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-env-fresnel" class="pf-label">Fresnel clearance</label>
+            <input id="home-env-fresnel" type="number" step="0.01" min="0" max="1">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-env-pessimism" class="pf-label">Coverage pessimism (dB)</label>
+            <input id="home-env-pessimism" type="number" step="0.1" min="0">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-env-situation" class="pf-label">Situation %</label>
+            <input id="home-env-situation" type="number" step="0.1" min="1" max="100">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-env-time" class="pf-label">Time %</label>
+            <input id="home-env-time" type="number" step="0.1" min="1" max="100">
+          </div>
+          <div class="pf-form-field pf-form-field--third">
+            <label for="home-env-dielectric" class="pf-label">Ground dielectric</label>
+            <input id="home-env-dielectric" type="number" step="0.1" min="1">
+          </div>
+          <div class="pf-form-field">
+            <label for="home-env-conductivity" class="pf-label">Ground conductivity (S/m)</label>
+            <input id="home-env-conductivity" type="number" step="0.0001" min="0">
+          </div>
+          <div class="pf-form-field">
+            <label for="home-env-bending" class="pf-label">Atmosphere bending (N)</label>
+            <input id="home-env-bending" type="number" step="0.1" min="0">
+          </div>
+        </div>
+      </div>
+    </wa-tab-panel>
+  </wa-tab-group>
+  <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Close</wa-button>
+  <wa-button slot="footer" id="home-settings-save" variant="brand" size="s" type="button">Save</wa-button>
+</wa-dialog>
+<script type="module" src="/static/home-settings.js"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.8.0/dist-cdn/webawesome.loader.js" crossorigin="anonymous"></script>
+</body>
+</html>

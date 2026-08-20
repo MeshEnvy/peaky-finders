@@ -1,188 +1,130 @@
-# peaky_finders v4 — project memory
+# Peaky Finders v5 — project memory
 
-Living snapshot of **current** architecture and repo state. **Agents: read this file before substantive work; update it in the same change set when anything below shifts.**
+Living snapshot of **current** architecture. **Agents: read before substantive work; update in the same change set when anything below shifts.**
 
 ## Agent contract
 
-1. **Read first** — Load MEMORY.md before tasks touching presets, serve/web UI, RF, or dev workflow.
-2. **Update always** — If the task changes architecture, APIs, paths, or workflows, update MEMORY.md before marking done.
-3. **Greenfield** — Prefer breaking simplifications. Delete dead paths; no shims or dual stacks.
+1. **Read first** — Load MEMORY.md before tasks touching presets, serve, RF, splatter, or CLI.
+2. **Update always** — Architecture/API/path/workflow changes → update MEMORY.md before marking done.
+3. **Greenfield** — v4 is read-only reference. Break freely in v5; no Python/Docker `./peaky` wrapper.
 
 ## Status
 
 | Item | State |
 |------|-------|
-| Repo | Greenfield — break freely |
-| Domain | LoRa mesh site planning — splatter RF coverage, terrain links |
-| Interface | **`peaky serve`** only — progressive web UI over preset YAML |
-| RF engine | `splatter` submodule (PyO3 Fresnel/FSPL) |
-| Dev/test | Docker — `./peaky serve`, `./peaky test` |
-| Reference preset | `peaky_home/projects/sample/config.yaml` (MeshEnvy: `$PEAKY_HOME` → `ops/peaky_home`) |
+| Repo | `peaky-finders-v5` — pure Rust workspace |
+| v4 | Frozen reference; do not delete until v5 soak |
+| Interface | `peaky serve` — progressive web UI over preset YAML |
+| RF engine | `splatter/` crate (in-process `Session`, no PyO3) |
+| Land | GeoJSON-only at runtime (no GDB/GDAL). GDB preset paths resolve via `data/*.geojson` fallbacks or `.peaky/cache/land/` exports. **WGS84 required.** |
+| Dev | `cargo build`, `cargo test`, `cargo run -p peaky -- serve` (dev = fast incremental). Use `--release` for long RF runs only; release uses LTO and rebuilds slowly. Finder RF phases use rayon; DEM fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8) |
+| Auto-finder | `peaky find path` — onX KML route → min-site RF chain; cache under `.peaky/cache/finder/`; **`--watch`** live MapLibre + SSE on localhost:9847 |
+| Ops | Public-land site tags + FO export live in ops: `peaky_home/scripts/tag_public_land.py`, `export_blm_fo_packet.py`. **Fleet-tool direction (ops, 08-14, speculative):** nevada YAML is the canonical site/fleet list; later creds + telemetry history may live next to the preset. **Do not** put passwords or keypairs in git-tracked `config.yaml`. → `ops/initiatives/peaky-fleet-management.md` |
+| Reference preset | `$PEAKY_HOME/projects/nevada/config.yaml` (default: `ops/peaky_home`) |
 
-## Domain model: sites
+## Workspace layout
 
-All map points under **`sites:`** (slug → `name`, `loc: [lat, lon]`, optional `tags`, `height_m`, …).
+| Path | Role |
+|------|------|
+| `cmd/peaky/` | CLI binary (`serve`, `find path`) |
+| `crates/peaky-finder/` | Auto-finder: route → min-site RF chain + config patch |
+| `crates/peaky-preset/` | Preset model, YAML I/O, paths, sites, home catalogs |
+| `crates/peaky-geo/` | GeoJSON land query, eligible land, KML import, PPM polygonize |
+| `crates/peaky-serve/` | Axum app, API routes, HTML, embedded static |
+| `splatter/` | RF coverage engine (Skadi DEM, Fresnel/FSPL) |
+| `assets/static/project-map/` | ESM modules: `main.js`, `legacy.js`, `constants.js`, `geo.js`, `viewshed-raster.js`, `land/`, `seek.js`, `viewsheds.js`, `links.js`, …; `app.css`, favicons (rust-embed) |
+| `assets/finder-watch/` | Embedded MapLibre page for `peaky find path --watch` |
+| `assets/templates/` | Server-rendered HTML fragments |
+| `tests/fixtures/` | Golden RF/GeoJSON fixtures from v4 |
 
-- **`height_m`** — optional antenna AGL (m); overrides `simulation.transmitter.height_m` for that site's viewshed TX height.
-- **`elevation_m`** — removed; terrain at `loc` comes from Skadi DEM in splatter.
+## Preset model
 
-- **No `type` field** — rejected on load (`sites.<slug>.type is removed; use tags`).
-- **No goals / repeaters split** — every site gets viewsheds and P2P link checks.
-- **`tags`** — optional lowercase labels for serve UI filtering only (e.g. `installed`, `eip`); no RF semantics.
+Same vocabulary as v4: `sites:` (slug → `name`, `loc`, optional `tags`, `height_m`), top-level `links:`, `simulation`, `display`, `land`, `seek`. No `sites.*.type`. Tags are UI-only.
 
-Manual mutual pairs: top-level `links: [[a, b], …]`.
+Paths: `PEAKY_HOME` → projects under `projects/<slug>/config.yaml`. Cache: `<preset-dir>/.peaky/cache/viewsheds/`; finder cache: `<preset-dir>/.peaky/cache/finder/`. **PLSS:** not in Peaky — ops `tag_public_land.py` (CadNSDI → preset YAML); export runs it as prep.
 
-Rule: `.cursor/rules/sites-and-tags.mdc`. Skill: `peaky-preset`.
+**YAML writes:** serve site edits patch the on-disk YAML tree (`insert_preset_site`, `patch_preset_site`, …) so unrelated sections keep their order. Full `save_preset` re-serializes the typed preset and should be reserved for whole-document updates.
 
-## Commands
+**Viewshed quality:** `simulation.viewshed_quality` (1–5, default 3). Q1 = 128 px always; Q5 = DEM-native for radius (`ceil(radius_m / 30)`, clamp 128–4096); Q2–4 = evenly spaced rungs on the doubling ladder 128→Q5. Resolved pixel count is in cache digests (not stored in YAML). Changing quality or radius invalidates viewshed cache entries.
 
-| Command | Role |
-|---------|------|
-| `./peaky serve` | Local web UI — MapLibre map, on-demand viewsheds/links, preset editor |
-| `./peaky test` | Pytest in `peaky:dev` Docker image |
-| `./peaky run …` | Arbitrary command from host cwd (`/project`); skips splatter rebuild; for ops scripts |
+**Viewshed warm:** Progressive ladder (128→target px) per site. Always-on stderr: `[peaky] viewshed {slug} [1/N] generating 128px…` / `done (Ns)` / `progressive warm complete`. Cache hits are `--verbose` only. Map pins show a bar + label (`2/5 · 256px`) under each loading site from SSE `ladder_step`/`ladder_total`/`raster_dimension`.
 
-Entry: `peaky_finders.serve.cli:main` (`peaky` or `peaky serve`).
+## Auto-finder (`peaky find path`)
 
-## Web UI (`peaky serve`)
+| Input | Effect |
+|-------|--------|
+| `--route` onX KML LineString | Ordered waypoints (lon,lat → internal lat,lon; 50 m dedupe; optional `--simplify-m`) |
+| `--allow-tag` (default `installed`) | Existing preset sites eligible for reuse |
+| `--name-prefix` + `--tag` | New peak sites written to `config.yaml` |
+| `--dry-run` | Print diff; no YAML write |
+| `--watch` | Live map at `http://127.0.0.1:9847/` — SSE hello first; hillshade after hello; progressive **gaps**, **search wedge/focus**, **chain_partial** + **viewshed** overlay per hop, `link_check` flashes; DEM/mask/peaks on demand; shared Skadi `Session` with finder (3D terrarium reuses loaded HGT); Ctrl+C to exit |
 
-Progressive shell over **`core/`** + **`serve/`** — not a batch build product.
+**Objective:** minimize distinct sites on a contiguous mutual-RF chain where each waypoint is in one-way decode viewshed of some chain site; tie-break on coarse decode bitmask union gain.
 
-| Layer | Modules |
-|-------|---------|
-| CLI / WSGI | `serve/cli.py`, `serve/app.py` |
-| Preset | `core/preset/` — slim YAML (simulation, display, sites, links, land) |
-| RF / viewshed | `core/rf/`, `core/viewshed/`, splatter |
-| Links | `core/links/` — mutual footprint + RF |
-| Background warm | `serve/coverage_queue.py`, `serve/project_warm_scheduler.py`, `serve/link_footprints.py` |
-| UI assets | `serve/static/` (`project-map.js`, …) |
+**Solver (cache schema v8):** on-demand **coverage-guided wedge search** — no corridor-wide DEM preload, no full hop-disc peak scan, no eager peak graph. Phase 0 **gap overview** on eligible land (hard spans first; cached under `.peaky/cache/finder/gaps/` keyed by waypoints + eligible-land digest + hop — **stable digest**, not invalidated by solver schema bumps). From `Pa` toward goal: **outer rings → inner**; DEM scan only the goal wedge (±2.5° first), widen until a peak is **inside Pa's one-way viewshed** (antenna AGL). **Goal waypoint stays locked** until some chain site covers it; hops past the waypoint are allowed only if they cover it. Prefer goal-covering peaks; in-viewshed relays only short of the waypoint. Then mutual RF. Peak `height_m` is antenna AGL (`None` = preset default) — never Skadi elev.
 
-**Server-owned warm:** On first project touch (`GET …/links`, SSE `…/events`), the scheduler enqueues all missing site footprints at background priority (100). Client never POSTs per-site warm storms; it **bumps priority** via `POST …/warm/priorities` for viewport (10) and selection (0). Overlays and link mesh updates arrive over SSE as workers drain the shared coverage queue. Link-adjacent slugs within hop range auto-bump to priority 20.
+**Hop-disc peaks:** 8-neighbor local maxima with ≥20 m prominence, then Web-Mercator binning. Not highest-cell-per-bin (that littered flat valleys with fake peaks).
 
-| Warm API | Role |
-|----------|------|
-| `POST /api/p/<slug>/warm/priorities` | Body `{slugs, priority}` — reorder queued footprint jobs |
-| `GET /api/p/<slug>/warm/status` | Poll snapshot: coverage queue depth, link warm phase/progress, links cache status |
-| `GET …/viewsheds/<site>` | Cache hit returns overlay; 404 bumps priority 0 (no blocking compute) |
-| `GET …/viewsheds/index` | Bulk cache index: bounds + immutable digest PNG URLs for all sites |
-| `GET …/cache/viewsheds/<digest>/splat.png` | Browser-cacheable PNG bytes (`Cache-Control: immutable`) |
-| `POST …/viewsheds/<site>/warm` | Deprecated → priority bump 0 |
-| `GET …/links` | Cached/partial mesh instantly; starts background warm if needed |
-| `GET …/sites/<site>/links` | One site's outbound weak/strong edges (progressive merge) |
-| `POST …/links/warm` | Starts scheduler; optional `priority_slugs` in JSON body |
+**Cache telemetry:** stderr hit/miss per op (`peaks`, `cover`, `link`, `bitmask`, `gap_overview`, `run`) unless `--quiet`; summary + `runs/{digest}/ledger.json`. `CACHE_SCHEMA_VERSION=8` (cover/link/run only; v8 = P2P at native DEM step). Gap keys use `digest_hex_stable` and reclaim prior `gaps/*.json` by identity / legacy segment-count match so solver schema bumps do not re-walk land.
 
-Client (`project-map.js`): after the basemap reaches idle, fetches `GET …/viewsheds/index` (one round trip), applies cached overlays in small batches (so satellite tiles are not starved), then fetches per-site outbound links. **Weak links** (one-way cover) render dashed **red**; **strong** (mutual) solid blue. Pin spinner until both viewshed and outbound link pass complete for that site. SSE `links` events with `"partial": true` merge per-site updates.
+**Eligible DEM masks:** per Skadi tile `.elmk` under `.peaky/cache/land/eligible/{digest}/dem_masks/` (format v2). Built by **polygon scanline burn** (R-tree → intersecting parcels → edge + even-odd fill onto 3601² grid), not per-cell point-in-polygon. Lookup is O(1) bit test; voids applied when forming the usable grid. Watch UI: on each DEM bbox ensure, finder loads/builds `.elmk` and publishes merged `dem_tiles` + `mask_tile` (HTTP `/mask` for samples).
 
-On-demand cache under `<project>/.peaky/cache/viewsheds/`, `.peaky/cache/plss/`, and `.peaky/cache/land/`.
+## RF link model (canonical)
 
-## Land point queries (`serve/land_query.py`)
-
-Point-in-polygon against preset **`land.sources`** layers (GDB/GeoJSON under `projects/<slug>/data/`). Used by MeshEnvy ops scripts for BLM tagging; generic — no SF-299 semantics in Peaky.
-
-| API | Role |
-|-----|------|
-| `load_land_layer_index(preset_path, source_id, layer_name?, entry?)` | Build STRtree for repeated queries |
-| `query_land_layer_index(index, lat, lon, smallest_only=…)` | → `[LandPointHit]` (`.properties`, `.area`) |
-| `point_hits(preset_path, lat, lon, source_id, …)` | One-shot; returns attribute dicts |
-
-Pass a custom `LandLayerEntry` to override preset filters (e.g. `ABBR=BLM` only for land tag, not eligible-land exclude set).
-
-**Ops:** `ops/peaky_home/scripts/tag_blm_field_offices.py` maps `ADMU_NAME` → `blm-{fo}` and SMA `ABBR=BLM` → `blm`. Run via `./peaky run python3 …` from `ops/`.
-
-## BLM GIS (ops-owned)
-
-MeshEnvy SF-299/POD Attachment 2 export lives in **`ops/peaky_home/scripts/export_blm_fo_packet.py`** (`me` ∩ `blm-{fo}` → CSV/KML/GeoJSON). Narrative POD / SF-299 PDF stay in `ops/docs/`.
-
-Not in Peaky: per-FO HTTP export route, Word merge, corporate attachments.
-
-Global defaults: `$PEAKY_HOME/config.yaml`, `modems.yaml`, `environments.yaml`. Project: `$PEAKY_HOME/projects/<slug>/config.yaml`.
-
-Entity sidebar: **Sites | Land** tabs (`entityPanelTab` in `localStorage`). Sites panel: **+ Site** (manual add modal) and **Import** (KML/KMZ Point placemarks). Map: **right-click** or **long-press** empty map opens the create panel at that point (draft marker + viewshed prefetch); **+ Site** modal remains for typed coordinates. **Bulk tag** adds/removes tags on sites currently listed in the sidebar (`POST …/sites/tags/bulk`); scope follows sidebar filters (**In view**, tag intersect/union). Open/closed state persists per project in `localStorage` (`peaky.map.v1.<slug>`). Sidebar **In view** toggle filters the site list to sites whose coords project inside the map canvas (client-side `map.project`, not geographic bounds — accurate with pitch; persists in map state). Row actions: eye (site visibility), droplet (viewshed), trash (delete). Multi-select tag filters with **intersect/union** mode (default **intersect** = AND); site rows always show all tags, with active filter tags highlighted. Import flow: file → `POST …/sites/import/preview` → in-modal MapLibre preview + scrollable point list with per-row **Import** toggle, **Select all** / **Clear all**, and **In view** filter; points within **100 m** of an existing site default skipped (gray on map); tags → `POST …/sites/import` with filtered `points[]` (`serve/kml_import.py`, `import_sites_to_preset`).
-
-Land panel (v2): informational GDB/GeoJSON overlays from `projects/<slug>/data/**` — no upload. **Import** modal: pick GDB, preview layers (full GDB — not AOI-clipped), per-layer **Attributes** (`role`, `labelField`, category exclude checkboxes, `styleField`, colors). Registers `land.sources.<id>.layers[]` (`name`, optional `role: aoi|include|exclude`, attribute `include`/`exclude`, `label_field`, `style_field`, `style`). **`role: aoi`** layers union to uber-AOI; serve GeoJSON for other layers clips to that boundary (lazy on `GET …/geojson`). Preview cache never clips; serve cache digest includes `aoi_digest`. AOI change purges clipped serve files; client reloads visible layers with per-row spinners. **`role: include` / `exclude`** drive goal-seek eligible land (`include − exclude`). **Serve paths:** `.gdb` dirs or `.geojson`/`.json` files under `data/` (e.g. CA FO boundaries). Sidebar: user **folders** contain whole **sources** (layer config stays in `sources` only); **+ Folder**, collapse/rename/delete, folder eye, source drag-reorder/move; **Unfiled** for sources outside folders. Per-layer eye, label toggle, role badges (AOI / Include / Exclude), filter chips, legend.
-
-| Sites API | Role |
-|-----------|------|
-| `GET/POST/PATCH/DELETE /api/p/<slug>/sites` | List / add / edit / delete |
-| `POST …/sites/tags/bulk` | Merge tags on existing sites (`slugs`, `add_tags`, `remove_tags`) |
-| `POST …/sites/import/preview` | Parse KML/KMZ; return `{points, skipped}` |
-| `POST …/sites/import` | Write sites with shared `tags` |
-
-| Land API | Role |
-|-----------|------|
-| `GET /api/p/<slug>/land` | List sources + layers; `sidebar`; `aoiDigest` |
-| `GET …/land/data-gdbs` | GDB paths under `data/` |
-| `POST …/land/import/preview` | Layer list + bbox for modal (`path`) |
-| `GET …/land/import/preview/fields` | Layer attribute fields + row count |
-| `GET …/land/import/preview/values` | Distinct field values (+ counts) |
-| `POST …/land/import` | Register source (`path`, `layers[]` objects, optional `label`/`id`) |
-| `PATCH …/land/sidebar` | Replace folder layout (`folders[]`, `unfiledSources[]`) |
-| `PATCH …/land/sources/<id>` | Update `layers[]` / `label` |
-| `DELETE …/land/sources/<id>` | Remove source + invalidate cache dir |
-| `GET/POST …/land/preview/geojson` | Modal preview (`path`, `layer`; POST accepts filters/label/style) |
-| `GET …/land/sources/<id>/layers/<layerKey>/geojson` | Lazy clipped serve GeoJSON; `X-Peaky-Digest` header |
-
-### Goal seek mode
-
-Interactive hop-by-hop path planning toward a clicked goal bearing. Toolbar **Goal seek** opens a panel: pick **Start** site; **Set goal** (crosshairs button) enters click-to-place mode, then a map click fixes **goal lat/lng** (green pin marker). Seek auto-starts when start and goal are both set. **Start** locks for the run (**Reset** to change). **Set goal** anytime to reposition; live session retargets on the next candidate refresh. From the current hop, the server finds Skadi **binned local maxima** on **eligible land** (`include − exclude`, AOI-clipped) intersected with hop disc and map viewport, ranked by elevation, filtered by **mutual RF link** to the source (`splatter.Session.linkable_binned_peaks`). **Preset sites** within hop range on eligible land are always included (not viewport-limited; blue guide lines). **`GET /seek/candidates` enqueues work on a background worker and returns `202` immediately** (`{status: "pending", gen}`); the client polls **`GET /seek/scan-progress`** until `{status: "done", result}` (or `error` / superseded `cancelled`). HTTP threads stay free for viewshed tiles and other API calls during long scans. Peak bin size scales with map zoom (~20 bins across viewport width; client sends `peak_bin_size_m`, server clamps to `[500 m, seek.peak_bin_size_m]`). **Tilted 3D view (pitch ≥ 12°):** seek scans use an **overhead-equivalent bbox** (center + zoom, ignoring pitch) instead of the horizon-expanded `getBounds()`; auto-refresh on pan/rotate is paused and a **Refresh candidates** button appears in the seek panel. Sidebar “in view” filters and viewshed warm priorities use the same overhead-equivalent area in 3D. While scanning, the panel shows a progress bar and a spinner on the current hop; superseded fetches abort via `AbortController`, stale peak clicks are ignored, and closing the panel cancels the in-flight scan (session kept). Prior candidate overlays stay clickable while a refresh runs; pan/zoom skips duplicate in-flight requests. Server scan progress uses a generation counter so overlapping requests do not clobber each other. Orange peak markers + LoS lines (distance + bearing labels; solid blue = RF viable, dashed gray = visible but no RF link). Site candidates render as blue markers on the seek layer (always visible even when sidebar tag filters hide preset site pins); **named sites show their preset name** on the seek layer when the regular site pin is hidden (no duplicate label when the pin is visible). **Committed path sites** (start + site hops) bypass sidebar tag filters while seek is active so their pins stay visible on the yellow path; manually hidden sites get a labeled blue path marker instead. Candidate markers draw above guide lines so endpoints stay visible. Path hops through existing sites use the site pin (no yellow hop number); yellow numbers count **new peak hops only**. When the goal point is within hop range and has a viable RF link, **Finish at goal** commits the final hop (only via that button). A dashed **green guide line** to the goal is always shown during seek (bearing/distance, including off-screen). Session path in `localStorage` `peaky.seek.v1.<slug>` (`goalLat`/`goalLon`; legacy `goalSlug` migrated on load); undo/redo icon buttons (hop history stack); reset clears session. **Committed path** (start, goal, hops) persists to project YAML under ``seek.plan`` via ``PATCH /api/p/<slug>/seek/plan``; page load embeds it in ``PEAKY_PROJECT.seek.plan`` and restores the yellow path. Ephemeral undo/redo stack stays in browser localStorage only. **Convert to sites** in the seek panel creates preset sites from coordinate hops (`{loc}` entries) with a name prefix and tags; rewrites the saved path to `{site}` refs via ``POST …/seek/plan/convert-to-sites``.
-
-Requires at least one land layer with `role: include`.
-
-| Seek API | Role |
-|----------|------|
-| `GET /api/p/<slug>/seek/candidates` | Query: `from_lat`, `from_lon`, `goal_lat`, `goal_lon`, `bbox=west,south,east,north`, optional `exclude=lat,lon;…`, optional `exclude_slugs=slug;…`, optional `peak_bin_size_m` → **`202`** `{status: "pending", gen}`; result via scan-progress |
-| `GET /api/p/<slug>/seek/scan-progress` | Poll while candidates run → `{gen, status: pending|done|error|cancelled|idle, progress?, result?, error?, error_status?}` |
-| `GET /api/p/<slug>/seek/plan` | Saved committed path → `{plan}` or `{plan: null}` |
-| `PATCH /api/p/<slug>/seek/plan` | Body `{start, goal: [lat, lon], complete, hops: [{site}|{loc, height_m?}, …]}` → writes ``seek.plan`` in project YAML |
-| `POST /api/p/<slug>/seek/plan/convert-to-sites` | Body `{name_prefix, tags}` → create sites from coordinate hops (no `height_m`; hop peak elevation is not antenna AGL); rewrite hops as `{site}` refs; merge `tags` onto all plan path sites (start + hops) that already existed |
-| `DELETE /api/p/<slug>/seek/plan` | Clear saved plan from project YAML |
-
-Cache: `.peaky/cache/land/eligible/<digest>/union.wkb` only (no global eligible-peaks JSON cache).
-
-Preset tunables (`seek:`): `peak_bin_size_m` (default 1500), `max_candidates` (default 48).
-
-Modules: `serve/seek.py`, `serve/seek_jobs.py`, `serve/seek_plan.py`, `serve/seek_progress.py`, `serve/eligible_land.py`. Peak scan + mutual RF filter: `splatter.Session.linkable_binned_peaks` (Rust).
-
-**Skadi DEM mirror:** Rust-only fetch-on-miss (`splatter` `ensure_mirror_tile`). Python passes `mirror_root` via `get_session`; use `ensure_tiles_for_bounds`, `missing_tiles_for_bounds`, `mirror_tile_gz_bytes` — no direct `.hgt.gz` reads or boto3 Skadi fetch in Python.
-
-## Repo layout
+**One physics path for all hop/link decisions.** Goal seek, site-pair confirmation, linkable binned peaks, and the site link mesh must all call the same splatter P2P stack:
 
 ```
-peaky_finders/src/peaky_finders/
-  core/          # preset, RF, viewshed, links, plss, home templates
-  serve/         # HTTP UI + static assets; serve/cli.py is the `peaky` entry
-splatter/        # Rust/PyO3 RF engine
-peaky_home/      # legacy local PEAKY_HOME (gitignored); MeshEnvy uses ../../ops/peaky_home
-./peaky          # Docker runner: serve | test | run (auto-detects ops/peaky_home)
+preset → CovRequest JSON (rf_json) → Session::link_eval / link_mutual_viable / link_mutual_batch
+         → propagate::evaluate_link / evaluate_mutual_link_viable
 ```
 
-## Environment
+**Terrain sample step:** P2P / cover / seek links sample at **native DEM spacing** (~30 m Skadi). Viewshed rasters use `radius_m / raster_dimension` for display ray step; `raster_dimension` derives from `viewshed_quality` + radius (see Preset model).
 
-| Var | Role |
-|-----|------|
-| `PEAKY_HOME` | Global config + projects (default `../../ops/peaky_home` when present, else `<repo>/peaky_home`) |
-| `PEAKY_PROJECTS` | Projects root (default `<PEAKY_HOME>/projects`) |
-| `PEAKY_SERVE_THREADS` | Waitress thread pool (default `16`) |
-| `PEAKY_SERVE_COVERAGE_CONCURRENT` | Coverage queue worker count (default `1`) |
-| `SPLAT_CACHE` / `PEAKY_CACHE_DIR` | Skadi DEM mirror |
-| `PEAKY_DEV_IMAGE` | Docker tag (default `peaky:dev`) |
+| Consumer | v4 (do not copy) | v5 |
+|----------|------------------|-----|
+| Goal seek (sites, goal, peaks) | splatter P2P | Same |
+| Linkable binned peaks | `Session::linkable_binned_peaks` | Same |
+| Site link mesh (`GET …/links`) | viewshed footprint cover | **P2P RF** via `Session::link_strength_batch` |
 
-## Removed (do not reintroduce)
+**Viewsheds are not link truth.** Footprint polygons and PNG overlays are display/cache only. They must not gate whether two sites are linked. Optional: derive a visual "coverage overlap" hint from footprints, but `linked` / `rf_viable` / seek candidacy come from P2P only.
 
-- Batch CLI: `build`, `bundle`, `mesh`, `viewshed`, `kmz`, `stamp`, `inspect`
-- Build DAG, batch **eligible land pipeline** (replaced by on-demand `serve/eligible_land.py` for seek)
-- `site_suggestions/`, `peaky build --suggest`, corridor / mesh-backbone planner
-- `sites_job.py` fat preset (`mesh`, `suggest`, `SiteType`)
-- Goals API / UI, site `type` field (replaced by interactive **seek** mode)
+**Single serve module:** implement in `peaky-serve/src/rf.rs` (preset→`rf_json`, pair/batch queries, shared by `links.rs` and `seek.rs`). No duplicate RF logic in route handlers.
 
-## Agent context
+**Mutual = strong, one-way = weak** (map line styling). Out of hop range or no decode = not linked.
 
-| Skill / rule | Topic |
-|--------------|-------|
-| `peaky-serve` | Web UI routes and patterns |
-| `peaky-preset` | `config.yaml`, tags-only sites |
-| `peaky-dev` | `./peaky`, Docker |
-| `peaky-architecture` | This doc + greenfield posture |
-| `memory-maintenance` | Read/update MEMORY |
-| `sites-and-tags` | Site YAML vocabulary |
-| `peaky-test` | `./peaky test` only |
+## Elevation sources
+
+| Use | Dataset | Notes |
+|-----|---------|-------|
+| RF, viewsheds, seek, site height | Skadi SRTM mirror (`$SPLAT_CACHE`, `.hgt.gz`) | Single analysis DEM; parallel fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8). Retries: `PEAKY_SKADI_FETCH_RETRIES` (5), `PEAKY_SKADI_FETCH_TIMEOUT_SECS` (180), `PEAKY_SKADI_FETCH_CONNECT_TIMEOUT_SECS` (30) |
+| Skadi basemap + 3D terrain mesh | Same Skadi mirror, rendered to hillshade/terrarium PNGs | Must match on-disk HGT before tile serves |
+| USGS Topo / satellite / street basemaps | External tile APIs (MapLibre) | **Visualization only** — separate rasters from analysis DEM |
+
+**Topo ↔ Skadi trust:** In practice, Skadi SRTM elevations align almost exactly with USGS Topo contours/shading where both are visible. When reviewing candidate sites on topo (or satellite/street), the parallel Skadi DEM used for placement and viewsheds is likely nearly identical at that location even though the basemap pixels come from a different provider.
+
+**Links disk cache:** `links/mesh.json` carries `links_model: "p2p-v5"` (DEM-native P2P step); fingerprint includes radius, modem/env/heights, sites, manual links — not viewshed quality/px. Older model tags rejected on read.
+
+## Serve (implemented vs stub)
+
+| Area | State |
+|------|-------|
+| Landing, project pages, sites CRUD, KML import | Implemented |
+| Viewshed PNG on demand (`splatter::Session` + cache) | Implemented |
+| Home modem/environment catalogs | Implemented |
+| SSE `/events` | Implemented (hello + keepalive; publish on warm TBD) |
+| Links mesh, warm scheduler | Implemented (P2P mesh, warm queue, SSE) |
+| Goal seek (`/seek/candidates`, scan-progress, plan, convert-to-sites) | Implemented (P2P via `seek.rs` + `Session::linkable_binned_peaks`). Start `<select>` matches entity-panel visibility (tag filter **or** post-add bypass) and refreshes on site add/delete |
+| Land list + layer GeoJSON | Implemented |
+| Skadi map tiles (`/api/dem/hillshade`, `/api/dem/terrarium`) | Implemented — PNG cache `$SPLAT_CACHE/.map_tiles/v3/`; render only when all required HGT on disk (503 until ready); hillshade uses padded HGT ring; **AOI HGT prefetch on project page load** (background); map tile prefetch capped (`PEAKY_DEM_MAP_QUEUE_CAP`, default 128) |
+
+## Ops (outside Peaky)
+
+BLM tagging/export are ops scripts under `ops/peaky_home/scripts/` — Peaky has no BLM-specific CLI. Nevada SMA/FO GeoJSON: `projects/nevada/data/blm-*.geojson`.
+
+## Active threads
+
+- **Ops (not this week's v5 work):** fleet-management / secrets-near-preset — `ops/initiatives/peaky-fleet-management.md`. No schema for creds until a non-git store is picked.
+- Seek eligible-land WKB cache + geo boolean safety (v4 `union.wkb` parity)
+- Integration tests (digest parity vs fixtures)
+- Finder `--watch` boot: progressive SSE replay, deferred hillshade, heavy-fetch queue (rebuild + hard refresh)
+- Watch map: `viewshed` SSE + `/viewshed/{digest}/splat.png`; chain hop triggers progressive splat warm (serve pipeline)

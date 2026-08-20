@@ -1,0 +1,24 @@
+---
+description: Locked ruamel round-trip writes for preset config.yaml mutations
+globs: peaky_finders/src/peaky_finders/{core/preset,serve/sites}.py
+alwaysApply: false
+---
+
+# Preset YAML writes
+
+Preset files are **`config.yaml`** under `projects/<slug>/`. Mutations must preserve `#` comments and survive concurrent writers.
+
+## Do
+
+- Use `update_preset_yaml_tree(path, mutator)` from `core/preset/io.py`.
+- Use `preset_yaml_transaction(path)` for multi-step locked edits.
+- Atomic write via `dump_preset_yaml_document` (`.partial` temp + replace).
+
+## Callers
+
+- `serve/sites.py` — add/update/delete sites
+
+## Avoid
+
+- Direct `open(preset).write(...)` or stdlib `yaml.dump`.
+- Unlocked read-modify-write races.

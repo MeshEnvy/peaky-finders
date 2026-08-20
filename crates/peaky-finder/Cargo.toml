@@ -1,0 +1,28 @@
+[package]
+name = "peaky-finder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-stream.workspace = true
+axum.workspace = true
+bincode = "1"
+geo.workspace = true
+parking_lot = "0.12"
+peaky-geo.workspace = true
+peaky-preset.workspace = true
+peaky-serve.workspace = true
+rayon = "1"
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2 = "0.10"
+splatter.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

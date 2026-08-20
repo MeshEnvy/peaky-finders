@@ -1,0 +1,33 @@
+[package]
+name = "peaky-serve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+async-stream = "0.3"
+futures = "0.3"
+geo.workspace = true
+geojson.workspace = true
+peaky-geo.workspace = true
+peaky-preset.workspace = true
+parking_lot = "0.12"
+rust-embed.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+splatter.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream = "0.1"
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros", "time"] }

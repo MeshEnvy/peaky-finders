@@ -1,0 +1,21 @@
+{
+  "format": "plss_mlrs_loc_cache/v1",
+  "by_loc": {
+    "39.909510,-119.400000": {
+      "plss": "",
+      "mlrs": ""
+    },
+    "39.913420,-119.300000": {
+      "plss": "NV; Mount Diablo Meridian; T.24N R.24E; Sec. 33 — CadNSDI PLSSID=NV210240N0240E0 | FRSTDIVID=NV210240N0240E0SN330",
+      "mlrs": "NV210240N0240E0SN330"
+    },
+    "40.403760,-119.600000": {
+      "plss": "NV; Mount Diablo Meridian; T.29N R.21E; Sec. 11 — CadNSDI PLSSID=NV210290N0210E0 | FRSTDIVID=NV210290N0210E0SN110",
+      "mlrs": "NV210290N0210E0SN110"
+    },
+    "40.426190,-119.500000": {
+      "plss": "NV; Mount Diablo Meridian; T.30N R.22E; Sec. 34 — CadNSDI PLSSID=NV210300N0220E0 | FRSTDIVID=NV210300N0220E0SN340",
+      "mlrs": "NV210300N0220E0SN340"
+    }
+  }
+}

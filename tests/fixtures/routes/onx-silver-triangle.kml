@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Silver Triangle</name>
+    <Placemark>
+      <name>Silver Triangle</name>
+      <ExtendedData>
+        <Data name="type"><value>Line</value></Data>
+      </ExtendedData>
+      <LineString>
+        <coordinates>
+          -119.81372,39.30245,0
+          -119.65210,39.41520,0
+          -119.48100,39.52880,0
+          -119.31050,39.64210,0
+          -119.14020,39.75540,0
+          -118.97010,39.86870,0
+          -118.80030,39.98190,0
+          -118.63080,40.09510,0
+          -118.46160,40.20820,0
+          -118.29280,40.32130,0
+          -118.12440,40.43430,0
+          -117.95650,40.54720,0
+          -117.78910,40.66000,0
+          -117.62230,40.77270,0
+          -117.45610,40.88530,0
+          -117.29060,40.99780,0
+          -117.12580,41.11020,0
+        </coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>

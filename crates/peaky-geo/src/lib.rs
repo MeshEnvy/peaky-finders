@@ -1,0 +1,34 @@
+//! GeoJSON land layers, eligible geometry, KML import, and PPM polygonize.
+
+pub mod eligible_land;
+pub mod kml_import;
+pub mod land_filter;
+pub mod land_path;
+pub mod land_query;
+pub mod polygonize;
+
+pub use eligible_land::{
+    build_eligible_geometry, build_eligible_land_union, eligible_land_dem_mask_dir,
+    eligible_land_digest, iter_land_layer_entries_by_role, load_or_build_eligible_land_filter,
+    load_or_build_eligible_land_union, EligibleLandError,
+};
+pub use kml_import::{
+    parse_kml_linestring_routes, parse_kml_point_placemarks, parse_kmz_linestring_routes,
+    parse_kmz_point_placemarks, serialize_kml_point, KmlLineRoute, KmlPointSite, KmlRoute,
+    KmlRouteWaypoint,
+};
+pub use land_filter::{
+    json_value_as_compare_string, matches_land_attribute_filters, property_matches_filter,
+};
+pub use land_path::{
+    is_land_geojson_path, resolve_land_layer_geojson_path, resolve_land_source_path,
+};
+pub use land_query::{
+    load_land_layer_index, point_hits, query_land_layer_index, resolve_land_layer_entry,
+    LandLayerSpatialIndex, LandPointHit,
+};
+pub use polygonize::{
+    coverage_mask_from_splat_ppm_rgb, fraction_to_lat_lon, pixel_to_lat_lon,
+    polygonize_ppm_coverage, polygonize_ppm_coverage_bbox, read_ppm_rgb, write_ppm_rgb,
+    LatLonBox,
+};

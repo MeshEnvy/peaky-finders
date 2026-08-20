@@ -1,0 +1,104 @@
+//! Filesystem paths for presets, Skadi cache, and viewshed workspaces.
+
+use std::env;
+use std::path::{Path, PathBuf};
+
+/// Workspace root (`peaky-finders-v5`).
+pub fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
+/// Runtime home directory (`PEAKY_HOME`, else `../../ops/peaky_home` when present, else workspace).
+pub fn peaky_home() -> PathBuf {
+    if let Ok(raw) = env::var("PEAKY_HOME") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return expand_user(trimmed);
+        }
+    }
+
+    let workspace = workspace_root();
+    let ops_home = workspace.join("../../ops/peaky_home");
+    if ops_home.is_dir() {
+        return canonicalize_lossy(&ops_home);
+    }
+
+    let local = workspace.join("peaky_home");
+    if local.is_dir() {
+        return canonicalize_lossy(&local);
+    }
+
+    workspace
+}
+
+/// Project presets root (`PEAKY_PROJECTS` or `<peaky_home>/projects`).
+pub fn peaky_projects_dir() -> PathBuf {
+    if let Ok(raw) = env::var("PEAKY_PROJECTS") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return expand_user(trimmed);
+        }
+    }
+    peaky_home().join("projects")
+}
+
+/// Global Skadi tile mirror (`SPLAT_CACHE` env, else `<peaky_home>/splat_cache`).
+pub fn resolved_skadi_mirror_dir() -> PathBuf {
+    if let Ok(raw) = env::var("SPLAT_CACHE") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return expand_user(trimmed);
+        }
+    }
+    canonicalize_lossy(&peaky_home().join("splat_cache"))
+}
+
+/// Resolve a project slug to `projects/{slug}/config.yaml` under `peaky_projects_dir`.
+pub fn resolve_preset_path(slug: &str) -> PathBuf {
+    peaky_projects_dir().join(slug).join("config.yaml")
+}
+
+/// Per-preset serve runtime cache: `<preset-dir>/.peaky/cache`.
+pub fn resolved_preset_cache_dir(preset_path: impl AsRef<Path>) -> PathBuf {
+    let p = preset_path.as_ref();
+    canonicalize_lossy(&p.parent().unwrap_or_else(|| Path::new(".")).join(".peaky/cache"))
+}
+
+/// Per-preset viewshed workspace root: `<preset-dir>/.peaky/cache/viewsheds`.
+pub fn resolved_viewshed_root(preset_path: impl AsRef<Path>) -> PathBuf {
+    resolved_preset_cache_dir(preset_path).join("viewsheds")
+}
+
+/// Stable preset id for document titles.
+pub fn resolved_preset_slug(preset_path: impl AsRef<Path>) -> String {
+    let path = preset_path.as_ref();
+    if path.file_stem().and_then(|s| s.to_str()) == Some("config") {
+        return path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            .unwrap_or("preset")
+            .to_string();
+    }
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("preset")
+        .to_string()
+}
+
+fn expand_user(raw: &str) -> PathBuf {
+    if raw.starts_with('~') {
+        if let Ok(home) = env::var("HOME") {
+            return PathBuf::from(home).join(raw.trim_start_matches("~/").trim_start_matches('~'));
+        }
+    }
+    PathBuf::from(raw)
+}
+
+fn canonicalize_lossy(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}

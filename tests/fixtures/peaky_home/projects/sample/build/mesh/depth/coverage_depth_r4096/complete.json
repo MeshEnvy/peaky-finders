@@ -1,0 +1,16 @@
+{
+  "format": "peaky_mesh_depth_geometry/v1",
+  "max_raster_dimension": 4096,
+  "site_slugs": [
+    "hub",
+    "peer-a",
+    "peer-b",
+    "peer-c"
+  ],
+  "viewshed_digests": [
+    "3d5af1fbd0aa59c5a88243eaa79f7e8ee3c0c5dfe0d461775ccfbfaf3307cf0e",
+    "a5c643d6b852bd2dc77b95055cefb84ebc107bcd22d7f0197de165b38c6629c4",
+    "c3bc1979d6105314b1e16f4836f6c04c37e06ddf4ea027a08b77b030cc4b4e66",
+    "cc8798880643d1cb288cd570872a4dd1ad8596a2855b47afb209379f1037a4e8"
+  ]
+}

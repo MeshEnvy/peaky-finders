@@ -1,0 +1,167 @@
+# Test fixture copy of bundled defaults (fixture RF catalog names).
+simulation:
+  radius_km: 50.0
+  viewshed_quality: 3
+  modem: fixture-modem
+  environment: fixture-desert
+  transmitter:
+    height_m: 2.0
+    gain_dbi: 3.0
+    loss_db: 2.0
+  receiver:
+    height_m: 2.0
+    gain_dbi: 3.0
+    loss_db: 2.0
+display:
+  colormap: plasma
+  transparency: 50
+  min_dbm: -130.0
+  max_dbm: -80.0
+  kml:
+    default:
+      line: ff666666
+      fill: '66888888'
+      fill_polygons: true
+    aoi:
+      line: ffff6600
+      fill: 66ffaa66
+      fill_polygons: true
+    include:
+      line: 6600f300
+      fill: 6600f300
+      fill_polygons: true
+      line_width: 0
+    exclude:
+      line: 660000ff
+      fill: 660000ff
+      fill_polygons: true
+      line_width: 0
+    eligible:
+      line: 6600f300
+      fill: 6600f300
+      fill_polygons: true
+      line_width: 0
+    reference:
+      line: ff666666
+      fill: '66888888'
+      fill_polygons: true
+      line_width: 1.0
+    summits:
+      line: ff0099ff
+      fill: '00000000'
+      fill_polygons: false
+    viewshed_coverage:
+      line: '00000000'
+      fill: 9900ff00
+      fill_polygons: true
+      line_width: 0
+    mesh:
+      depth:
+        d1_unique:
+          line: '00000000'
+          fill: 9900ff00
+          fill_polygons: true
+          line_width: 0
+        d2_pair:
+          line: '00000000'
+          fill: 9966ff66
+          fill_polygons: true
+          line_width: 0
+        d3_quad:
+          line: '00000000'
+          fill: 99ffaa00
+          fill_polygons: true
+          line_width: 0
+        d5_plus:
+          line: '00000000'
+          fill: 99ff0066
+          fill_polygons: true
+          line_width: 0
+      depth_eligible:
+        d1_unique:
+          line: '00000000'
+          fill: 9900ff00
+          fill_polygons: true
+          line_width: 0
+        d2_pair:
+          line: '00000000'
+          fill: 9966ff66
+          fill_polygons: true
+          line_width: 0
+        d3_quad:
+          line: '00000000'
+          fill: 99ffaa00
+          fill_polygons: true
+          line_width: 0
+        d5_plus:
+          line: '00000000'
+          fill: 99ff0066
+          fill_polygons: true
+          line_width: 0
+      pairwise:
+        line: '00000000'
+        fill: 99ff0000
+        fill_polygons: true
+        line_width: 0
+      pairwise_eligible:
+        line: '00000000'
+        fill: 99ffff00
+        fill_polygons: true
+        line_width: 0
+  kmz:
+    layers:
+      viewshed_raster: true
+      viewshed_polygon: false
+      mesh:
+        edges: true
+        depth_d1_unique: false
+        depth_d2_pair: false
+        depth_d3_quad: false
+        depth_d5_plus: false
+        depth_eligible_d1_unique: false
+        depth_eligible_d2_pair: false
+        depth_eligible_d3_quad: false
+        depth_eligible_d5_plus: false
+        pairwise: false
+        pairwise_eligible: false
+      pins: true
+      eligible: false
+      exclude: false
+      include: false
+      aoi: false
+mesh:
+  pairwise: false
+  depth: false
+  max_raster_dimension: 4096
+  pairwise_dem_peak_pin: true
+  pairwise_overlap_workers: 8
+  mesh_depth_workers: 8
+suggest:
+  strategy: mesh-backbone
+  coverage_target: eligible
+  planner_raster_dimension: 1024
+  uncovered_stop_pct: 0.5
+  land_grab:
+    coverage_goal_depth: 1
+    max_candidates_per_round: 48
+    max_clusters_per_round: 16
+    peak_cluster_radius_m: 1500.0
+    cluster_sample_spacing_m: 250.0
+    cluster_sample_radius_m: 750.0
+    refine_enabled: true
+    refine_top_n: 3
+    refine_radius_m: 200.0
+    refine_spacing_m: 50.0
+  mesh_backbone:
+    corridor_k: 3
+    corridor_grid_cell_m: 750
+    corridor_buffer_m: 3000
+    corridor_lookahead_m: 30000
+    stall_rounds: 2
+    max_candidates_per_round: 48
+    frontier_sample_spacing_m: 500
+    max_nodes: 64
+    refine_enabled: true
+    refine_top_n: 3
+    refine_radius_m: 200.0
+    refine_spacing_m: 50.0

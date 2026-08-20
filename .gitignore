@@ -1,29 +1,5 @@
-__pycache__/
-*.pyc
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-dist/
-*.egg-info/
-.venv/
+/target
+**/*.rs.bk
 .DS_Store
-
-# Rust (splatter submodule)
-**/target/
-
-.local
-*.kmz
-share
-build
-.peaky
-# Runtime home: track global YAML + public sample project only (not data/.peaky/cache)
-peaky_home/**
-!peaky_home/*.yaml
-!peaky_home/projects/
-peaky_home/projects/**
-!peaky_home/projects/sample/
-!peaky_home/projects/sample/config.yaml
-projects/**
-!projects/**/
-!projects/**/config.yaml
-*.log
+.idea
+.vscode

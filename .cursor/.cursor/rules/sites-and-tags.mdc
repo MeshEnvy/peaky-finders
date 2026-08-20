@@ -1,0 +1,22 @@
+---
+description: Site YAML vocabulary — one sites map, optional tags, no type or goals
+alwaysApply: true
+---
+
+# Sites and tags
+
+## One `sites:` map
+
+Each entry: `name`, `loc: [lat, lon]`, optional `tags: [str, …]`, optional metadata (`height_m`, `description`, …).
+
+- **No `type` field** — load rejects `sites.*.type` (“use tags”).
+- **No goals** — no separate attractor type; all sites participate in viewsheds and P2P links.
+- **`tags`** — freeform lowercase labels for serve UI filtering only (not RF switches).
+
+Roles like `installed` or `planned` are **tags**, not schema fields.
+
+## Links
+
+Manual mutual pairs at top level: `links: [[site-a, site-b], …]`.
+
+See [MEMORY.md](../../MEMORY.md) and skill `peaky-preset`.

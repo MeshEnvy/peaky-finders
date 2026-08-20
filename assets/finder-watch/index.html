@@ -1,0 +1,2094 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Peaky Finder Watch</title>
+    <link href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: system-ui, sans-serif;
+        background: #0f1419;
+        color: #e7ecf1;
+      }
+      #layout {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        height: 100%;
+      }
+      #sidebar {
+        border-right: 1px solid #2a3440;
+        padding: 12px 14px;
+        overflow: auto;
+        background: #151b22;
+      }
+      h1 {
+        font-size: 1rem;
+        margin: 0 0 8px;
+        font-weight: 600;
+      }
+      #phase {
+        font-size: 0.85rem;
+        color: #8aa0b5;
+        margin-bottom: 12px;
+        min-height: 2.5em;
+      }
+      #log {
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        line-height: 1.45;
+        max-height: 220px;
+        overflow: auto;
+        background: #0c1014;
+        border: 1px solid #2a3440;
+        border-radius: 6px;
+        padding: 8px;
+        margin-bottom: 12px;
+      }
+      #stats {
+        font-size: 0.8rem;
+        color: #8aa0b5;
+        margin-bottom: 8px;
+      }
+      #tile-progress-wrap {
+        margin-bottom: 12px;
+      }
+      #tile-progress-label {
+        font-size: 0.75rem;
+        color: #8aa0b5;
+        margin-bottom: 4px;
+      }
+      #tile-progress {
+        height: 8px;
+        background: #2a3440;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      #tile-progress-bar {
+        height: 100%;
+        width: 0%;
+        background: #4ea1ff;
+        transition: width 0.2s ease;
+      }
+      fieldset {
+        border: 1px solid #2a3440;
+        border-radius: 6px;
+        margin: 0 0 10px;
+        padding: 8px 10px;
+      }
+      legend {
+        font-size: 0.75rem;
+        color: #8aa0b5;
+        padding: 0 4px;
+      }
+      label {
+        display: block;
+        font-size: 0.82rem;
+        margin: 4px 0;
+        cursor: pointer;
+      }
+      #map {
+        width: 100%;
+        height: 100%;
+      }
+      #map-wrap {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      #map-hud {
+        position: absolute;
+        bottom: 22px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(12, 16, 20, 0.92);
+        border: 1px solid #3d4f63;
+        border-radius: 10px;
+        padding: 10px 18px 12px;
+        min-width: 300px;
+        max-width: 440px;
+        text-align: center;
+        pointer-events: none;
+        z-index: 2;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+      }
+      #hud-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      #hud-detail {
+        font-size: 0.78rem;
+        color: #8aa0b5;
+        margin-top: 4px;
+        min-height: 1.2em;
+      }
+      #hud-bar {
+        height: 5px;
+        background: #2a3440;
+        border-radius: 3px;
+        margin-top: 8px;
+        overflow: hidden;
+      }
+      #hud-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #4ea1ff, #74c0fc);
+        transition: width 0.12s linear;
+      }
+      #log {
+        display: none;
+        max-height: 140px;
+      }
+      #log.visible {
+        display: block;
+      }
+      .done-banner {
+        background: #1a3d2a;
+        border: 1px solid #2d6a4a;
+        color: #b7e4c7;
+        padding: 8px 10px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        margin-bottom: 10px;
+        display: none;
+      }
+      .done-banner.visible {
+        display: block;
+      }
+      #tile-legend {
+        font-size: 0.75rem;
+        color: #8aa0b5;
+        margin-bottom: 10px;
+        line-height: 1.6;
+      }
+      #tile-legend span {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        margin-right: 4px;
+        vertical-align: middle;
+      }
+      .dem-popup .maplibregl-popup-content {
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        background: #151b22;
+        color: #e7ecf1;
+        border: 1px solid #2a3440;
+        padding: 8px 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="layout">
+      <aside id="sidebar">
+        <h1>Peaky Finder Watch</h1>
+        <div id="phase">Connecting…</div>
+        <div id="done-banner" class="done-banner"></div>
+        <div id="stats">Peaks: 0 · Tiles: — · Candidates: — · Chain: —</div>
+        <div id="tile-progress-wrap">
+          <div id="tile-progress-label">Activity</div>
+          <div id="tile-progress"><div id="tile-progress-bar"></div></div>
+        </div>
+        <label><input type="checkbox" id="show-log" /> Show debug log</label>
+        <div id="log"></div>
+        <fieldset>
+          <legend>Layers</legend>
+          <label><input type="checkbox" id="layer-terrain" checked /> DEM terrain</label>
+          <label><input type="checkbox" id="layer-3d" /> 3D terrain (or drag compass)</label>
+          <label><input type="checkbox" id="layer-viewshed" checked /> Chain viewsheds</label>
+          <label><input type="checkbox" id="layer-land" checked /> Eligible land</label>
+          <label><input type="checkbox" id="layer-peaks" checked /> Peaks</label>
+          <label><input type="checkbox" id="layer-gaps" checked /> Route gaps</label>
+          <label><input type="checkbox" id="layer-search" checked /> Search animation</label>
+          <label><input type="checkbox" id="layer-route" checked /> Route</label>
+          <label><input type="checkbox" id="layer-link-checks" checked /> Link checks (flash)</label>
+          <label><input type="checkbox" id="layer-dem-tiles" checked /> DEM tile grid</label>
+          <label><input type="checkbox" id="layer-existing" checked /> Existing sites</label>
+          <label><input type="checkbox" id="layer-corridor" /> Corridor outline</label>
+          <label><input type="checkbox" id="layer-chain" checked /> Selected chain</label>
+        </fieldset>
+        <div id="tile-legend">
+          <div><span style="background:#4ea1ff"></span> Anchor (blue) · goal (orange)</div>
+          <div><span style="background:#74c0fc"></span> Hop disc (scan radius)</div>
+          <div><span style="background:#4ea1ff;opacity:0.5"></span> Search wedge (pulses)</div>
+          <div><span style="background:#ff922b"></span> Active route segment</div>
+          <div><span style="background:#f06595"></span> Chain (grows hop-by-hop)</div>
+          <div><span style="background:#51cf66;opacity:0.45"></span> RF viewshed (per hop)</div>
+          <div><span style="background:#fa5252"></span> Link fail flash · blue = ok</div>
+          <div><span style="background:#2f9e44;opacity:0.7"></span> Eligible land · <span style="background:#868e96;opacity:0.7"></span> ineligible · <span style="background:#e03131;opacity:0.7"></span> loading</div>
+          <div><span style="background:#e03131"></span> Route gaps (ineligible land)</div>
+        </div>
+      </aside>
+      <div id="map-wrap">
+        <div id="map"></div>
+        <div id="map-hud">
+          <div id="hud-title">Connecting…</div>
+          <div id="hud-detail"></div>
+          <div id="hud-bar"><div id="hud-bar-fill"></div></div>
+        </div>
+      </div>
+    </div>
+    <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+    <script>
+      const phaseEl = document.getElementById('phase')
+      const logEl = document.getElementById('log')
+      const statsEl = document.getElementById('stats')
+      const doneBanner = document.getElementById('done-banner')
+      const tileProgressBar = document.getElementById('tile-progress-bar')
+      const tileProgressLabel = document.getElementById('tile-progress-label')
+      const hudTitle = document.getElementById('hud-title')
+      const hudDetail = document.getElementById('hud-detail')
+      const hudBarFill = document.getElementById('hud-bar-fill')
+      const showLogEl = document.getElementById('show-log')
+      const EARTH_R = 6371000
+      let peakCount = 0
+      let tilesDone = null
+      let tilesTotal = null
+      let candidateCount = null
+      let chainCount = null
+      let fittedBounds = false
+      let scanActive = false
+      const tileStates = new Map()
+      let demPopup = null
+
+      showLogEl.addEventListener('change', () => {
+        logEl.classList.toggle('visible', showLogEl.checked)
+      })
+
+      const viz = {
+        focus: { pa: null, goal: null },
+        hop: { center: null, radiusM: 72000, pct: 0, active: false },
+        wedgeHalf: 0,
+        segment: { from: null, to: null, idx: 0, total: 0 },
+        animT: 0,
+        raf: 0,
+      }
+
+      function setHud(title, detail, pct) {
+        hudTitle.textContent = title || ''
+        hudDetail.textContent = detail || ''
+        if (pct == null) {
+          hudBarFill.style.width = '0%'
+        } else {
+          hudBarFill.style.width = Math.min(100, Math.max(0, pct)) + '%'
+        }
+        if (title) phaseEl.textContent = title
+      }
+
+      function destinationPoint(lon, lat, bearingDeg, distM) {
+        const br = (bearingDeg * Math.PI) / 180
+        const lat1 = (lat * Math.PI) / 180
+        const lon1 = (lon * Math.PI) / 180
+        const ang = distM / EARTH_R
+        const lat2 = Math.asin(
+          Math.sin(lat1) * Math.cos(ang) + Math.cos(lat1) * Math.sin(ang) * Math.cos(br),
+        )
+        const lon2 =
+          lon1 +
+          Math.atan2(
+            Math.sin(br) * Math.sin(ang) * Math.cos(lat1),
+            Math.cos(ang) - Math.sin(lat1) * Math.sin(lat2),
+          )
+        return [(lon2 * 180) / Math.PI, (lat2 * 180) / Math.PI]
+      }
+
+      function circleRing(lon, lat, radiusM, steps) {
+        steps = steps || 72
+        const ring = []
+        for (let i = 0; i <= steps; i++) {
+          ring.push(destinationPoint(lon, lat, (360 * i) / steps, radiusM))
+        }
+        return ring
+      }
+
+      /** fitBounds padding: subject in center 50% of map pane (25% margin each side). */
+      function centerHalfPadding(extra) {
+        const c = map.getContainer()
+        const w = c.clientWidth || 800
+        const h = c.clientHeight || 600
+        const pad = {
+          top: h * 0.25,
+          bottom: h * 0.25,
+          left: w * 0.25,
+          right: w * 0.25,
+        }
+        if (extra) {
+          pad.top += extra.top || 0
+          pad.bottom += extra.bottom || 0
+          pad.left += extra.left || 0
+          pad.right += extra.right || 0
+        }
+        return pad
+      }
+
+      function flyToSearchArea(pa, goal) {
+        if (!mapLoaded || !pa || !goal) return
+        const lngs = [pa[0], goal[0]]
+        const lats = [pa[1], goal[1]]
+        map.fitBounds(
+          [
+            [Math.min(...lngs), Math.min(...lats)],
+            [Math.max(...lngs), Math.max(...lats)],
+          ],
+          { padding: centerHalfPadding(), maxZoom: 11, duration: 900 },
+        )
+      }
+
+      function startVizLoop() {
+        if (viz.raf) return
+        const tick = (t) => {
+          viz.animT = t
+          updateVizLayers()
+          viz.raf = requestAnimationFrame(tick)
+        }
+        viz.raf = requestAnimationFrame(tick)
+      }
+
+      function updateVizLayers() {
+        if (!mapLoaded) return
+        const pulse = 0.55 + 0.45 * Math.sin(viz.animT / 380)
+        const wedgePulse = 0.22 + 0.28 * Math.sin(viz.animT / 520)
+
+        if (map.getSource('search-ray') && viz.focus.pa && viz.focus.goal) {
+          map.getSource('search-ray').setData({
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: [viz.focus.pa, viz.focus.goal],
+            },
+            properties: {},
+          })
+        }
+
+        if (map.getSource('segment-active') && viz.segment.from && viz.segment.to) {
+          map.getSource('segment-active').setData({
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: [viz.segment.from, viz.segment.to],
+            },
+            properties: {},
+          })
+        }
+
+        if (map.getSource('hop-disc') && viz.hop.center && viz.hop.active) {
+          const [lon, lat] = viz.hop.center
+          const r = viz.hop.radiusM
+          map.getSource('hop-disc').setData({
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: [circleRing(lon, lat, r)] },
+            properties: {},
+          })
+          if (map.getLayer('hop-disc-fill')) {
+            map.setPaintProperty('hop-disc-fill', 'fill-opacity', 0.06 + 0.1 * (viz.hop.pct / 100))
+          }
+          if (map.getLayer('hop-disc-line')) {
+            map.setPaintProperty('hop-disc-line', 'line-opacity', 0.35 + 0.35 * pulse)
+          }
+        } else if (map.getSource('hop-disc')) {
+          map.getSource('hop-disc').setData(emptyFc())
+        }
+
+        if (map.getSource('pulse-ring') && viz.focus.pa) {
+          const ringR = 800 + 1200 * pulse
+          map.getSource('pulse-ring').setData({
+            type: 'Feature',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [circleRing(viz.focus.pa[0], viz.focus.pa[1], ringR, 48)],
+            },
+            properties: {},
+          })
+        }
+
+        if (map.getLayer('search-wedge-fill')) {
+          map.setPaintProperty('search-wedge-fill', 'fill-opacity', wedgePulse)
+        }
+        if (map.getLayer('search-focus-circles')) {
+          map.setPaintProperty('search-focus-circles', 'circle-radius', 7 + 4 * pulse)
+        }
+      }
+
+      const MASK_W = 128
+      const MASK_H = 128
+      const tileMaskBuffers = new Map()
+      let landMaskVisible = true
+      // 0 = not processed (red), 1 = not eligible (gray), 2 = eligible (green)
+      const MASK_COLORS = {
+        0: [224, 49, 49],
+        1: [134, 142, 150],
+        2: [47, 158, 68],
+      }
+
+      function setMaskPixel(px, i, code) {
+        const c = MASK_COLORS[code] || MASK_COLORS[1]
+        px[i] = c[0]
+        px[i + 1] = c[1]
+        px[i + 2] = c[2]
+        px[i + 3] = 210
+      }
+
+      function tileSourceId(name) {
+        return (
+          'mask-' +
+          name
+            .replace(/\.(hgt\.gz|hgt)$/i, '')
+            .replace(/[^a-zA-Z0-9]+/g, '_')
+            .toLowerCase()
+        )
+      }
+
+      function isLandMaskVisible() {
+        return landMaskVisible
+      }
+
+      function syncLandMaskLayerVisibility() {
+        if (!map.isStyleLoaded()) return
+        const vis = landMaskVisible ? 'visible' : 'none'
+        for (const name of tileMaskBuffers.keys()) {
+          const lid = tileSourceId(name) + '-layer'
+          if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis)
+        }
+      }
+
+      function getTileBounds(name) {
+        const st = tileStates.get(name)
+        if (!st || st.west == null) return null
+        return { west: st.west, south: st.south, east: st.east, north: st.north }
+      }
+
+      function ensureTileMaskBuffer(name) {
+        if (tileMaskBuffers.has(name)) return tileMaskBuffers.get(name)
+        const bounds = getTileBounds(name)
+        if (!bounds) return null
+        const imageData = new ImageData(MASK_W, MASK_H)
+        const px = imageData.data
+        for (let i = 0; i < px.length; i += 4) setMaskPixel(px, i, 0)
+        const canvas = document.createElement('canvas')
+        canvas.width = MASK_W
+        canvas.height = MASK_H
+        const buf = {
+          imageData,
+          canvas,
+          ctx: canvas.getContext('2d'),
+          lastCy: -1,
+          dirty: false,
+          inflight: false,
+          gen: 0,
+          ...bounds,
+        }
+        tileMaskBuffers.set(name, buf)
+        return buf
+      }
+
+      function maskCanvasUrl(buf) {
+        buf.ctx.putImageData(buf.imageData, 0, 0)
+        return buf.canvas.toDataURL('image/png')
+      }
+
+      // MapLibre aborts the previous image fetch on every updateImage({url}).
+      // Coalesce: at most one in-flight load per tile; keep latest pixels for next push.
+      let maskFlushRaf = 0
+      const maskFlushQueue = new Set()
+
+      function ensureTileMaskRaster(name) {
+        if (!map.isStyleLoaded()) return
+        const sid = tileSourceId(name)
+        const buf = ensureTileMaskBuffer(name)
+        if (!buf) return
+        if (!map.getSource(sid)) {
+          buf.inflight = true
+          buf.gen += 1
+          const gen = buf.gen
+          map.addSource(sid, {
+            type: 'image',
+            url: maskCanvasUrl(buf),
+            coordinates: [
+              [buf.west, buf.north],
+              [buf.east, buf.north],
+              [buf.east, buf.south],
+              [buf.west, buf.south],
+            ],
+          })
+          // Land above peaks so ~87k yellow dots don't paint solid over gray/green.
+          const before = map.getLayer('existing-circles')
+            ? 'existing-circles'
+            : map.getLayer('route-line')
+              ? 'route-line'
+              : undefined
+          map.addLayer(
+            {
+              id: sid + '-layer',
+              type: 'raster',
+              source: sid,
+              layout: { visibility: isLandMaskVisible() ? 'visible' : 'none' },
+              // Semi-transparent so Skadi hillshade ridges show through.
+              paint: { 'raster-opacity': 0.62, 'raster-fade-duration': 0 },
+            },
+            before,
+          )
+          const finish = () => {
+            if (buf.gen !== gen) return
+            buf.inflight = false
+            if (buf.dirty) scheduleMaskFlush(name)
+          }
+          const onSourceData = (e) => {
+            if (e.sourceId === sid && (e.isSourceLoaded || e.sourceDataType === 'idle')) {
+              map.off('sourcedata', onSourceData)
+              finish()
+            }
+          }
+          map.on('sourcedata', onSourceData)
+          setTimeout(() => {
+            map.off('sourcedata', onSourceData)
+            finish()
+          }, 300)
+        } else {
+          scheduleMaskFlush(name)
+        }
+        syncLandMaskLayerVisibility()
+      }
+
+      function scheduleMaskFlush(name) {
+        const buf = tileMaskBuffers.get(name)
+        if (!buf) return
+        buf.dirty = true
+        maskFlushQueue.add(name)
+        if (maskFlushRaf) return
+        maskFlushRaf = requestAnimationFrame(() => {
+          maskFlushRaf = 0
+          const names = Array.from(maskFlushQueue)
+          maskFlushQueue.clear()
+          for (const n of names) flushTileMaskImage(n)
+        })
+      }
+
+      function flushTileMaskImage(name) {
+        const sid = tileSourceId(name)
+        const src = map.getSource(sid)
+        const buf = tileMaskBuffers.get(name)
+        if (!src || !buf || typeof src.updateImage !== 'function') return
+        if (!buf.dirty) return
+        if (buf.inflight) return
+        buf.dirty = false
+        buf.inflight = true
+        buf.gen += 1
+        const gen = buf.gen
+        const finish = () => {
+          if (buf.gen !== gen) return
+          buf.inflight = false
+          if (buf.dirty) scheduleMaskFlush(name)
+        }
+        const onSourceData = (e) => {
+          if (e.sourceId === sid && (e.isSourceLoaded || e.sourceDataType === 'idle')) {
+            map.off('sourcedata', onSourceData)
+            finish()
+          }
+        }
+        map.on('sourcedata', onSourceData)
+        setTimeout(() => {
+          map.off('sourcedata', onSourceData)
+          finish()
+        }, 300)
+        try {
+          src.updateImage({ url: maskCanvasUrl(buf) })
+        } catch (_) {
+          map.off('sourcedata', onSourceData)
+          finish()
+        }
+      }
+
+      function pushTileMaskImage(name) {
+        scheduleMaskFlush(name)
+      }
+
+      function removeTileMaskRaster(name) {
+        const sid = tileSourceId(name)
+        const lid = sid + '-layer'
+        const buf = tileMaskBuffers.get(name)
+        if (buf) buf.gen += 1
+        maskFlushQueue.delete(name)
+        if (map.getLayer(lid)) map.removeLayer(lid)
+        if (map.getSource(sid)) map.removeSource(sid)
+        tileMaskBuffers.delete(name)
+      }
+
+      function paintMaskSamples(tile, data) {
+        if (!data || !data.samples) return
+        const buf = ensureTileMaskBuffer(tile)
+        if (!buf) return
+        ensureTileMaskRaster(tile)
+        const w = data.w || MASK_W
+        const h = data.h || MASK_H
+        const samples = data.samples
+        const px = buf.imageData.data
+        for (let y = 0; y < MASK_H; y++) {
+          const sy = Math.min(h - 1, Math.floor((y * h) / MASK_H))
+          for (let x = 0; x < MASK_W; x++) {
+            const sx = Math.min(w - 1, Math.floor((x * w) / MASK_W))
+            setMaskPixel(px, (y * MASK_W + x) * 4, samples[sy * w + sx] ?? 1)
+          }
+        }
+        buf.lastCy = MASK_H - 1
+        pushTileMaskImage(tile)
+      }
+
+      // Cap concurrent heavy GETs so SSE + map stay responsive.
+      const heavyQueue = []
+      let heavyActive = 0
+      const HEAVY_MAX = 2
+      function enqueueHeavy(job) {
+        heavyQueue.push(job)
+        pumpHeavy()
+      }
+      function pumpHeavy() {
+        while (heavyActive < HEAVY_MAX && heavyQueue.length) {
+          const job = heavyQueue.shift()
+          heavyActive++
+          Promise.resolve()
+            .then(job)
+            .catch(() => {})
+            .finally(() => {
+              heavyActive--
+              pumpHeavy()
+            })
+        }
+      }
+
+      // SSE carries a stub; full samples come from GET /mask?tile=…
+      function applyMaskTile(stub) {
+        if (!stub || !stub.tile) return
+        const tile = stub.tile
+        if (stub.west != null && stub.south != null && stub.east != null && stub.north != null) {
+          initDemTiles(
+            [
+              {
+                name: tile,
+                west: stub.west,
+                south: stub.south,
+                east: stub.east,
+                north: stub.north,
+              },
+            ],
+            true,
+          )
+        }
+        // dem_tiles may not have run yet — retry once the grid exists.
+        if (!getTileBounds(tile)) {
+          whenMap(() => applyMaskTile(stub))
+          return
+        }
+        updateTileState(tile, { status: 'done', mask_pct: 1, detail: 'eligible mask' })
+        if (stub.samples) {
+          paintMaskSamples(tile, stub)
+          return
+        }
+        const cached = tileMaskBuffers.get(tile)
+        if (!isLandMaskVisible() && cached && cached.lastCy >= MASK_H - 1) return
+        enqueueHeavy(async () => {
+          const res = await fetch('/mask?tile=' + encodeURIComponent(tile))
+          if (!res.ok) return
+          paintMaskSamples(tile, await res.json())
+        })
+      }
+
+      function tileRing(west, south, east, north) {
+        return [
+          [west, south],
+          [east, south],
+          [east, north],
+          [west, north],
+          [west, south],
+        ]
+      }
+
+      function initDemTiles(tiles, merge) {
+        if (!merge) {
+          tileStates.clear()
+          for (const name of [...tileMaskBuffers.keys()]) removeTileMaskRaster(name)
+        }
+        for (const t of tiles || []) {
+          if (!t || !t.name) continue
+          const cur = tileStates.get(t.name) || {
+            status: 'pending',
+            peaks: 0,
+            mask_pct: 0,
+            detail: '',
+          }
+          tileStates.set(t.name, {
+            ...cur,
+            west: t.west ?? cur.west,
+            south: t.south ?? cur.south,
+            east: t.east ?? cur.east,
+            north: t.north ?? cur.north,
+          })
+        }
+        refreshDemTileLayer()
+        // Show red "not processed" placeholder for every new tile until mask_tile arrives.
+        for (const t of tiles || []) {
+          if (t && t.name) ensureTileMaskRaster(t.name)
+        }
+      }
+
+      function updateTileState(name, patch) {
+        const cur = tileStates.get(name) || {
+          status: 'pending',
+          peaks: 0,
+          mask_pct: 0,
+          detail: '',
+        }
+        tileStates.set(name, { ...cur, ...patch })
+        refreshDemTileLayer()
+      }
+
+      function refreshDemTileLayer() {
+        if (!map.getSource('dem-tiles')) return
+        const features = []
+        for (const [name, st] of tileStates) {
+          const w = st.west
+          const s = st.south
+          const e = st.east
+          const n = st.north
+          if (w == null || s == null || e == null || n == null) continue
+          features.push({
+            type: 'Feature',
+            properties: {
+              name,
+              status: st.status || 'pending',
+              peaks: st.peaks || 0,
+              mask_pct: st.mask_pct || 0,
+              detail: st.detail || '',
+            },
+            geometry: { type: 'Polygon', coordinates: [tileRing(w, s, e, n)] },
+          })
+        }
+        map.getSource('dem-tiles').setData({ type: 'FeatureCollection', features })
+      }
+
+      function logLine(text) {
+        const line = document.createElement('div')
+        line.textContent = text
+        logEl.appendChild(line)
+        logEl.scrollTop = logEl.scrollHeight
+        while (logEl.childNodes.length > 80) {
+          logEl.removeChild(logEl.firstChild)
+        }
+      }
+
+      function updateStats() {
+        statsEl.textContent =
+          'Peaks: ' +
+          peakCount +
+          ' · Tiles: ' +
+          (tilesDone == null || tilesTotal == null ? '—' : tilesDone + '/' + tilesTotal) +
+          ' · Candidates: ' +
+          (candidateCount == null ? '—' : candidateCount) +
+          ' · Chain: ' +
+          (chainCount == null ? '—' : chainCount)
+      }
+
+      function updateTileProgress(done, total) {
+        if (done == null || total == null || total <= 0) return
+        tilesDone = done
+        tilesTotal = total
+        const pct = Math.min(100, Math.round((done / total) * 100))
+        tileProgressBar.style.width = pct + '%'
+        tileProgressLabel.textContent = 'Tile scan ' + done + '/' + total + ' (' + pct + '%)'
+        updateStats()
+      }
+
+      function applyScanProgress(data) {
+        if (!data) return
+        const tile = data.tile || ''
+        if (data.status === 'hop_disc') {
+          scanActive = true
+          const done = data.done || 0
+          const total = data.total || 0
+          const pct =
+            data.pct != null ? data.pct : total > 0 ? Math.round((done / total) * 100) : 0
+          tileProgressBar.style.width = pct + '%'
+          tileProgressLabel.textContent = 'Peak terrain scan'
+          if (data.center) {
+            viz.hop.center = data.center
+            viz.hop.radiusM = data.radius_m || viz.hop.radiusM
+            viz.hop.active = true
+            viz.hop.pct = pct
+            startVizLoop()
+          }
+          setHud(
+            'Scanning terrain for peaks',
+            done + ' / ' + total + ' rows · ' + (data.tiles || '?') + ' DEM tiles',
+            pct,
+          )
+          return
+        }
+        if (data.status === 'coverage') {
+          scanActive = true
+          const done = data.done || 0
+          const total = data.total || 0
+          const pct =
+            data.pct != null ? data.pct : total > 0 ? Math.round((done / total) * 100) : 0
+          viz.hop.active = false
+          tileProgressBar.style.width = pct + '%'
+          tileProgressLabel.textContent = 'Coverage filter'
+          setHud(
+            'Filtering peaks inside current viewshed',
+            done + ' in wedge · ' + (data.covered || 0) + ' in viewshed',
+            pct,
+          )
+          startVizLoop()
+          return
+        }
+        if (data.status === 'gap_overview') {
+          scanActive = true
+          const done = data.done || 0
+          const total = data.total || 0
+          const pct =
+            data.pct != null ? data.pct : total > 0 ? Math.round((done / total) * 100) : 0
+          tileProgressBar.style.width = pct + '%'
+          tileProgressLabel.textContent = 'Route gap scan'
+          if (data.from && data.to) {
+            viz.segment.from = data.from
+            viz.segment.to = data.to
+            viz.segment.idx = done
+            viz.segment.total = total
+            viz.hop.active = false
+            startVizLoop()
+            flyToSearchArea(data.from, data.to)
+          }
+          setHud(
+            'Scanning route for land gaps',
+            'Segment ' + done + ' / ' + total + (data.gaps != null ? ' · ' + data.gaps + ' gaps found' : ''),
+            pct,
+          )
+          return
+        }
+        if (data.status === 'working') {
+          scanActive = true
+          ensureTileMaskRaster(tile)
+          updateTileState(tile, { status: 'working', detail: 'peak scan queued' })
+          phaseEl.textContent =
+            'Working ' + tile + ' (' + (data.started || '?') + '/' + (data.total || '?') + ' started)'
+          return
+        }
+        if (data.status === 'tile_done') {
+          scanActive = true
+          scheduleMaskFlush(tile)
+          updateTileProgress(data.done, data.total)
+          const batch = data.batch_peaks != null ? data.batch_peaks : 0
+          updateTileState(tile, {
+            status: 'done',
+            peaks: batch,
+            mask_pct: 1,
+            detail: batch + ' peaks',
+          })
+          if (data.peaks_total != null) {
+            peakCount = data.peaks_total
+            updateStats()
+          }
+          phaseEl.textContent =
+            'Tile ' +
+            (data.done || '?') +
+            '/' +
+            (data.total || '?') +
+            ' ' +
+            tile +
+            ' — ' +
+            batch +
+            ' peaks this tile'
+        }
+      }
+
+      // SSE first; map layers second; hillshade last (after hello) so boot stays interactive.
+      let mapLoaded = false
+      let hillshadeReady = false
+      const pendingMapFns = []
+      let pendingDrainRaf = 0
+      function whenMap(fn) {
+        pendingMapFns.push(fn)
+        if (mapLoaded) schedulePendingDrain()
+      }
+      function schedulePendingDrain() {
+        if (pendingDrainRaf) return
+        pendingDrainRaf = requestAnimationFrame(() => {
+          pendingDrainRaf = 0
+          // A few light jobs per frame; heavy mask/peak work goes through enqueueHeavy.
+          const n = Math.min(4, pendingMapFns.length)
+          for (let i = 0; i < n; i++) {
+            const fn = pendingMapFns.shift()
+            if (fn) fn()
+          }
+          if (pendingMapFns.length) schedulePendingDrain()
+        })
+      }
+      const PITCH_TERRAIN_ON = 8
+      const PITCH_TERRAIN_OFF = 4
+      const TERRAIN_EXAGGERATION = 2.5
+      const VIEWSHED_OPACITY = 0.42
+      let terrainMeshActive = false
+      const siteViewshedSlug = new Map()
+      let viewshedLayerVisible = true
+
+      function viewshedSourceId(slug) {
+        return 'viewshed-src-' + slug
+      }
+
+      function viewshedLayerId(slug) {
+        return 'viewshed-layer-' + slug
+      }
+
+      function viewshedInsertBefore() {
+        if (map.getLayer('chain-stroke')) return 'chain-stroke'
+        if (map.getLayer('dem-hillshade')) return 'dem-hillshade'
+        return undefined
+      }
+
+      function addViewshedLayer(vs) {
+        if (!vs || !vs.slug || !vs.url || !vs.coordinates) return
+        const sourceId = viewshedSourceId(vs.slug)
+        const layerId = viewshedLayerId(vs.slug)
+        if (vs.lat != null && vs.lon != null) {
+          siteViewshedSlug.set(siteKey({ lat: vs.lat, lon: vs.lon }), vs.slug)
+        }
+        const existingSource = map.getSource(sourceId)
+        if (existingSource) {
+          if (typeof existingSource.updateImage === 'function') {
+            existingSource.updateImage({ url: vs.url, coordinates: vs.coordinates })
+          } else {
+            if (map.getLayer(layerId)) map.removeLayer(layerId)
+            map.removeSource(sourceId)
+            map.addSource(sourceId, {
+              type: 'image',
+              url: vs.url,
+              coordinates: vs.coordinates,
+            })
+            map.addLayer(
+              {
+                id: layerId,
+                type: 'raster',
+                source: sourceId,
+                paint: {
+                  'raster-opacity': VIEWSHED_OPACITY,
+                  'raster-fade-duration': 0,
+                },
+              },
+              viewshedInsertBefore(),
+            )
+          }
+        } else {
+          map.addSource(sourceId, {
+            type: 'image',
+            url: vs.url,
+            coordinates: vs.coordinates,
+          })
+          map.addLayer(
+            {
+              id: layerId,
+              type: 'raster',
+              source: sourceId,
+              paint: {
+                'raster-opacity': VIEWSHED_OPACITY,
+                'raster-fade-duration': 0,
+              },
+            },
+            viewshedInsertBefore(),
+          )
+        }
+        const vis = viewshedLayerVisible ? 'visible' : 'none'
+        if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', vis)
+      }
+
+      function removeViewshedLayer(slug) {
+        if (!slug) return
+        const layerId = viewshedLayerId(slug)
+        const sourceId = viewshedSourceId(slug)
+        if (map.getLayer(layerId)) map.removeLayer(layerId)
+        if (map.getSource(sourceId)) map.removeSource(sourceId)
+      }
+
+      function syncViewshedLayerVisibility() {
+        const vis = viewshedLayerVisible ? 'visible' : 'none'
+        for (const slug of siteViewshedSlug.values()) {
+          const layerId = viewshedLayerId(slug)
+          if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', vis)
+        }
+      }
+
+      function ensureHillshade() {
+        if (hillshadeReady || !mapLoaded) return
+        hillshadeReady = true
+        ensureTerrainDem()
+        if (!map.getSource('dem-hillshade')) {
+          map.addSource('dem-hillshade', {
+            type: 'raster',
+            tiles: ['/dem/hillshade/{z}/{x}/{y}'],
+            tileSize: 256,
+            maxzoom: 13,
+            attribution: 'Skadi DEM',
+          })
+          map.addLayer(
+            {
+              id: 'dem-hillshade',
+              type: 'raster',
+              source: 'dem-hillshade',
+              paint: {
+                'raster-opacity': 0.92,
+                'raster-contrast': 0.25,
+                'raster-brightness-min': 0.05,
+                'raster-brightness-max': 0.95,
+                'raster-fade-duration': 0,
+              },
+            },
+            'peaks-circles',
+          )
+          const terrainEl = document.getElementById('layer-terrain')
+          if (terrainEl && !terrainEl.checked) {
+            map.setLayoutProperty('dem-hillshade', 'visibility', 'none')
+          }
+        }
+      }
+
+      function ensureTerrainDem() {
+        if (!mapLoaded) return
+        if (!map.getSource('dem-terrarium')) {
+          map.addSource('dem-terrarium', {
+            type: 'raster-dem',
+            tiles: ['/dem/terrarium/{z}/{x}/{y}'],
+            tileSize: 256,
+            maxzoom: 13,
+            encoding: 'terrarium',
+          })
+        }
+      }
+
+      function showTerrainMesh() {
+        ensureHillshade()
+        ensureTerrainDem()
+        map.setTerrain({ source: 'dem-terrarium', exaggeration: TERRAIN_EXAGGERATION })
+        terrainMeshActive = true
+        const el = document.getElementById('layer-3d')
+        if (el && !el.checked) el.checked = true
+      }
+
+      function hideTerrainMesh() {
+        if (map.getTerrain()) map.setTerrain(null)
+        terrainMeshActive = false
+        const el = document.getElementById('layer-3d')
+        if (el && el.checked && map.getPitch() <= PITCH_TERRAIN_OFF) el.checked = false
+      }
+
+      function syncTerrainFromPitch() {
+        if (!mapLoaded || !hillshadeReady) return
+        const pitch = map.getPitch()
+        if (!terrainMeshActive && pitch >= PITCH_TERRAIN_ON) {
+          showTerrainMesh()
+        } else if (terrainMeshActive && pitch <= PITCH_TERRAIN_OFF) {
+          hideTerrainMesh()
+        }
+      }
+
+      connectEvents()
+
+      const map = new maplibregl.Map({
+        container: 'map',
+        // Leave headroom for EventSource on HTTP/1.1 (~6 conns/origin).
+        maxParallelImageRequests: 2,
+        maxPitch: 85,
+        pitchWithRotate: true,
+        // No hillshade at boot — add after SSE hello so Connecting… isn't starved.
+        style: {
+          version: 8,
+          sources: {},
+          layers: [
+            { id: 'background', type: 'background', paint: { 'background-color': '#1a1d23' } },
+          ],
+        },
+        center: [-116.5, 39.2],
+        zoom: 6,
+      })
+
+      map.addControl(
+        new maplibregl.NavigationControl({ visualizePitch: true, showZoom: true }),
+        'top-right',
+      )
+
+      map.on('load', () => {
+        // Bottom → top: peaks → eligible land (dynamic) → existing → route → corridor → DEM grid → chain
+        map.addSource('peaks', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'peaks-circles',
+          type: 'circle',
+          source: 'peaks',
+          paint: {
+            'circle-radius': [
+              'interpolate',
+              ['exponential', 1.6],
+              ['zoom'],
+              5,
+              1.2,
+              8,
+              2.5,
+              11,
+              5,
+              14,
+              9,
+            ],
+            'circle-color': [
+              'case',
+              ['==', ['get', 'covered'], 0],
+              '#868e96',
+              '#ffd43b',
+            ],
+            'circle-opacity': [
+              'case',
+              ['==', ['get', 'covered'], 0],
+              0.35,
+              0.75,
+            ],
+            'circle-stroke-width': 0,
+          },
+        })
+
+        map.addSource('existing', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'existing-circles',
+          type: 'circle',
+          source: 'existing',
+          paint: {
+            'circle-radius': 7,
+            'circle-color': '#ffffff',
+            'circle-stroke-width': 2,
+            'circle-stroke-color': '#212529',
+          },
+        })
+
+        map.addSource('route', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'route-line',
+          type: 'line',
+          source: 'route',
+          paint: { 'line-color': '#4ea1ff', 'line-width': 3, 'line-opacity': 1 },
+        })
+
+        map.addSource('gaps', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'gaps-line',
+          type: 'line',
+          source: 'gaps',
+          paint: {
+            'line-color': '#e03131',
+            'line-width': 4,
+            'line-opacity': 0.85,
+            'line-dasharray': [2, 1.5],
+          },
+        })
+
+        map.addSource('search-wedge', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'search-wedge-fill',
+          type: 'fill',
+          source: 'search-wedge',
+          paint: {
+            'fill-color': '#4ea1ff',
+            'fill-opacity': 0.28,
+            'fill-outline-color': '#7ec8ff',
+          },
+        })
+
+        map.addSource('search-ray', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'search-ray-line',
+          type: 'line',
+          source: 'search-ray',
+          paint: {
+            'line-color': '#ff922b',
+            'line-width': 2,
+            'line-opacity': 0.85,
+            'line-dasharray': [3, 2],
+          },
+        })
+
+        map.addSource('hop-disc', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'hop-disc-fill',
+          type: 'fill',
+          source: 'hop-disc',
+          paint: { 'fill-color': '#4ea1ff', 'fill-opacity': 0.08 },
+        })
+        map.addLayer({
+          id: 'hop-disc-line',
+          type: 'line',
+          source: 'hop-disc',
+          paint: {
+            'line-color': '#74c0fc',
+            'line-width': 2,
+            'line-opacity': 0.55,
+            'line-dasharray': [2, 2],
+          },
+        })
+
+        map.addSource('pulse-ring', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'pulse-ring-line',
+          type: 'line',
+          source: 'pulse-ring',
+          paint: {
+            'line-color': '#4ea1ff',
+            'line-width': 2,
+            'line-opacity': 0.65,
+          },
+        })
+
+        map.addSource('segment-active', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'segment-active-line',
+          type: 'line',
+          source: 'segment-active',
+          paint: {
+            'line-color': '#ff922b',
+            'line-width': 6,
+            'line-opacity': 0.75,
+          },
+        })
+
+        map.addSource('search-focus', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'search-focus-circles',
+          type: 'circle',
+          source: 'search-focus',
+          paint: {
+            'circle-radius': 8,
+            'circle-color': [
+              'match',
+              ['get', 'role'],
+              'pa',
+              '#4ea1ff',
+              'goal',
+              '#ff922b',
+              '#ffffff',
+            ],
+            'circle-stroke-width': 2,
+            'circle-stroke-color': '#fff',
+          },
+        })
+
+        map.addSource('corridor', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'corridor-line',
+          type: 'line',
+          source: 'corridor',
+          layout: { visibility: 'none' },
+          paint: {
+            'line-color': '#ff922b',
+            'line-opacity': 1,
+            'line-width': 2.5,
+            'line-dasharray': [2, 2],
+          },
+        })
+
+        map.addSource('dem-tiles', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'dem-tiles-line',
+          type: 'line',
+          source: 'dem-tiles',
+          paint: {
+            'line-color': '#212529',
+            'line-width': 1.25,
+            'line-opacity': 0.85,
+          },
+        })
+
+        demPopup = new maplibregl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          className: 'dem-popup',
+        })
+        map.on('mousemove', 'dem-tiles-line', (e) => {
+          if (!e.features || !e.features.length) return
+          const p = e.features[0].properties
+          const html =
+            '<strong>' +
+            (p.name || '') +
+            '</strong><br>' +
+            'status: ' +
+            (p.status || '') +
+            '<br>' +
+            (p.detail ? p.detail + '<br>' : '') +
+            (p.peaks ? 'peaks: ' + p.peaks : '')
+          map.getCanvas().style.cursor = 'crosshair'
+          demPopup.setLngLat(e.lngLat).setHTML(html).addTo(map)
+        })
+        map.on('mouseleave', 'dem-tiles-line', () => {
+          map.getCanvas().style.cursor = ''
+          demPopup.remove()
+        })
+
+        // Ephemeral RF pair probes (SSE link_check); fade via rAF opacity updates.
+        map.addSource('link-probes', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'link-probes-line',
+          type: 'line',
+          source: 'link-probes',
+          paint: {
+            'line-color': [
+              'case',
+              ['==', ['get', 'ok'], 1],
+              '#4ea1ff',
+              '#fa5252',
+            ],
+            'line-width': ['case', ['==', ['get', 'ok'], 1], 4, 2.5],
+            'line-opacity': ['get', 'opacity'],
+          },
+        })
+
+        map.addSource('chain-line', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'chain-stroke',
+          type: 'line',
+          source: 'chain-line',
+          paint: { 'line-color': '#f06595', 'line-width': 4 },
+        })
+
+        map.addSource('chain-points', { type: 'geojson', data: emptyFc() })
+        map.addLayer({
+          id: 'chain-circles',
+          type: 'circle',
+          source: 'chain-points',
+          paint: {
+            'circle-radius': 9,
+            'circle-color': '#f06595',
+            'circle-stroke-width': 2,
+            'circle-stroke-color': '#fff',
+          },
+        })
+
+        wireLayerToggles()
+        map.on('pitch', syncTerrainFromPitch)
+        mapLoaded = true
+        schedulePendingDrain()
+        // If hello already arrived before map load, attach terrain now.
+        if (sseHelloSeen) ensureHillshade()
+      })
+
+      function emptyFc() {
+        return { type: 'FeatureCollection', features: [] }
+      }
+
+      function setLayerVis(layerIds, visible) {
+        const vis = visible ? 'visible' : 'none'
+        for (const lid of layerIds) {
+          if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis)
+        }
+      }
+
+      function wireLayerToggles() {
+        const pairs = [
+          ['layer-terrain', ['dem-hillshade']],
+          ['layer-route', ['route-line']],
+          ['layer-gaps', ['gaps-line']],
+          ['layer-search', [
+            'search-wedge-fill',
+            'search-focus-circles',
+            'search-ray-line',
+            'hop-disc-fill',
+            'hop-disc-line',
+            'pulse-ring-line',
+            'segment-active-line',
+          ]],
+          ['layer-link-checks', ['link-probes-line']],
+          ['layer-corridor', ['corridor-line']],
+          ['layer-existing', ['existing-circles']],
+          ['layer-peaks', ['peaks-circles']],
+          ['layer-dem-tiles', ['dem-tiles-line']],
+          ['layer-chain', ['chain-stroke', 'chain-circles']],
+        ]
+        for (const [id, layers] of pairs) {
+          const el = document.getElementById(id)
+          const sync = () => setLayerVis(layers, el.checked)
+          el.addEventListener('change', sync)
+          sync()
+        }
+        const landEl = document.getElementById('layer-land')
+        const syncLand = () => {
+          landMaskVisible = landEl.checked
+          if (landMaskVisible) {
+            for (const name of tileStates.keys()) ensureTileMaskRaster(name)
+          }
+          syncLandMaskLayerVisibility()
+        }
+        landEl.addEventListener('change', syncLand)
+        landMaskVisible = landEl.checked
+        syncLand()
+
+        const el3d = document.getElementById('layer-3d')
+        el3d.addEventListener('change', () => {
+          if (el3d.checked) {
+            ensureHillshade()
+            showTerrainMesh()
+            if (map.getPitch() < PITCH_TERRAIN_ON) {
+              map.easeTo({ pitch: 55, duration: 600 })
+            }
+          } else {
+            hideTerrainMesh()
+            map.easeTo({ pitch: 0, bearing: map.getBearing(), duration: 500 })
+          }
+        })
+        const vsEl = document.getElementById('layer-viewshed')
+        vsEl.addEventListener('change', () => {
+          viewshedLayerVisible = vsEl.checked
+          syncViewshedLayerVisibility()
+        })
+        viewshedLayerVisible = vsEl.checked
+      }
+
+      function fitToCoords(coords) {
+        if (fittedBounds || !coords.length) return
+        const lngs = coords.map((c) => c[0])
+        const lats = coords.map((c) => c[1])
+        map.fitBounds(
+          [
+            [Math.min(...lngs), Math.min(...lats)],
+            [Math.max(...lngs), Math.max(...lats)],
+          ],
+          { padding: centerHalfPadding(), maxZoom: 11 },
+        )
+        fittedBounds = true
+      }
+
+      function setGaps(data) {
+        gapFeatures.length = 0
+        for (const g of data.gaps || []) {
+          appendGapFeature(g)
+        }
+        flushGapsLayer()
+      }
+
+      const gapFeatures = []
+
+      function appendGapFeature(g) {
+        const coords = g.coordinates || [
+          [g.start_lon, g.start_lat],
+          [g.end_lon, g.end_lat],
+        ]
+        gapFeatures.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: coords },
+          properties: { length_m: g.length_m || 0 },
+        })
+      }
+
+      function flushGapsLayer() {
+        if (!map.getSource('gaps')) return
+        map.getSource('gaps').setData({ type: 'FeatureCollection', features: gapFeatures })
+      }
+
+      function appendGapLive(g) {
+        appendGapFeature(g)
+        flushGapsLayer()
+      }
+
+      function setSearchFocus(data) {
+        if (data.pa) viz.focus.pa = data.pa
+        if (data.goal) viz.focus.goal = data.goal
+        startVizLoop()
+        flyToSearchArea(viz.focus.pa, viz.focus.goal)
+        const features = []
+        if (data.pa) {
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: data.pa },
+            properties: { role: 'pa' },
+          })
+        }
+        if (data.goal) {
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: data.goal },
+            properties: { role: 'goal' },
+          })
+        }
+        map.getSource('search-focus').setData({ type: 'FeatureCollection', features })
+      }
+
+      function setSearchWedge(data) {
+        const ring = data.ring || []
+        if (data.pa) viz.focus.pa = data.pa
+        if (data.goal) viz.focus.goal = data.goal
+        viz.wedgeHalf = data.half_angle_deg || 0
+        viz.hop.active = false
+        startVizLoop()
+        setHud(
+          'Searching wedge toward goal',
+          'Ring ' +
+            Math.round((data.min_m || 0) / 1000) +
+            '–' +
+            Math.round((data.max_m || 0) / 1000) +
+            ' km · ±' +
+            (data.half_angle_deg || '?') +
+            '°',
+          null,
+        )
+        if (!ring.length) {
+          map.getSource('search-wedge').setData(emptyFc())
+          return
+        }
+        map.getSource('search-wedge').setData({
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [ring] },
+          properties: {},
+        })
+      }
+
+      function setSegmentActive(data) {
+        viz.segment.from = data.from || null
+        viz.segment.to = data.to || null
+        viz.segment.idx = data.segment || 0
+        viz.segment.total = data.total || 0
+        viz.hop.active = false
+        startVizLoop()
+        setHud(
+          'Route segment ' + viz.segment.idx + ' / ' + viz.segment.total,
+          'Finding repeater hops along this leg',
+          null,
+        )
+        flyToSearchArea(viz.segment.from, viz.segment.to)
+      }
+
+      function onSearchDisc(data) {
+        if (!data.center) return
+        viz.hop.center = data.center
+        viz.hop.radiusM = data.radius_m || viz.hop.radiusM
+        viz.hop.pct = 0
+        viz.hop.active = true
+        if (viz.focus.pa == null) viz.focus.pa = data.center
+        startVizLoop()
+        setHud(
+          'Loading elevation data',
+          (data.tiles || '?') + ' terrain tiles around anchor',
+          5,
+        )
+      }
+
+      function setRoute(data) {
+        const coords = data.coordinates || []
+        map.getSource('route').setData({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: coords },
+          properties: { name: data.name || 'Route' },
+        })
+        fitToCoords(coords)
+        setHud('Route loaded', (data.name || 'Route') + ' · ' + coords.length + ' waypoints', null)
+      }
+
+      function setCorridor(data) {
+        const ring = data.ring || []
+        map.getSource('corridor').setData({
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [ring] },
+          properties: {},
+        })
+      }
+
+      function setExisting(sites) {
+        map.getSource('existing').setData({
+          type: 'FeatureCollection',
+          features: (sites || []).map((s) => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+            properties: { name: s.name || s.slug || '' },
+          })),
+        })
+      }
+
+      const peakFeatures = []
+      const MAX_PEAK_MARKERS = 14000
+      let peaksFlushRaf = 0
+      let peaksDirty = false
+      let peaksHydrating = false
+
+      function flushPeaksLayer() {
+        peaksFlushRaf = 0
+        if (!peaksDirty || !map.getSource('peaks')) return
+        peaksDirty = false
+        const step = Math.max(1, Math.ceil(peakFeatures.length / MAX_PEAK_MARKERS))
+        const shown =
+          step === 1 ? peakFeatures : peakFeatures.filter((_, i) => i % step === 0)
+        map.getSource('peaks').setData({
+          type: 'FeatureCollection',
+          features: shown,
+        })
+        updateStats()
+      }
+
+      function schedulePeaksFlush() {
+        peaksDirty = true
+        if (peaksFlushRaf) return
+        peaksFlushRaf = requestAnimationFrame(flushPeaksLayer)
+      }
+
+      function paintPeaks(data) {
+        for (const p of data.peaks || []) {
+          peakFeatures.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+            properties: {
+              elev: p.elev_m,
+              covered: p.covered === false ? 0 : 1,
+            },
+          })
+        }
+        peakCount = peakFeatures.length
+        if (data.peaks_total != null) peakCount = data.peaks_total
+        schedulePeaksFlush()
+        if (data.done != null && data.total != null) {
+          updateTileProgress(data.done, data.total)
+        }
+      }
+
+      // Live scan: stub → GET one tile. Reconnect: peaks_ready → GET /peaks once.
+      function appendPeaksBatch(stub) {
+        if (!stub) return
+        if (stub.peaks) {
+          paintPeaks(stub)
+          return
+        }
+        if (!stub.tile) return
+        enqueueHeavy(async () => {
+          const res = await fetch('/peaks?tile=' + encodeURIComponent(stub.tile))
+          if (!res.ok) return
+          paintPeaks({ ...stub, ...(await res.json()) })
+        })
+      }
+
+      function hydrateAllPeaks(meta) {
+        if (peaksHydrating || peakFeatures.length) return
+        peaksHydrating = true
+        if (meta && meta.peaks_total != null) {
+          peakCount = meta.peaks_total
+          updateStats()
+        }
+        enqueueHeavy(async () => {
+          try {
+            const res = await fetch('/peaks')
+            if (!res.ok) return
+            paintPeaks(await res.json())
+          } finally {
+            peaksHydrating = false
+          }
+        })
+      }
+
+      const LINK_FADE_MS = 2200
+      const HOP_DWELL_MS = 750
+      const linkProbes = []
+      let linkProbeRaf = 0
+      let chainSites = []
+      let committedChain = []
+      let chainQueue = []
+      let chainQueueTimer = null
+
+      function siteKey(s) {
+        return (s.lon || 0).toFixed(5) + ',' + (s.lat || 0).toFixed(5)
+      }
+
+      function chainTailKey() {
+        if (committedChain.length) return siteKey(committedChain[committedChain.length - 1])
+        if (chainQueue.length) return siteKey(chainQueue[chainQueue.length - 1])
+        return null
+      }
+
+      function siteQueuedOrCommitted(key) {
+        return (
+          committedChain.some((s) => siteKey(s) === key) ||
+          chainQueue.some((s) => siteKey(s) === key)
+        )
+      }
+
+      function paintLinkProbes() {
+        linkProbeRaf = 0
+        if (!map.getSource('link-probes')) return
+        const now = performance.now()
+        const features = []
+        let i = 0
+        while (i < linkProbes.length) {
+          const p = linkProbes[i]
+          const age = now - p.t0
+          if (age >= LINK_FADE_MS) {
+            linkProbes.splice(i, 1)
+            continue
+          }
+          features.push({
+            type: 'Feature',
+            properties: {
+              ok: p.ok ? 1 : 0,
+              opacity: Math.max(0, 1 - age / LINK_FADE_MS),
+            },
+            geometry: { type: 'LineString', coordinates: [p.a, p.b] },
+          })
+          i++
+        }
+        map.getSource('link-probes').setData({ type: 'FeatureCollection', features })
+        if (linkProbes.length) {
+          linkProbeRaf = requestAnimationFrame(paintLinkProbes)
+        }
+      }
+
+      function pushLinkCheck(d) {
+        if (!d || !d.a || !d.b) return
+        setHud(
+          d.ok ? 'Link OK' : 'Link blocked',
+          d.ok ? 'Mutual RF path found' : 'No mutual link — trying next peak',
+          null,
+        )
+        linkProbes.push({
+          a: d.a,
+          b: d.b,
+          ok: !!d.ok,
+          t0: performance.now(),
+        })
+        if (d.ok) {
+          setHud('Link confirmed', 'Adding hop to chain…', null)
+        }
+        if (linkProbes.length > 500) {
+          linkProbes.splice(0, linkProbes.length - 500)
+        }
+        if (!linkProbeRaf) {
+          linkProbeRaf = requestAnimationFrame(paintLinkProbes)
+        }
+      }
+
+      function renderChain(sites) {
+        if (!map.getSource('chain-line')) return
+        const coords = sites.map((s) => [s.lon, s.lat])
+        map.getSource('chain-line').setData({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: coords },
+          properties: {},
+        })
+        map.getSource('chain-points').setData({
+          type: 'FeatureCollection',
+          features: sites.map((s, i) => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+            properties: { name: s.name || '', kind: s.kind || '', ord: i + 1 },
+          })),
+        })
+        chainCount = sites.length
+        updateStats()
+      }
+
+      function clearChainQueue() {
+        chainQueue = []
+        if (chainQueueTimer != null) {
+          clearTimeout(chainQueueTimer)
+          chainQueueTimer = null
+        }
+      }
+
+      function popCommittedTail() {
+        if (committedChain.length === 0) return
+        const popped = committedChain[committedChain.length - 1]
+        const slug = siteViewshedSlug.get(siteKey(popped))
+        if (slug) {
+          removeViewshedLayer(slug)
+          siteViewshedSlug.delete(siteKey(popped))
+        }
+        committedChain.pop()
+      }
+
+      function drainChainQueue() {
+        if (chainQueueTimer != null) return
+        const tick = () => {
+          if (chainQueue.length === 0) {
+            chainQueueTimer = null
+            return
+          }
+          const site = chainQueue.shift()
+          committedChain.push(site)
+          renderChain(committedChain)
+          setHud(
+            'Chain hop ' + committedChain.length,
+            site.name || site.kind || 'repeater',
+            null,
+          )
+          chainQueueTimer = setTimeout(tick, HOP_DWELL_MS)
+        }
+        tick()
+      }
+
+      function syncChainToTarget(sites) {
+        chainSites = sites
+        chainCount = sites.length
+        updateStats()
+
+        const targetKeys = sites.map(siteKey)
+        const committedKeys = committedChain.map(siteKey)
+        let shared = 0
+        while (
+          shared < committedKeys.length &&
+          shared < targetKeys.length &&
+          committedKeys[shared] === targetKeys[shared]
+        ) {
+          shared++
+        }
+
+        // Solver backtracked or jumped — drop stale tail immediately (no diagonal lines).
+        if (shared < committedKeys.length) {
+          clearChainQueue()
+          while (committedChain.length > shared) popCommittedTail()
+          renderChain(committedChain)
+        }
+
+        let prevKey = chainTailKey()
+        for (const site of sites) {
+          const key = siteKey(site)
+          if (key === prevKey) continue
+          prevKey = key
+          if (!siteQueuedOrCommitted(key)) chainQueue.push(site)
+        }
+        if (committedChain.length === 0 && chainQueue.length > 0) {
+          committedChain.push(chainQueue.shift())
+          renderChain(committedChain)
+        }
+        drainChainQueue()
+      }
+
+      function onChainPop() {
+        if (chainQueue.length > 0) {
+          chainQueue.pop()
+          return
+        }
+        if (committedChain.length > 0) {
+          popCommittedTail()
+          renderChain(committedChain)
+        }
+      }
+
+      function setChain(data) {
+        syncChainToTarget(data.sites || [])
+      }
+
+      /** Final authoritative chain from solver — snap immediately, no hop animation. */
+      function setChainFinal(data) {
+        const sites = data.sites || []
+        clearChainQueue()
+        chainSites = sites
+        chainCount = sites.length
+        updateStats()
+        committedChain = sites.slice()
+        renderChain(committedChain)
+      }
+
+      let sseHelloSeen = false
+
+      function connectEvents() {
+        const es = new EventSource('/events')
+        es.addEventListener('hello', () => {
+          sseHelloSeen = true
+          setHud('Connected', 'Waiting for finder to start…', null)
+          whenMap(() => ensureHillshade())
+        })
+        es.addEventListener('route', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => setRoute(d))
+          } catch (_) {}
+        })
+        es.addEventListener('gaps', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => setGaps(d))
+          } catch (_) {}
+        })
+        es.addEventListener('gap_found', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => appendGapLive(d))
+          } catch (_) {}
+        })
+        es.addEventListener('search_focus', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => setSearchFocus(d))
+          } catch (_) {}
+        })
+        es.addEventListener('search_wedge', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => setSearchWedge(d))
+          } catch (_) {}
+        })
+        es.addEventListener('search_disc', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => onSearchDisc(d))
+          } catch (_) {}
+        })
+        es.addEventListener('segment_active', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => setSegmentActive(d))
+          } catch (_) {}
+        })
+        es.addEventListener('search_step', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            const line = d.line || ''
+            if (line.includes('eligible land')) {
+              setHud('Loading eligible land', line.replace(/^[^…]+…?\s*/, ''), 15)
+            } else if (line.includes('gap overview cache hit')) {
+              setHud('Land gaps ready', 'Loaded from disk cache', 100)
+            } else if (line.includes('gap overview: sampling')) {
+              setHud('Scanning route for land gaps', 'Walking route segments…', 5)
+            }
+            if (line && showLogEl.checked) logLine(line)
+          } catch (_) {}
+        })
+        es.addEventListener('chain_partial', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => setChain(d))
+          } catch (_) {}
+        })
+        es.addEventListener('viewshed', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => addViewshedLayer(d))
+          } catch (_) {}
+        })
+        es.addEventListener('chain_pop', (ev) => {
+          try {
+            whenMap(() => onChainPop())
+          } catch (_) {}
+        })
+        es.addEventListener('segment_done', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            setHud(
+              'Segment complete',
+              'Leg ' + (d.segment || '?') + '/' + (d.total || '?') + ' · ' + (d.hops || 0) + ' hops',
+              100,
+            )
+          } catch (_) {}
+        })
+        es.addEventListener('dem_touch', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            if (d.name) logLine('dem ' + d.name)
+          } catch (_) {}
+        })
+        es.addEventListener('corridor', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => setCorridor(d))
+          } catch (_) {}
+        })
+        es.addEventListener('existing', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => setExisting(d.sites))
+          } catch (_) {}
+        })
+        es.addEventListener('dem_tiles', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => initDemTiles(d.tiles, !!d.merge))
+          } catch (_) {}
+        })
+        es.addEventListener('peaks_batch', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => appendPeaksBatch(d))
+          } catch (_) {}
+        })
+        es.addEventListener('peaks_ready', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => hydrateAllPeaks(d))
+          } catch (_) {}
+        })
+        es.addEventListener('scan_progress', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => applyScanProgress(d))
+          } catch (_) {}
+        })
+        es.addEventListener('mask_tile', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => applyMaskTile(d))
+          } catch (_) {}
+        })
+        es.addEventListener('candidates', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            candidateCount = d.count
+            updateStats()
+          } catch (_) {}
+        })
+        es.addEventListener('phase', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            if (d.state === 'start' && scanActive) return
+            const label = d.name || ''
+            if (d.state === 'start') {
+              if (label === 'search') {
+                setHud('Preparing search', 'Loading eligible land and route analysis…', 5)
+              } else if (label === 'find path') {
+                setHud('Starting finder', 'Loading candidates…', null)
+              } else {
+                setHud(label, '', null)
+              }
+            } else if (d.detail) {
+              setHud('Done: ' + label, d.detail, 100)
+            }
+            phaseEl.textContent =
+              (d.state === 'end' ? 'Done: ' : '') + label + (d.detail ? ' — ' + d.detail : '')
+          } catch (_) {}
+        })
+        es.addEventListener('log', (ev) => {
+          try {
+            logLine(JSON.parse(ev.data).line || '')
+          } catch (_) {}
+        })
+        es.addEventListener('chain', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => setChainFinal(d))
+          } catch (_) {}
+        })
+        es.addEventListener('link_check', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            whenMap(() => pushLinkCheck(d))
+          } catch (_) {}
+        })
+        es.addEventListener('done', (ev) => {
+          try {
+            const d = JSON.parse(ev.data)
+            doneBanner.textContent =
+              'Finder complete: ' +
+              (d.chain_sites || 0) +
+              ' chain sites, ' +
+              (d.new_sites || 0) +
+              ' new'
+            doneBanner.classList.add('visible')
+            setHud('Complete', d.chain_sites + ' sites in chain', 100)
+          } catch (_) {}
+        })
+        es.onerror = () => {
+          setHud('Disconnected', 'Finder exited or SSE lost', null)
+        }
+      }
+    </script>
+  </body>
+</html>
