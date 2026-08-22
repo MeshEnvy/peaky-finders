@@ -12,6 +12,7 @@ pub mod land_path;
 pub mod land_query;
 pub mod land_refresh;
 pub mod land_validate;
+pub mod land_validate_cache;
 pub mod polygonize;
 
 pub use eligible_land::{

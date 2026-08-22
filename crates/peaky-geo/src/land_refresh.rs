@@ -13,7 +13,8 @@ use serde::Serialize;
 use crate::land_boot::{land_boot_pool, land_boot_workers};
 use crate::land_cache::ensure_land_caches_for_preset;
 use crate::land_fetch::refresh_land_source_file;
-use crate::land_validate::validate_land_source;
+use crate::land_validate::validate_land_source_with_cache;
+use crate::land_validate_cache::LandValidateCache;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -159,6 +160,7 @@ fn audit_one(
     entry: &LandSourceEntry,
     preset: &Preset,
     project_dir: &Path,
+    validate_cache: Option<&LandValidateCache>,
 ) -> LandSourceRefreshRow {
     if !entry.is_enabled() {
         return LandSourceRefreshRow {
@@ -192,7 +194,7 @@ fn audit_one(
     let mut next_due = None;
     let status = if !source_path_exists(project_dir, &entry.path) {
         LandRefreshStatusKind::Missing
-    } else if validate_land_source(project_dir, entry).is_err() {
+    } else if validate_land_source_with_cache(project_dir, entry, validate_cache).is_err() {
         LandRefreshStatusKind::Invalid
     } else if let Some(ref last) = last_updated {
             if let Some((y, m, d)) = parse_ymd(last) {
@@ -242,6 +244,13 @@ fn audit_one(
 }
 
 pub fn audit_land_refresh_for_preset(preset_path: &Path) -> Result<LandRefreshReport> {
+    audit_land_refresh_for_preset_with_cache(preset_path, None)
+}
+
+pub fn audit_land_refresh_for_preset_with_cache(
+    preset_path: &Path,
+    validate_cache: Option<&LandValidateCache>,
+) -> Result<LandRefreshReport> {
     let preset = load_preset(preset_path).context("load preset")?;
     let project_dir = preset_path
         .parent()
@@ -252,12 +261,20 @@ pub fn audit_land_refresh_for_preset(preset_path: &Path) -> Result<LandRefreshRe
         .unwrap_or("project")
         .to_string();
 
-    let mut rows: Vec<LandSourceRefreshRow> = preset
-        .land
-        .sources
-        .iter()
-        .map(|(id, entry)| audit_one(id, entry, &preset, project_dir))
-        .collect();
+    let mut rows: Vec<LandSourceRefreshRow> = {
+        let sources: Vec<(String, LandSourceEntry)> = preset
+            .land
+            .sources
+            .iter()
+            .map(|(id, entry)| (id.clone(), entry.clone()))
+            .collect();
+        land_boot_pool().install(|| {
+            sources
+                .par_iter()
+                .map(|(id, entry)| audit_one(id, entry, &preset, project_dir, validate_cache))
+                .collect()
+        })
+    };
     rows.sort_by(|a, b| a.source_id.cmp(&b.source_id));
 
     Ok(LandRefreshReport {
@@ -292,7 +309,7 @@ pub fn refresh_row_for_source(
     entry: &LandSourceEntry,
     project_dir: &Path,
 ) -> LandSourceRefreshRow {
-    audit_one(source_id, entry, preset, project_dir)
+    audit_one(source_id, entry, preset, project_dir, None)
 }
 
 fn refreshable(row: &LandSourceRefreshRow, entry: &LandSourceEntry, force: bool) -> bool {
@@ -350,12 +367,13 @@ pub fn refresh_due_land_sources(
     preset_path: &Path,
     force: bool,
     verbose: bool,
+    validate_cache: Option<&LandValidateCache>,
 ) -> Result<LandRefreshRunSummary> {
     let preset = load_preset(preset_path).context("load preset")?;
     let project_dir = preset_path
         .parent()
         .context("preset path must have parent")?;
-    let report = audit_land_refresh_for_preset(preset_path)?;
+    let report = audit_land_refresh_for_preset_with_cache(preset_path, validate_cache)?;
     let today = today_utc_ymd_string();
     let workers = land_boot_workers();
 
@@ -474,7 +492,8 @@ pub fn prepare_land_at_boot(preset_path: &Path, verbose: bool) -> Result<LandRef
         .parent()
         .context("preset path must have parent")?;
 
-    let mut summary = refresh_due_land_sources(preset_path, false, verbose)?;
+    let validate_cache = LandValidateCache::open(project_dir)?;
+    let mut summary = refresh_due_land_sources(preset_path, false, verbose, Some(&validate_cache))?;
 
     let enabled: Vec<(String, LandSourceEntry)> = preset
         .land
@@ -489,8 +508,8 @@ pub fn prepare_land_at_boot(preset_path: &Path, verbose: bool) -> Result<LandRef
     let failures: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
     land_boot_pool().install(|| {
         enabled.par_iter().for_each(|(source_id, entry)| {
-            match validate_land_source(project_dir, entry) {
-                Ok(()) => tracing::info!(
+            match validate_land_source_with_cache(project_dir, entry, Some(&validate_cache)) {
+                Ok(()) => tracing::debug!(
                     source_id = %source_id,
                     path = %entry.path,
                     "land validate: ok"
@@ -513,8 +532,11 @@ pub fn prepare_land_at_boot(preset_path: &Path, verbose: bool) -> Result<LandRef
 
     let failures = failures.into_inner().expect("land validate failure list");
     if !failures.is_empty() {
+        validate_cache.persist()?;
         anyhow::bail!("{}", format_land_boot_wedge(&failures));
     }
+
+    validate_cache.persist()?;
 
     if summary.cache.is_none() {
         summary.cache = Some(ensure_land_caches_for_preset(preset_path, verbose)?);

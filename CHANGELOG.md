@@ -18,7 +18,7 @@ Targets **v0.5.0** (first v5 release). Promote to `## [v0.5.0] - YYYY-MM-DD` whe
 - **Self-contained projects** — modem and environment presets live in project YAML; optional split files (`sites.yaml`, `land.yaml`, …) merge at load.
 - **Project bootstrap** — `peaky serve <dir>` initializes an empty project when the directory has no config yet.
 - **Single-project serve** — one project path per process; multi-project listing removed.
-- **Land from GDB** — configured sources download and refresh to GeoJSON at boot (`refresh.downloadUrl`); invalid enabled sources block boot until disabled; `--no-land-refresh` skips network refresh.
+- **Land from GDB** — configured sources download and refresh to GeoJSON at boot (`refresh.downloadUrl`); invalid enabled sources block boot until disabled; `--no-land-refresh` skips network refresh. Validated sources are fingerprinted in `.peaky/cache/land/validate.json` so unchanged files skip re-parse on later boots.
 - **Land layer UI** — sidebar folders, rename modal, label toggles, GeoJSON attribute filters, in-map editing.
 - **Parallel workers** — `simulation.max_workers.dem` and `max_workers.coverage` tune Skadi fetch and viewshed warm pools.
 - **Release CI** — tagged builds for Linux x64 and macOS (x64 + arm64) on `v*` push.
@@ -33,6 +33,7 @@ Targets **v0.5.0** (first v5 release). Promote to `## [v0.5.0] - YYYY-MM-DD` whe
 ### Fixed
 
 - **Land display** — clip layers to project AOI before render; restore land layer edit API.
+- **Land boot** — land integrity checks cache size/mtime fingerprints after the first successful parse, so repeat `peaky serve` boots skip re-reading large GeoJSON sources.
 
 ## [v4] - 2026-08-07
 
