@@ -987,25 +987,128 @@ function reorderLandSource(fromSourceId, beforeSourceId, folderId = null) {
 }
 
 function createLandFolder() {
-  const label = window.prompt("Folder name");
-  if (!label || !label.trim()) return;
-  const trimmed = label.trim();
-  const id = slugifyLandFolderId(trimmed, landSidebar.folders);
-  applyLandSidebarMutation((sidebar) => {
-    sidebar.folders.push({ id, label: trimmed, sources: [] });
-  });
+  void openCreateLandFolderModal();
 }
 
 function renameLandFolder(folderId) {
-  const folder = landSidebar.folders.find((item) => item.id === folderId);
-  if (!folder) return;
-  const label = window.prompt("Folder name", folder.label);
-  if (!label || !label.trim() || label.trim() === folder.label) return;
-  applyLandSidebarMutation((sidebar) => {
-    const target = sidebar.folders.find((item) => item.id === folderId);
-    if (target) target.label = label.trim();
+  void openRenameLandFolderModal(folderId);
+}
+
+let landFolderModalMode = "create";
+let landFolderEditId = null;
+
+const landFolderModal = document.getElementById("land-folder-modal");
+const landFolderName = document.getElementById("land-folder-name");
+const landFolderError = document.getElementById("land-folder-error");
+const landFolderSave = document.getElementById("land-folder-save");
+
+function setLandFolderError(message) {
+  if (!landFolderError) return;
+  if (message) {
+    landFolderError.textContent = message;
+    landFolderError.hidden = false;
+  } else {
+    landFolderError.textContent = "";
+    landFolderError.hidden = true;
+  }
+}
+
+function closeLandFolderModal() {
+  if (!landFolderModal) return;
+  landFolderModal.open = false;
+  landFolderModalMode = "create";
+  landFolderEditId = null;
+}
+
+function resetLandFolderModal() {
+  if (landFolderName) landFolderName.value = "";
+  setLandFolderError("");
+}
+
+async function openCreateLandFolderModal() {
+  if (!landFolderModal) return;
+  landFolderModalMode = "create";
+  landFolderEditId = null;
+  landFolderModal.label = "New folder";
+  resetLandFolderModal();
+  if (scope.openWaDialog) await scope.openWaDialog(landFolderModal);
+  else {
+    await customElements.whenDefined("wa-dialog");
+    landFolderModal.open = true;
+  }
+  requestAnimationFrame(() => {
+    landFolderName?.focus();
   });
 }
+
+async function openRenameLandFolderModal(folderId) {
+  const folder = landSidebar.folders.find((item) => item.id === folderId);
+  if (!folder || !landFolderModal) return;
+  landFolderModalMode = "rename";
+  landFolderEditId = folderId;
+  landFolderModal.label = "Rename folder";
+  setLandFolderError("");
+  if (landFolderName) landFolderName.value = folder.label;
+  if (scope.openWaDialog) await scope.openWaDialog(landFolderModal);
+  else {
+    await customElements.whenDefined("wa-dialog");
+    landFolderModal.open = true;
+  }
+  requestAnimationFrame(() => {
+    landFolderName?.focus();
+    landFolderName?.select();
+  });
+}
+
+function saveLandFolderModal() {
+  const trimmed = (landFolderName?.value || "").trim();
+  if (!trimmed) {
+    setLandFolderError("Name is required.");
+    landFolderName?.focus();
+    return;
+  }
+  if (landFolderModalMode === "rename") {
+    const folder = landSidebar.folders.find((item) => item.id === landFolderEditId);
+    if (!folder) {
+      closeLandFolderModal();
+      return;
+    }
+    if (trimmed === folder.label) {
+      closeLandFolderModal();
+      return;
+    }
+    applyLandSidebarMutation((sidebar) => {
+      const target = sidebar.folders.find((item) => item.id === landFolderEditId);
+      if (target) target.label = trimmed;
+    });
+  } else {
+    const id = slugifyLandFolderId(trimmed, landSidebar.folders);
+    applyLandSidebarMutation((sidebar) => {
+      sidebar.folders.push({ id, label: trimmed, sources: [] });
+    });
+  }
+  closeLandFolderModal();
+}
+
+function initLandFolderModal() {
+  if (!landFolderModal || landFolderModal.dataset.bound) return;
+  landFolderModal.dataset.bound = "1";
+  if (landFolderSave) {
+    landFolderSave.addEventListener("click", () => {
+      saveLandFolderModal();
+    });
+  }
+  if (landFolderName) {
+    landFolderName.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        saveLandFolderModal();
+      }
+    });
+  }
+}
+
+initLandFolderModal();
 
 function deleteLandFolder(folderId) {
   const folder = landSidebar.folders.find((item) => item.id === folderId);
@@ -3050,6 +3153,9 @@ async function saveEditLandModal() {
   scope.reorderLandSource = reorderLandSource
   scope.createLandFolder = createLandFolder
   scope.renameLandFolder = renameLandFolder
+  scope.openCreateLandFolderModal = openCreateLandFolderModal
+  scope.openRenameLandFolderModal = openRenameLandFolderModal
+  scope.saveLandFolderModal = saveLandFolderModal
   scope.deleteLandFolder = deleteLandFolder
   scope.syncLandMapLayerOrder = syncLandMapLayerOrder
   scope.buildLandDragHandle = buildLandDragHandle

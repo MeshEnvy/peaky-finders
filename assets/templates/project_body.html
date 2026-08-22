@@ -710,6 +710,15 @@
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
   <wa-button slot="footer" id="edit-land-save" variant="brand" size="s" type="button" disabled>Save</wa-button>
 </wa-dialog>
+<wa-dialog id="land-folder-modal" label="Folder" style="--width: 28rem" with-footer light-dismiss>
+  <wa-callout id="land-folder-error" variant="danger" hidden></wa-callout>
+  <div class="pf-form-field">
+    <label for="land-folder-name" class="pf-label">Name</label>
+    <input id="land-folder-name" type="text" autocomplete="off" maxlength="64">
+  </div>
+  <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
+  <wa-button slot="footer" id="land-folder-save" variant="brand" size="s" type="button">Save</wa-button>
+</wa-dialog>
 <wa-dialog id="bulk-tag-modal" label="Bulk tag sidebar sites" style="--width: 28rem" with-footer light-dismiss>
   <wa-callout id="bulk-tag-error" variant="danger" hidden></wa-callout>
   <p class="wa-caption pf-muted" id="bulk-tag-status"></p>

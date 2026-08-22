@@ -1022,6 +1022,10 @@
   const importSitesPointList = document.getElementById(
     "import-sites-point-list",
   );
+  const landFolderModal = document.getElementById("land-folder-modal");
+  const landFolderName = document.getElementById("land-folder-name");
+  const landFolderError = document.getElementById("land-folder-error");
+  const landFolderSave = document.getElementById("land-folder-save");
   const bulkTagModal = document.getElementById("bulk-tag-modal");
   const bulkTagError = document.getElementById("bulk-tag-error");
   const bulkTagStatus = document.getElementById("bulk-tag-status");
@@ -3997,25 +4001,95 @@
     });
   }
 
-  function createLandFolder() {
-    const label = window.prompt("Folder name");
-    if (!label || !label.trim()) return;
-    const trimmed = label.trim();
-    const id = slugifyLandFolderId(trimmed, landSidebar.folders);
-    applyLandSidebarMutation((sidebar) => {
-      sidebar.folders.push({ id, label: trimmed, sources: [] });
+  let landFolderModalMode = "create";
+  let landFolderEditId = null;
+
+  function setLandFolderError(message) {
+    if (!landFolderError) return;
+    if (message) {
+      landFolderError.textContent = message;
+      landFolderError.hidden = false;
+    } else {
+      landFolderError.textContent = "";
+      landFolderError.hidden = true;
+    }
+  }
+
+  function closeLandFolderModal() {
+    if (!landFolderModal) return;
+    landFolderModal.open = false;
+    landFolderModalMode = "create";
+    landFolderEditId = null;
+  }
+
+  function resetLandFolderModal() {
+    if (landFolderName) landFolderName.value = "";
+    setLandFolderError("");
+  }
+
+  async function openCreateLandFolderModal() {
+    if (!landFolderModal) return;
+    landFolderModalMode = "create";
+    landFolderEditId = null;
+    landFolderModal.label = "New folder";
+    resetLandFolderModal();
+    await openWaDialog(landFolderModal);
+    requestAnimationFrame(() => {
+      landFolderName?.focus();
     });
   }
 
-  function renameLandFolder(folderId) {
+  async function openRenameLandFolderModal(folderId) {
     const folder = landSidebar.folders.find((item) => item.id === folderId);
-    if (!folder) return;
-    const label = window.prompt("Folder name", folder.label);
-    if (!label || !label.trim() || label.trim() === folder.label) return;
-    applyLandSidebarMutation((sidebar) => {
-      const target = sidebar.folders.find((item) => item.id === folderId);
-      if (target) target.label = label.trim();
+    if (!folder || !landFolderModal) return;
+    landFolderModalMode = "rename";
+    landFolderEditId = folderId;
+    landFolderModal.label = "Rename folder";
+    setLandFolderError("");
+    if (landFolderName) landFolderName.value = folder.label;
+    await openWaDialog(landFolderModal);
+    requestAnimationFrame(() => {
+      landFolderName?.focus();
+      landFolderName?.select();
     });
+  }
+
+  function saveLandFolderModal() {
+    const trimmed = (landFolderName?.value || "").trim();
+    if (!trimmed) {
+      setLandFolderError("Name is required.");
+      landFolderName?.focus();
+      return;
+    }
+    if (landFolderModalMode === "rename") {
+      const folder = landSidebar.folders.find((item) => item.id === landFolderEditId);
+      if (!folder) {
+        closeLandFolderModal();
+        return;
+      }
+      if (trimmed === folder.label) {
+        closeLandFolderModal();
+        return;
+      }
+      applyLandSidebarMutation((sidebar) => {
+        const target = sidebar.folders.find((item) => item.id === landFolderEditId);
+        if (target) target.label = trimmed;
+      });
+    } else {
+      const id = slugifyLandFolderId(trimmed, landSidebar.folders);
+      applyLandSidebarMutation((sidebar) => {
+        sidebar.folders.push({ id, label: trimmed, sources: [] });
+      });
+    }
+    closeLandFolderModal();
+  }
+
+  function createLandFolder() {
+    void openCreateLandFolderModal();
+  }
+
+  function renameLandFolder(folderId) {
+    void openRenameLandFolderModal(folderId);
   }
 
   function deleteLandFolder(folderId) {
@@ -11756,7 +11830,20 @@
   }
   if (entityPanelAddLandFolder) {
     entityPanelAddLandFolder.addEventListener("click", () => {
-      createLandFolder();
+      void openCreateLandFolderModal();
+    });
+  }
+  if (landFolderSave) {
+    landFolderSave.addEventListener("click", () => {
+      saveLandFolderModal();
+    });
+  }
+  if (landFolderName) {
+    landFolderName.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        saveLandFolderModal();
+      }
     });
   }
   queueLandSidebarMigrationFromLayerOrder();
