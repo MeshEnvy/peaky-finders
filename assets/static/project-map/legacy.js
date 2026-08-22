@@ -2174,6 +2174,7 @@ export function initProjectMap() {
             exclude: layerConfig.exclude,
             labelField: layerConfig.labelField || undefined,
             styleField: layerConfig.styleField || undefined,
+            role: layerConfig.role || undefined,
           };
           const resp = await fetch(scope.landPreviewGeoJsonPostUrl(), {
             method: "POST",

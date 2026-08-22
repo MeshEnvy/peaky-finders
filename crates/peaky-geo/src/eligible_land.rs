@@ -51,6 +51,14 @@ fn geom_union(a: Geometry<f64>, b: &Geometry<f64>) -> Geometry<f64> {
     multi_to_geometry(ma.union(&mb))
 }
 
+pub fn intersect_land_geometry(a: Geometry<f64>, b: &Geometry<f64>) -> Geometry<f64> {
+    geom_intersection(a, b)
+}
+
+pub fn land_geometry_is_empty(geom: &Geometry<f64>) -> bool {
+    is_empty_geom(geom)
+}
+
 fn geom_intersection(a: Geometry<f64>, b: &Geometry<f64>) -> Geometry<f64> {
     let ma = geometry_to_multi(&a);
     let mb = geometry_to_multi(b);
@@ -406,6 +414,19 @@ pub fn load_or_build_eligible_land_union(
     }
 }
 
+pub fn load_preset_aoi_union(preset_path: &Path) -> Result<Option<Geometry<f64>>> {
+    let geom = union_role_layers(preset_path, LandLayerRole::Aoi, None)?;
+    if is_empty_geom(&geom) {
+        Ok(None)
+    } else {
+        Ok(Some(geom))
+    }
+}
+
+pub fn aoi_land_digest(preset_path: &Path) -> Result<String> {
+    land_role_layer_digest(preset_path, LandLayerRole::Aoi)
+}
+
 pub fn eligible_land_digest(preset_path: &Path) -> Result<String> {
     let preset = load_preset(preset_path)?;
     let project_dir = preset_path
@@ -416,11 +437,11 @@ pub fn eligible_land_digest(preset_path: &Path) -> Result<String> {
         for (source_id, layer) in iter_land_layer_entries_by_role(&preset, role) {
             let source = &preset.land.sources[&source_id];
             let data_path = resolve_land_layer_geojson_path(
-            project_dir,
-            &source_id,
-            &layer.name,
-            &source.path,
-        )?;
+                project_dir,
+                &source_id,
+                &layer.name,
+                &source.path,
+            )?;
             let meta = std::fs::metadata(&data_path)?;
             let modified = meta
                 .modified()
@@ -439,6 +460,45 @@ pub fn eligible_land_digest(preset_path: &Path) -> Result<String> {
                 meta.len()
             ));
         }
+    }
+    if parts.is_empty() {
+        return Ok("none".to_string());
+    }
+    parts.sort();
+    Ok(format!("{:016x}", fnv1a_hash(parts.join("\n").as_bytes())))
+}
+
+fn land_role_layer_digest(preset_path: &Path, role: LandLayerRole) -> Result<String> {
+    let preset = load_preset(preset_path)?;
+    let project_dir = preset_path
+        .parent()
+        .context("preset path must have a parent directory")?;
+    let mut parts = Vec::new();
+    for (source_id, layer) in iter_land_layer_entries_by_role(&preset, role) {
+        let source = &preset.land.sources[&source_id];
+        let data_path = resolve_land_layer_geojson_path(
+            project_dir,
+            &source_id,
+            &layer.name,
+            &source.path,
+        )?;
+        let meta = std::fs::metadata(&data_path)?;
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let role_tag = match role {
+            LandLayerRole::Include => "include",
+            LandLayerRole::Exclude => "exclude",
+            LandLayerRole::Aoi => "aoi",
+        };
+        parts.push(format!(
+            "{role_tag}|{source_id}|{}|{modified}|{}",
+            layer.layer_key(),
+            meta.len()
+        ));
     }
     if parts.is_empty() {
         return Ok("none".to_string());

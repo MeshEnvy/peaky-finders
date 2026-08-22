@@ -2,6 +2,7 @@
 
 pub mod eligible_land;
 pub mod kml_import;
+pub mod land_aoi_clip;
 pub mod land_filter;
 pub mod land_gdb;
 pub mod land_path;
@@ -9,9 +10,13 @@ pub mod land_query;
 pub mod polygonize;
 
 pub use eligible_land::{
-    build_eligible_geometry, build_eligible_land_union, eligible_land_dem_mask_dir,
-    eligible_land_digest, iter_land_layer_entries_by_role, load_or_build_eligible_land_filter,
-    load_or_build_eligible_land_union, EligibleLandError,
+    aoi_land_digest, build_eligible_geometry, build_eligible_land_union,
+    eligible_land_dem_mask_dir, eligible_land_digest, intersect_land_geometry,
+    iter_land_layer_entries_by_role, land_geometry_is_empty, load_or_build_eligible_land_filter,
+    load_or_build_eligible_land_union, load_preset_aoi_union, EligibleLandError,
+};
+pub use land_aoi_clip::{
+    apply_aoi_clip_to_geojson, clip_geojson_to_aoi, layer_skips_aoi_clip,
 };
 pub use kml_import::{
     parse_kml_linestring_routes, parse_kml_point_placemarks, parse_kmz_linestring_routes,

@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use peaky_geo::{
-    filter_geojson_preview, layer_field_values, layer_fields, list_land_data_gdbs,
-    list_preview_layers, preview_layers_json, read_layer_geojson_value, resolve_land_data_path,
+    apply_aoi_clip_to_geojson, aoi_land_digest, layer_field_values, layer_fields,
+    layer_skips_aoi_clip, list_land_data_gdbs, list_preview_layers, load_preset_aoi_union,
+    preview_layers_json, read_layer_geojson_value, resolve_land_data_path,
     resolve_land_layer_geojson_path, transform_geojson_for_layer,
 };
 use peaky_preset::{
@@ -125,12 +126,13 @@ pub fn serialize_land_source(
     source_id: &str,
     entry: &LandSourceEntry,
     manifest: &HashMap<String, Value>,
+    aoi_digest: &str,
 ) -> Value {
     let layers: Vec<Value> = entry
         .layers
         .iter()
         .map(|layer| {
-            let digest = effective_layer_digest(manifest, source_id, layer, None);
+            let digest = effective_layer_digest(manifest, source_id, layer, None, aoi_digest);
             serialize_land_layer(layer, Some(&digest))
         })
         .collect();
@@ -146,11 +148,12 @@ pub fn list_land_payload(preset_path: &Path) -> Result<Value> {
     let preset = load_preset(preset_path)?;
     let cache_root = resolved_land_cache_dir(preset_path);
     let manifest = read_manifest(&cache_root);
+    let aoi_digest = peaky_geo::aoi_land_digest(preset_path).unwrap_or_else(|_| "none".to_string());
     let mut sources: Vec<Value> = preset
         .land
         .sources
         .iter()
-        .map(|(id, entry)| serialize_land_source(id, entry, &manifest))
+        .map(|(id, entry)| serialize_land_source(id, entry, &manifest, &aoi_digest))
         .collect();
     sources.sort_by(|a, b| {
         a.get("id")
@@ -158,8 +161,6 @@ pub fn list_land_payload(preset_path: &Path) -> Result<Value> {
             .unwrap_or("")
             .cmp(b.get("id").and_then(|v| v.as_str()).unwrap_or(""))
     });
-    let aoi_digest = peaky_geo::eligible_land_digest(preset_path)
-        .unwrap_or_else(|_| "none".to_string());
     Ok(json!({
         "sources": sources,
         "sidebar": preset.land.sidebar,
@@ -211,36 +212,78 @@ fn layer_needs_geojson_transform(layer: &LandLayerEntry) -> bool {
             .is_some_and(|field| !field.is_empty())
 }
 
+fn layer_needs_aoi_clip(layer: &LandLayerEntry, aoi_digest: &str) -> bool {
+    !layer_skips_aoi_clip(layer) && aoi_digest != "none"
+}
+
+fn layer_needs_geojson_pipeline(layer: &LandLayerEntry, aoi_digest: &str) -> bool {
+    layer_needs_geojson_transform(layer) || layer_needs_aoi_clip(layer, aoi_digest)
+}
+
+fn pipeline_digest_suffix(layer: &LandLayerEntry, aoi_digest: &str) -> String {
+    let mut parts = Vec::new();
+    if layer_needs_aoi_clip(layer, aoi_digest) {
+        parts.push(format!("aoi:{aoi_digest}"));
+    }
+    if layer_needs_geojson_transform(layer) {
+        parts.push(format!("filt:{}", filter_digest_suffix(layer)));
+    }
+    parts.join("|")
+}
+
 fn effective_layer_digest(
     manifest: &HashMap<String, Value>,
     source_id: &str,
     layer: &LandLayerEntry,
     filtered_bytes: Option<&[u8]>,
+    aoi_digest: &str,
 ) -> String {
     if let Some(base) = manifest_digest(manifest, source_id, &layer.layer_key()) {
-        if !layer_needs_geojson_transform(layer) {
+        if !layer_needs_geojson_pipeline(layer, aoi_digest) {
             return base;
         }
-        return format!("{base}:{}", filter_digest_suffix(layer));
+        let suffix = pipeline_digest_suffix(layer, aoi_digest);
+        if suffix.is_empty() {
+            return base;
+        }
+        return format!("{base}:{suffix}");
     }
     filtered_bytes
         .map(digest_for_bytes)
-        .unwrap_or_else(|| filter_digest_suffix(layer))
+        .unwrap_or_else(|| pipeline_digest_suffix(layer, aoi_digest))
 }
 
-fn apply_registered_layer_filters(raw_bytes: &[u8], layer: &LandLayerEntry) -> Result<Vec<u8>> {
-    if !layer_needs_geojson_transform(layer) {
+fn apply_land_layer_geojson_pipeline(
+    raw_bytes: &[u8],
+    preset_path: &Path,
+    layer: &LandLayerEntry,
+) -> Result<Vec<u8>> {
+    let aoi = load_preset_aoi_union(preset_path)?;
+    if aoi.is_none() && !layer_needs_geojson_transform(layer) {
         return Ok(raw_bytes.to_vec());
     }
+
     let geojson: Value = serde_json::from_slice(raw_bytes).context("parse layer GeoJSON")?;
-    let geojson = transform_geojson_for_layer(
+    let geojson = process_land_geojson_value(geojson, layer, aoi.as_ref());
+    Ok(serde_json::to_vec(&geojson)?)
+}
+
+fn process_land_geojson_value(
+    geojson: Value,
+    layer: &LandLayerEntry,
+    aoi: Option<&geo::Geometry<f64>>,
+) -> Value {
+    let geojson = apply_aoi_clip_to_geojson(geojson, layer, aoi);
+    if !layer_needs_geojson_transform(layer) {
+        return geojson;
+    }
+    transform_geojson_for_layer(
         geojson,
         &layer.include,
         &layer.exclude,
         layer.label_field.as_deref(),
         layer.style_field.as_deref(),
-    );
-    Ok(serde_json::to_vec(&geojson)?)
+    )
 }
 
 pub fn read_layer_geojson_bytes(
@@ -262,6 +305,7 @@ pub fn read_layer_geojson_bytes(
         .context("preset path must have parent")?;
     let cache_root = resolved_land_cache_dir(preset_path);
     let manifest = read_manifest(&cache_root);
+    let aoi_digest = aoi_land_digest(preset_path).unwrap_or_else(|_| "none".to_string());
     let cached = layer_cache_path(&cache_root, source_id, layer_key);
 
     let raw_bytes = if cached.is_file() {
@@ -276,8 +320,8 @@ pub fn read_layer_geojson_bytes(
         std::fs::read(&geo_path)?
     };
 
-    let bytes = apply_registered_layer_filters(&raw_bytes, layer)?;
-    let digest = effective_layer_digest(&manifest, source_id, layer, Some(&bytes));
+    let bytes = apply_land_layer_geojson_pipeline(&raw_bytes, preset_path, layer)?;
+    let digest = effective_layer_digest(&manifest, source_id, layer, Some(&bytes), &aoi_digest);
     Ok((bytes, digest))
 }
 
@@ -315,6 +359,21 @@ pub struct LandPreviewGeoJsonBody {
     pub label_field: Option<String>,
     #[serde(default, rename = "styleField")]
     pub style_field: Option<String>,
+    #[serde(default)]
+    pub role: Option<LandLayerRole>,
+}
+
+fn preview_layer_entry(body: &LandPreviewGeoJsonBody) -> LandLayerEntry {
+    LandLayerEntry {
+        name: body.layer.clone(),
+        id: None,
+        role: body.role,
+        include: body.include.clone(),
+        exclude: body.exclude.clone(),
+        label_field: body.label_field.clone(),
+        style_field: body.style_field.clone(),
+        style: None,
+    }
 }
 
 pub fn land_data_gdbs_payload(preset_path: &Path) -> Result<Value> {
@@ -350,9 +409,10 @@ pub fn land_import_source(
     )?;
     let cache_root = resolved_land_cache_dir(preset_path);
     let manifest = read_manifest(&cache_root);
+    let aoi_digest = aoi_land_digest(preset_path).unwrap_or_else(|_| "none".to_string());
     Ok((
         source_id.clone(),
-        serialize_land_source(&source_id, &entry, &manifest),
+        serialize_land_source(&source_id, &entry, &manifest, &aoi_digest),
     ))
 }
 
@@ -382,7 +442,8 @@ pub fn land_patch_source(
     let entry = patch_land_source(preset_path, source_id, body.label, layers)?;
     let cache_root = resolved_land_cache_dir(preset_path);
     let manifest = read_manifest(&cache_root);
-    Ok(serialize_land_source(source_id, &entry, &manifest))
+    let aoi_digest = aoi_land_digest(preset_path).unwrap_or_else(|_| "none".to_string());
+    Ok(serialize_land_source(source_id, &entry, &manifest, &aoi_digest))
 }
 
 pub fn land_delete_source(preset_path: &Path, source_id: &str) -> Result<()> {
@@ -402,6 +463,18 @@ pub fn land_preview_geojson_payload(
     let project_dir = project_dir_for(preset_path)?;
     let abs = resolve_land_data_path(project_dir, rel_path)?;
     let geojson = read_layer_geojson_value(&abs, layer)?;
+    let aoi = load_preset_aoi_union(preset_path)?;
+    let preview_layer = LandLayerEntry {
+        name: layer.to_string(),
+        id: None,
+        role: None,
+        include: Vec::new(),
+        exclude: Vec::new(),
+        label_field: None,
+        style_field: None,
+        style: None,
+    };
+    let geojson = process_land_geojson_value(geojson, &preview_layer, aoi.as_ref());
     Ok(json!({
         "path": rel_path,
         "layer": layer,
@@ -415,15 +488,10 @@ pub fn land_preview_geojson_filtered_payload(
 ) -> Result<Value> {
     let project_dir = project_dir_for(preset_path)?;
     let abs = resolve_land_data_path(project_dir, &body.path)?;
-    let mut geojson = read_layer_geojson_value(&abs, &body.layer)?;
-    geojson = filter_geojson_preview(geojson, &body.include, &body.exclude);
-    geojson = transform_geojson_for_layer(
-        geojson,
-        &body.include,
-        &body.exclude,
-        body.label_field.as_deref(),
-        body.style_field.as_deref(),
-    );
+    let geojson = read_layer_geojson_value(&abs, &body.layer)?;
+    let aoi = load_preset_aoi_union(preset_path)?;
+    let layer = preview_layer_entry(&body);
+    let geojson = process_land_geojson_value(geojson, &layer, aoi.as_ref());
     Ok(json!({
         "path": body.path,
         "layer": body.layer,
