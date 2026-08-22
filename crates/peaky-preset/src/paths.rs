@@ -92,7 +92,16 @@ pub fn resolve_project_dir(project: &str) -> PathBuf {
     if path.join("config.yaml").is_file() {
         return canonicalize_lossy(&path);
     }
+    if looks_like_filesystem_path(&path) {
+        return canonicalize_lossy(&path);
+    }
     canonicalize_lossy(&peaky_projects_dir().join(trimmed))
+}
+
+fn looks_like_filesystem_path(path: &Path) -> bool {
+    path.is_absolute()
+        || path.starts_with(".")
+        || path.components().count() > 1
 }
 
 /// Resolve a project argument to `config.yaml`.

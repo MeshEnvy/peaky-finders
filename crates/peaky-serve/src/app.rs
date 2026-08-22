@@ -26,14 +26,17 @@ pub fn router(state: AppState) -> Router {
 
 pub async fn run_server(host: &str, port: u16, verbose: bool, project: &std::path::Path) -> Result<()> {
     let project_dir = peaky_preset::resolve_project_dir(&project.to_string_lossy());
+    let is_new = peaky_preset::project_needs_init(&project_dir);
+    let project_dir = peaky_preset::ensure_project_initialized(project)?;
     let preset_path = project_dir.join("config.yaml");
-    if !preset_path.is_file() {
-        anyhow::bail!(
-            "not a Peaky project (missing config.yaml): {}",
+    let slug = peaky_preset::resolved_preset_slug(&preset_path);
+    if is_new {
+        tracing::info!(
+            "initialized new project {} ({}) with MeshCore defaults",
+            slug,
             project_dir.display()
         );
     }
-    let slug = peaky_preset::resolved_preset_slug(&preset_path);
     tracing::info!("project {} ({})", slug, project_dir.display());
 
     let mirror = resolved_skadi_mirror_dir_for_project(&project_dir);

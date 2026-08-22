@@ -1,6 +1,7 @@
 //! Peaky preset YAML schema, I/O, and path resolution.
 
 pub mod home;
+pub mod init;
 pub mod io;
 pub mod model;
 pub mod paths;
@@ -10,6 +11,10 @@ pub mod sites;
 pub use home::{
     environment_catalog_from_preset, load_environment_catalog, load_modem_catalog,
     modem_catalog_from_preset,
+};
+
+pub use init::{
+    default_meshcore_preset, ensure_project_initialized, project_needs_init,
 };
 
 pub use io::{

@@ -445,10 +445,6 @@ pub fn validate_project_preset_document(raw: &serde_yaml::Mapping) -> PresetResu
 }
 
 pub fn validate_preset(preset: &Preset) -> PresetResult<()> {
-    if preset.sites.is_empty() {
-        return Err(err("sites must contain at least one entry"));
-    }
-
     let radius: f64 = match &preset.simulation.radius_km {
         serde_yaml::Value::Number(n) => n.as_f64().ok_or_else(|| err("simulation.radius_km must be numeric"))?,
         serde_yaml::Value::String(s) => s.parse().map_err(|_| err("simulation.radius_km must be numeric"))?,
