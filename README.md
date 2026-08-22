@@ -13,11 +13,11 @@ Binary: `target/release/peaky`
 ## Serve
 
 ```bash
-export PEAKY_HOME=/path/to/peaky_home   # default: ../../ops/peaky_home when present
-cargo run -p peaky -- serve --port 8080
+export PEAKY_HOME=/path/to/peaky_home   # catalogs; default ../../ops/peaky_home when present
+cargo run -p peaky -- serve /path/to/peaky_home/projects/nevada --port 8080
 ```
 
-Open `http://127.0.0.1:8080/` and pick a project (e.g. Nevada).
+Open `http://127.0.0.1:8080/` — that process is bound to one project.
 
 ## Docker
 
@@ -25,11 +25,12 @@ Open `http://127.0.0.1:8080/` and pick a project (e.g. Nevada).
 docker build -t peaky:latest .
 docker run --rm -p 8080:8080 \
   -v /path/to/peaky_home:/peaky_home \
+  -v /path/to/peaky_home/projects/nevada:/project \
   -v "${SPLAT_CACHE:-$HOME/.cache/splat}:/splat_cache" \
   peaky:latest
 ```
 
-Image defaults: `PEAKY_HOME=/peaky_home`, `SPLAT_CACHE=/splat_cache`, `peaky serve --host 0.0.0.0 --port 8080`. Override the command for `find path`.
+Image defaults: `PEAKY_HOME=/peaky_home`, `SPLAT_CACHE=/splat_cache`, `peaky serve /project`. Override the command for `find path`.
 
 ## Ops (BLM tags / FO export)
 

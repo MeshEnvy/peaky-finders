@@ -187,7 +187,11 @@ impl From<anyhow::Error> for SeekRunError {
     }
 }
 
-pub fn parse_seek_request(slug: &str, params: &HashMap<String, String>) -> Result<SeekRequest, SeekError> {
+pub fn parse_seek_request(
+    slug: &str,
+    preset_path: std::path::PathBuf,
+    params: &HashMap<String, String>,
+) -> Result<SeekRequest, SeekError> {
     let from_lat: f64 = params
         .get("from_lat")
         .ok_or_else(|| SeekError("from_lat required".into()))?
@@ -243,7 +247,7 @@ pub fn parse_seek_request(slug: &str, params: &HashMap<String, String>) -> Resul
 
     Ok(SeekRequest {
         slug: slug.to_string(),
-        preset_path: peaky_preset::resolve_preset_path(slug),
+        preset_path,
         from_lat,
         from_lon,
         goal_lat,
@@ -1650,7 +1654,6 @@ land:
                 std::env::set_var("PEAKY_HOME", home);
             }
             let preset_path = write_seek_fixture_project(home);
-            let _ = preset_path;
             let mirror = home.join("mirror");
             std::fs::create_dir_all(&mirror).expect("mirror");
             let session = Arc::new(Session::new(mirror, false));
@@ -1664,6 +1667,8 @@ land:
                 seek,
                 verbose: false,
                 dem_tile_render: Arc::new(Semaphore::new(crate::state::DEM_TILE_RENDER_PERMITS)),
+                project_dir: preset_path.parent().unwrap().to_path_buf(),
+                slug: "seek-sample".into(),
             };
             let app = router(state);
 

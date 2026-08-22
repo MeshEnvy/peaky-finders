@@ -14,10 +14,10 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 |------|-------|
 | Repo | `peaky-finders-v5` — pure Rust workspace |
 | v4 | Frozen reference; do not delete until v5 soak |
-| Interface | `peaky serve` — progressive web UI over preset YAML |
+| Interface | `peaky serve <project>` — web UI for one project directory |
 | RF engine | `splatter/` crate (in-process `Session`, library only) |
 | Land | GeoJSON-only at runtime (no GDB/GDAL). GDB preset paths resolve via `data/*.geojson` fallbacks or `.peaky/cache/land/` exports. **WGS84 required.** |
-| Dev | Host: `cargo build`, `cargo test`, `cargo run -p peaky -- serve` (fast incremental). `--release` for long RF only (LTO, slow rebuild). Docker: `docker build -t peaky:latest .` then mount `PEAKY_HOME` + `SPLAT_CACHE`. DEM fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8) |
+| Dev | Host: `cargo run -p peaky -- serve <project-dir>`. `--release` for long RF only. Docker: mount `PEAKY_HOME`, project at `/project`, and `SPLAT_CACHE`. DEM fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8) |
 | Auto-finder | `peaky find path` — onX KML route → min-site RF chain; cache under `.peaky/cache/finder/`; **`--watch`** live MapLibre + SSE on localhost:9847 |
 | Ops | Public-land site tags + FO export live in ops: `peaky_home/scripts/tag_public_land.py`, `export_blm_fo_packet.py`. **Fleet-tool direction (ops, 08-14, speculative):** nevada YAML is the canonical site/fleet list; later creds + telemetry history may live next to the preset. **Do not** put passwords or keypairs in git-tracked `config.yaml`. → `ops/initiatives/peaky-fleet-management.md` |
 | Reference preset | `$PEAKY_HOME/projects/nevada/config.yaml` (default: `ops/peaky_home`) |
@@ -26,7 +26,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 
 | Path | Role |
 |------|------|
-| `Dockerfile` | `peaky:latest` — mount `PEAKY_HOME` + `SPLAT_CACHE` |
+| `Dockerfile` | `peaky:latest` — mount `PEAKY_HOME`, project at `/project`, `SPLAT_CACHE` |
 | `cmd/peaky/` | CLI binary (`serve`, `find path`) |
 | `crates/peaky-finder/` | Auto-finder: route → min-site RF chain + config patch |
 | `crates/peaky-preset/` | Preset model, YAML I/O, paths, sites, home catalogs |
@@ -42,7 +42,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 
 Same vocabulary as v4: `sites:` (slug → `name`, `loc`, optional `tags`, `height_m`), top-level `links:`, `simulation`, `display`, `land`, `seek`. No `sites.*.type`. Tags are UI-only.
 
-Paths: `PEAKY_HOME` → projects under `projects/<slug>/config.yaml`. Cache: `<preset-dir>/.peaky/cache/viewsheds/`; finder cache: `<preset-dir>/.peaky/cache/finder/`. **PLSS:** not in Peaky — ops `tag_public_land.py` (CadNSDI → preset YAML); export runs it as prep.
+Paths: `peaky serve` / `find path --project` take a project dir, `config.yaml`, or slug under `$PEAKY_HOME/projects/<slug>/`. Catalogs still from `PEAKY_HOME`. Cache: `<preset-dir>/.peaky/cache/viewsheds/`; finder cache: `<preset-dir>/.peaky/cache/finder/`. **PLSS:** not in Peaky — ops `tag_public_land.py` (CadNSDI → preset YAML); export runs it as prep.
 
 **YAML writes:** serve site edits patch the on-disk YAML tree (`insert_preset_site`, `patch_preset_site`, …) so unrelated sections keep their order. Full `save_preset` re-serializes the typed preset and should be reserved for whole-document updates.
 
@@ -109,7 +109,7 @@ preset → CovRequest JSON (rf_json) → Session::link_eval / link_mutual_viable
 
 | Area | State |
 |------|-------|
-| Landing, project pages, sites CRUD, KML import | Implemented |
+| `/` project map, sites CRUD, KML import | Implemented (no landing / project listing) |
 | Viewshed PNG on demand (`splatter::Session` + cache) | Implemented |
 | Home modem/environment catalogs | Implemented |
 | SSE `/events` | Implemented (hello + keepalive; publish on warm TBD) |

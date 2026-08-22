@@ -7,7 +7,7 @@ use anyhow::Result;
 use peaky_finder::{new_session, run_find_path, FindPathJob, FinderWatchHub, FinderWatchServer};
 
 pub async fn run_path(
-    project: &str,
+    project: &Path,
     route: &Path,
     name_prefix: &str,
     tags: &[String],
@@ -19,7 +19,7 @@ pub async fn run_path(
     watch_port: Option<u16>,
 ) -> Result<()> {
     let job = FindPathJob::from_cli(
-        project,
+        &project.to_string_lossy(),
         route,
         name_prefix,
         tags,

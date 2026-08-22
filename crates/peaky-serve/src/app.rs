@@ -11,10 +11,10 @@ use tokio::sync::Semaphore;
 use tower_http::trace::TraceLayer;
 
 use crate::api;
-use crate::state::AppState;
 use crate::seek::SeekHub;
-use crate::warm::WarmHub;
+use crate::state::AppState;
 use crate::static_files;
+use crate::warm::WarmHub;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -24,7 +24,18 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-pub async fn run_server(host: &str, port: u16, verbose: bool) -> Result<()> {
+pub async fn run_server(host: &str, port: u16, verbose: bool, project: &std::path::Path) -> Result<()> {
+    let project_dir = peaky_preset::resolve_project_dir(&project.to_string_lossy());
+    let preset_path = project_dir.join("config.yaml");
+    if !preset_path.is_file() {
+        anyhow::bail!(
+            "not a Peaky project (missing config.yaml): {}",
+            project_dir.display()
+        );
+    }
+    let slug = peaky_preset::resolved_preset_slug(&preset_path);
+    tracing::info!("project {} ({})", slug, project_dir.display());
+
     let mirror = resolved_skadi_mirror_dir();
     std::fs::create_dir_all(&mirror)?;
     let session = Arc::new(Session::new(mirror, verbose));
@@ -36,6 +47,8 @@ pub async fn run_server(host: &str, port: u16, verbose: bool) -> Result<()> {
         seek: SeekHub::new(session, verbose),
         verbose,
         dem_tile_render: Arc::new(Semaphore::new(crate::state::DEM_TILE_RENDER_PERMITS)),
+        project_dir: project_dir.clone(),
+        slug,
     };
 
     let app = router(state);
@@ -53,8 +66,4 @@ pub async fn run_server(host: &str, port: u16, verbose: bool) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
-}
-
-pub fn default_projects_dir() -> std::path::PathBuf {
-    peaky_preset::peaky_projects_dir()
 }

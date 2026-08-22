@@ -1,7 +1,6 @@
 //! HTTP API and page routes.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use axum::{
@@ -14,15 +13,14 @@ use axum::{
 };
 use peaky_geo::{parse_kml_point_placemarks, parse_kmz_point_placemarks};
 use peaky_preset::{
-    discover_projects, insert_preset_site, load_preset, load_preset_raw, patch_preset_site,
-    patch_preset_sites_tags, peaky_projects_dir, preset_site_slugs, remove_preset_site,
-    resolve_preset_path, unique_site_slug, validate_coords, SiteEntry,
+    insert_preset_site, load_preset, load_preset_raw, patch_preset_site, patch_preset_sites_tags,
+    preset_site_slugs, remove_preset_site, unique_site_slug, validate_coords, SiteEntry,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::events::sse_keepalive_interval;
-use crate::html::{landing_html, project_error_html, project_html, site_api_row};
+use crate::html::{project_error_html, project_html, site_api_row};
 use crate::links::{load_project_site_links, load_single_site_links};
 use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
 use crate::state::AppState;
@@ -41,10 +39,7 @@ use crate::viewshed_sim::{parse_lat_lon_params, parse_viewshed_sim_params, sim_s
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/", get(landing))
-        .route("/projects", post(create_project))
-        .route("/api/projects", get(list_projects))
-        .route("/p/{slug}/", get(project_page))
+        .route("/", get(project_page))
         .route("/api/p/{slug}/sites", get(list_sites).post(add_site))
         .route("/api/p/{slug}/sites/prefetch", get(sites_prefetch))
         .route(
@@ -108,62 +103,22 @@ pub fn router() -> Router<AppState> {
         .route("/api/dem/hillshade/{z}/{x}/{y}", get(dem_hillshade_tile))
 }
 
-fn preset_path(slug: &str) -> PathBuf {
-    resolve_preset_path(slug)
-}
-
-fn project_dir(slug: &str) -> PathBuf {
-    peaky_projects_dir().join(slug)
-}
-
-async fn landing(State(_state): State<AppState>) -> Html<String> {
-    let projects = discover_projects(None);
-    Html(landing_html(&projects, None))
-}
-
-async fn list_projects() -> Json<Value> {
-    let projects = discover_projects(None);
-    Json(json!({ "projects": projects }))
-}
-
-#[derive(Deserialize)]
-struct CreateProjectForm {
-    slug: String,
-}
-
-async fn create_project(
-    axum::Form(form): axum::Form<CreateProjectForm>,
-) -> Result<Response, StatusCode> {
-    let slug = form.slug.trim().to_lowercase();
-    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let dir = project_dir(&slug);
-    if dir.exists() {
-        return Err(StatusCode::CONFLICT);
-    }
-    std::fs::create_dir_all(&dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let template = include_str!("../../../crates/peaky-preset/templates/new_project_config.yaml");
-    std::fs::write(dir.join("config.yaml"), template).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(axum::response::Redirect::to(&format!("/p/{slug}/")).into_response())
-}
-
 async fn project_page(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
 ) -> Result<Html<String>, Html<String>> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     match load_preset(&path) {
         Ok(preset) => {
-            state.warm.ensure_aoi_dem_prefetch(&slug, path.clone());
-            Ok(Html(project_html(&slug, &preset, &path)))
+            state.warm.ensure_aoi_dem_prefetch(&state.slug, path.clone());
+            Ok(Html(project_html(&state.slug, &preset, &path)))
         }
-        Err(e) => Err(Html(project_error_html(&slug, &e.to_string()))),
+        Err(e) => Err(Html(project_error_html(&state.slug, &e.to_string()))),
     }
 }
 
-async fn list_sites(Path(slug): Path<String>) -> Result<Json<Value>, StatusCode> {
-    let preset = load_preset(&preset_path(&slug)).map_err(|_| StatusCode::NOT_FOUND)?;
+async fn list_sites(State(state): State<AppState>,
+    Path(_slug): Path<String>) -> Result<Json<Value>, StatusCode> {
+    let preset = load_preset(&state.preset_path()).map_err(|_| StatusCode::NOT_FOUND)?;
     let sites: Vec<Value> = preset
         .sites
         .iter()
@@ -182,12 +137,13 @@ struct AddSiteBody {
     height_m: Option<f64>,
 }
 
-async fn add_site(
-    Path(slug): Path<String>,
+async fn add_site(State(state): State<AppState>,
+    
+    Path(_slug): Path<String>,
     Json(body): Json<AddSiteBody>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
     validate_coords(body.lat, body.lon).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let raw = load_preset_raw(&path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
     let map = raw.as_mapping().ok_or((StatusCode::INTERNAL_SERVER_ERROR, "invalid preset".to_string()))?;
     let existing = preset_site_slugs(map);
@@ -214,7 +170,7 @@ async fn add_site(
 
 async fn sites_prefetch(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(_slug): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let (lat, lon) = parse_lat_lon_params(&params).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
@@ -222,7 +178,7 @@ async fn sites_prefetch(
         .get("exclude_site")
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     if !path.is_file() {
         return Err((StatusCode::NOT_FOUND, "project not found".to_string()));
     }
@@ -241,7 +197,7 @@ async fn sites_prefetch(
         .as_object()
         .cloned()
         .unwrap_or_default();
-    obj.insert("project".into(), json!(slug));
+    obj.insert("project".into(), json!(state.slug));
     Ok(Json(Value::Object(obj)))
 }
 
@@ -254,11 +210,12 @@ struct PatchSiteBody {
     height_m: Option<f64>,
 }
 
-async fn patch_site(
-    Path((slug, site_slug)): Path<(String, String)>,
+async fn patch_site(State(state): State<AppState>,
+    
+    Path((_slug, site_slug)): Path<(String, String)>,
     Json(body): Json<PatchSiteBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let preset = load_preset(&path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
     if !preset.sites.contains_key(&site_slug) {
         return Err((StatusCode::NOT_FOUND, "site not found".to_string()));
@@ -286,10 +243,11 @@ async fn patch_site(
     Ok(Json(json!({ "site": site_api_row(&site_slug, site) })))
 }
 
-async fn delete_site(
-    Path((slug, site_slug)): Path<(String, String)>,
+async fn delete_site(State(state): State<AppState>,
+    
+    Path((_slug, site_slug)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let preset = load_preset(&path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
     if !preset.sites.contains_key(&site_slug) {
         return Err((StatusCode::NOT_FOUND, "site not found".to_string()));
@@ -310,8 +268,9 @@ struct BulkTagsBody {
     remove_tags: Vec<String>,
 }
 
-async fn bulk_tags(
-    Path(slug): Path<String>,
+async fn bulk_tags(State(state): State<AppState>,
+    
+    Path(_slug): Path<String>,
     Json(body): Json<BulkTagsBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     if body.slugs.is_empty() {
@@ -323,7 +282,7 @@ async fn bulk_tags(
             "add_tags or remove_tags required".to_string(),
         ));
     }
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let preset = load_preset(&path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
     let targets: Vec<String> = body
         .slugs
@@ -339,17 +298,16 @@ async fn bulk_tags(
         .filter_map(|s| updated.sites.get(s).map(|site| site_api_row(s, site)))
         .collect();
     Ok(Json(json!({
-        "slug": slug,
+        "slug": state.slug.clone(),
         "sites": site_rows,
         "updated": site_rows.len(),
     })))
 }
 
 async fn import_preview(
-    Path(slug): Path<String>,
+    Path(_slug): Path<String>,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let _ = slug;
     let points = if body.starts_with(b"PK") {
         parse_kmz_point_placemarks(&body).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?.0
     } else {
@@ -378,11 +336,12 @@ struct ImportPoint {
     lon: f64,
 }
 
-async fn import_sites(
-    Path(slug): Path<String>,
+async fn import_sites(State(state): State<AppState>,
+    
+    Path(_slug): Path<String>,
     Json(body): Json<ImportSitesBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let mut slugs = Vec::new();
     for pt in body.points {
         let raw = load_preset_raw(&path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
@@ -406,27 +365,29 @@ async fn import_sites(
     Ok(Json(json!({ "slugs": slugs })))
 }
 
-async fn viewshed_prefetch_meta(
-    Path(slug): Path<String>,
+async fn viewshed_prefetch_meta(State(state): State<AppState>,
+    
+    Path(_slug): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, StatusCode> {
     let (lat, lon) = parse_lat_lon_params(&params).map_err(sim_status_from_err)?;
     let sim = parse_viewshed_sim_params(&params).map_err(sim_status_from_err)?;
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let preset = load_preset(&path).map_err(|_| StatusCode::NOT_FOUND)?;
-    let overlay = coords_viewshed_overlay_if_ready(&slug, &path, &preset, lat, lon, Some(&sim))
+    let overlay = coords_viewshed_overlay_if_ready(&state.slug, &path, &preset, lat, lon, Some(&sim))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(overlay))
 }
 
-async fn viewshed_prefetch_png(
-    Path(slug): Path<String>,
+async fn viewshed_prefetch_png(State(state): State<AppState>,
+    
+    Path(_slug): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, StatusCode> {
     let (lat, lon) = parse_lat_lon_params(&params).map_err(sim_status_from_err)?;
     let sim = parse_viewshed_sim_params(&params).map_err(sim_status_from_err)?;
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let preset = load_preset(&path).map_err(|_| StatusCode::NOT_FOUND)?;
     let png = read_coords_viewshed_png_if_ready(&path, &preset, lat, lon, Some(&sim))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -436,23 +397,23 @@ async fn viewshed_prefetch_png(
 
 async fn viewshed_prefetch_warm(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(_slug): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let (lat, lon) = parse_lat_lon_params(&params).map_err(|msg| {
         (
             sim_status_from_err(msg.clone()),
-            Json(json!({ "slug": slug, "error": msg })),
+            Json(json!({ "slug": state.slug.clone(), "error": msg })),
         )
     })?;
     let sim = parse_viewshed_sim_params(&params).map_err(|msg| {
         (
             sim_status_from_err(msg.clone()),
-            Json(json!({ "slug": slug, "error": msg })),
+            Json(json!({ "slug": state.slug.clone(), "error": msg })),
         )
     })?;
-    let path = preset_path(&slug);
-    match state.warm.warm_coords_viewshed(&slug, path, lat, lon, sim) {
+    let path = state.preset_path();
+    match state.warm.warm_coords_viewshed(&state.slug, path, lat, lon, sim) {
         Ok(payload) => {
             let status = if payload.get("status").and_then(|v| v.as_str()) == Some("ready") {
                 StatusCode::OK
@@ -463,29 +424,31 @@ async fn viewshed_prefetch_warm(
         }
         Err(msg) => Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "slug": slug, "error": msg })),
+            Json(json!({ "slug": state.slug.clone(), "error": msg })),
         )),
     }
 }
 
 async fn viewshed_png(
     State(state): State<AppState>,
-    Path((slug, site_slug)): Path<(String, String)>,
+    Path((_slug, site_slug)): Path<(String, String)>,
 ) -> Result<Response, StatusCode> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
+    let project_slug = state.slug.clone();
     let png = ensure_viewshed_png(state.session.clone(), &path, &site_slug, state.verbose)
         .await
         .map_err(|e| {
-            tracing::error!("viewshed {slug}/{site_slug}: {e:#}");
+            tracing::error!("viewshed {project_slug}/{site_slug}: {e:#}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     serve_file_png(&png, false)
 }
 
-async fn viewshed_cache_png(
-    Path((slug, digest)): Path<(String, String)>,
+async fn viewshed_cache_png(State(state): State<AppState>,
+    
+    Path((_slug, digest)): Path<(String, String)>,
 ) -> Result<Response, StatusCode> {
-    let png = peaky_preset::resolved_viewshed_root(preset_path(&slug)).join(&digest).join("splat.png");
+    let png = peaky_preset::resolved_viewshed_root(state.preset_path()).join(&digest).join("splat.png");
     if !png.is_file() {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -505,16 +468,17 @@ fn serve_file_png(path: &std::path::Path, immutable: bool) -> Result<Response, S
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-async fn viewshed_meta(
-    Path((slug, site_slug)): Path<(String, String)>,
+async fn viewshed_meta(State(state): State<AppState>,
+    
+    Path((_slug, site_slug)): Path<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, StatusCode> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let preset = load_preset(&path).map_err(|_| StatusCode::NOT_FOUND)?;
     let site = preset.sites.get(&site_slug).ok_or(StatusCode::NOT_FOUND)?;
     let sim = parse_viewshed_sim_params(&params).map_err(sim_status_from_err)?;
     if let Ok(Some(overlay)) =
-        site_viewshed_overlay_if_ready(&slug, &path, &site_slug, site, &preset, Some(&sim))
+        site_viewshed_overlay_if_ready(&state.slug, &path, &site_slug, site, &preset, Some(&sim))
     {
         return Ok(Json(overlay));
     }
@@ -524,48 +488,49 @@ async fn viewshed_meta(
     Ok(Json(json!({
         "slug": site_slug,
         "digest": digest,
-        "url": viewshed_cache_png_api_path(&slug, &digest),
+        "url": viewshed_cache_png_api_path(&state.slug, &digest),
         "ready": false,
         "raster_target": target_raster,
     })))
 }
 
-async fn viewshed_index(Path(slug): Path<String>) -> Result<Json<Value>, StatusCode> {
-    let path = preset_path(&slug);
+async fn viewshed_index(State(state): State<AppState>,
+    Path(_slug): Path<String>) -> Result<Json<Value>, StatusCode> {
+    let path = state.preset_path();
     let preset = load_preset(&path).map_err(|_| StatusCode::NOT_FOUND)?;
-    build_viewshed_index(&slug, &path, &preset)
+    build_viewshed_index(&state.slug, &path, &preset)
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn links_mesh(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(_slug): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let preset = load_preset(&path).map_err(|_| StatusCode::NOT_FOUND)?;
     let payload = load_project_site_links(&path, &preset).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if payload.get("status").and_then(|v| v.as_str()) != Some("ready") {
-        state.warm.start_links_warm(&slug, path.clone());
+        state.warm.start_links_warm(&state.slug, path.clone());
     }
     let mut out = payload.as_object().cloned().unwrap_or_default();
-    out.insert("project".into(), json!(slug));
+    out.insert("project".into(), json!(state.slug));
     Ok(Json(Value::Object(out)))
 }
 
 async fn links_warm(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(_slug): Path<String>,
 ) -> Json<Value> {
-    let path = preset_path(&slug);
-    Json(state.warm.start_links_warm(&slug, path))
+    let path = state.preset_path();
+    Json(state.warm.start_links_warm(&state.slug, path))
 }
 
 async fn site_links(
     State(state): State<AppState>,
-    Path((slug, site_slug)): Path<(String, String)>,
+    Path((_slug, site_slug)): Path<(String, String)>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let preset = load_preset(&path).map_err(|_| {
         (
             StatusCode::NOT_FOUND,
@@ -594,16 +559,16 @@ async fn site_links(
         (status, Json(json!({ "error": e.to_string() })))
     })?;
     let mut out = result.as_object().cloned().unwrap_or_default();
-    out.insert("project".into(), json!(slug));
+    out.insert("project".into(), json!(state.slug));
     Ok(Json(Value::Object(out)))
 }
 
 async fn warm_priorities(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(_slug): Path<String>,
     Json(body): Json<WarmPrioritiesBody>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     if !path.is_file() {
         return Err((
             StatusCode::NOT_FOUND,
@@ -612,7 +577,7 @@ async fn warm_priorities(
     }
     let result = state
         .warm
-        .bump_priorities(&slug, path, &body.slugs, body.priority)
+        .bump_priorities(&state.slug, path, &body.slugs, body.priority)
         .map_err(|e| {
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -620,12 +585,12 @@ async fn warm_priorities(
             )
         })?;
     let mut out = result.as_object().cloned().unwrap_or_default();
-    out.insert("project".into(), json!(slug));
+    out.insert("project".into(), json!(state.slug));
     Ok(Json(Value::Object(out)))
 }
 
-async fn warm_status(State(state): State<AppState>, Path(slug): Path<String>) -> Json<Value> {
-    Json(state.warm.warm_status(&slug, preset_path(&slug)))
+async fn warm_status(State(state): State<AppState>, Path(_slug): Path<String>) -> Json<Value> {
+    Json(state.warm.warm_status(&state.slug, state.preset_path()))
 }
 
 #[derive(Deserialize)]
@@ -636,15 +601,15 @@ struct WarmPrioritiesBody {
 
 async fn project_events(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(_slug): Path<String>,
 ) -> impl IntoResponse {
-    let mut rx = state.events.subscribe(&slug);
+    let mut rx = state.events.subscribe(&state.slug);
     let stream = async_stream::stream! {
         yield Ok::<_, std::convert::Infallible>(
             axum::response::sse::Event::default().comment("connected"),
         );
         yield Ok(axum::response::sse::Event::default().event("hello").data(
-            serde_json::json!({ "project": slug }).to_string(),
+            serde_json::json!({ "project": state.slug.clone() }).to_string(),
         ));
         let mut interval = tokio::time::interval(sse_keepalive_interval());
         loop {
@@ -671,17 +636,19 @@ async fn project_events(
     )
 }
 
-async fn land_list(Path(slug): Path<String>) -> Result<Json<Value>, StatusCode> {
-    let path = preset_path(&slug);
+async fn land_list(State(state): State<AppState>,
+    Path(_slug): Path<String>) -> Result<Json<Value>, StatusCode> {
+    let path = state.preset_path();
     list_land_payload(&path)
         .map(Json)
         .map_err(|_| StatusCode::NOT_FOUND)
 }
 
-async fn land_layer_geojson(
-    Path((slug, source_id, layer_key)): Path<(String, String, String)>,
+async fn land_layer_geojson(State(state): State<AppState>,
+    
+    Path((_slug, source_id, layer_key)): Path<(String, String, String)>,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     let (bytes, digest) = read_layer_geojson_bytes(&path, &source_id, &layer_key).map_err(|e| {
         let status = if e.to_string().contains("unknown") {
             StatusCode::NOT_FOUND
@@ -703,82 +670,86 @@ async fn land_layer_geojson(
         })
 }
 
-async fn project_simulation(Path(slug): Path<String>) -> Result<Json<Value>, StatusCode> {
-    project_simulation_payload(&preset_path(&slug))
+async fn project_simulation(State(state): State<AppState>,
+    Path(_slug): Path<String>) -> Result<Json<Value>, StatusCode> {
+    project_simulation_payload(&state.preset_path())
         .map(Json)
         .map_err(|_| StatusCode::NOT_FOUND)
 }
 
 async fn seek_candidates(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(_slug): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
-    if !preset_path(&slug).is_file() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": slug, "error": "not found" }))));
+    if !state.preset_path().is_file() {
+        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": state.slug.clone(), "error": "not found" }))));
     }
-    let request = parse_seek_request(&slug, &q).map_err(|e| {
+    let request = parse_seek_request(&state.slug, state.preset_path(), &q).map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": slug, "error": e.0 })),
+            Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
         )
     })?;
     let gen = state.seek.enqueue(request, state.verbose).map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": slug, "error": e.0 })),
+            Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
         )
     })?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({ "project": slug, "status": "pending", "gen": gen })),
+        Json(json!({ "project": state.slug.clone(), "status": "pending", "gen": gen })),
     ))
 }
 
-async fn seek_progress(State(state): State<AppState>, Path(slug): Path<String>) -> Json<Value> {
-    Json(state.seek.poll(&slug))
+async fn seek_progress(State(state): State<AppState>, Path(_slug): Path<String>) -> Json<Value> {
+    Json(state.seek.poll(&state.slug))
 }
 
-async fn get_seek_plan(Path(slug): Path<String>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let path = preset_path(&slug);
+async fn get_seek_plan(State(state): State<AppState>,
+    Path(_slug): Path<String>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let path = state.preset_path();
     if !path.is_file() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": slug, "error": "not found" }))));
+        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": state.slug.clone(), "error": "not found" }))));
     }
     let plan = load_seek_plan_payload(&path).map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": slug, "error": e.to_string() })),
+            Json(json!({ "slug": state.slug.clone(), "error": e.to_string() })),
         )
     })?;
-    Ok(Json(json!({ "project": slug, "plan": plan })))
+    Ok(Json(json!({ "project": state.slug.clone(), "plan": plan })))
 }
 
-async fn patch_seek_plan_handler(
-    Path(slug): Path<String>,
+async fn patch_seek_plan_handler(State(state): State<AppState>,
+    
+    Path(_slug): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     if !path.is_file() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": slug, "error": "not found" }))));
+        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": state.slug.clone(), "error": "not found" }))));
     }
     let plan = patch_seek_plan(&path, &body).map_err(|e| match e {
         SeekPlanError(msg) => (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": slug, "error": msg })),
+            Json(json!({ "slug": state.slug.clone(), "error": msg })),
         ),
     })?;
-    Ok(Json(json!({ "project": slug, "plan": plan })))
+    Ok(Json(json!({ "project": state.slug.clone(), "plan": plan })))
 }
 
-async fn clear_seek_plan_handler(Path(slug): Path<String>) -> Result<StatusCode, (StatusCode, Json<Value>)> {
-    let path = preset_path(&slug);
+async fn clear_seek_plan_handler(State(state): State<AppState>,
+    Path(_slug): Path<String>) -> Result<StatusCode, (StatusCode, Json<Value>)> {
+    let path = state.preset_path();
     if !path.is_file() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": slug, "error": "not found" }))));
+        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": state.slug.clone(), "error": "not found" }))));
     }
     clear_seek_plan(&path).map_err(|e| match e {
         SeekPlanError(msg) => (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": slug, "error": msg })),
+            Json(json!({ "slug": state.slug.clone(), "error": msg })),
         ),
     })?;
     Ok(StatusCode::NO_CONTENT)
@@ -791,24 +762,25 @@ struct ConvertSeekPlanBody {
     tags: Vec<String>,
 }
 
-async fn convert_seek_plan(
-    Path(slug): Path<String>,
+async fn convert_seek_plan(State(state): State<AppState>,
+    
+    Path(_slug): Path<String>,
     Json(body): Json<ConvertSeekPlanBody>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let path = preset_path(&slug);
+    let path = state.preset_path();
     if !path.is_file() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": slug, "error": "not found" }))));
+        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": state.slug.clone(), "error": "not found" }))));
     }
     let result = convert_seek_plan_locs_to_sites(&path, &body.name_prefix, &body.tags).map_err(|e| match e {
         SeekPlanError(msg) => (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": slug, "error": msg })),
+            Json(json!({ "slug": state.slug.clone(), "error": msg })),
         ),
     })?;
     let mut payload = result;
     if let Some(obj) = payload.as_object_mut() {
-        obj.insert("slug".to_string(), json!(slug));
-        obj.insert("project".to_string(), json!(slug));
+        obj.insert("slug".to_string(), json!(state.slug));
+        obj.insert("project".to_string(), json!(state.slug));
     }
     Ok(Json(payload))
 }

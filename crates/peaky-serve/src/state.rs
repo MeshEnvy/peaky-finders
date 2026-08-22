@@ -1,5 +1,6 @@
 //! Shared application state.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use splatter::Session;
@@ -20,4 +21,14 @@ pub struct AppState {
     pub seek: SeekHub,
     pub verbose: bool,
     pub dem_tile_render: Arc<Semaphore>,
+    /// Directory that contains `config.yaml`.
+    pub project_dir: PathBuf,
+    /// Display / cache key (directory name).
+    pub slug: String,
+}
+
+impl AppState {
+    pub fn preset_path(&self) -> PathBuf {
+        self.project_dir.join("config.yaml")
+    }
 }

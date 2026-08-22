@@ -15,7 +15,7 @@ Read [MEMORY.md](../../MEMORY.md) for env vars.
 cargo build
 cargo build --release
 export PEAKY_HOME=/Volumes/Code/repos/meshenvy/ops/peaky_home   # or rely on default
-cargo run -p peaky -- serve --host 127.0.0.1 --port 8080
+cargo run -p peaky -- serve "$PEAKY_HOME/projects/nevada" --host 127.0.0.1 --port 8080
 cargo test
 ```
 
@@ -27,11 +27,12 @@ Skadi mirror: `$SPLAT_CACHE` or `$PEAKY_HOME/splat_cache`. Use `--release` only 
 docker build -t peaky:latest .
 docker run --rm -p 8080:8080 \
   -v "$PEAKY_HOME:/peaky_home" \
+  -v "$PEAKY_HOME/projects/nevada:/project" \
   -v "${SPLAT_CACHE:-$HOME/.cache/splat}:/splat_cache" \
   peaky:latest
 ```
 
-Image `PEAKY_HOME=/peaky_home`, `SPLAT_CACHE=/splat_cache`. Extra args replace `serve` (e.g. `find path --help`).
+Image `PEAKY_HOME=/peaky_home`, `SPLAT_CACHE=/splat_cache`, `serve /project`. Extra args replace `serve` (e.g. `find path --help`).
 
 ## Ops (BLM — not in this repo)
 

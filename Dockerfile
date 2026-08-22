@@ -4,6 +4,7 @@
 #
 #   docker run --rm -p 8080:8080 \
 #     -v /path/to/peaky_home:/peaky_home \
+#     -v /path/to/project:/project \
 #     -v "${SPLAT_CACHE:-$HOME/.cache/splat}:/splat_cache" \
 #     peaky:latest
 #
@@ -32,4 +33,4 @@ ENV PEAKY_HOME=/peaky_home \
 EXPOSE 8080 9847
 
 ENTRYPOINT ["/usr/local/bin/peaky"]
-CMD ["serve", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8080", "/project"]

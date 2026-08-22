@@ -31,7 +31,7 @@ impl FindPathJob {
     ) -> Result<Self> {
         let project = project.trim();
         if project.is_empty() {
-            bail!("--project is required");
+            bail!("project path is required");
         }
         let name_prefix = name_prefix.trim();
         if name_prefix.is_empty() {

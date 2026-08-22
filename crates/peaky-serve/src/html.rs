@@ -65,34 +65,6 @@ pub fn html_page(title: &str, body: &str, wide: bool, extra_head: &str) -> Strin
     )
 }
 
-pub fn landing_html(projects: &[String], error: Option<&str>) -> String {
-    let err = error
-        .map(|e| format!(r#"<wa-callout variant="danger">{}</wa-callout>"#, html_escape(e)))
-        .unwrap_or_default();
-    let project_block = if projects.is_empty() {
-        r#"<p class="wa-caption pf-muted pf-italic">No projects yet — create one below.</p>"#.to_string()
-    } else {
-        let items: String = projects
-            .iter()
-            .map(|slug| {
-                format!(
-                    r#"    <a class="project-list__item" href="/p/{}/">{}</a>"#,
-                    html_escape(slug),
-                    html_escape(slug)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(r#"<div class="project-list">{items}</div>"#)
-    };
-    let body = format!(
-        include_str!("../../../assets/templates/landing_fragment.html"),
-        err = err,
-        project_block = project_block,
-    );
-    html_page("Peaky", &body, false, "")
-}
-
 pub fn site_api_row(slug: &str, site: &SiteEntry) -> serde_json::Value {
     serde_json::Value::Object(site_row_from_entry(slug, site))
 }
@@ -116,7 +88,11 @@ pub fn project_html(slug: &str, preset: &Preset, _preset_path: &Path) -> String 
             })
         })
         .collect();
-    let seek_plan = preset.seek.plan.as_ref().map(|p| serde_json::to_value(p).unwrap_or_default());
+    let seek_plan = preset
+        .seek
+        .plan
+        .as_ref()
+        .map(|p| serde_json::to_value(p).unwrap_or_default());
     let peaky_config = serde_json::json!({
         "slug": slug,
         "sites": sites,
@@ -143,9 +119,8 @@ pub fn project_html(slug: &str, preset: &Preset, _preset_path: &Path) -> String 
 pub fn project_error_html(slug: &str, message: &str) -> String {
     let body = format!(
         r#"<div class="landing-container pf-page">
-  <wa-button href="/" appearance="plain" size="s">&larr; All projects</wa-button>
   <h1 class="wa-heading">{slug}</h1>
-  <wa-callout variant="danger">Could not load project sites: {msg}</wa-callout>
+  <wa-callout variant="danger">Could not load project: {msg}</wa-callout>
 </div>"#,
         slug = html_escape(slug),
         msg = html_escape(message),

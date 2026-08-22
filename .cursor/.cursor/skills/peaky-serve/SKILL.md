@@ -24,6 +24,6 @@ Read [MEMORY.md](../../MEMORY.md) first.
 | `serve/sites.py` | Preset site CRUD (tags-only YAML) |
 | `core/preset/` | Load/validate/write `config.yaml` |
 
-Runtime: `PEAKY_HOME`, `PEAKY_PROJECTS`. Dev: `cargo run -p peaky -- serve` or the repo-root Docker image.
+Runtime: `peaky serve <project-dir>`. Catalogs from `PEAKY_HOME`. Docker: mount project at `/project`.
 
 Rule: `.cursor/rules/serve-web-ui.mdc`.

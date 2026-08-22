@@ -21,7 +21,7 @@ mod viewshed_log;
 mod viewshed_sim;
 mod warm;
 
-pub use app::{default_projects_dir, router, run_server};
+pub use app::{router, run_server};
 pub use events::ServeEventHub;
 pub use state::AppState;
 pub use viewshed_sim::ViewshedSimOverrides;

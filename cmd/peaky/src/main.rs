@@ -16,17 +16,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the local web UI
+    /// Start the local web UI for one project
     Serve {
+        /// Project directory (or path to config.yaml)
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
         #[arg(long, default_value = "0.0.0.0")]
         host: String,
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
         #[arg(long)]
         verbose: bool,
-        /// Open this project after start (optional)
-        #[arg(long)]
-        project: Option<String>,
     },
     /// Auto-find RF chain along a route
     Find {
@@ -39,8 +39,9 @@ enum Commands {
 enum FindCommands {
     /// Solve minimum-site RF chain covering route waypoints
     Path {
+        /// Project directory (or path to config.yaml)
         #[arg(long)]
-        project: String,
+        project: PathBuf,
         #[arg(long)]
         route: PathBuf,
         #[arg(long)]
@@ -76,15 +77,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Serve {
+            project,
             host,
             port,
             verbose,
-            project,
         } => {
-            if let Some(ref slug) = project {
-                tracing::info!("project context: {slug}");
-            }
-            run_server(&host, port, verbose).await?;
+            run_server(&host, port, verbose, &project).await?;
         }
         Commands::Find {
             command:
@@ -102,7 +100,7 @@ async fn main() -> Result<()> {
                 },
         } => {
             find::run_path(
-                &project,
+                project.as_path(),
                 &route,
                 &name_prefix,
                 &tag,
