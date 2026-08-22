@@ -49,7 +49,6 @@ import {
   LAND_PREVIEW_LINE_WIDTH,
   VIEWSHED_OPACITY_DEFAULT,
   DRAFT_VIEWSHED_SLUG,
-  VIEWSHED_PREVIEW_QUALITY,
   VIEWSHED_QUALITY_MIN,
   VIEWSHED_QUALITY_MAX,
   COORD_PREFETCH_MS,
@@ -90,6 +89,12 @@ import {
   slugifyLandFolderId,
 } from './geo.js'
 import * as apiUrls from './api-urls.js'
+import {
+  clampRadiusKm as clampRadiusKmSim,
+  clampViewshedQuality,
+  buildViewshedSimQueryParams,
+  buildViewshedPreviewSimQueryParams,
+} from './viewshed-sim.js'
 
 export function initProjectMap() {
   const config = window.PEAKY_PROJECT || {};
@@ -427,17 +432,7 @@ export function initProjectMap() {
   }
 
   function clampRadiusKm(km) {
-    return Math.max(
-      VIEWSHED_RADIUS_KM_MIN,
-      Math.min(VIEWSHED_RADIUS_KM_MAX, Number(km)),
-    );
-  }
-
-  function clampViewshedQuality(quality) {
-    return Math.max(
-      VIEWSHED_QUALITY_MIN,
-      Math.min(VIEWSHED_QUALITY_MAX, Math.round(Number(quality))),
-    );
+    return clampRadiusKmSim(km, VIEWSHED_RADIUS_KM_MIN, VIEWSHED_RADIUS_KM_MAX);
   }
 
   function setViewshedSimulation(radiusKm, quality) {
@@ -6384,17 +6379,11 @@ export function initProjectMap() {
   }
 
   function viewshedSimQueryParams() {
-    const params = new URLSearchParams();
-    params.set("radius_km", String(viewshedRadiusKm));
-    params.set("quality", String(viewshedQuality));
-    return params;
+    return buildViewshedSimQueryParams(viewshedRadiusKm, viewshedQuality);
   }
 
   function viewshedPreviewSimQueryParams() {
-    const params = new URLSearchParams();
-    params.set("radius_km", String(viewshedRadiusKm));
-    params.set("quality", String(VIEWSHED_PREVIEW_QUALITY));
-    return params;
+    return buildViewshedPreviewSimQueryParams(viewshedRadiusKm);
   }
 
   let serveEventsSource = null;
@@ -8896,7 +8885,7 @@ export function initProjectMap() {
     setEditError("");
     sitePanelEditSave.disabled = true;
     const savedEditSlug = editSlug;
-    const apiUrl = `/api/p/${projectSlug}/sites/${savedEditSlug}`;
+    const apiUrl = siteDeleteUrl(savedEditSlug);
     const body = {
       name,
       lat: coords.lat,
