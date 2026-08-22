@@ -1090,6 +1090,17 @@
       landVisible.set(key, !!visible);
     }
   }
+  const landSourceBatchVisible = new Map();
+  if (
+    savedMapState?.landSourceBatchVisible &&
+    typeof savedMapState.landSourceBatchVisible === "object"
+  ) {
+    for (const [key, visible] of Object.entries(
+      savedMapState.landSourceBatchVisible,
+    )) {
+      landSourceBatchVisible.set(key, !!visible);
+    }
+  }
   const landLabelsVisible = new Map();
   if (
     savedMapState?.landLabelsVisible &&
@@ -2961,6 +2972,21 @@
     };
   }
 
+  function landLayerShortLabel(spec) {
+    if (spec.role === "include") return "Public land";
+    if (spec.role === "exclude") return friendlyLandLayerName(spec.name);
+    for (const filt of spec.include || []) {
+      const values = (filt.values || []).filter(Boolean);
+      if (values.length === 1) {
+        if (filt.field === "ABBR") return values[0];
+        return filt.field ? `${filt.field}: ${values[0]}` : values[0];
+      }
+      if (values.length > 1) return values.join(", ");
+    }
+    if (spec.id) return String(spec.id).toUpperCase();
+    return friendlyLandLayerName(spec.name);
+  }
+
   function landLayerDisplayName(spec) {
     const parts = [spec.name];
     const includeValues = (spec.include || [])
@@ -3091,26 +3117,28 @@
     return controls;
   }
 
-  function appendLandLayerMeta(parent, spec) {
+  function appendLandLayerMeta(parent, spec, { showFilters = true, showLegend = true } = {}) {
     const meta = document.createElement("div");
     meta.className = "entity-panel__meta";
     let hasMeta = false;
 
-    for (const filt of spec.include || []) {
-      const field = filt.field || "";
-      for (const value of filt.values || []) {
-        if (!value) continue;
-        const pill = document.createElement("span");
-        pill.className =
-          "entity-panel__meta-tag entity-panel__meta-tag--active";
-        pill.textContent = field ? `${field}: ${value}` : String(value);
-        meta.appendChild(pill);
-        hasMeta = true;
+    if (showFilters) {
+      for (const filt of spec.include || []) {
+        const field = filt.field || "";
+        for (const value of filt.values || []) {
+          if (!value) continue;
+          const pill = document.createElement("span");
+          pill.className =
+            "entity-panel__meta-tag entity-panel__meta-tag--active";
+          pill.textContent = field ? `${field}: ${value}` : String(value);
+          meta.appendChild(pill);
+          hasMeta = true;
+        }
       }
     }
 
     const styleMap = styleMapFromLayerSpec(spec);
-    if (styleMap && Object.keys(styleMap).length) {
+    if (showLegend && styleMap && Object.keys(styleMap).length) {
       const legend = document.createElement("div");
       legend.className = "entity-panel__land-legend";
       for (const [key, rawStyle] of Object.entries(styleMap)) {
@@ -3234,6 +3262,113 @@
     };
   }
 
+  function resolveRegisteredPreviewLayerName(registeredName, previewLayers) {
+    const previewNames = (previewLayers || []).map((layer) => layer.name);
+    if (previewNames.includes(registeredName)) return registeredName;
+    if (previewNames.length === 1) return previewNames[0];
+    return null;
+  }
+
+  function registeredLayersForPreviewName(previewName, registeredLayers, previewLayers) {
+    return (registeredLayers || []).filter((raw) => {
+      const spec = normalizeRegisteredLayer(raw);
+      if (spec.name === previewName) return true;
+      return resolveRegisteredPreviewLayerName(spec.name, previewLayers) === previewName;
+    });
+  }
+
+  function initialEditLandSelected(source, previewLayers) {
+    const selected = new Set();
+    for (const rawLayer of source?.layers || []) {
+      const spec = normalizeRegisteredLayer(rawLayer);
+      const previewName = resolveRegisteredPreviewLayerName(
+        spec.name,
+        previewLayers,
+      );
+      if (previewName) selected.add(previewName);
+    }
+    const previewNames = previewLayers.map((layer) => layer.name);
+    if (!selected.size && previewNames.length === 1 && (source?.layers || []).length) {
+      selected.add(previewNames[0]);
+    }
+    return selected;
+  }
+
+  function buildEditLandLayerState(source, previewLayers) {
+    const configs = new Map();
+    const styles = new Map();
+    for (const previewLayer of previewLayers) {
+      const previewName = previewLayer.name;
+      const matching = registeredLayersForPreviewName(
+        previewName,
+        source?.layers,
+        previewLayers,
+      );
+      const primary =
+        matching.find(
+          (raw) => normalizeRegisteredLayer(raw).role === "include",
+        ) || matching[0];
+      if (!primary) continue;
+      const spec = normalizeRegisteredLayer(primary);
+      configs.set(previewName, configFromRegisteredLayer(primary));
+      ensureLandLayerStyleState(
+        styles,
+        previewName,
+        flatStyleFromLayerSpec(spec),
+      );
+    }
+    return { configs, styles };
+  }
+
+  function registeredLayerToSavePayload(raw, previewName) {
+    const spec = normalizeRegisteredLayer(raw);
+    const row = { name: previewName };
+    if (raw.id != null && raw.id !== "") row.id = raw.id;
+    if (spec.role) row.role = spec.role;
+    if (spec.labelField) row.labelField = spec.labelField;
+    if (spec.include?.length) row.include = spec.include;
+    if (spec.exclude?.length) row.exclude = spec.exclude;
+    if (spec.styleField) row.styleField = spec.styleField;
+    if (spec.style) row.style = normalizeLandLayerStyle(flatStyleFromLayerSpec(spec));
+    return row;
+  }
+
+  function collectEditLandSavePayloads(
+    listEl,
+    layerStyles,
+    layerConfigs,
+    prevSource,
+    previewLayers,
+  ) {
+    const selectedNames = collectSelectedLandLayers(listEl);
+    if (!selectedNames.length) return [];
+    const payloads = [];
+    for (const previewName of selectedNames) {
+      const prevMatching = registeredLayersForPreviewName(
+        previewName,
+        prevSource?.layers,
+        previewLayers,
+      );
+      if (prevMatching.length > 1) {
+        for (const raw of prevMatching) {
+          payloads.push(registeredLayerToSavePayload(raw, previewName));
+        }
+        continue;
+      }
+      const payload = layerConfigToPayload(
+        previewName,
+        layerStyles,
+        layerConfigs,
+      );
+      if (prevMatching.length === 1) {
+        const raw = prevMatching[0];
+        if (raw.id != null && raw.id !== "") payload.id = raw.id;
+      }
+      payloads.push(payload);
+    }
+    return payloads;
+  }
+
   function collectSelectedLayerPayloads(listEl, layerStyles, layerConfigs) {
     return collectSelectedLandLayers(listEl).map((name) =>
       layerConfigToPayload(name, layerStyles, layerConfigs),
@@ -3269,6 +3404,28 @@
     return null;
   }
 
+  function decorateLandGeoJsonProperties(
+    geojson,
+    { labelField = "", styleField = "" } = {},
+  ) {
+    if (!geojson?.features?.length) return geojson;
+    const labelKey = String(labelField || "").trim();
+    const styleKey = String(styleField || "").trim();
+    if (!labelKey && !styleKey) return geojson;
+    for (const feat of geojson.features) {
+      if (!feat.properties) feat.properties = {};
+      if (labelKey) {
+        const raw = feat.properties[labelKey];
+        if (raw != null && raw !== "") feat.properties.label = String(raw);
+      }
+      if (styleKey) {
+        const raw = feat.properties[styleKey];
+        if (raw != null && raw !== "") feat.properties.style_key = String(raw);
+      }
+    }
+    return geojson;
+  }
+
   async function fetchLandPreviewGeoJson(path, layer, layerConfig) {
     const cacheKey = `${landPreviewCacheKey(path, layer)}|${JSON.stringify(layerConfig || {})}`;
     return fetchCachedGeoJson(
@@ -3300,14 +3457,14 @@
           if (!resp.ok || !payload.geojson) {
             throw new Error(payload.error || `Preview failed (${resp.status})`);
           }
-          return payload.geojson;
+          return decorateLandGeoJsonProperties(payload.geojson, layerConfig || {});
         }
         const resp = await fetch(landPreviewGeoJsonUrl(path, layer));
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok || !payload.geojson) {
           throw new Error(payload.error || `Preview failed (${resp.status})`);
         }
-        return payload.geojson;
+        return decorateLandGeoJsonProperties(payload.geojson, layerConfig || {});
       },
     );
   }
@@ -3480,6 +3637,28 @@
     const key = landLayerKey(sourceId, layer);
     if (!landVisible.has(key)) return false;
     return landVisible.get(key) === true;
+  }
+
+  function isLandSourceBatchVisible(sourceId) {
+    if (!landSourceBatchVisible.has(sourceId)) return true;
+    return landSourceBatchVisible.get(sourceId) === true;
+  }
+
+  function isLandLayerEffectivelyVisible(sourceId, layer) {
+    if (!isLandSourceBatchVisible(sourceId)) return false;
+    return isLandLayerVisible(sourceId, layer);
+  }
+
+  function setLandSourceBatchVisible(sourceId, visible) {
+    landSourceBatchVisible.set(sourceId, !!visible);
+    scheduleSaveMapState();
+    const source = landSourceRecord(sourceId);
+    if (!source || !Array.isArray(source.layers)) return;
+    for (const rawLayer of source.layers) {
+      const spec = normalizeRegisteredLayer(rawLayer);
+      syncLandMapLayerVisibility(sourceId, spec.key);
+      syncLandMapLabelLayer(sourceId, spec.key);
+    }
   }
 
   function setLandLayerVisible(sourceId, layer, visible) {
@@ -3682,13 +3861,20 @@
   function isLandFolderVisible(folderId) {
     const refs = landFolderLayerRefs(folderId);
     if (!refs.length) return false;
-    return refs.every((key) => landVisible.get(key) === true);
+    return refs.every((key) => {
+      const slash = key.indexOf("/");
+      if (slash < 0) return false;
+      const sourceId = key.slice(0, slash);
+      const layerKey = key.slice(slash + 1);
+      return isLandLayerEffectivelyVisible(sourceId, layerKey);
+    });
   }
 
   function setLandFolderVisible(folderId, visible) {
     const folder = landSidebar.folders.find((item) => item.id === folderId);
     if (!folder) return;
     for (const sourceId of folder.sources) {
+      setLandSourceBatchVisible(sourceId, visible);
       const source = landSourceRecord(sourceId);
       if (!source || !Array.isArray(source.layers)) continue;
       for (const rawLayer of source.layers) {
@@ -4036,7 +4222,7 @@
     if (!mapReady) return;
     const sourceMapId = landMapSourceId(sourceId, layerKey);
     const labelsId = `${sourceMapId}-labels`;
-    const layerVisible = isLandLayerVisible(sourceId, layerKey);
+    const layerVisible = isLandLayerEffectivelyVisible(sourceId, layerKey);
     const labelsVisible =
       layerVisible && isLandLayerLabelsVisible(sourceId, layerKey);
     const vis = labelsVisible ? "visible" : "none";
@@ -4054,7 +4240,7 @@
     const sourceMapId = landMapSourceId(sourceId, layer);
     const fillId = `${sourceMapId}-fill`;
     const lineId = `${sourceMapId}-line`;
-    const vis = isLandLayerVisible(sourceId, layer) ? "visible" : "none";
+    const vis = isLandLayerEffectivelyVisible(sourceId, layer) ? "visible" : "none";
     if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
     if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
   }
@@ -4135,10 +4321,12 @@
       removeLandMapLayer(sourceId, layerKey);
     }
     try {
-      const geojson = await fetchLandLayerGeoJson(
-        sourceId,
-        layerKey,
-        spec?.digest || "",
+      const geojson = decorateLandGeoJsonProperties(
+        await fetchLandLayerGeoJson(sourceId, layerKey, spec?.digest || ""),
+        {
+          labelField: spec?.labelField || "",
+          styleField: spec?.styleField || "",
+        },
       );
       map.addSource(sourceMapId, { type: "geojson", data: geojson });
       map.addLayer(
@@ -4148,7 +4336,7 @@
           source: sourceMapId,
           paint: fillPaint,
           layout: {
-            visibility: isLandLayerVisible(sourceId, layerKey)
+            visibility: isLandLayerEffectivelyVisible(sourceId, layerKey)
               ? "visible"
               : "none",
           },
@@ -4165,7 +4353,7 @@
             "line-width": LAND_LINE_WIDTH,
           },
           layout: {
-            visibility: isLandLayerVisible(sourceId, layerKey)
+            visibility: isLandLayerEffectivelyVisible(sourceId, layerKey)
               ? "visible"
               : "none",
           },
@@ -4181,7 +4369,7 @@
 
   async function refreshLandMapLayer(sourceId, layerKey) {
     if (!mapReady) return;
-    if (!isLandLayerVisible(sourceId, layerKey)) return;
+    if (!isLandLayerEffectivelyVisible(sourceId, layerKey)) return;
     setLandSidebarRowLoading(sourceId, layerKey, true);
     try {
       clearLandLayerGeoJsonCacheForLayer(sourceId, layerKey);
@@ -4194,7 +4382,7 @@
   async function reloadClippedLandLayers() {
     const rows = landLayerRows().filter((row) => {
       if (row.spec.role === "aoi") return false;
-      return isLandLayerVisible(row.sourceId, row.layerKey);
+      return isLandLayerEffectivelyVisible(row.sourceId, row.layerKey);
     });
     await Promise.all(
       rows.map((row) => refreshLandMapLayer(row.sourceId, row.layerKey)),
@@ -4220,6 +4408,67 @@
       ),
     );
     syncLandMapLayerOrder();
+  }
+
+  function buildLandFilterBadge(sourceId, spec) {
+    const rowKey = landLayerKey(sourceId, spec.key);
+    const active = isLandLayerVisible(sourceId, spec.key);
+    const batchHidden = !isLandSourceBatchVisible(sourceId);
+    const style = flatStyleFromLayerSpec(spec);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "entity-panel__land-filter-badge";
+    btn.dataset.landKey = rowKey;
+    if (active) btn.classList.add("entity-panel__land-filter-badge--active");
+    if (batchHidden)
+      btn.classList.add("entity-panel__land-filter-badge--batch-hidden");
+    if (spec.role === "include")
+      btn.classList.add("entity-panel__land-filter-badge--include");
+    btn.style.setProperty("--land-filter-color", style.color);
+    btn.textContent = landLayerShortLabel(spec);
+    btn.title = landLayerDisplayName(spec);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+    btn.addEventListener("click", () => {
+      const next = !isLandLayerVisible(sourceId, spec.key);
+      setLandLayerVisible(sourceId, spec.key, next);
+      if (next) setLandSourceBatchVisible(sourceId, true);
+      renderLandPanel();
+      if (next && isLandSourceBatchVisible(sourceId)) {
+        void ensureLandMapLayer(sourceId, spec.key);
+      }
+    });
+    return btn;
+  }
+
+  function buildLandSourceFilterBadges(sourceId, layers) {
+    const host = document.createElement("div");
+    host.className = "entity-panel__land-source-filters";
+    for (const rawLayer of layers) {
+      const spec = normalizeRegisteredLayer(rawLayer);
+      host.appendChild(buildLandFilterBadge(sourceId, spec));
+    }
+    return host;
+  }
+
+  function buildLandSourceEyeBtn(sourceId, layers) {
+    const visible = isLandSourceBatchVisible(sourceId);
+    return makeEntityPanelActionBtn({
+      icon: visible ? "eye" : "eye-slash",
+      label: visible ? "Hide all layers on map" : "Show all layers on map",
+      active: visible,
+      onClick: () => {
+        const next = !isLandSourceBatchVisible(sourceId);
+        setLandSourceBatchVisible(sourceId, next);
+        renderLandPanel();
+        if (!next) return;
+        for (const rawLayer of layers) {
+          const spec = normalizeRegisteredLayer(rawLayer);
+          if (isLandLayerVisible(sourceId, spec.key)) {
+            void ensureLandMapLayer(sourceId, spec.key);
+          }
+        }
+      },
+    });
   }
 
   function buildLandLayerEyeBtn(sourceId, layerKey) {
@@ -4374,6 +4623,7 @@
     const layers = Array.isArray(source.layers) ? source.layers : [];
     const singleLayer = layers.length === 1;
     const singleSpec = singleLayer ? normalizeRegisteredLayer(layers[0]) : null;
+    const multiLayer = layers.length > 1;
 
     const el = document.createElement("div");
     el.className = "entity-panel__land-source-group";
@@ -4386,7 +4636,9 @@
     if (folderId) header.dataset.landFolderId = folderId;
     if (singleSpec)
       header.dataset.landKey = landLayerKey(sourceId, singleSpec.key);
-    if (singleSpec && !isLandLayerVisible(sourceId, singleSpec.key)) {
+    if (multiLayer && !isLandSourceBatchVisible(sourceId)) {
+      header.classList.add("entity-panel__row--hidden");
+    } else if (singleSpec && !isLandLayerVisible(sourceId, singleSpec.key)) {
       header.classList.add("entity-panel__row--hidden");
     }
 
@@ -4410,7 +4662,9 @@
 
     const controls = document.createElement("div");
     controls.className = "entity-panel__land-source-actions";
-    if (singleSpec) {
+    if (multiLayer) {
+      controls.appendChild(buildLandSourceEyeBtn(sourceId, layers));
+    } else if (singleSpec) {
       controls.appendChild(
         buildLandLayerControls(sourceId, singleSpec.key, {
           labelField: singleSpec.labelField,
@@ -4427,23 +4681,8 @@
       metaHost.className = "entity-panel__land-source-meta";
       appendLandLayerMeta(metaHost, singleSpec);
       if (metaHost.childNodes.length) el.appendChild(metaHost);
-    } else if (layers.length > 1) {
-      const layerList = document.createElement("div");
-      layerList.className = "entity-panel__land-source-layers";
-      for (const rawLayer of layers) {
-        const spec = normalizeRegisteredLayer(rawLayer);
-        layerList.appendChild(
-          buildLandEntityRow(
-            {
-              sourceId,
-              layerKey: spec.key,
-              spec,
-            },
-            { showName: true },
-          ),
-        );
-      }
-      el.appendChild(layerList);
+    } else if (multiLayer) {
+      el.appendChild(buildLandSourceFilterBadges(sourceId, layers));
     }
     return el;
   }
@@ -4510,49 +4749,16 @@
     const row =
       entityPanelLandList.querySelector(
         `.entity-panel__row--land[data-land-key="${rowKey}"]`,
-      ) || entityPanelLandList.querySelector(`[data-land-key="${rowKey}"]`);
+      ) ||
+      entityPanelLandList.querySelector(
+        `.entity-panel__land-filter-badge[data-land-key="${rowKey}"]`,
+      ) ||
+      entityPanelLandList.querySelector(`[data-land-key="${rowKey}"]`);
     if (!row) return;
     row.classList.toggle("entity-panel__row--land-loading", !!loading);
+    row.classList.toggle("entity-panel__land-filter-badge--loading", !!loading);
     const spinner = row.querySelector(".entity-panel__land-row-spinner");
     if (spinner) spinner.hidden = !loading;
-  }
-
-  function buildLandEntityRow(row, { showName = false } = {}) {
-    const rowKey = landLayerKey(row.sourceId, row.layerKey);
-    const el = document.createElement("div");
-    el.className =
-      "entity-panel__row entity-panel__row--land entity-panel__row--land-nested";
-    el.dataset.landKey = rowKey;
-    const visible = isLandLayerVisible(row.sourceId, row.layerKey);
-    if (!visible) el.classList.add("entity-panel__row--hidden");
-
-    const main = document.createElement("div");
-    main.className = "entity-panel__main";
-    if (showName) {
-      const titleRow = document.createElement("div");
-      titleRow.className = "entity-panel__land-title-row";
-      appendLandLayerRoleBadge(titleRow, row.spec.role);
-      const name = document.createElement("div");
-      name.className = "entity-panel__name";
-      const nameText = friendlyLandLayerName(row.spec.name);
-      name.textContent = nameText;
-      name.title = nameText;
-      titleRow.appendChild(name);
-      main.appendChild(titleRow);
-    }
-    appendLandLayerMeta(main, row.spec);
-
-    const controls = document.createElement("div");
-    controls.className = "entity-panel__controls";
-    controls.appendChild(
-      buildLandLayerControls(row.sourceId, row.layerKey, {
-        labelField: row.spec.labelField,
-      }),
-    );
-
-    el.appendChild(main);
-    el.appendChild(controls);
-    return el;
   }
 
   async function reloadLandSources({ refreshMap = true } = {}) {
@@ -4600,6 +4806,7 @@
           const spec = normalizeRegisteredLayer(rawLayer);
           removeLandMapLayer(sourceId, spec.key);
           landVisible.delete(landLayerKey(sourceId, spec.key));
+          landSourceBatchVisible.delete(sourceId);
           landLabelsVisible.delete(landLayerKey(sourceId, spec.key));
           clearLandLayerGeoJsonCacheForLayer(sourceId, spec.key);
         }
@@ -5568,6 +5775,7 @@
           const spec = normalizeRegisteredLayer(rawLayer);
           setLandLayerVisible(source.id, spec.key, true);
         }
+        setLandSourceBatchVisible(source.id, true);
         renderLandPanel();
         if (landAoiDigest !== prevAoiDigest) {
           clearAllLandLayerGeoJsonCache();
@@ -5613,24 +5821,11 @@
       editLandPreviewLayers = Array.isArray(payload.layers)
         ? payload.layers
         : [];
-      editLandLayerStyles = new Map();
-      editLandLayerConfigs = new Map();
-      const registeredByName = new Map();
-      for (const rawLayer of source.layers || []) {
-        const spec = normalizeRegisteredLayer(rawLayer);
-        registeredByName.set(spec.name, rawLayer);
-        editLandLayerConfigs.set(
-          spec.name,
-          configFromRegisteredLayer(rawLayer),
-        );
-        ensureLandLayerStyleState(
-          editLandLayerStyles,
-          spec.name,
-          flatStyleFromLayerSpec(spec),
-        );
-      }
+      const layerState = buildEditLandLayerState(source, editLandPreviewLayers);
+      editLandLayerStyles = layerState.styles;
+      editLandLayerConfigs = layerState.configs;
       const allLayerNames = editLandPreviewLayers.map((layer) => layer.name);
-      const selected = new Set([...registeredByName.keys()]);
+      const selected = initialEditLandSelected(source, editLandPreviewLayers);
       const refreshEditPreview = () => {
         void syncLandPreviewMap(
           editLandPreviewMap,
@@ -5734,10 +5929,12 @@
     );
     try {
       const body = {
-        layers: collectSelectedLayerPayloads(
+        layers: collectEditLandSavePayloads(
           editLandLayerList,
           editLandLayerStyles,
           editLandLayerConfigs,
+          prevSource,
+          editLandPreviewLayers,
         ),
         label: editLandLabel?.value.trim() || editLandSourceId,
       };
@@ -5806,6 +6003,7 @@
       entityPanelOpen,
       entityPanelTab,
       landVisible: Object.fromEntries(landVisible),
+      landSourceBatchVisible: Object.fromEntries(landSourceBatchVisible),
       landLabelsVisible: Object.fromEntries(landLabelsVisible),
       landFoldersCollapsed: Object.fromEntries(landFoldersCollapsed),
     };

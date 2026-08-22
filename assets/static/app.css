@@ -1244,7 +1244,34 @@ wa-dropdown-item.is-active::part(base) {
 }
 
 .entity-panel__row--land-nested {
-  padding-left: 0.85rem;
+  padding-left: 0.55rem;
+  padding-top: 0.2rem;
+  padding-bottom: 0.2rem;
+  align-items: center;
+}
+
+.entity-panel__main--land-compact {
+  flex: 1;
+  min-width: 0;
+}
+
+.entity-panel__land-title-row--compact {
+  margin: 0;
+}
+
+.entity-panel__name--land-compact {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  -webkit-line-clamp: 1;
+}
+
+.entity-panel__controls--land-compact {
+  align-self: center;
+  padding-top: 0;
+}
+
+.entity-panel__row--land-nested .entity-panel__meta {
+  margin-top: 0.1rem;
 }
 
 .entity-panel__row--land-loading .entity-panel__name {
@@ -1318,7 +1345,81 @@ wa-dropdown-item.is-active::part(base) {
 }
 
 .entity-panel__land-source-layers {
-  padding-left: 0.35rem;
+  border-left: 1px solid rgb(148 163 184 / 0.14);
+  margin-left: 0.45rem;
+  padding-left: 0.15rem;
+}
+
+.entity-panel__land-source-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0 0.35rem 0.35rem 1.65rem;
+}
+
+.entity-panel__land-filter-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid rgb(148 163 184 / 0.28);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.04);
+  color: rgb(203 213 225 / 0.72);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.25;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.entity-panel__land-filter-badge::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--land-filter-color, rgb(148 163 184 / 0.5));
+  opacity: 0.45;
+  flex-shrink: 0;
+}
+
+.entity-panel__land-filter-badge--active {
+  color: var(--wa-color-text-normal);
+  border-color: rgb(148 163 184 / 0.42);
+  background: rgb(255 255 255 / 0.08);
+}
+
+.entity-panel__land-filter-badge--active::before {
+  opacity: 1;
+}
+
+.entity-panel__land-filter-badge--include.entity-panel__land-filter-badge--active {
+  color: #6ee7b7;
+  border-color: rgb(16 185 129 / 0.35);
+  background: rgb(16 185 129 / 0.1);
+}
+
+.entity-panel__land-filter-badge--batch-hidden {
+  opacity: 0.55;
+}
+
+.entity-panel__land-filter-badge--loading {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.entity-panel__land-filter-badge:hover {
+  border-color: rgb(148 163 184 / 0.5);
+  color: var(--wa-color-text-normal);
+}
+
+.entity-panel__land-source.entity-panel__row--hidden
+  .entity-panel__land-source-title {
+  opacity: 0.68;
 }
 
 .entity-panel__land-folder {
