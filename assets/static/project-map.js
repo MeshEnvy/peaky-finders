@@ -3890,6 +3890,47 @@
     renderLandPanel();
   }
 
+  function landFolderLabeledLayers(folderId) {
+    const folder = landSidebar.folders.find((item) => item.id === folderId);
+    if (!folder) return [];
+    const layers = [];
+    for (const sourceId of folder.sources) {
+      const source = landSourceRecord(sourceId);
+      if (!source || !Array.isArray(source.layers)) continue;
+      for (const rawLayer of source.layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        if (landLayerHasLabels(sourceId, spec.key)) {
+          layers.push({ sourceId, layerKey: spec.key });
+        }
+      }
+    }
+    return layers;
+  }
+
+  function isLandFolderLabelsVisible(folderId) {
+    const layers = landFolderLabeledLayers(folderId);
+    if (!layers.length) return false;
+    return layers.every(({ sourceId, layerKey }) =>
+      isLandLayerLabelsVisible(sourceId, layerKey),
+    );
+  }
+
+  function setLandFolderLabelsVisible(folderId, visible) {
+    const folder = landSidebar.folders.find((item) => item.id === folderId);
+    if (!folder) return;
+    for (const sourceId of folder.sources) {
+      const source = landSourceRecord(sourceId);
+      if (!source || !Array.isArray(source.layers)) continue;
+      for (const rawLayer of source.layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        if (landLayerHasLabels(sourceId, spec.key)) {
+          setLandLayerLabelsVisible(sourceId, spec.key, visible);
+        }
+      }
+    }
+    renderLandPanel();
+  }
+
   function landLayerRowsRaw() {
     const rows = [];
     for (const sourceId of orderedLandSourceIds()) {
@@ -4614,6 +4655,26 @@
     });
   }
 
+  function buildLandFolderLabelBtn(folderId) {
+    const labeledLayers = landFolderLabeledLayers(folderId);
+    const labelsVisible = isLandFolderLabelsVisible(folderId);
+    return makeEntityPanelActionBtn({
+      icon: "font",
+      label: labelsVisible
+        ? "Hide all labels in folder"
+        : "Show all labels in folder",
+      active: labelsVisible,
+      disabled: !labeledLayers.length,
+      extraClass: "entity-panel__land-label-toggle",
+      onClick: () => {
+        setLandFolderLabelsVisible(
+          folderId,
+          !isLandFolderLabelsVisible(folderId),
+        );
+      },
+    });
+  }
+
   function buildLandFolderActionBtns(folderId) {
     const renameBtn = makeEntityPanelActionBtn({
       icon: "pen",
@@ -4674,6 +4735,7 @@
     const controls = document.createElement("div");
     controls.className = "entity-panel__land-source-actions";
     controls.appendChild(buildLandFolderEyeBtn(folder.id));
+    controls.appendChild(buildLandFolderLabelBtn(folder.id));
     for (const btn of buildLandFolderActionBtns(folder.id))
       controls.appendChild(btn);
     header.appendChild(controls);
