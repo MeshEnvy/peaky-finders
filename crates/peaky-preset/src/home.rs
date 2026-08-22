@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde_yaml::Mapping;
 
-use crate::io::read_preset_document;
+use crate::yaml_io::read_preset_document;
 use crate::model::Preset;
 
 pub fn modem_catalog_from_preset(preset: &Preset) -> HashMap<String, Mapping> {

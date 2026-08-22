@@ -5,8 +5,10 @@ pub mod init;
 pub mod io;
 pub mod model;
 pub mod paths;
+pub mod project;
 pub mod viewshed_quality;
 pub mod sites;
+pub mod yaml_io;
 
 pub use home::{
     environment_catalog_from_preset, load_environment_catalog, load_modem_catalog,
@@ -22,8 +24,9 @@ pub use io::{
     load_preset, load_preset_raw, parse_preset_dict, patch_land_sidebar, patch_land_source,
     patch_land_source_last_updated,
     patch_preset_site, patch_preset_site_tags, patch_preset_sites_tags, preset_site_slugs,
-    read_preset_document, remove_preset_site, save_preset, write_preset_document,
+    remove_preset_site, save_preset, write_preset_document,
 };
+pub use yaml_io::read_preset_document;
 pub use model::{
     default_viewshed_polygon_style, resolved_coverage_dispatcher_max_workers,
     resolved_viewshed_polygon_style, slugify_files_segment, validate_preset,

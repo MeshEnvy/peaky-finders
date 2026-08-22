@@ -1,62 +1,32 @@
-//! Preset YAML read/write.
+//! Preset YAML read/write (monolithic or split project files).
 
 use std::collections::HashSet;
-use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde_yaml::{Mapping, Value};
 
 use crate::model::{
-    validate_preset, validate_project_preset_document, Preset, PresetValidationError, SiteEntry,
+    validate_preset, validate_project_preset_document, LandLayerEntry, LandSidebar,
+    LandSourceEntry, LandSourceRefresh, Preset, PresetValidationError, SiteEntry,
 };
+use crate::project::{read_merged_document, write_merged_document, ProjectLayout};
 use crate::sites::normalize_site_tags;
+use crate::yaml_io::{read_preset_document, write_preset_value};
 
-const PRESET_EXTENSIONS: [&str; 2] = [".yaml", ".yml"];
-
-pub fn require_preset_yaml_path(path: &Path) -> Result<()> {
-    let suffix = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if suffix == "json" {
-        anyhow::bail!(
-            "Peaky preset paths must end with `.yaml` or `.yml` (not `.json`); legacy JSON presets are unsupported: {}",
-            path.display()
-        );
-    }
-    if !PRESET_EXTENSIONS.iter().any(|ext| suffix == ext.trim_start_matches('.')) {
-        anyhow::bail!(
-            "preset path must end with `.yaml` or `.yml` (got suffix {suffix:?}): {}",
-            path.display()
-        );
-    }
-    Ok(())
+fn layout_for(config_path: &Path) -> Result<ProjectLayout> {
+    ProjectLayout::from_config_path(config_path)
 }
 
-pub fn read_preset_document(path: &Path) -> Result<Mapping> {
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    require_preset_yaml_path(&path)?;
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("read preset YAML: {}", path.display()))?;
-    let root: serde_yaml::Value = serde_yaml::from_str(&text)
-        .with_context(|| format!("parse preset YAML: {}", path.display()))?;
-    match root {
-        serde_yaml::Value::Mapping(map) => Ok(map),
-        _ => anyhow::bail!("preset YAML root must be a mapping at {}", path.display()),
-    }
-}
-
-/// Load preset file as raw YAML for partial updates.
-pub fn load_preset_raw(path: &Path) -> Result<serde_yaml::Value> {
-    let map = read_preset_document(path)?;
-    Ok(serde_yaml::Value::Mapping(map))
+/// Load preset file as raw YAML for partial updates (merged across split files).
+pub fn load_preset_raw(path: &Path) -> Result<Value> {
+    let layout = layout_for(path)?;
+    Ok(Value::Mapping(read_merged_document(&layout)?))
 }
 
 pub fn parse_preset_dict(raw: Mapping) -> Result<Preset, PresetValidationError> {
     validate_project_preset_document(&raw)?;
-    let value = serde_yaml::Value::Mapping(raw);
+    let value = Value::Mapping(raw);
     let preset: Preset = serde_yaml::from_value(value)
         .map_err(|e| PresetValidationError::Message(e.to_string()))?;
     validate_preset(&preset)?;
@@ -64,51 +34,24 @@ pub fn parse_preset_dict(raw: Mapping) -> Result<Preset, PresetValidationError> 
 }
 
 pub fn load_preset(path: &Path) -> Result<Preset> {
-    let raw = read_preset_document(path)?;
+    let layout = layout_for(path)?;
+    let raw = read_merged_document(&layout)?;
     parse_preset_dict(raw).map_err(|e| anyhow::anyhow!(e))
 }
 
 pub fn save_preset(path: &Path, preset: &Preset) -> Result<()> {
     validate_preset(preset).map_err(|e| anyhow::anyhow!(e))?;
+    let layout = layout_for(path)?;
     let value = serde_yaml::to_value(preset).context("serialize preset")?;
-    write_preset_value(path, value)
+    let merged = value
+        .as_mapping()
+        .context("preset must serialize to a mapping")?;
+    write_merged_document(&layout, merged)
 }
 
 pub fn write_preset_document(path: &Path, payload: &Mapping) -> Result<()> {
-    write_preset_value(path, serde_yaml::Value::Mapping(payload.clone()))
-}
-
-fn write_preset_value(path: &Path, value: Value) -> Result<()> {
-    require_preset_yaml_path(path)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create preset parent dir: {}", parent.display()))?;
-    }
-
-    let text = serde_yaml::to_string(&value).context("encode preset YAML")?;
-    let tmp = path.with_file_name(format!(
-        "{}.partial",
-        path.file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("config.yaml")
-    ));
-    fs::write(&tmp, text).with_context(|| format!("write preset temp file: {}", tmp.display()))?;
-    fs::rename(&tmp, path).with_context(|| format!("replace preset file: {}", path.display()))?;
-    Ok(())
-}
-
-fn preset_root_mut(raw: &mut Value) -> Result<&mut Mapping> {
-    raw.as_mapping_mut()
-        .context("preset YAML root must be a mapping")
-}
-
-fn preset_sites_mut(map: &mut Mapping) -> Result<&mut Mapping> {
-    let sites_val = map
-        .get_mut(Value::from("sites"))
-        .context("preset missing sites")?;
-    sites_val
-        .as_mapping_mut()
-        .context("sites must be a mapping")
+    let layout = layout_for(path)?;
+    write_merged_document(&layout, payload)
 }
 
 pub fn preset_site_slugs(map: &Mapping) -> HashSet<String> {
@@ -123,16 +66,40 @@ pub fn preset_site_slugs(map: &Mapping) -> HashSet<String> {
         .unwrap_or_default()
 }
 
+fn sites_map_mut(doc: &mut Mapping) -> Result<&mut Mapping> {
+    let sites_val = doc
+        .entry(Value::from("sites"))
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+    sites_val
+        .as_mapping_mut()
+        .context("sites must be a mapping")
+}
+
+fn read_sites_document_root(config_path: &Path) -> Result<(ProjectLayout, Mapping)> {
+    let layout = layout_for(config_path)?;
+    let mut doc = read_preset_document(&layout.sites_document_path())?;
+    if !doc.contains_key(Value::from("sites")) {
+        doc.insert(Value::from("sites"), Value::Mapping(Mapping::new()));
+    }
+    Ok((layout, doc))
+}
+
+fn write_sites_document(layout: &ProjectLayout, doc: &Mapping) -> Result<()> {
+    write_preset_value(
+        &layout.sites_document_path(),
+        Value::Mapping(doc.clone()),
+    )
+}
+
 /// Append one site to the on-disk preset without rewriting unrelated sections.
 pub fn insert_preset_site(path: &Path, slug: &str, entry: &SiteEntry) -> Result<()> {
-    let mut raw = load_preset_raw(path)?;
-    let map = preset_root_mut(&mut raw)?;
-    let sites = preset_sites_mut(map)?;
+    let (layout, mut doc) = read_sites_document_root(path)?;
+    let sites = sites_map_mut(&mut doc)?;
     sites.insert(
         Value::from(slug),
         serde_yaml::to_value(entry).context("serialize site entry")?,
     );
-    write_preset_document(path, map)
+    write_sites_document(&layout, &doc)
 }
 
 /// Patch fields on one site entry in place (preserves key order elsewhere in the file).
@@ -144,9 +111,8 @@ pub fn patch_preset_site(
     tags: Option<&[String]>,
     height_m: Option<Option<f64>>,
 ) -> Result<()> {
-    let mut raw = load_preset_raw(path)?;
-    let map = preset_root_mut(&mut raw)?;
-    let sites = preset_sites_mut(map)?;
+    let (layout, mut doc) = read_sites_document_root(path)?;
+    let sites = sites_map_mut(&mut doc)?;
     let site_val = sites
         .get_mut(&Value::from(slug))
         .with_context(|| format!("site not found: {slug}"))?;
@@ -180,7 +146,7 @@ pub fn patch_preset_site(
         );
     }
 
-    write_preset_document(path, map)
+    write_sites_document(&layout, &doc)
 }
 
 pub fn patch_preset_sites_tags(
@@ -189,9 +155,8 @@ pub fn patch_preset_sites_tags(
     add_tags: &[String],
     remove_tags: &[String],
 ) -> Result<()> {
-    let mut raw = load_preset_raw(path)?;
-    let map = preset_root_mut(&mut raw)?;
-    let sites = preset_sites_mut(map)?;
+    let (layout, mut doc) = read_sites_document_root(path)?;
+    let sites = sites_map_mut(&mut doc)?;
     for slug in slugs {
         let Some(site_val) = sites.get_mut(&Value::from(slug.as_str())) else {
             continue;
@@ -212,7 +177,7 @@ pub fn patch_preset_sites_tags(
             Value::Sequence(tags.into_iter().map(Value::from).collect()),
         );
     }
-    write_preset_document(path, map)
+    write_sites_document(&layout, &doc)
 }
 
 pub fn patch_preset_site_tags(
@@ -221,46 +186,137 @@ pub fn patch_preset_site_tags(
     add_tags: &[String],
     remove_tags: &[String],
 ) -> Result<()> {
-    let mut raw = load_preset_raw(path)?;
-    let map = preset_root_mut(&mut raw)?;
-    let sites = preset_sites_mut(map)?;
-    let Some(site_val) = sites.get_mut(&Value::from(slug)) else {
-        return Ok(());
-    };
-    let site_map = site_val
-        .as_mapping_mut()
-        .with_context(|| format!("sites.{slug} must be a mapping"))?;
-
-    let current = site_map.get(&Value::from("tags"));
-    let mut tags = normalize_site_tags(current)
-        .map_err(|e| anyhow::anyhow!(e))?;
-    tags.retain(|t| !remove_tags.iter().any(|r| r == t));
-    for t in add_tags {
-        if !tags.iter().any(|x| x == t) {
-            tags.push(t.clone());
-        }
-    }
-    site_map.insert(
-        Value::from("tags"),
-        Value::Sequence(tags.into_iter().map(Value::from).collect()),
-    );
-    write_preset_document(path, map)
+    patch_preset_sites_tags(path, &[slug.to_string()], add_tags, remove_tags)
 }
 
 pub fn remove_preset_site(path: &Path, slug: &str) -> Result<()> {
-    let mut raw = load_preset_raw(path)?;
-    let map = preset_root_mut(&mut raw)?;
-    let sites = preset_sites_mut(map)?;
+    let (layout, mut doc) = read_sites_document_root(path)?;
+    let sites = sites_map_mut(&mut doc)?;
     sites
         .remove(&Value::from(slug))
         .with_context(|| format!("site not found: {slug}"))?;
-    write_preset_document(path, map)
+    write_sites_document(&layout, &doc)
+}
+
+fn unique_land_source_id(base: &str, existing: &HashSet<String>) -> String {
+    if !existing.contains(base) {
+        return base.to_string();
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{base}-{n}");
+        if !existing.contains(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+pub fn land_source_id_for_path(path: &str, existing: &HashSet<String>) -> String {
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("source");
+    let base = crate::model::slugify_files_segment(stem);
+    unique_land_source_id(&base, existing)
+}
+
+fn save_land_from_preset(config_path: &Path, land: &crate::model::LandConfig) -> Result<()> {
+    let layout = layout_for(config_path)?;
+    let land_value = serde_yaml::to_value(land).context("serialize land")?;
+    if layout.uses_split_land() {
+        let mut doc = read_preset_document(&layout.land_document_path())?;
+        doc.insert(Value::from("land"), land_value);
+        write_preset_value(&layout.land_document_path(), Value::Mapping(doc))?;
+    } else {
+        let mut merged = read_merged_document(&layout)?;
+        merged.insert(Value::from("land"), land_value);
+        write_merged_document(&layout, &merged)?;
+    }
+    Ok(())
+}
+
+pub fn import_land_source(
+    path: &Path,
+    rel_path: String,
+    label: Option<String>,
+    layers: Vec<LandLayerEntry>,
+) -> Result<(String, LandSourceEntry)> {
+    let mut preset = load_preset(path)?;
+    let existing: HashSet<String> = preset.land.sources.keys().cloned().collect();
+    let source_id = land_source_id_for_path(&rel_path, &existing);
+    let entry = LandSourceEntry {
+        path: rel_path,
+        label: label.or_else(|| Some(source_id.clone())),
+        layers,
+        refresh: None,
+    };
+    preset.land.sources.insert(source_id.clone(), entry.clone());
+    save_land_from_preset(path, &preset.land)?;
+    Ok((source_id, entry))
+}
+
+pub fn patch_land_source(
+    path: &Path,
+    source_id: &str,
+    label: Option<String>,
+    layers: Vec<LandLayerEntry>,
+) -> Result<LandSourceEntry> {
+    let mut preset = load_preset(path)?;
+    let entry = preset
+        .land
+        .sources
+        .get_mut(source_id)
+        .with_context(|| format!("unknown land source: {source_id}"))?;
+    if let Some(label) = label {
+        entry.label = Some(label);
+    }
+    entry.layers = layers;
+    let out = entry.clone();
+    save_land_from_preset(path, &preset.land)?;
+    Ok(out)
+}
+
+pub fn patch_land_source_last_updated(path: &Path, source_id: &str, last_updated: &str) -> Result<()> {
+    let mut preset = load_preset(path)?;
+    let entry = preset
+        .land
+        .sources
+        .get_mut(source_id)
+        .with_context(|| format!("unknown land source: {source_id}"))?;
+    let refresh = entry.refresh.get_or_insert_with(LandSourceRefresh::default);
+    refresh.last_updated = Some(last_updated.to_string());
+    save_land_from_preset(path, &preset.land)
+}
+
+pub fn delete_land_source(path: &Path, source_id: &str) -> Result<()> {
+    let mut preset = load_preset(path)?;
+    preset
+        .land
+        .sources
+        .remove(source_id)
+        .with_context(|| format!("unknown land source: {source_id}"))?;
+    if let Some(sidebar) = preset.land.sidebar.as_mut() {
+        for folder in &mut sidebar.folders {
+            folder.sources.retain(|sid| sid != source_id);
+        }
+        sidebar.unfiled_sources.retain(|sid| sid != source_id);
+    }
+    save_land_from_preset(path, &preset.land)
+}
+
+pub fn patch_land_sidebar(path: &Path, sidebar: LandSidebar) -> Result<LandSidebar> {
+    let mut preset = load_preset(path)?;
+    preset.land.sidebar = Some(sidebar.clone());
+    save_land_from_preset(path, &preset.land)?;
+    Ok(sidebar)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::fs;
 
     use crate::model::{Preset, SiteEntry};
 
@@ -311,6 +367,38 @@ mod tests {
 
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.find("  first:").unwrap() < text.find("  second:").unwrap());
+    }
+
+    #[test]
+    fn split_insert_preset_site_writes_sites_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.yaml");
+        write_preset_document(&config_path, &Mapping::new()).unwrap();
+        fs::write(
+            dir.path().join("sites.yaml"),
+            "sites:\n  first:\n    name: First\n    loc: [1.0, 2.0]\n    tags: []\n",
+        )
+        .unwrap();
+
+        insert_preset_site(
+            &config_path,
+            "second",
+            &SiteEntry {
+                name: "Second".into(),
+                loc: [3.0, 4.0],
+                height_m: None,
+                description: None,
+                tags: vec![],
+            },
+        )
+        .unwrap();
+
+        let config_text = fs::read_to_string(&config_path).unwrap();
+        assert!(!config_text.contains("second:"));
+        let sites_text = fs::read_to_string(dir.path().join("sites.yaml")).unwrap();
+        assert!(sites_text.contains("second:"));
+        let preset = load_preset(&config_path).unwrap();
+        assert!(preset.sites.contains_key("second"));
     }
 
     #[test]
