@@ -1,8 +1,16 @@
 ---
-description: On commit requests, follow skill commit — no improvised workflow
+description: Conventional Commits required; subjects feed GitHub Release notes
 alwaysApply: true
 ---
 
-# Commits
+# Commit style
 
-When the user asks to commit (including `/commit`), read and follow [`.cursor/skills/commit/SKILL.md`](../skills/commit/SKILL.md). Do not duplicate that workflow here.
+When the user asks to commit (including `/commit`), read and follow [`.cursor/skills/commit/SKILL.md`](../skills/commit/SKILL.md).
+
+## Policy
+
+- **Format:** `type(scope): description` — Conventional Commits, subject ≤ 50 chars, imperative, lowercase.
+- **Release notes:** subjects are the changelog. `feat` / `fix` / `perf` must read well for users.
+- **PRs:** title = squash commit subject; optional labels per [`.github/release.yml`](../../.github/release.yml).
+
+Do not duplicate the full workflow here.

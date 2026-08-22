@@ -1,44 +1,39 @@
 ---
 name: peaky-dev
 description: >-
-  Peaky v5 host cargo workflow and Docker image. Use when running locally
-  or packaging peaky to run in a container.
+  Peaky v5 host cargo workflow and Docker image. Use when running locally,
+  packaging peaky in a container, or developing the Rust workspace.
 ---
 
 # Peaky v5 dev workflow
 
-Read [MEMORY.md](../../MEMORY.md) for env vars.
+Read [MEMORY.md](../../MEMORY.md) for env vars and architecture.
+
+For publishing releases, use skill `peaky-release`.
 
 ## Host
 
 ```bash
 cargo build
-cargo build --release
-export PEAKY_HOME=/Volumes/Code/repos/meshenvy/ops/peaky_home   # optional slug fallback only
-cargo run -p peaky -- serve /Volumes/Code/repos/meshenvy/peaky-nevada --host 127.0.0.1 --port 8080
-cargo test
+cargo build --locked --release -p peaky
+cargo run -p peaky -- serve /path/to/project --host 127.0.0.1 --port 8080
+cargo test --locked
 ```
 
 Skadi mirror: `<project>/.peaky/cache/skadi`. Optional `SPLAT_CACHE` override. Use `--release` only for long RF runs.
+
+Empty project dirs auto-init with MeshCore defaults on first `serve` (`crates/peaky-preset/src/init.rs`).
 
 ## Docker
 
 ```bash
 docker build -t peaky:latest .
 docker run --rm -p 8080:8080 \
-  -v /path/to/peaky-nevada:/project \
+  -v /path/to/project:/project \
   peaky:latest
 ```
 
-Image `peaky serve /project`. Skadi cache persists in the project mount. Extra args replace `serve` (e.g. `find path --help`).
-
-## Ops (BLM — not in this repo)
-
-```bash
-# from ops/
-python3 peaky_home/scripts/tag_public_land.py --project nevada --dry-run
-python3 peaky_home/scripts/export_blm_fo_packet.py --project nevada --tag blm-sierra-fo --dry-run
-```
+Image default: `peaky serve /project`. Skadi cache persists in the project mount. Extra args replace `serve` (e.g. `find path --help`).
 
 ## v4 reference
 
