@@ -18,7 +18,7 @@ Targets **v0.5.0** (first v5 release). Promote to `## [v0.5.0] - YYYY-MM-DD` whe
 - **Self-contained projects** — modem and environment presets live in project YAML; optional split files (`sites.yaml`, `land.yaml`, …) merge at load.
 - **Project bootstrap** — `peaky serve <dir>` initializes an empty project when the directory has no config yet.
 - **Single-project serve** — one project path per process; multi-project listing removed.
-- **Land from GDB** — configured sources download and refresh to GeoJSON at boot (`refresh.downloadUrl`); invalid enabled sources block boot until disabled; `--no-land-refresh` skips network refresh. Validated sources are fingerprinted in `.peaky/cache/land/validate.json` so unchanged files skip re-parse on later boots.
+- **Land from GDB** — configured sources download and refresh to GeoJSON at boot (`refresh.downloadUrl`); invalid enabled sources block boot until disabled; `--fast-boot` skips validation, refresh, and cache warm (`--no-land-refresh` alias). Validated sources are fingerprinted in `.peaky/cache/land/validate.json` so unchanged files skip re-parse on later boots.
 - **Land layer UI** — sidebar folders, rename modal, label toggles, GeoJSON attribute filters, in-map editing.
 - **Parallel workers** — `simulation.max_workers.dem` and `max_workers.coverage` tune Skadi fetch and viewshed warm pools.
 - **Release CI** — tagged builds for Linux x64 and macOS (x64 + arm64) on `v*` push.
@@ -34,6 +34,9 @@ Targets **v0.5.0** (first v5 release). Promote to `## [v0.5.0] - YYYY-MM-DD` whe
 
 - **Land display** — clip layers to project AOI before render; restore land layer edit API.
 - **Land boot** — land integrity checks cache size/mtime fingerprints after the first successful parse, so repeat `peaky serve` boots skip re-reading large GeoJSON sources.
+- **Land map load** — fetch only visible land layers on map refresh; cache AOI-clipped and filtered GeoJSON under `.peaky/cache/land/pipeline/` so repeat page loads skip re-parsing large sources.
+- **Land source editor** — single-column modal (map above rules), one dialog scroll, accordion rules; filter values use a grid instead of nested scroll panes.
+- **Land boot** — after integrity validation, warm import-preview caches (AOI-clipped GeoJSON, field lists, field value indexes) then pipeline artifacts for enabled layers; boot loops log per-layer progress at INFO (`[done/total]`).
 
 ## [v4] - 2026-08-07
 

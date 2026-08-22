@@ -41,5 +41,17 @@ For parallel work, log progress as units **complete** (`as_completed`), not only
 ## Avoid
 
 - Silent long loops under `--verbose`.
+- **Silent long loops at default log level** — boot prep, cache warm, GDAL export, AOI clip, and similar tight loops must emit INFO progress even without `--verbose` (see `LandBootProgress` in `land_boot.rs`, `land_cache.rs` export/copy lines).
 - Start-only or end-only logging for multi-step work.
 - Unbounded per-item spam when thousands of trivial items exist — batch or sample instead (e.g. every N items or summary counts).
+
+## Default INFO (not only `--verbose`)
+
+Long-running **boot and cache-warm loops** must log at **INFO** without requiring `--verbose`:
+
+1. Phase start (job count, workers).
+2. Per-unit start before slow work (source/layer identity).
+3. Per-unit done with `[done/total]` and elapsed seconds.
+4. Phase complete summary.
+
+Use `LandBootProgress` for parallel land boot phases; match the `land cache: export start/done` pattern for serial steps inside a unit.

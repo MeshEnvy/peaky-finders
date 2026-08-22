@@ -5,6 +5,7 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use geojson::{FeatureCollection, GeoJson};
+use peaky_preset::slugify_files_segment;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -17,26 +18,29 @@ pub struct LandPreviewLayer {
     pub bbox: Option<[f64; 4]>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LandPreviewField {
     pub name: String,
     #[serde(rename = "type")]
     pub field_type: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LandFieldValueRow {
     pub value: String,
     pub count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<[f64; 4]>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LandFieldValues {
     pub values: Vec<LandFieldValueRow>,
     pub truncated: bool,
 }
 
 const FIELD_VALUES_MAX: usize = 100;
+const FIELD_VALUES_AOI_MAX: usize = 10_000;
 
 /// Resolve ``data/...`` relative to ``project_dir`` (``.gdb`` dir or ``.geojson`` file).
 pub fn resolve_land_data_path(project_dir: &Path, rel_path: &str) -> Result<PathBuf> {
@@ -141,9 +145,14 @@ pub fn layer_fields(abs_path: &Path, layer: &str) -> Result<Vec<LandPreviewField
 pub fn layer_field_values(abs_path: &Path, layer: &str, field: &str) -> Result<LandFieldValues> {
     let lower = abs_path.to_string_lossy().to_ascii_lowercase();
     if lower.ends_with(".geojson") || lower.ends_with(".json") {
-        return field_values_from_geojson(abs_path, field);
+        return field_values_from_geojson(abs_path, field, FIELD_VALUES_MAX, true);
     }
     field_values_from_gdb(abs_path, layer, field)
+}
+
+/// Distinct field values from an in-memory GeoJSON FeatureCollection (e.g. after AOI clip).
+pub fn field_values_from_geojson_value(value: &Value, field: &str) -> Result<LandFieldValues> {
+    field_values_from_geojson_value_limited(value, field, FIELD_VALUES_AOI_MAX, false)
 }
 
 pub fn read_layer_geojson_value(abs_path: &Path, layer: &str) -> Result<Value> {
@@ -154,6 +163,30 @@ pub fn read_layer_geojson_value(abs_path: &Path, layer: &str) -> Result<Value> {
     }
     let out = run_ogr2ogr_stdout(abs_path, layer)?;
     serde_json::from_slice(&out).context("parse ogr2ogr GeoJSON")
+}
+
+/// Read layer GeoJSON from ``.peaky/cache/land/_export/`` when available (avoids ogr2ogr).
+pub fn read_layer_geojson_cached(
+    project_dir: &Path,
+    rel_path: &str,
+    layer: &str,
+) -> Result<Value> {
+    let lower = rel_path.trim().to_ascii_lowercase();
+    if lower.ends_with(".geojson") || lower.ends_with(".json") {
+        let abs = resolve_land_data_path(project_dir, rel_path)?;
+        let text = std::fs::read_to_string(&abs).context("read GeoJSON")?;
+        return serde_json::from_str(&text).context("parse GeoJSON JSON");
+    }
+    let cache_path = project_dir
+        .join(".peaky/cache/land/_export")
+        .join(slugify_files_segment(rel_path))
+        .join(format!("{}.geojson", slugify_files_segment(layer)));
+    if cache_path.is_file() {
+        let text = std::fs::read_to_string(&cache_path).context("read cached layer GeoJSON")?;
+        return serde_json::from_str(&text).context("parse cached layer GeoJSON");
+    }
+    let abs = resolve_land_data_path(project_dir, rel_path)?;
+    read_layer_geojson_value(&abs, layer)
 }
 
 fn list_gdb_layers(gdb_path: &Path) -> Result<Vec<LandPreviewLayer>> {
@@ -286,24 +319,65 @@ fn field_values_from_gdb(gdb_path: &Path, layer: &str, field: &str) -> Result<La
     parse_ogrinfo_grouped_field_values(&String::from_utf8_lossy(&out.stdout), field)
 }
 
-fn field_values_from_geojson(path: &Path, field: &str) -> Result<LandFieldValues> {
+fn field_values_from_geojson(
+    path: &Path,
+    field: &str,
+    max: usize,
+    sort_by_count: bool,
+) -> Result<LandFieldValues> {
     let text = std::fs::read_to_string(path).context("read GeoJSON")?;
     let value: Value = serde_json::from_str(&text).context("parse GeoJSON")?;
+    field_values_from_geojson_value_limited(&value, field, max, sort_by_count)
+}
+
+fn field_values_from_geojson_value_limited(
+    value: &Value,
+    field: &str,
+    max: usize,
+    sort_by_count: bool,
+) -> Result<LandFieldValues> {
     let features = value
         .get("features")
         .and_then(|v| v.as_array())
         .context("GeoJSON missing features")?;
-    let mut counts = std::collections::HashMap::<String, u64>::new();
+    let mut counts = std::collections::HashMap::<String, (u64, Option<[f64; 4]>)>::new();
     for feat in features {
-        if let Some(v) = feat
-            .get("properties")
-            .and_then(|p| p.get(field))
-            .and_then(value_as_string)
-        {
-            *counts.entry(v).or_insert(0) += 1;
-        }
+        let Some(props) = feat.get("properties") else {
+            continue;
+        };
+        let Some(v) = props.get(field).and_then(value_as_string) else {
+            continue;
+        };
+        let feat_bbox = feat
+            .get("geometry")
+            .and_then(|g| serde_json::from_value::<geojson::Geometry>(g.clone()).ok())
+            .and_then(|geom| geometry_bbox(&geom.value));
+        let entry = counts.entry(v).or_insert((0, None));
+        entry.0 += 1;
+        entry.1 = merge_bbox(entry.1, feat_bbox);
     }
-    Ok(truncate_field_values(counts))
+    let rows: Vec<LandFieldValueRow> = counts
+        .into_iter()
+        .map(|(value, (count, bbox))| LandFieldValueRow {
+            value,
+            count,
+            bbox,
+        })
+        .collect();
+    Ok(finalize_field_value_rows(rows, max, sort_by_count))
+}
+
+fn merge_bbox(a: Option<[f64; 4]>, b: Option<[f64; 4]>) -> Option<[f64; 4]> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(b), None) | (None, Some(b)) => Some(b),
+        (Some(a), Some(b)) => Some([
+            a[0].min(b[0]),
+            a[1].min(b[1]),
+            a[2].max(b[2]),
+            a[3].max(b[3]),
+        ]),
+    }
 }
 
 fn validate_sql_ident(name: &str, label: &str) -> Result<()> {
@@ -313,20 +387,40 @@ fn validate_sql_ident(name: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn truncate_field_values(counts: std::collections::HashMap<String, u64>) -> LandFieldValues {
-    let mut rows: Vec<LandFieldValueRow> = counts
-        .into_iter()
-        .map(|(value, count)| LandFieldValueRow { value, count })
-        .collect();
-    rows.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.value.cmp(&b.value)));
-    let truncated = rows.len() > FIELD_VALUES_MAX;
+fn finalize_field_value_rows(
+    mut rows: Vec<LandFieldValueRow>,
+    max: usize,
+    sort_by_count: bool,
+) -> LandFieldValues {
+    if sort_by_count {
+        rows.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.value.cmp(&b.value)));
+    } else {
+        rows.sort_by(|a, b| a.value.cmp(&b.value));
+    }
+    let truncated = rows.len() > max;
     if truncated {
-        rows.truncate(FIELD_VALUES_MAX);
+        rows.truncate(max);
     }
     LandFieldValues {
         values: rows,
         truncated,
     }
+}
+
+fn finalize_field_values(
+    counts: std::collections::HashMap<String, u64>,
+    max: usize,
+    sort_by_count: bool,
+) -> LandFieldValues {
+    let rows: Vec<LandFieldValueRow> = counts
+        .into_iter()
+        .map(|(value, count)| LandFieldValueRow {
+            value,
+            count,
+            bbox: None,
+        })
+        .collect();
+    finalize_field_value_rows(rows, max, sort_by_count)
 }
 
 fn parse_ogrinfo_grouped_field_values(text: &str, field: &str) -> Result<LandFieldValues> {
@@ -353,7 +447,7 @@ fn parse_ogrinfo_grouped_field_values(text: &str, field: &str) -> Result<LandFie
         }
     }
 
-    Ok(truncate_field_values(counts))
+    Ok(finalize_field_values(counts, FIELD_VALUES_MAX, true))
 }
 
 fn run_ogrinfo_json(path: &Path, layer: Option<&str>) -> Result<Vec<u8>> {

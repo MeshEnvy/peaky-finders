@@ -120,11 +120,44 @@ fn normalize_rel_path(rel: &str) -> String {
     rel.trim().replace('\\', "/")
 }
 
+pub fn land_source_layers_key(entry: &LandSourceEntry) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut layers: Vec<_> = entry.layers.iter().collect();
+    layers.sort_by_key(|layer| layer.layer_key());
+    for layer in layers {
+        layer.layer_key().hash(&mut hasher);
+        layer.name.hash(&mut hasher);
+        if let Some(id) = &layer.id {
+            id.hash(&mut hasher);
+        }
+        if let Some(role) = &layer.role {
+            format!("{role:?}").hash(&mut hasher);
+        }
+        for filt in &layer.include {
+            filt.field.hash(&mut hasher);
+            for v in &filt.values {
+                v.hash(&mut hasher);
+            }
+        }
+        for filt in &layer.exclude {
+            filt.field.hash(&mut hasher);
+            for v in &filt.values {
+                v.hash(&mut hasher);
+            }
+        }
+        if let Some(label) = &layer.label_field {
+            label.hash(&mut hasher);
+        }
+        if let Some(style) = &layer.style_field {
+            style.hash(&mut hasher);
+        }
+    }
+    format!("{:016x}", hasher.finish())
+}
+
 fn layers_key(entry: &LandSourceEntry) -> String {
-    let mut names: Vec<&str> = entry.layers.iter().map(|layer| layer.name.as_str()).collect();
-    names.sort_unstable();
-    names.dedup();
-    names.join("\0")
+    land_source_layers_key(entry)
 }
 
 fn mtime_secs(meta: &fs::Metadata) -> Result<u64> {
@@ -202,7 +235,23 @@ mod tests {
         let entry_a = sample_entry(vec!["b", "a"]);
         let entry_b = sample_entry(vec!["a", "b"]);
         assert_eq!(layers_key(&entry_a), layers_key(&entry_b));
+    }
+
+    #[test]
+    fn layers_key_differs_when_duplicate_layer_names() {
+        let entry_a = sample_entry(vec!["a", "b"]);
         let entry_dup = sample_entry(vec!["a", "b", "a"]);
-        assert_eq!(layers_key(&entry_a), layers_key(&entry_dup));
+        assert_ne!(layers_key(&entry_a), layers_key(&entry_dup));
+    }
+
+    #[test]
+    fn layers_key_changes_when_filters_change() {
+        let entry_a = sample_entry(vec!["layer"]);
+        let mut entry_b = sample_entry(vec!["layer"]);
+        entry_b.layers[0].exclude.push(peaky_preset::LandAttributeFilter {
+            field: "NAME".to_string(),
+            values: vec!["Private".to_string()],
+        });
+        assert_ne!(layers_key(&entry_a), layers_key(&entry_b));
     }
 }

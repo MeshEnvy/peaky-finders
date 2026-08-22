@@ -10,6 +10,8 @@ pub mod land_filter;
 pub mod land_gdb;
 pub mod land_path;
 pub mod land_query;
+pub mod land_preview;
+pub mod land_pipeline;
 pub mod land_refresh;
 pub mod land_validate;
 pub mod land_validate_cache;
@@ -34,9 +36,9 @@ pub use land_filter::{
     property_matches_filter, transform_geojson_for_layer,
 };
 pub use land_gdb::{
-    layer_field_values, layer_fields, list_land_data_gdbs, list_preview_layers,
-    preview_layers_json, read_layer_geojson_value, resolve_land_data_path, LandFieldValues,
-    LandPreviewField, LandPreviewLayer,
+    field_values_from_geojson_value, layer_field_values, layer_fields, list_land_data_gdbs,
+    list_preview_layers, preview_layers_json, read_layer_geojson_cached, read_layer_geojson_value,
+    resolve_land_data_path, LandFieldValues, LandPreviewField, LandPreviewLayer,
 };
 pub use land_path::{
     is_land_geojson_path, resolve_land_layer_geojson_path, resolve_land_source_path,
@@ -44,6 +46,18 @@ pub use land_path::{
 pub use land_query::{
     load_land_layer_index, point_hits, query_land_layer_index, resolve_land_layer_entry,
     LandLayerSpatialIndex, LandPointHit,
+};
+pub use land_preview::{
+    apply_filters_to_aoi_base, ensure_aoi_clipped_preview_geojson, ensure_preview_field_values,
+    ensure_preview_fields, warm_land_preview_caches_for_preset, LandPreviewWarmCache,
+    LandPreviewWarmStats,
+};
+pub use land_pipeline::{
+    digest_for_bytes, effective_layer_digest, filter_digest_suffix, land_cache_dir,
+    layer_needs_aoi_clip, layer_needs_geojson_pipeline, layer_needs_geojson_transform,
+    manifest_layer_digest, pipeline_digest_suffix, process_land_geojson_value,
+    read_land_manifest, read_layer_geojson_bytes, warm_land_pipeline_caches_for_preset,
+    LandPipelineWarmCache, LandPipelineWarmStats,
 };
 pub use land_refresh::{
     audit_land_refresh_for_preset, prepare_land_at_boot, LandRefreshFailure, LandRefreshReport,

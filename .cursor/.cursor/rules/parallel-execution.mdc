@@ -36,5 +36,13 @@ Default to **parallel or multi-core** approaches when work is embarrassingly par
 
 - Bound workers: `mx = min(max_workers, len(units))`.
 - Collect results safely; avoid mutating shared structures from workers.
-- Under `--verbose`, log worker count at start and per-unit progress as units finish.
+- Log worker count at phase start; log **per-unit progress as units finish** (`[done/total]`, outcome, elapsed) at default **INFO** for boot/cache warm loops — not only under `--verbose`.
 - Preserve deterministic output order after parallel collection when callers depend on it.
+
+## Tight loops (required feedback)
+
+Any loop that can run **seconds or minutes** per iteration (land preview/pipeline warm, GDB export, download, splatter batch) must not go silent:
+
+- Log **unit start** before expensive work.
+- Log **unit done** with progress counter when the unit completes.
+- Reuse `LandBootProgress` in `peaky-geo` land boot paths.

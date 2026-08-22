@@ -1,4 +1,4 @@
-// Canonical map boot (ESM). Entry: main.js → initProjectMap().
+import { createLandSourceEditor } from './land-source-editor.js'
 import {
   TERRAIN_SOURCE,
   TERRAIN_HILLSHADE,
@@ -960,32 +960,20 @@ export function initProjectMap() {
     "entity-panel-add-land-folder",
   );
   const entityPanelTabs = document.querySelectorAll("[data-entity-tab]");
-  const importLandModal = document.getElementById("import-land-modal");
-  const importLandGdb = document.getElementById("import-land-gdb");
-  const importLandLabel = document.getElementById("import-land-label");
-  const importLandStatus = document.getElementById("import-land-status");
-  const importLandPreviewField = document.getElementById(
-    "import-land-preview-field",
-  );
-  const importLandPreviewMapEl = document.getElementById(
-    "import-land-preview-map",
-  );
-  const importLandError = document.getElementById("import-land-error");
-  const importLandSave = document.getElementById("import-land-save");
-  const importLandListCount = document.getElementById("import-land-list-count");
-  const importLandSelectAll = document.getElementById("import-land-select-all");
-  const importLandClearAll = document.getElementById("import-land-clear-all");
-  const importLandLayerList = document.getElementById("import-land-layer-list");
-  const editLandModal = document.getElementById("edit-land-modal");
-  const editLandSourcePath = document.getElementById("edit-land-source-path");
-  const editLandLabel = document.getElementById("edit-land-label");
-  const editLandPreviewMapEl = document.getElementById("edit-land-preview-map");
-  const editLandError = document.getElementById("edit-land-error");
-  const editLandSave = document.getElementById("edit-land-save");
-  const editLandListCount = document.getElementById("edit-land-list-count");
-  const editLandSelectAll = document.getElementById("edit-land-select-all");
-  const editLandClearAll = document.getElementById("edit-land-clear-all");
-  const editLandLayerList = document.getElementById("edit-land-layer-list");
+  const landSourceModal = document.getElementById("land-source-modal");
+  const landSourceError = document.getElementById("land-source-error");
+  const landSourceFile = document.getElementById("land-source-file");
+  const landSourceFileField = document.getElementById("land-source-file-field");
+  const landSourceFileStatus = document.getElementById("land-source-file-status");
+  const landSourcePath = document.getElementById("land-source-path");
+  const landSourceLabel = document.getElementById("land-source-label");
+  const landSourceEditorBody = document.getElementById("land-source-editor-body");
+  const landSourceMapSection = document.getElementById("land-source-map-section");
+  const landSourcePreviewMapEl = document.getElementById("land-source-preview-map");
+  const landSourceRulesList = document.getElementById("land-source-rules-list");
+  const landSourceRulesCount = document.getElementById("land-source-rules-count");
+  const landSourceAddRule = document.getElementById("land-source-add-rule");
+  const landSourceSave = document.getElementById("land-source-save");
   const sitePanelTags = document.getElementById("site-panel-tags");
   const sitePanelTagsSection = document.getElementById(
     "site-panel-tags-section",
@@ -1144,28 +1132,10 @@ export function initProjectMap() {
   let landSidebarSaveTimer = null;
   let landSidebarMigrationPending = false;
   const LAND_SIDEBAR_SAVE_MS = 400;
-  let importLandPreviewLayers = [];
-  let importLandPreviewPath = "";
-  let importLandPreviewMap = null;
-  let importLandPreviewBusy = false;
-  let importLandLayerStyles = new Map();
-  let importLandLayerConfigs = new Map();
-  let editLandLayerConfigs = new Map();
-  let editLandSourceId = "";
-  let editLandPreviewLayers = [];
-  let editLandPreviewPath = "";
-  let editLandPreviewMap = null;
-  let editLandPreviewBusy = false;
-  let editLandLayerStyles = new Map();
-  let editLandPreviewRefresh = null;
-  const IMPORT_LAND_PREVIEW_SOURCE = "import-land-preview";
-  const EDIT_LAND_PREVIEW_SOURCE = "edit-land-preview";
   const landPreviewGeoJsonCache = new Map();
   const landPreviewGeoJsonInflight = new Map();
   const landLayerGeoJsonCache = new Map();
   const landLayerGeoJsonInflight = new Map();
-  const landPreviewLoadingCounts = new Map();
-  const landPreviewLoadingOverlays = new Map();
 
   function ensureTerrainSource() {
     if (map.getSource(TERRAIN_SOURCE)) {
@@ -2817,24 +2787,6 @@ export function initProjectMap() {
     return promise;
   }
 
-  function defaultLandLayerConfig() {
-    return {
-      labelField: "",
-      role: "",
-      include: [],
-      exclude: [],
-      attrsOpen: false,
-      fields: null,
-      fieldsLoading: false,
-    };
-  }
-
-  function ensureLandLayerConfig(configs, layerName) {
-    if (!configs.has(layerName))
-      configs.set(layerName, defaultLandLayerConfig());
-    return configs.get(layerName);
-  }
-
   function normalizeRegisteredLayer(layer) {
     if (typeof layer === "string") {
       const name = layer;
@@ -2851,9 +2803,13 @@ export function initProjectMap() {
       };
     }
     const name = layer.name;
+    const layerId = layer.id != null && layer.id !== "" ? String(layer.id) : null;
     return {
       name,
-      key: layer.key || landLayerSlug(name),
+      id: layerId,
+      key:
+        layer.key ||
+        (layerId ? landLayerSlug(layerId) : landLayerSlug(name)),
       role: layer.role || null,
       digest: layer.digest || null,
       style: layer.style || null,
@@ -3098,191 +3054,6 @@ export function initProjectMap() {
     return expr;
   }
 
-  function layerConfigToPayload(name, layerStyles, layerConfigs) {
-    const config = layerConfigs.get(name) || defaultLandLayerConfig();
-    const row = { name };
-    if (config.role) row.role = config.role;
-    if (config.labelField) row.labelField = config.labelField;
-    if (config.include?.length) row.include = config.include;
-    if (config.exclude?.length) row.exclude = config.exclude;
-    if (layerStyles.has(name)) {
-      row.style = normalizeLandLayerStyle(layerStyles.get(name));
-    }
-    return row;
-  }
-
-  function landColumnSortKey(name) {
-    const upper = String(name).toUpperCase();
-    if (upper === "NAME") return "0";
-    if (upper === "ABBR") return "1";
-    return `9${upper}`;
-  }
-
-  function excludedValuesForField(config, field) {
-    if (!field) return new Set();
-    const filt = (config.exclude || []).find((item) => item.field === field);
-    return new Set(Array.isArray(filt?.values) ? filt.values : []);
-  }
-
-  function setExcludedValueForField(config, field, value, excluded) {
-    if (!field || !value) return;
-    if (!Array.isArray(config.exclude)) config.exclude = [];
-    let filt = config.exclude.find((item) => item.field === field);
-    if (!filt) {
-      filt = { field, values: [] };
-      config.exclude.push(filt);
-    }
-    const values = new Set(Array.isArray(filt.values) ? filt.values : []);
-    if (excluded) values.add(value);
-    else values.delete(value);
-    filt.values = [...values];
-    config.exclude = config.exclude.filter(
-      (item) => Array.isArray(item.values) && item.values.length,
-    );
-  }
-
-  function configFromRegisteredLayer(layer) {
-    const spec = normalizeRegisteredLayer(layer);
-    return {
-      labelField: spec.labelField || "",
-      role: spec.role || "",
-      include: spec.include || [],
-      exclude: spec.exclude || [],
-      attrsOpen: false,
-      fields: null,
-      fieldsLoading: false,
-    };
-  }
-
-  function resolveRegisteredPreviewLayerName(registeredName, previewLayers) {
-    const previewNames = (previewLayers || []).map((layer) => layer.name);
-    if (previewNames.includes(registeredName)) return registeredName;
-    if (previewNames.length === 1) return previewNames[0];
-    return null;
-  }
-
-  function registeredLayersForPreviewName(previewName, registeredLayers, previewLayers) {
-    return (registeredLayers || []).filter((raw) => {
-      const spec = normalizeRegisteredLayer(raw);
-      if (spec.name === previewName) return true;
-      return resolveRegisteredPreviewLayerName(spec.name, previewLayers) === previewName;
-    });
-  }
-
-  function initialEditLandSelected(source, previewLayers) {
-    const selected = new Set();
-    for (const rawLayer of source?.layers || []) {
-      const spec = normalizeRegisteredLayer(rawLayer);
-      const previewName = resolveRegisteredPreviewLayerName(
-        spec.name,
-        previewLayers,
-      );
-      if (previewName) selected.add(previewName);
-    }
-    const previewNames = previewLayers.map((layer) => layer.name);
-    if (!selected.size && previewNames.length === 1 && (source?.layers || []).length) {
-      selected.add(previewNames[0]);
-    }
-    return selected;
-  }
-
-  function buildEditLandLayerState(source, previewLayers) {
-    const configs = new Map();
-    const styles = new Map();
-    for (const previewLayer of previewLayers) {
-      const previewName = previewLayer.name;
-      const matching = registeredLayersForPreviewName(
-        previewName,
-        source?.layers,
-        previewLayers,
-      );
-      const primary =
-        matching.find(
-          (raw) => normalizeRegisteredLayer(raw).role === "include",
-        ) || matching[0];
-      if (!primary) continue;
-      const spec = normalizeRegisteredLayer(primary);
-      configs.set(previewName, configFromRegisteredLayer(primary));
-      ensureLandLayerStyleState(
-        styles,
-        previewName,
-        flatStyleFromLayerSpec(spec),
-      );
-    }
-    return { configs, styles };
-  }
-
-  function registeredLayerToSavePayload(raw, previewName) {
-    const spec = normalizeRegisteredLayer(raw);
-    const row = { name: previewName };
-    if (raw.id != null && raw.id !== "") row.id = raw.id;
-    if (spec.role) row.role = spec.role;
-    if (spec.labelField) row.labelField = spec.labelField;
-    if (spec.include?.length) row.include = spec.include;
-    if (spec.exclude?.length) row.exclude = spec.exclude;
-    if (spec.styleField) row.styleField = spec.styleField;
-    if (spec.style) row.style = normalizeLandLayerStyle(flatStyleFromLayerSpec(spec));
-    return row;
-  }
-
-  function collectEditLandSavePayloads(
-    listEl,
-    layerStyles,
-    layerConfigs,
-    prevSource,
-    previewLayers,
-  ) {
-    const selectedNames = collectSelectedLandLayers(listEl);
-    if (!selectedNames.length) return [];
-    const payloads = [];
-    for (const previewName of selectedNames) {
-      const prevMatching = registeredLayersForPreviewName(
-        previewName,
-        prevSource?.layers,
-        previewLayers,
-      );
-      if (prevMatching.length > 1) {
-        for (const raw of prevMatching) {
-          payloads.push(registeredLayerToSavePayload(raw, previewName));
-        }
-        continue;
-      }
-      const payload = layerConfigToPayload(
-        previewName,
-        layerStyles,
-        layerConfigs,
-      );
-      if (prevMatching.length === 1) {
-        const raw = prevMatching[0];
-        if (raw.id != null && raw.id !== "") payload.id = raw.id;
-      }
-      payloads.push(payload);
-    }
-    return payloads;
-  }
-
-  function collectSelectedLayerPayloads(listEl, layerStyles, layerConfigs) {
-    return collectSelectedLandLayers(listEl).map((name) =>
-      layerConfigToPayload(name, layerStyles, layerConfigs),
-    );
-  }
-
-  async function fetchLandLayerFields(path, layer) {
-    const resp = await fetch(landFieldsApiUrl(path, layer));
-    const payload = await resp.json().catch(() => ({}));
-    if (!resp.ok)
-      throw new Error(payload.error || `Fields failed (${resp.status})`);
-    return payload;
-  }
-
-  async function fetchLandFieldValues(path, layer, field) {
-    const resp = await fetch(landValuesApiUrl(path, layer, field));
-    const payload = await resp.json().catch(() => ({}));
-    if (!resp.ok)
-      throw new Error(payload.error || `Values failed (${resp.status})`);
-    return payload;
-  }
-
   function landPreviewLayerConfig(config) {
     if (!config) return null;
     if (
@@ -3381,72 +3152,6 @@ export function initProjectMap() {
         return data;
       },
     );
-  }
-
-  function landPreviewMapPrefix(sourceIdPrefix) {
-    return sourceIdPrefix === "import"
-      ? IMPORT_LAND_PREVIEW_SOURCE
-      : EDIT_LAND_PREVIEW_SOURCE;
-  }
-
-  function ensureLandPreviewLoadingOverlay(mapEl) {
-    if (!mapEl) return null;
-    if (landPreviewLoadingOverlays.has(mapEl))
-      return landPreviewLoadingOverlays.get(mapEl);
-    let wrap = mapEl.parentElement;
-    if (!wrap?.classList.contains("import-land-preview-map-wrap")) {
-      const parent = mapEl.parentElement;
-      if (!parent) return null;
-      wrap = document.createElement("div");
-      wrap.className = "import-land-preview-map-wrap";
-      parent.insertBefore(wrap, mapEl);
-      wrap.appendChild(mapEl);
-    }
-    const overlay = document.createElement("div");
-    overlay.className = "import-land-preview-loading";
-    overlay.hidden = true;
-    overlay.setAttribute("aria-hidden", "true");
-    const spinner = document.createElement("div");
-    spinner.className = "pin-load-spinner import-land-preview-spinner";
-    overlay.appendChild(spinner);
-    wrap.appendChild(overlay);
-    landPreviewLoadingOverlays.set(mapEl, overlay);
-    return overlay;
-  }
-
-  function setLandPreviewMapLoading(mapEl, loading) {
-    const overlay = ensureLandPreviewLoadingOverlay(mapEl);
-    if (!overlay) return;
-    overlay.hidden = !loading;
-  }
-
-  function beginLandPreviewMapFetch(mapEl) {
-    if (!mapEl) return;
-    const next = (landPreviewLoadingCounts.get(mapEl) || 0) + 1;
-    landPreviewLoadingCounts.set(mapEl, next);
-    setLandPreviewMapLoading(mapEl, true);
-  }
-
-  function endLandPreviewMapFetch(mapEl) {
-    if (!mapEl) return;
-    const next = Math.max(0, (landPreviewLoadingCounts.get(mapEl) || 0) - 1);
-    landPreviewLoadingCounts.set(mapEl, next);
-    setLandPreviewMapLoading(mapEl, next > 0);
-  }
-
-  function setLandLayerRowLoading(listEl, layerName, loading) {
-    if (!listEl || !layerName) return;
-    const escaped =
-      typeof CSS !== "undefined" && CSS.escape
-        ? CSS.escape(layerName)
-        : layerName;
-    const input = listEl.querySelector(
-      `input[type="checkbox"][data-layer-name="${escaped}"]`,
-    );
-    const row = input?.closest(".import-land-layer-row");
-    if (!row) return;
-    row.classList.toggle("import-land-layer-row--loading", !!loading);
-    if (input) input.disabled = !!loading;
   }
 
   function defaultLandLayerStyle() {
@@ -4394,29 +4099,57 @@ export function initProjectMap() {
 
   async function refreshLandMapLayers() {
     await Promise.all(
-      landLayerRows().map((row) =>
-        ensureLandMapLayer(row.sourceId, row.layerKey),
-      ),
+      landLayerRows()
+        .filter((row) =>
+          isLandLayerEffectivelyVisible(row.sourceId, row.layerKey),
+        )
+        .map((row) => ensureLandMapLayer(row.sourceId, row.layerKey)),
     );
     syncLandMapLayerOrder();
   }
 
-  function buildLandFilterBadge(sourceId, spec) {
-    const rowKey = landLayerKey(sourceId, spec.key);
+  function landRuleSidebarText(spec) {
+    if (spec.role === "include") {
+      const excluded = (spec.exclude || [])
+        .flatMap((filt) => (Array.isArray(filt.values) ? filt.values : []))
+        .filter(Boolean);
+      if (excluded.length) {
+        const preview = excluded.slice(0, 3).join(", ");
+        return excluded.length > 3 ? `Remove: ${preview}…` : `Remove: ${preview}`;
+      }
+      return "Eligible land";
+    }
+    if (spec.role === "exclude") return "Blocked land";
+    if (spec.role === "aoi") return "Project boundary";
+    for (const filt of spec.include || []) {
+      const values = (filt.values || []).filter(Boolean);
+      if (values.length === 1) {
+        return filt.field ? `${filt.field}: ${values[0]}` : String(values[0]);
+      }
+      if (values.length > 1) return values.join(", ");
+    }
+    if (spec.id) return String(spec.id).toUpperCase();
+    return "Map overlay";
+  }
+
+  function buildLandRuleChip(sourceId, spec) {
     const active = isLandLayerVisible(sourceId, spec.key);
     const batchHidden = !isLandSourceBatchVisible(sourceId);
     const style = flatStyleFromLayerSpec(spec);
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "entity-panel__land-filter-badge";
-    btn.dataset.landKey = rowKey;
-    if (active) btn.classList.add("entity-panel__land-filter-badge--active");
-    if (batchHidden)
-      btn.classList.add("entity-panel__land-filter-badge--batch-hidden");
+    btn.className = "entity-panel__land-rule-chip";
+    btn.dataset.landKey = landLayerKey(sourceId, spec.key);
+    if (active) btn.classList.add("entity-panel__land-rule-chip--active");
+    if (batchHidden) btn.classList.add("entity-panel__land-filter-badge--batch-hidden");
     if (spec.role === "include")
       btn.classList.add("entity-panel__land-filter-badge--include");
-    btn.style.setProperty("--land-filter-color", style.color);
-    btn.textContent = landLayerShortLabel(spec);
+    const swatch = document.createElement("span");
+    swatch.className = "entity-panel__land-rule-chip-swatch";
+    swatch.style.backgroundColor = style.color;
+    swatch.style.opacity = String(style.opacity);
+    btn.appendChild(swatch);
+    btn.appendChild(document.createTextNode(landLayerShortLabel(spec)));
     btn.title = landLayerDisplayName(spec);
     btn.setAttribute("aria-pressed", active ? "true" : "false");
     btn.addEventListener("click", () => {
@@ -4431,12 +4164,21 @@ export function initProjectMap() {
     return btn;
   }
 
-  function buildLandSourceFilterBadges(sourceId, layers) {
+  function buildLandSourceRulesList(sourceId, layers) {
     const host = document.createElement("div");
-    host.className = "entity-panel__land-source-filters";
+    host.className = "entity-panel__land-rules";
     for (const rawLayer of layers) {
       const spec = normalizeRegisteredLayer(rawLayer);
-      host.appendChild(buildLandFilterBadge(sourceId, spec));
+      const row = document.createElement("div");
+      row.className = "entity-panel__land-rule-row";
+      row.dataset.landKey = landLayerKey(sourceId, spec.key);
+      row.appendChild(buildLandRuleChip(sourceId, spec));
+      const summary = document.createElement("span");
+      summary.className = "entity-panel__land-rule-summary";
+      summary.textContent = landRuleSidebarText(spec);
+      summary.title = landRuleSidebarText(spec);
+      row.appendChild(summary);
+      host.appendChild(row);
     }
     return host;
   }
@@ -4500,9 +4242,9 @@ export function initProjectMap() {
   function buildLandSourceActionBtns(sourceId) {
     const editBtn = makeEntityPanelActionBtn({
       icon: "pen",
-      label: "Edit layers",
+      label: "Edit source",
       onClick: () => {
-        void openEditLandModal(sourceId);
+        void landSourceEditor.openEdit(sourceId);
       },
     });
     const deleteBtn = makeEntityPanelActionBtn({
@@ -4688,13 +4430,8 @@ export function initProjectMap() {
     header.appendChild(controls);
     el.appendChild(header);
 
-    if (singleSpec) {
-      const metaHost = document.createElement("div");
-      metaHost.className = "entity-panel__land-source-meta";
-      appendLandLayerMeta(metaHost, singleSpec);
-      if (metaHost.childNodes.length) el.appendChild(metaHost);
-    } else if (multiLayer) {
-      el.appendChild(buildLandSourceFilterBadges(sourceId, layers));
+    if (layers.length) {
+      el.appendChild(buildLandSourceRulesList(sourceId, layers));
     }
     return el;
   }
@@ -4738,7 +4475,7 @@ export function initProjectMap() {
     if (!sourceCount) {
       const empty = document.createElement("div");
       empty.className = "entity-panel__empty";
-      empty.textContent = "Import GDB layers from data/.";
+      empty.textContent = "Import land sources from data/.";
       entityPanelLandList.appendChild(empty);
       return;
     }
@@ -4834,1169 +4571,166 @@ export function initProjectMap() {
     }
   }
 
-  function setImportLandError(message) {
-    if (!importLandError) return;
-    if (message) {
-      importLandError.textContent = message;
-      importLandError.hidden = false;
-    } else {
-      importLandError.textContent = "";
-      importLandError.hidden = true;
-    }
-  }
-
-  function setEditLandError(message) {
-    if (!editLandError) return;
-    if (message) {
-      editLandError.textContent = message;
-      editLandError.hidden = false;
-    } else {
-      editLandError.textContent = "";
-      editLandError.hidden = true;
-    }
-  }
-
-  function destroyImportLandPreviewMap() {
-    if (importLandPreviewMap) {
-      importLandPreviewMap.remove();
-      importLandPreviewMap = null;
-    }
-  }
-
-  function destroyEditLandPreviewMap() {
-    if (editLandPreviewMap) {
-      editLandPreviewMap.remove();
-      editLandPreviewMap = null;
-    }
-  }
-
-  function ensureLandPreviewMap(el, mapRef) {
-    if (!el) return null;
-    if (mapRef) {
-      mapRef.resize();
-      return mapRef;
-    }
-    const preview = new maplibregl.Map({
-      container: el,
-      style: basemapStyle(currentBasemapKey),
-      center: map.getCenter(),
-      zoom: map.getZoom(),
-      bearing: 0,
-      pitch: 0,
-      attributionControl: false,
-    });
-    return preview;
-  }
-
-  function whenPreviewMapReady(previewMap) {
-    if (!previewMap) return Promise.resolve();
-    if (previewMap.isStyleLoaded()) return Promise.resolve();
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      previewMap.once("load", finish);
-      previewMap.once("error", finish);
-      window.setTimeout(finish, 8000);
-    });
-  }
-
-  function resetLandPreviewMapLoading(mapEl) {
-    if (!mapEl) return;
-    landPreviewLoadingCounts.set(mapEl, 0);
-    setLandPreviewMapLoading(mapEl, false);
-  }
-
-  function fitPreviewMapToBboxes(previewMap, bboxes) {
-    if (!previewMap || !bboxes.length) return;
-    const fit = () => {
-      const bounds = new maplibregl.LngLatBounds();
-      for (const bbox of bboxes) {
-        if (!Array.isArray(bbox) || bbox.length !== 4) continue;
-        const [minx, miny, maxx, maxy] = bbox;
-        bounds.extend([minx, miny]);
-        bounds.extend([maxx, maxy]);
-      }
-      if (!bounds.isEmpty()) {
-        previewMap.fitBounds(bounds, { padding: 36, maxZoom: 12, duration: 0 });
-      }
-    };
-    if (previewMap.loaded()) fit();
-    else previewMap.once("load", fit);
-  }
-
-  function ensureLandLayerStyleState(layerStyles, layerName, seed) {
-    if (!layerStyles.has(layerName)) {
-      layerStyles.set(layerName, normalizeLandLayerStyle(seed));
-    }
-    return layerStyles.get(layerName);
-  }
-
-  function buildLandLayerAttrPanel(
-    layerName,
-    gdbPath,
-    config,
-    onLabelFieldChange,
-  ) {
-    const panel = document.createElement("div");
-    panel.className = "import-land-layer-attrs";
-    panel.hidden = !config.attrsOpen;
-
-    const labelTitle = document.createElement("div");
-    labelTitle.className = "import-land-attrs-section-title";
-    labelTitle.textContent = "Label field";
-
-    const labelSelect = document.createElement("select");
-    labelSelect.className = "import-land-attrs-select";
-    labelSelect.innerHTML = '<option value="">None</option>';
-
-    const valuesEl = document.createElement("div");
-    valuesEl.className = "import-land-attrs-values";
-
-    const valuesTitle = document.createElement("div");
-    valuesTitle.className = "import-land-attrs-section-title";
-    valuesTitle.textContent = "Categories";
-    valuesTitle.hidden = true;
-
-    const valuesHint = document.createElement("div");
-    valuesHint.className = "wa-caption pf-muted import-land-attrs-values-hint";
-    valuesHint.textContent = "Check to exclude from import";
-    valuesHint.hidden = true;
-
-    const roleTitle = document.createElement("div");
-    roleTitle.className = "import-land-attrs-section-title";
-    roleTitle.textContent = "Role";
-
-    const roleSelect = document.createElement("select");
-    roleSelect.className = "import-land-attrs-select";
-    for (const [value, label] of [
-      ["", "Default"],
-      ["aoi", "AOI (clip boundary)"],
-      ["include", "Include"],
-      ["exclude", "Exclude"],
-    ]) {
-      const opt = document.createElement("option");
-      opt.value = value;
-      opt.textContent = label;
-      roleSelect.appendChild(opt);
-    }
-    roleSelect.value = config.role || "";
-    roleSelect.addEventListener("change", () => {
-      config.role = roleSelect.value;
-    });
-
-    function populateLabelSelect() {
-      const fields = config.fields || [];
-      const prev = labelSelect.value || config.labelField;
-      labelSelect.innerHTML = '<option value="">None</option>';
-      for (const field of fields
-        .slice()
-        .sort((a, b) =>
-          landColumnSortKey(a.name).localeCompare(landColumnSortKey(b.name)),
-        )) {
-        const opt = document.createElement("option");
-        opt.value = field.name;
-        opt.textContent = field.name;
-        labelSelect.appendChild(opt);
-      }
-      if (prev && [...labelSelect.options].some((opt) => opt.value === prev)) {
-        labelSelect.value = prev;
-      }
-    }
-
-    async function loadLabelValues() {
-      if (!config.labelField) {
-        valuesEl.innerHTML = "";
-        valuesTitle.hidden = true;
-        valuesHint.hidden = true;
-        return;
-      }
-      valuesTitle.hidden = false;
-      valuesHint.hidden = false;
-      valuesEl.innerHTML = '<span class="wa-caption pf-muted">Loading…</span>';
-      try {
-        const payload = await fetchLandFieldValues(
-          gdbPath,
-          layerName,
-          config.labelField,
-        );
-        const rows = Array.isArray(payload.values) ? payload.values : [];
-        valuesEl.innerHTML = "";
-        if (!rows.length) {
-          valuesEl.innerHTML =
-            '<span class="wa-caption pf-muted">No values</span>';
-          return;
-        }
-        const excluded = excludedValuesForField(config, config.labelField);
-        for (const row of rows) {
-          const item = document.createElement("label");
-          item.className = "import-land-attrs-value-row";
-          if (excluded.has(row.value)) {
-            item.classList.add("import-land-attrs-value-row--excluded");
-          }
-
-          const checkbox = document.createElement("input");
-          checkbox.type = "checkbox";
-          checkbox.checked = excluded.has(row.value);
-          checkbox.title = "Exclude this category";
-
-          const text = document.createElement("span");
-          text.textContent = `${row.value} (${row.count})`;
-
-          checkbox.addEventListener("change", () => {
-            setExcludedValueForField(
-              config,
-              config.labelField,
-              row.value,
-              checkbox.checked,
-            );
-            item.classList.toggle(
-              "import-land-attrs-value-row--excluded",
-              checkbox.checked,
-            );
-            if (onLabelFieldChange) onLabelFieldChange(layerName);
-          });
-
-          item.appendChild(checkbox);
-          item.appendChild(text);
-          valuesEl.appendChild(item);
-        }
-      } catch (_) {
-        valuesEl.innerHTML =
-          '<span class="wa-caption pf-muted">Could not load values</span>';
-      }
-    }
-
-    async function ensureFields() {
-      if (config.fields) {
-        populateLabelSelect();
-        return;
-      }
-      if (config.fieldsLoading) return;
-      config.fieldsLoading = true;
-      labelSelect.disabled = true;
-      try {
-        const payload = await fetchLandLayerFields(gdbPath, layerName);
-        config.fields = Array.isArray(payload.fields) ? payload.fields : [];
-        populateLabelSelect();
-      } catch (_) {
-        labelSelect.innerHTML =
-          '<option value="">Could not load fields</option>';
-      } finally {
-        config.fieldsLoading = false;
-        labelSelect.disabled = false;
-      }
-    }
-
-    labelSelect.addEventListener("change", () => {
-      config.labelField = labelSelect.value;
-      void loadLabelValues();
-      if (onLabelFieldChange) onLabelFieldChange(layerName);
-    });
-
-    panel.appendChild(roleTitle);
-    panel.appendChild(roleSelect);
-    panel.appendChild(labelTitle);
-    panel.appendChild(labelSelect);
-    panel.appendChild(valuesTitle);
-    panel.appendChild(valuesHint);
-    panel.appendChild(valuesEl);
-
-    void ensureFields().then(() => {
-      if (config.labelField) void loadLabelValues();
-    });
-
-    return panel;
-  }
-
-  function renderLandLayerChecklist(
-    listEl,
-    layers,
-    {
-      selected,
-      layerStyles,
-      layerConfigs,
-      gdbPath,
-      onToggle,
-      onStyleChange,
-      onLabelFieldChange,
-      countEl,
-    },
-  ) {
-    if (!listEl) return;
-    listEl.innerHTML = "";
-    const selectedSet =
-      selected instanceof Set ? selected : new Set(selected || []);
-    for (const layer of layers) {
-      ensureLandLayerStyleState(layerStyles, layer.name);
-      ensureLandLayerConfig(layerConfigs, layer.name);
-      const config = layerConfigs.get(layer.name);
-      const row = document.createElement("div");
-      row.className = "import-sites-point-row import-land-layer-row";
-      if (selectedSet.has(layer.name))
-        row.classList.add("import-land-layer-row--selected");
-
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.checked = selectedSet.has(layer.name);
-      checkbox.dataset.layerName = layer.name;
-      checkbox.addEventListener("change", () => {
-        onToggle(layer.name, checkbox.checked);
-        row.classList.toggle(
-          "import-land-layer-row--selected",
-          checkbox.checked,
-        );
-        attrsToggle.hidden = !checkbox.checked;
-        if (!checkbox.checked) {
-          config.attrsOpen = false;
-          attrsPanel.hidden = true;
-        }
-      });
-
-      const text = document.createElement("span");
-      text.className = "import-sites-point-label import-land-layer-label";
-      text.textContent = `${layer.name} (${layer.geometry || "layer"}, ${layer.count || 0})`;
-
-      const styleWrap = document.createElement("div");
-      styleWrap.className = "import-land-layer-style";
-
-      const colorInput = document.createElement("input");
-      colorInput.type = "color";
-      colorInput.className = "import-land-layer-color";
-      colorInput.value = layerStyles.get(layer.name).color;
-      colorInput.title = "Layer color";
-      colorInput.addEventListener("input", () => {
-        const style = layerStyles.get(layer.name);
-        style.color = colorInput.value.toLowerCase();
-        onStyleChange(layer.name, style);
-      });
-
-      const opacityInput = document.createElement("input");
-      opacityInput.type = "range";
-      opacityInput.className = "import-land-layer-opacity";
-      opacityInput.min = "0";
-      opacityInput.max = "100";
-      opacityInput.step = "1";
-      opacityInput.value = String(
-        Math.round(layerStyles.get(layer.name).opacity * 100),
-      );
-      opacityInput.title = "Layer opacity";
-
-      const opacityLabel = document.createElement("span");
-      opacityLabel.className = "import-land-layer-opacity-label";
-      opacityLabel.textContent = `${opacityInput.value}%`;
-
-      opacityInput.addEventListener("input", () => {
-        const style = layerStyles.get(layer.name);
-        style.opacity = Number(opacityInput.value) / 100;
-        opacityLabel.textContent = `${opacityInput.value}%`;
-        onStyleChange(layer.name, style);
-      });
-
-      styleWrap.appendChild(colorInput);
-      styleWrap.appendChild(opacityInput);
-      styleWrap.appendChild(opacityLabel);
-
-      const attrsToggle = document.createElement("button");
-      attrsToggle.type = "button";
-      attrsToggle.className = "import-land-attrs-toggle";
-      attrsToggle.textContent = "Attributes";
-      attrsToggle.hidden = !checkbox.checked;
-
-      const attrsPanel = buildLandLayerAttrPanel(
-        layer.name,
-        gdbPath,
-        config,
-        onLabelFieldChange,
-      );
-
-      attrsToggle.addEventListener("click", () => {
-        config.attrsOpen = !config.attrsOpen;
-        attrsPanel.hidden = !config.attrsOpen;
-      });
-
-      row.appendChild(checkbox);
-      row.appendChild(text);
-      row.appendChild(styleWrap);
-      row.appendChild(attrsToggle);
-      row.appendChild(attrsPanel);
-      listEl.appendChild(row);
-    }
-    if (countEl) {
-      const n = selectedSet.size;
-      countEl.textContent = `${n} of ${layers.length} selected`;
-    }
-  }
-
-  function landPreviewLayerSpecs(sourceName, fillId, lineId, style) {
-    const normalized = normalizeLandLayerStyle(style);
-    const lineColor = landLineColorFromFill(normalized.color);
-    return [
-      {
-        id: fillId,
-        type: "fill",
-        source: sourceName,
-        paint: {
-          "fill-color": normalized.color,
-          "fill-opacity": normalized.opacity,
-          "fill-outline-color": lineColor,
-        },
-      },
-      {
-        id: lineId,
-        type: "line",
-        source: sourceName,
-        paint: {
-          "line-color": lineColor,
-          "line-width": LAND_PREVIEW_LINE_WIDTH,
-        },
-      },
-    ];
-  }
-
-  function applyLandPreviewLayerStyle(
-    previewMap,
-    sourceName,
-    fillId,
-    lineId,
-    style,
-  ) {
-    if (!previewMap) return;
-    const normalized = normalizeLandLayerStyle(style);
-    const lineColor = landLineColorFromFill(normalized.color);
-    if (previewMap.getLayer(fillId)) {
-      previewMap.setPaintProperty(fillId, "fill-color", normalized.color);
-      previewMap.setPaintProperty(fillId, "fill-opacity", normalized.opacity);
-      previewMap.setPaintProperty(fillId, "fill-outline-color", lineColor);
-    }
-    if (previewMap.getLayer(lineId)) {
-      previewMap.setPaintProperty(lineId, "line-color", lineColor);
-      previewMap.setPaintProperty(
-        lineId,
-        "line-width",
-        LAND_PREVIEW_LINE_WIDTH,
-      );
-    }
-  }
-
-  function landPreviewLabelsLayerId(sourceName) {
-    return `${sourceName}-labels`;
-  }
-
-  function syncLandPreviewLabelLayer(previewMap, sourceName, showLabels) {
-    syncGeoJsonLabelLayer(
-      previewMap,
-      sourceName,
-      landPreviewLabelsLayerId(sourceName),
-      showLabels,
-      "visible",
-    );
-  }
-
-  function applyLandPreviewMapData(
-    previewMap,
-    sourceName,
-    fillId,
-    lineId,
-    data,
-    style,
-    config,
-  ) {
-    if (!previewMap) return Promise.resolve();
-    const apply = () => {
-      try {
-        if (!previewMap.getSource(sourceName)) {
-          previewMap.addSource(sourceName, { type: "geojson", data });
-          for (const spec of landPreviewLayerSpecs(
-            sourceName,
-            fillId,
-            lineId,
-            style,
-          )) {
-            if (!previewMap.getLayer(spec.id)) previewMap.addLayer(spec);
-          }
-        } else {
-          previewMap.getSource(sourceName).setData(data);
-        }
-        applyLandPreviewLayerStyle(
-          previewMap,
-          sourceName,
-          fillId,
-          lineId,
-          style,
-        );
-        syncLandPreviewLabelLayer(previewMap, sourceName, !!config?.labelField);
-      } catch (_) {
-        /* style/source race */
-      }
-    };
-    if (previewMap.isStyleLoaded()) {
-      apply();
-      return Promise.resolve();
-    }
-    return whenPreviewMapReady(previewMap).then(apply);
-  }
-
-  function removeLandPreviewLayer(previewMap, prefix, layerName) {
-    if (!previewMap) return;
-    const sourceName = landPreviewSourceId(prefix, layerName);
-    const fillId = `${sourceName}-fill`;
-    const lineId = `${sourceName}-line`;
-    const labelsId = landPreviewLabelsLayerId(sourceName);
-    if (previewMap.getLayer(labelsId)) previewMap.removeLayer(labelsId);
-    if (previewMap.getLayer(lineId)) previewMap.removeLayer(lineId);
-    if (previewMap.getLayer(fillId)) previewMap.removeLayer(fillId);
-    if (previewMap.getSource(sourceName)) previewMap.removeSource(sourceName);
-  }
-
-  function clearLandPreviewMapLayers(
-    previewMap,
-    prefix,
-    allLayerNames,
-    keepLayerNames,
-  ) {
-    if (!previewMap) return;
-    const keep = new Set(keepLayerNames);
-    for (const layerName of allLayerNames) {
-      if (!keep.has(layerName))
-        removeLandPreviewLayer(previewMap, prefix, layerName);
-    }
-  }
-
-  async function refreshLandPreviewLayerConfig(
-    previewMap,
-    path,
-    layerName,
-    sourceIdPrefix,
-    layerStyles,
-    layerConfigs,
-  ) {
-    if (!previewMap || !path || !layerName) return;
-    const config = layerConfigs?.get(layerName) || defaultLandLayerConfig();
-    const prefix = landPreviewMapPrefix(sourceIdPrefix);
-    const sourceName = landPreviewSourceId(prefix, layerName);
-    const fillId = `${sourceName}-fill`;
-    const lineId = `${sourceName}-line`;
-    const style = normalizeLandLayerStyle(layerStyles.get(layerName));
-    await whenPreviewMapReady(previewMap);
-    try {
-      const geojson = await fetchLandPreviewGeoJson(
-        path,
-        layerName,
-        landPreviewLayerConfig(config),
-      );
-      if (previewMap.getSource(sourceName)) {
-        previewMap.getSource(sourceName).setData(geojson);
-        applyLandPreviewLayerStyle(
-          previewMap,
-          sourceName,
-          fillId,
-          lineId,
-          style,
-        );
-        syncLandPreviewLabelLayer(previewMap, sourceName, !!config.labelField);
-      } else {
-        await applyLandPreviewMapData(
-          previewMap,
-          sourceName,
-          fillId,
-          lineId,
-          geojson,
-          style,
-          config,
-        );
-      }
-    } catch (_) {
-      /* skip */
-    }
-  }
-
-  async function showLandPreviewLayer(
-    previewMap,
-    mapEl,
-    listEl,
-    path,
-    layerName,
-    sourceIdPrefix,
-    layerStyles,
-    layerConfigs,
-    layerMetaList,
-  ) {
-    if (!previewMap || !path || !layerName) return;
-    const config = layerConfigs?.get(layerName) || defaultLandLayerConfig();
-    const prefix = landPreviewMapPrefix(sourceIdPrefix);
-    const sourceName = landPreviewSourceId(prefix, layerName);
-    const fillId = `${sourceName}-fill`;
-    const lineId = `${sourceName}-line`;
-    const style = normalizeLandLayerStyle(layerStyles.get(layerName));
-    await whenPreviewMapReady(previewMap);
-    const hasSource = !!previewMap.getSource(sourceName);
-    if (hasSource && !config.labelField) {
-      applyLandPreviewLayerStyle(previewMap, sourceName, fillId, lineId, style);
-      syncLandPreviewLabelLayer(previewMap, sourceName, false);
-      return;
-    }
-    if (!hasSource) setLandLayerRowLoading(listEl, layerName, true);
-    try {
-      const geojson = await fetchLandPreviewGeoJson(
-        path,
-        layerName,
-        landPreviewLayerConfig(config),
-      );
-      await applyLandPreviewMapData(
-        previewMap,
-        sourceName,
-        fillId,
-        lineId,
-        geojson,
-        style,
-        config,
-      );
-      const layerMeta = layerMetaList.find((layer) => layer.name === layerName);
-      if (layerMeta?.bbox) fitPreviewMapToBboxes(previewMap, [layerMeta.bbox]);
-    } catch (_) {
-      /* skip layer */
-    } finally {
-      if (!hasSource) setLandLayerRowLoading(listEl, layerName, false);
-      resetLandPreviewMapLoading(mapEl);
-    }
-  }
-
-  function hideLandPreviewLayer(
-    previewMap,
-    sourceIdPrefix,
-    layerName,
-    mapEl,
-    listEl,
-  ) {
-    if (!previewMap || !layerName) return;
-    removeLandPreviewLayer(
-      previewMap,
-      landPreviewMapPrefix(sourceIdPrefix),
-      layerName,
-    );
-    setLandLayerRowLoading(listEl, layerName, false);
-    resetLandPreviewMapLoading(mapEl);
-  }
-
-  async function updateLandPreviewLayerStyle(
-    previewMap,
-    layerName,
-    sourceIdPrefix,
-    layerStyles,
-  ) {
-    if (!previewMap || !layerName) return;
-    const prefix = landPreviewMapPrefix(sourceIdPrefix);
-    const sourceName = landPreviewSourceId(prefix, layerName);
-    if (!previewMap.getSource(sourceName)) return;
-    const fillId = `${sourceName}-fill`;
-    const lineId = `${sourceName}-line`;
-    applyLandPreviewLayerStyle(
-      previewMap,
-      sourceName,
-      fillId,
-      lineId,
-      layerStyles.get(layerName),
-    );
-  }
-
-  async function syncLandPreviewMap(
-    previewMap,
-    mapEl,
-    listEl,
-    path,
-    selectedNames,
-    sourceIdPrefix,
-    layerStyles,
-    layerConfigs,
-    allLayerNames,
-    layerMetaList,
-  ) {
-    if (!previewMap) return;
-    const selected = [...selectedNames];
-    const prefix = landPreviewMapPrefix(sourceIdPrefix);
-    clearLandPreviewMapLayers(previewMap, prefix, allLayerNames, selected);
-    await whenPreviewMapReady(previewMap);
-    const bboxes = [];
-    await Promise.all(
-      selected.map(async (layerName) => {
-        await showLandPreviewLayer(
-          previewMap,
-          mapEl,
-          listEl,
-          path,
-          layerName,
-          sourceIdPrefix,
-          layerStyles,
-          layerConfigs,
-          layerMetaList,
-        );
-        const layerMeta = layerMetaList.find(
-          (layer) => layer.name === layerName,
-        );
-        if (layerMeta?.bbox) bboxes.push(layerMeta.bbox);
-      }),
-    );
-    fitPreviewMapToBboxes(previewMap, bboxes);
-  }
-
-  function resetImportLandModal() {
-    setImportLandError("");
-    importLandPreviewLayers = [];
-    importLandPreviewPath = "";
-    importLandPreviewBusy = false;
-    importLandLayerStyles = new Map();
-    importLandLayerConfigs = new Map();
-    if (importLandPreviewMapEl) {
-      resetLandPreviewMapLoading(importLandPreviewMapEl);
-    }
-    if (importLandGdb) importLandGdb.value = "";
-    if (importLandLabel) importLandLabel.value = "";
-    if (importLandStatus)
-      importLandStatus.textContent =
-        "Choose a FileGDB under the project data folder.";
-    if (importLandPreviewField) importLandPreviewField.hidden = true;
-    if (importLandLayerList) importLandLayerList.innerHTML = "";
-    if (importLandSave) importLandSave.disabled = true;
-    destroyImportLandPreviewMap();
-  }
-
-  function fillImportLandGdbSelect(paths) {
-    if (!importLandGdb) return;
-    importLandGdb.innerHTML = '<option value="">Select a GDB…</option>';
-    for (const path of paths) {
-      const opt = document.createElement("option");
-      opt.value = path;
-      opt.textContent = path;
-      importLandGdb.appendChild(opt);
-    }
-  }
-
-  async function populateImportLandGdbSelect() {
-    if (!importLandGdb) return;
-    if (landDataGdbPaths.length) {
-      fillImportLandGdbSelect(landDataGdbPaths);
-      return;
-    }
-    importLandGdb.innerHTML = '<option value="">Loading GDB list…</option>';
-    importLandGdb.disabled = true;
-    try {
-      const resp = await fetch(landDataGdbsUrl());
-      const payload = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        fillImportLandGdbSelect([]);
-        return;
-      }
-      landDataGdbPaths = Array.isArray(payload.paths) ? payload.paths : [];
-      fillImportLandGdbSelect(landDataGdbPaths);
-    } catch (_) {
-      fillImportLandGdbSelect([]);
-    } finally {
-      importLandGdb.disabled = false;
-    }
-  }
-
-  async function previewImportLandPath(path) {
-    if (!path) {
-      resetImportLandModal();
-      return;
-    }
-    setImportLandError("");
-    importLandPreviewBusy = true;
-    if (importLandSave) importLandSave.disabled = true;
-    if (importLandStatus) importLandStatus.textContent = "Loading layers…";
-    try {
-      const resp = await fetch(landImportPreviewApiUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      const payload = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        setImportLandError(payload.error || `Preview failed (${resp.status})`);
-        if (importLandPreviewField) importLandPreviewField.hidden = true;
-        return;
-      }
-      importLandPreviewPath = path;
-      importLandPreviewLayers = Array.isArray(payload.layers)
-        ? payload.layers
-        : [];
-      importLandLayerStyles = new Map();
-      importLandLayerConfigs = new Map();
-      if (importLandPreviewField) importLandPreviewField.hidden = false;
-      if (importLandStatus) {
-        importLandStatus.textContent = `${importLandPreviewLayers.length} layer(s) in ${path}`;
-      }
-      const selected = new Set();
-      if (importLandPreviewLayers.length === 1) {
-        selected.add(importLandPreviewLayers[0].name);
-      }
-      importLandPreviewMap = ensureLandPreviewMap(
-        importLandPreviewMapEl,
-        importLandPreviewMap,
-      );
-      renderLandLayerChecklist(importLandLayerList, importLandPreviewLayers, {
-        selected,
-        layerStyles: importLandLayerStyles,
-        layerConfigs: importLandLayerConfigs,
-        gdbPath: importLandPreviewPath,
-        countEl: importLandListCount,
-        onToggle: (name, checked) => {
-          if (checked) selected.add(name);
-          else selected.delete(name);
-          if (importLandListCount) {
-            importLandListCount.textContent = `${selected.size} of ${importLandPreviewLayers.length} selected`;
-          }
-          if (importLandSave) importLandSave.disabled = selected.size === 0;
-          if (checked) {
-            void showLandPreviewLayer(
-              importLandPreviewMap,
-              importLandPreviewMapEl,
-              importLandLayerList,
-              importLandPreviewPath,
-              name,
-              "import",
-              importLandLayerStyles,
-              importLandLayerConfigs,
-              importLandPreviewLayers,
-            );
-          } else {
-            hideLandPreviewLayer(
-              importLandPreviewMap,
-              "import",
-              name,
-              importLandPreviewMapEl,
-              importLandLayerList,
-            );
-          }
-        },
-        onStyleChange: (name) => {
-          if (selected.has(name)) {
-            void updateLandPreviewLayerStyle(
-              importLandPreviewMap,
-              name,
-              "import",
-              importLandLayerStyles,
-            );
-          }
-        },
-        onLabelFieldChange: (name) => {
-          if (!selected.has(name)) return;
-          void refreshLandPreviewLayerConfig(
-            importLandPreviewMap,
-            importLandPreviewPath,
-            name,
-            "import",
-            importLandLayerStyles,
-            importLandLayerConfigs,
-          );
-        },
-      });
-      if (importLandSave) importLandSave.disabled = selected.size === 0;
-      if (importLandSelectAll)
-        importLandSelectAll.disabled = importLandPreviewLayers.length === 0;
-      if (importLandClearAll)
-        importLandClearAll.disabled = importLandPreviewLayers.length === 0;
-      await whenPreviewMapReady(importLandPreviewMap);
-      requestAnimationFrame(() => importLandPreviewMap?.resize());
-      for (const name of selected) {
-        await showLandPreviewLayer(
-          importLandPreviewMap,
-          importLandPreviewMapEl,
-          importLandLayerList,
-          importLandPreviewPath,
-          name,
-          "import",
-          importLandLayerStyles,
-          importLandLayerConfigs,
-          importLandPreviewLayers,
-        );
-      }
-      fitPreviewMapToBboxes(
-        importLandPreviewMap,
-        importLandPreviewLayers.map((layer) => layer.bbox).filter(Boolean),
-      );
-    } catch (_) {
-      setImportLandError("Could not reach server.");
-    } finally {
-      importLandPreviewBusy = false;
-    }
-  }
-
-  async function openImportLandModal() {
-    if (!importLandModal) return;
-    setAddPlacementMode(null);
-    setEntityPanelOpen(true);
-    setEntityTab("land");
-    resetImportLandModal();
-    await customElements.whenDefined("wa-dialog");
-    importLandModal.open = true;
-    void populateImportLandGdbSelect();
-  }
-
-  function collectSelectedLandLayers(listEl) {
-    const selected = [];
-    if (!listEl) return selected;
-    for (const input of listEl.querySelectorAll(
-      'input[type="checkbox"][data-layer-name]',
-    )) {
-      if (input.checked && input.dataset.layerName)
-        selected.push(input.dataset.layerName);
-    }
-    return selected;
-  }
-
-  async function saveImportLandModal() {
-    const selected = collectSelectedLandLayers(importLandLayerList);
-    if (!importLandPreviewPath || !selected.length) {
-      setImportLandError("Select a GDB and at least one layer.");
-      return;
-    }
-    setImportLandError("");
-    if (importLandSave) importLandSave.disabled = true;
+  async function handleLandSourceImportSaved(payload) {
     const prevAoiDigest = landAoiDigest;
-    try {
-      const body = {
-        path: importLandPreviewPath,
-        layers: collectSelectedLayerPayloads(
-          importLandLayerList,
-          importLandLayerStyles,
-          importLandLayerConfigs,
-        ),
-      };
-      if (importLandLabel?.value.trim())
-        body.label = importLandLabel.value.trim();
-      const resp = await fetch(landImportApiUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const payload = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        setImportLandError(payload.error || `Import failed (${resp.status})`);
-        return;
+    await reloadLandSources({ refreshMap: false });
+    const source = payload?.source;
+    if (source?.id && Array.isArray(source.layers)) {
+      for (const rawLayer of source.layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        setLandLayerVisible(source.id, spec.key, true);
       }
-      if (importLandModal) importLandModal.open = false;
-      await reloadLandSources({ refreshMap: false });
-      const source = payload.source;
-      if (source?.id && Array.isArray(source.layers)) {
-        for (const rawLayer of source.layers) {
-          const spec = normalizeRegisteredLayer(rawLayer);
-          setLandLayerVisible(source.id, spec.key, true);
-        }
-        setLandSourceBatchVisible(source.id, true);
-        renderLandPanel();
-        if (landAoiDigest !== prevAoiDigest) {
-          clearAllLandLayerGeoJsonCache();
-          await reloadClippedLandLayers();
-        } else {
-          await Promise.all(
-            source.layers.map((rawLayer) => {
-              const spec = normalizeRegisteredLayer(rawLayer);
-              return refreshLandMapLayer(source.id, spec.key);
-            }),
-          );
-        }
-      } else {
-        await refreshLandMapLayers();
-      }
-    } catch (_) {
-      setImportLandError("Could not reach server.");
-    } finally {
-      if (importLandSave) importLandSave.disabled = false;
-    }
-  }
-
-  async function openEditLandModal(sourceId) {
-    const source = landSources.find((s) => s.id === sourceId);
-    if (!source || !editLandModal) return;
-    editLandSourceId = sourceId;
-    editLandPreviewPath = source.path;
-    setEditLandError("");
-    if (editLandSourcePath) editLandSourcePath.textContent = source.path;
-    if (editLandLabel) editLandLabel.value = source.label || source.id;
-    if (editLandSave) editLandSave.disabled = true;
-    try {
-      const resp = await fetch(landImportPreviewApiUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: source.path }),
-      });
-      const payload = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        const message = payload.error || `Preview failed (${resp.status})`;
-        setEditLandError(message);
-        window.alert(message);
-        return;
-      }
-      editLandPreviewLayers = Array.isArray(payload.layers)
-        ? payload.layers
-        : [];
-      const layerState = buildEditLandLayerState(source, editLandPreviewLayers);
-      editLandLayerStyles = layerState.styles;
-      editLandLayerConfigs = layerState.configs;
-      const allLayerNames = editLandPreviewLayers.map((layer) => layer.name);
-      const selected = initialEditLandSelected(source, editLandPreviewLayers);
-      const refreshEditPreview = () => {
-        void syncLandPreviewMap(
-          editLandPreviewMap,
-          editLandPreviewMapEl,
-          editLandLayerList,
-          editLandPreviewPath,
-          selected,
-          "edit",
-          editLandLayerStyles,
-          editLandLayerConfigs,
-          allLayerNames,
-          editLandPreviewLayers,
-        );
-      };
-      renderLandLayerChecklist(editLandLayerList, editLandPreviewLayers, {
-        selected,
-        layerStyles: editLandLayerStyles,
-        layerConfigs: editLandLayerConfigs,
-        gdbPath: editLandPreviewPath,
-        countEl: editLandListCount,
-        onToggle: (name, checked) => {
-          if (checked) selected.add(name);
-          else selected.delete(name);
-          if (editLandListCount) {
-            editLandListCount.textContent = `${selected.size} of ${editLandPreviewLayers.length} selected`;
-          }
-          if (editLandSave) editLandSave.disabled = selected.size === 0;
-          if (checked) {
-            void showLandPreviewLayer(
-              editLandPreviewMap,
-              editLandPreviewMapEl,
-              editLandLayerList,
-              editLandPreviewPath,
-              name,
-              "edit",
-              editLandLayerStyles,
-              editLandLayerConfigs,
-              editLandPreviewLayers,
-            );
-          } else {
-            hideLandPreviewLayer(
-              editLandPreviewMap,
-              "edit",
-              name,
-              editLandPreviewMapEl,
-              editLandLayerList,
-            );
-          }
-        },
-        onStyleChange: (name) => {
-          if (selected.has(name)) {
-            void updateLandPreviewLayerStyle(
-              editLandPreviewMap,
-              name,
-              "edit",
-              editLandLayerStyles,
-            );
-          }
-        },
-        onLabelFieldChange: (name) => {
-          if (!selected.has(name)) return;
-          void refreshLandPreviewLayerConfig(
-            editLandPreviewMap,
-            editLandPreviewPath,
-            name,
-            "edit",
-            editLandLayerStyles,
-            editLandLayerConfigs,
-          );
-        },
-      });
-      editLandPreviewMap = ensureLandPreviewMap(
-        editLandPreviewMapEl,
-        editLandPreviewMap,
-      );
-      if (editLandSave) editLandSave.disabled = selected.size === 0;
-      editLandPreviewRefresh = refreshEditPreview;
-      if (selected.size) refreshEditPreview();
-      await openWaDialog(editLandModal);
-    } catch (_) {
-      setEditLandError("Could not reach server.");
-      window.alert("Could not reach server.");
-    }
-  }
-
-  async function saveEditLandModal() {
-    if (!editLandSourceId) return;
-    const selected = collectSelectedLandLayers(editLandLayerList);
-    if (!selected.length) {
-      setEditLandError("Select at least one layer.");
-      return;
-    }
-    setEditLandError("");
-    if (editLandSave) editLandSave.disabled = true;
-    const prevAoiDigest = landAoiDigest;
-    const prevSource = landSources.find((s) => s.id === editLandSourceId);
-    const prevKeys = new Set(
-      (prevSource?.layers || []).map(
-        (layer) => normalizeRegisteredLayer(layer).key,
-      ),
-    );
-    try {
-      const body = {
-        layers: collectEditLandSavePayloads(
-          editLandLayerList,
-          editLandLayerStyles,
-          editLandLayerConfigs,
-          prevSource,
-          editLandPreviewLayers,
-        ),
-        label: editLandLabel?.value.trim() || editLandSourceId,
-      };
-      const resp = await fetch(landSourceApiUrl(editLandSourceId), {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const payload = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        setEditLandError(payload.error || `Save failed (${resp.status})`);
-        return;
-      }
-      if (editLandModal) editLandModal.open = false;
-      const updated =
-        payload.source || landSources.find((s) => s.id === editLandSourceId);
-      const newKeys = new Set(
-        (updated?.layers || []).map(
-          (layer) => normalizeRegisteredLayer(layer).key,
-        ),
-      );
-      for (const key of prevKeys) {
-        if (!newKeys.has(key)) {
-          removeLandMapLayer(editLandSourceId, key);
-          landVisible.delete(landLayerKey(editLandSourceId, key));
-          landLabelsVisible.delete(landLayerKey(editLandSourceId, key));
-          clearLandLayerGeoJsonCacheForLayer(editLandSourceId, key);
-        }
-      }
-      for (const key of newKeys) {
-        if (!prevKeys.has(key))
-          setLandLayerVisible(editLandSourceId, key, true);
-      }
-      await reloadLandSources({ refreshMap: false });
+      setLandSourceBatchVisible(source.id, true);
+      renderLandPanel();
       if (landAoiDigest !== prevAoiDigest) {
         clearAllLandLayerGeoJsonCache();
         await reloadClippedLandLayers();
       } else {
         await Promise.all(
-          [...newKeys].map((key) => refreshLandMapLayer(editLandSourceId, key)),
+          source.layers.map((rawLayer) => {
+            const spec = normalizeRegisteredLayer(rawLayer);
+            return refreshLandMapLayer(source.id, spec.key);
+          }),
         );
       }
-    } catch (_) {
-      setEditLandError("Could not reach server.");
-    } finally {
-      if (editLandSave) editLandSave.disabled = false;
+    } else {
+      await reloadLandSources();
     }
+    scheduleSaveMapState();
   }
+
+  async function handleLandSourceEditSaved(sourceId, layers, payload) {
+    const prevAoiDigest = landAoiDigest;
+    const prevSource = landSources.find((s) => s.id === sourceId);
+    const prevKeys = new Set(
+      (prevSource?.layers || []).map(
+        (layer) => normalizeRegisteredLayer(layer).key,
+      ),
+    );
+    const updated =
+      payload?.source || { id: sourceId, layers: layers || [] };
+    const newKeys = new Set(
+      (updated.layers || []).map(
+        (layer) => normalizeRegisteredLayer(layer).key,
+      ),
+    );
+    for (const key of prevKeys) {
+      if (!newKeys.has(key)) {
+        removeLandMapLayer(sourceId, key);
+        landVisible.delete(landLayerKey(sourceId, key));
+        landLabelsVisible.delete(landLayerKey(sourceId, key));
+        clearLandLayerGeoJsonCacheForLayer(sourceId, key);
+      }
+    }
+    for (const key of newKeys) {
+      if (!prevKeys.has(key)) setLandLayerVisible(sourceId, key, true);
+    }
+    await reloadLandSources({ refreshMap: false });
+    if (landAoiDigest !== prevAoiDigest) {
+      clearAllLandLayerGeoJsonCache();
+      await reloadClippedLandLayers();
+    } else {
+      await Promise.all(
+        [...newKeys].map((key) => refreshLandMapLayer(sourceId, key)),
+      );
+    }
+    scheduleSaveMapState();
+  }
+
+  const landSourceEditor = createLandSourceEditor({
+    elements: {
+      modal: landSourceModal,
+      errorEl: landSourceError,
+      fileSelect: landSourceFile,
+      fileField: landSourceFileField,
+      fileStatusEl: landSourceFileStatus,
+      pathEl: landSourcePath,
+      labelInput: landSourceLabel,
+      editorBody: landSourceEditorBody,
+      mapSection: landSourceMapSection,
+      previewMapEl: landSourcePreviewMapEl,
+      rulesListEl: landSourceRulesList,
+      rulesCountEl: landSourceRulesCount,
+      addRuleBtn: landSourceAddRule,
+      saveBtn: landSourceSave,
+    },
+    api: {
+      fetchDataFiles: async () => {
+        if (landDataGdbPaths.length) return landDataGdbPaths;
+        const resp = await fetch(landDataGdbsUrl());
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(payload.error || "Could not load file list");
+        landDataGdbPaths = Array.isArray(payload.paths) ? payload.paths : [];
+        return landDataGdbPaths;
+      },
+      fetchPreview: async (path) => {
+        const resp = await fetch(landImportPreviewApiUrl(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        });
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(payload.error || `Preview failed (${resp.status})`);
+        return payload;
+      },
+      fetchFields: async (path, layer) => {
+        const resp = await fetch(landFieldsApiUrl(path, layer));
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(payload.error || `Fields failed (${resp.status})`);
+        return payload;
+      },
+      fetchValues: async (path, layer, field) => {
+        const resp = await fetch(landValuesApiUrl(path, layer, field));
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(payload.error || `Values failed (${resp.status})`);
+        return payload;
+      },
+      fetchPreviewGeoJson: (path, layer, layerConfig) =>
+        fetchLandPreviewGeoJson(path, layer, layerConfig),
+      postImport: async (body) => {
+        const resp = await fetch(landImportApiUrl(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(payload.error || `Import failed (${resp.status})`);
+        await handleLandSourceImportSaved(payload);
+        return payload;
+      },
+      patchSource: async (sourceId, body) => {
+        const resp = await fetch(landSourceApiUrl(sourceId), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(payload.error || `Save failed (${resp.status})`);
+        await handleLandSourceEditSaved(sourceId, body.layers, payload);
+        return payload;
+      },
+    },
+    callbacks: {
+      getSource: (sourceId) => landSourceRecord(sourceId),
+      onImportOpen: () => {
+        setAddPlacementMode(null);
+        setEntityPanelOpen(true);
+        setEntityTab("land");
+      },
+      onSaved: async () => {
+        renderLandPanel();
+      },
+    },
+    utils: {
+      normalizeRegisteredLayer,
+      flatStyleFromLayerSpec,
+      basemapStyle,
+      currentBasemapKey: () => currentBasemapKey,
+      mainMapCenter: () => map.getCenter(),
+      mainMapZoom: () => map.getZoom(),
+      openWaDialog,
+    },
+  });
 
   function captureMapState() {
     const c = map.getCenter();
@@ -11558,7 +10292,7 @@ export function initProjectMap() {
   }
   if (entityPanelImportLand) {
     entityPanelImportLand.addEventListener("click", () => {
-      void openImportLandModal();
+      void landSourceEditor.openImport();
     });
   }
   if (entityPanelAddLandFolder) {
@@ -11586,95 +10320,6 @@ export function initProjectMap() {
     });
   }
   initLandPanelDragDrop();
-  if (importLandGdb) {
-    importLandGdb.addEventListener("change", () => {
-      void previewImportLandPath(importLandGdb.value);
-    });
-  }
-  if (importLandSave) {
-    importLandSave.addEventListener("click", () => {
-      void saveImportLandModal();
-    });
-  }
-  if (importLandSelectAll) {
-    importLandSelectAll.addEventListener("click", () => {
-      if (!importLandLayerList) return;
-      for (const input of importLandLayerList.querySelectorAll(
-        'input[type="checkbox"][data-layer-name]',
-      )) {
-        input.checked = true;
-        input.dispatchEvent(new Event("change"));
-      }
-    });
-  }
-  if (importLandClearAll) {
-    importLandClearAll.addEventListener("click", () => {
-      if (!importLandLayerList) return;
-      for (const input of importLandLayerList.querySelectorAll(
-        'input[type="checkbox"][data-layer-name]',
-      )) {
-        input.checked = false;
-        input.dispatchEvent(new Event("change"));
-      }
-    });
-  }
-  if (importLandModal) {
-    importLandModal.addEventListener("wa-after-show", () => {
-      if (importLandPreviewMap)
-        requestAnimationFrame(() => importLandPreviewMap.resize());
-    });
-    importLandModal.addEventListener("wa-after-hide", () => {
-      resetImportLandModal();
-    });
-  }
-  if (editLandSave) {
-    editLandSave.addEventListener("click", () => {
-      void saveEditLandModal();
-    });
-  }
-  if (editLandSelectAll) {
-    editLandSelectAll.addEventListener("click", () => {
-      if (!editLandLayerList) return;
-      for (const input of editLandLayerList.querySelectorAll(
-        'input[type="checkbox"][data-layer-name]',
-      )) {
-        input.checked = true;
-        input.dispatchEvent(new Event("change"));
-      }
-    });
-  }
-  if (editLandClearAll) {
-    editLandClearAll.addEventListener("click", () => {
-      if (!editLandLayerList) return;
-      for (const input of editLandLayerList.querySelectorAll(
-        'input[type="checkbox"][data-layer-name]',
-      )) {
-        input.checked = false;
-        input.dispatchEvent(new Event("change"));
-      }
-    });
-  }
-  if (editLandModal) {
-    editLandModal.addEventListener("wa-after-show", () => {
-      if (editLandPreviewMap) {
-        requestAnimationFrame(() => {
-          editLandPreviewMap.resize();
-          if (editLandPreviewRefresh) void editLandPreviewRefresh();
-        });
-      }
-    });
-    editLandModal.addEventListener("wa-after-hide", () => {
-      destroyEditLandPreviewMap();
-      editLandSourceId = "";
-      editLandPreviewRefresh = null;
-      editLandPreviewLayers = [];
-      editLandPreviewPath = "";
-      editLandLayerStyles = new Map();
-      editLandLayerConfigs = new Map();
-      if (editLandLayerList) editLandLayerList.innerHTML = "";
-      setEditLandError("");
-    });
-  }
   if (entityPanelBulkTag) {
     entityPanelBulkTag.addEventListener("click", () => {
       void openBulkTagModal();

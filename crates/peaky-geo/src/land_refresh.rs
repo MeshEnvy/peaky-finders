@@ -13,8 +13,11 @@ use serde::Serialize;
 use crate::land_boot::{land_boot_pool, land_boot_workers};
 use crate::land_cache::ensure_land_caches_for_preset;
 use crate::land_fetch::refresh_land_source_file;
+use crate::land_pipeline::{warm_land_pipeline_caches_for_preset, LandPipelineWarmCache};
+use crate::land_preview::{warm_land_preview_caches_for_preset, LandPreviewWarmCache};
 use crate::land_validate::validate_land_source_with_cache;
 use crate::land_validate_cache::LandValidateCache;
+use crate::eligible_land::aoi_land_digest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -57,6 +60,8 @@ pub struct LandRefreshRunSummary {
     pub skipped: Vec<String>,
     pub failed: Vec<LandRefreshFailure>,
     pub cache: Option<crate::land_cache::LandCacheWarmStats>,
+    pub preview: Option<crate::land_preview::LandPreviewWarmStats>,
+    pub pipeline: Option<crate::land_pipeline::LandPipelineWarmStats>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -542,13 +547,32 @@ pub fn prepare_land_at_boot(preset_path: &Path, verbose: bool) -> Result<LandRef
         summary.cache = Some(ensure_land_caches_for_preset(preset_path, verbose)?);
     }
 
+    let aoi_digest = aoi_land_digest(preset_path).unwrap_or_else(|_| "none".to_string());
+    let preview_warm_cache = LandPreviewWarmCache::open(project_dir, &aoi_digest)?;
+    summary.preview = Some(warm_land_preview_caches_for_preset(
+        preset_path,
+        &preview_warm_cache,
+    )?);
+
+    let pipeline_warm_cache = LandPipelineWarmCache::open(project_dir, &aoi_digest)?;
+    summary.pipeline = Some(warm_land_pipeline_caches_for_preset(
+        preset_path,
+        &pipeline_warm_cache,
+    )?);
+
     let cache = summary.cache.as_ref();
+    let preview = summary.preview.as_ref();
+    let pipeline = summary.pipeline.as_ref();
     tracing::info!(
         refreshed = summary.refreshed.len(),
         skipped = summary.skipped.len(),
         failed = summary.failed.len(),
         cache_exported = cache.map(|c| c.exported).unwrap_or(0),
         cache_copied = cache.map(|c| c.copied).unwrap_or(0),
+        preview_aoi_bases = preview.map(|p| p.aoi_bases).unwrap_or(0),
+        preview_field_values = preview.map(|p| p.field_values).unwrap_or(0),
+        pipeline_warmed = pipeline.map(|p| p.warmed).unwrap_or(0),
+        pipeline_skipped = pipeline.map(|p| p.skipped).unwrap_or(0),
         "land boot complete"
     );
 
