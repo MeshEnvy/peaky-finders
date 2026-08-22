@@ -6,7 +6,7 @@ Read [MEMORY.md](MEMORY.md) before substantive changes.
 
 ## Commit messages
 
-Commit subjects become GitHub Release notes. Write them for humans reading the changelog, not for yourself in the moment.
+Conventional Commits for git history. **Release notes are not derived from commits** — curate [`CHANGELOG.md`](CHANGELOG.md) instead. Policy: [`docs/change-management.md`](docs/change-management.md).
 
 ### Format
 
@@ -29,26 +29,15 @@ perf(seek): trim peak scan to hop disc
 chore(ci): add release workflow
 ```
 
-### Release-facing vs internal
-
-| Type | Release audience | Write the subject as… |
-|------|------------------|------------------------|
-| `feat` | Users | A new capability ("add land layer import") |
-| `fix` | Users | What was broken ("repair viewshed cache key") |
-| `perf` | Users | What got faster ("speed up eligible-land mask") |
-| `refactor`, `test`, `chore`, `build`, `ci`, `docs` | Maintainers | Fine-grained; may appear under **Other changes** |
-
-Avoid vague subjects (`wip`, `update stuff`, `fix bug`). Avoid past tense (`fixed`, `added`).
+Commits may stay granular. Group user-facing impact in **`## [Unreleased]`** (skill [`.cursor/skills/peaky-changelog/SKILL.md`](.cursor/skills/peaky-changelog/SKILL.md)).
 
 ### Pull requests
 
-Prefer PRs for non-trivial work. Set the **PR title** to the same conventional subject (squash merge keeps one clean line per PR in the release). GitHub credits the PR author in generated notes.
-
-Optional PR labels map to release sections (see [`.github/release.yml`](.github/release.yml)): `feature`, `fix`, `bug`, `performance`. Use label `skip-changelog` to omit noise from the release body.
+Prefer PRs for non-trivial work. Squash title = conventional subject for git history only.
 
 ### Agents
 
-On `/commit`, follow [`.cursor/skills/commit/SKILL.md`](.cursor/skills/commit/SKILL.md).
+On `/commit`, follow [`.cursor/skills/commit/SKILL.md`](.cursor/skills/commit/SKILL.md). On user-visible ships, update `CHANGELOG.md` in the same change set.
 
 ## Opportunistic refactor
 
@@ -111,4 +100,4 @@ Map UI lives under `assets/static/project-map/`. Production entry: `/static/proj
 
 ## Releases
 
-Publishing is tag-driven. Maintainer workflow: skill [`.cursor/skills/peaky-release/SKILL.md`](.cursor/skills/peaky-release/SKILL.md).
+Publishing is tag-driven. [`CHANGELOG.md`](CHANGELOG.md) is the GitHub Release body source. Maintainer workflow: skill [`.cursor/skills/peaky-release/SKILL.md`](.cursor/skills/peaky-release/SKILL.md). Policy: [`docs/change-management.md`](docs/change-management.md).

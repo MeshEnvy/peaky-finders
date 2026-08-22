@@ -1,5 +1,5 @@
 ---
-description: Conventional Commits required; subjects feed GitHub Release notes
+description: Conventional Commits for git history; CHANGELOG.md for release notes
 alwaysApply: true
 ---
 
@@ -10,7 +10,7 @@ When the user asks to commit (including `/commit`), read and follow [`.cursor/sk
 ## Policy
 
 - **Format:** `type(scope): description` — Conventional Commits, subject ≤ 50 chars, imperative, lowercase.
-- **Release notes:** subjects are the changelog. `feat` / `fix` / `perf` must read well for users.
-- **PRs:** title = squash commit subject; optional labels per [`.github/release.yml`](../../.github/release.yml).
+- **Release notes:** [`CHANGELOG.md`](../../CHANGELOG.md) under **`## [Unreleased]`**, not commit subjects. Skill: **`peaky-changelog`**.
+- **PRs:** squash title = commit subject for git history only.
 
 Do not duplicate the full workflow here.

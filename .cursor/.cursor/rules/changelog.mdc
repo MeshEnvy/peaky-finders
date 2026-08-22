@@ -1,0 +1,27 @@
+---
+description: Curated CHANGELOG.md for releases; commits are for git history only
+alwaysApply: true
+---
+
+# Changelog
+
+User-facing release notes live in [`CHANGELOG.md`](../../CHANGELOG.md). Policy: [`docs/change-management.md`](../../docs/change-management.md).
+
+## On user-visible change sets
+
+1. Add a bullet under **`## [Unreleased]`** in the same commit/PR as the code.
+2. Follow skill [`.cursor/skills/peaky-changelog/SKILL.md`](../skills/peaky-changelog/SKILL.md).
+3. Group related work into one bullet; do not mirror every commit.
+
+## Commits vs changelog
+
+| Commits | Changelog |
+|---------|-----------|
+| Conventional, granular, for bisect | Curated, grouped, for users |
+| Required format | Required on user-facing ships |
+
+Commit subjects do **not** feed GitHub Releases anymore.
+
+## Release cut
+
+Promote Unreleased → `## [vX.Y.Z] - YYYY-MM-DD`, run `./scripts/changelog.sh check`, then tag. Skill: **`peaky-release`**.

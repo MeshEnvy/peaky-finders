@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Parse `/commit` or a plain **commit** request the same way.
 
-Commit subjects feed **GitHub Release notes** (`generate_release_notes` + [`.github/release.yml`](../../.github/release.yml)). Write subjects a user could read in a changelog. See [CONTRIBUTING.md](../../CONTRIBUTING.md) § Commit messages.
+Commits are for **git history** (bisect, review). User-facing release text goes in [`CHANGELOG.md`](../../CHANGELOG.md) **`## [Unreleased]`** — skill **`peaky-changelog`**. See [CONTRIBUTING.md](../../CONTRIBUTING.md) § Commit messages.
 
 ## Scope
 
@@ -19,6 +19,7 @@ Commit subjects feed **GitHub Release notes** (`generate_release_notes` + [`.git
 - **Only commit changes from the current conversation** — leave unrelated WIP unstaged.
 - Stage paths explicitly (`git add <path>…`); never `git add .` or `git add -A` unless the user asks to commit everything.
 - Make **as many logical commits as reasonable** (separate by type, scope, or unrelated work).
+- User-visible ships → include `CHANGELOG.md` Unreleased bullet in the same commit when applicable.
 - Never commit `output/` meshes, build artifacts, or other generated files unless explicitly part of the task.
 - If a changed file is ambiguous (possible work from another session), **ask** before staging.
 
@@ -50,7 +51,7 @@ Commit subjects feed **GitHub Release notes** (`generate_release_notes` + [`.git
 
 - **type** (required): `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`, `perf`
 - **scope** (optional): `preset`, `serve`, `splatter`, `geo`, `finder`, `cli`, `assets`, …
-- **description**: imperative mood, lowercase, no trailing period; **user-facing** for `feat` / `fix` / `perf`
+- **description**: imperative mood, lowercase, no trailing period
 
 Examples:
 

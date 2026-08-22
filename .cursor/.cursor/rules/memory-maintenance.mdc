@@ -29,6 +29,7 @@ Update MEMORY.md in the **same commit/PR** when you change anything in the table
 | Dev contract | `cargo run -p peaky`, Dockerfile, env vars |
 | splatter / RF | Coverage outputs, viewshed pipeline |
 | Greenfield breaks | Removed APIs, renamed paths, invalidated caches |
+| Releases | `CHANGELOG.md` Unreleased bullets, version in `Cargo.toml`, `./scripts/changelog.sh` |
 
 ## Style
 

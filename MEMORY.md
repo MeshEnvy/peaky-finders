@@ -22,6 +22,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | Auto-finder | `peaky find path` — onX KML route → min-site RF chain; cache under `.peaky/cache/finder/`; **`--watch`** live MapLibre + SSE on localhost:9847 |
 | Ops | Public-land site tags + FO export live in ops: `peaky_home/scripts/tag_public_land.py`, `export_blm_fo_packet.py`. **Fleet-tool direction (ops, 08-14, speculative):** nevada YAML is the canonical site/fleet list; later creds + telemetry history may live next to the preset. **Do not** put passwords or keypairs in git-tracked `config.yaml`. → `ops/initiatives/peaky-fleet-management.md` |
 | Reference preset | `peaky-nevada/config.yaml` (standalone project repo) |
+| Releases | [`CHANGELOG.md`](CHANGELOG.md) + `./scripts/changelog.sh`; tag `v*` → GitHub Release binaries ([`docs/change-management.md`](docs/change-management.md)) |
 
 ## Workspace layout
 
