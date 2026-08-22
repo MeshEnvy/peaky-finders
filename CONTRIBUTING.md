@@ -99,6 +99,10 @@ Default image command: `peaky serve /project`. Override for `find path`, etc.
 | `splatter/` | RF viewshed engine |
 | `assets/` | Embedded static UI |
 
+### Frontend assets
+
+Map UI lives under `assets/static/project-map/`. Production entry: `/static/project-map/main.js` (ESM). Edit `init.js` for map behavior; `home-settings.js` and `viewshed-raster.js` for the settings modal. Assets are **compile-time embedded** via `rust-embed` — run `cargo build -p peaky` (or restart `cargo run`) after JS/CSS changes.
+
 ## Releases
 
 Publishing is tag-driven. Maintainer workflow: skill [`.cursor/skills/peaky-release/SKILL.md`](.cursor/skills/peaky-release/SKILL.md).

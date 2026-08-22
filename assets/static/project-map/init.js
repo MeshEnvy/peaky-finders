@@ -1,60 +1,7 @@
-import * as C from './constants.js'
-import { computeViewshedRaster } from './viewshed-raster.js'
-import {
-  compareHuman,
-  kmToDegreeDeltas,
-  lngLatBoundsFromPoints,
-  padMapBounds,
-  coordsUsableForMarker,
-  arrayBufferToBase64,
-  slugifyName,
-  previewSlugForName as previewSlugForNameFromGeo,
-  formatCoord,
-  parseCoordPairFromText,
-  coordsMatchPair,
-  coordSeparationM,
-  haversineMeters,
-  bearingDeg,
-  destinationPointLatLon,
-  buildSeekWedgeFeature,
-  buildSeekGoalLineFeature,
-  seekWedgeHalfAngleDeg,
-  isMapTiltedView as isMapTiltedViewGeo,
-  mapOverheadEquivalentBounds,
-  mapDataViewportBounds as mapDataViewportBoundsGeo,
-  mapSeekScanBounds as mapSeekScanBoundsGeo,
-  seekPeakBinSizeMForBounds,
-  seekScanBoundsForRequest as seekScanBoundsForRequestGeo,
-  clampRadiusKm,
-  clampViewshedQuality,
-} from './geo.js'
-import { normalizeLandSidebarInput } from './land/sidebar-model.js'
-import { installLand } from './land/index.js'
-import { installImportSites } from './import-sites.js'
-import { installBulkTag } from './entity-panel-bulk-tag.js'
-import { installSeek } from './seek.js'
-import { installMapState } from './map-state.js'
-import { installLinks } from './links.js'
-import { installViewsheds } from './viewsheds.js'
-import { installSitesEdit } from './sites-edit.js'
-import { installInteractions } from './interactions.js'
-import { installToolbar } from './toolbar.js'
-
-/** @typedef {import('./ctx.js').MapContext} MapContext */
-
-/**
- * @returns {{ reloadViewshedsForSimChange: () => void, setViewshedSimulation: (radiusKm: number, quality: number) => boolean }}
- */
+// Canonical map boot (ESM). Entry: main.js → initProjectMap().
 export function initProjectMap() {
   const config = window.PEAKY_PROJECT || {};
-  const projectSlug = config.slug
-  const simDefaults = config.simulation || {}
-  const radiusBounds = C.viewshedRadiusBounds(simDefaults)
-  const VIEWSHED_RADIUS_KM_MIN = radiusBounds.min
-  const VIEWSHED_RADIUS_KM_MAX = radiusBounds.max
-  const MAP_STATE_KEY = C.mapStateKey(projectSlug)
-  const SEEK_STATE_KEY = C.seekStateKey(projectSlug)
-  const SEEK_REDO_KEY = C.seekRedoKey(projectSlug)
+  const projectSlug = config.slug;
   let sites = config.sites || [];
   let landSources = Array.isArray(config.land?.sources)
     ? [...config.land.sources]
@@ -66,30 +13,240 @@ export function initProjectMap() {
     typeof config.land?.aoiDigest === "string" ? config.land.aoiDigest : "none";
   let landSidebar = normalizeLandSidebarInput(config.land?.sidebar);
 
-  function isMapTiltedView(mapInstance = map) {
-    return isMapTiltedViewGeo(mapInstance, mapReady)
-  }
-
-  function mapDataViewportBounds(mapInstance = map) {
-    return mapDataViewportBoundsGeo(mapInstance, mapReady)
-  }
-
-  function mapSeekScanBounds(mapInstance = map) {
-    return mapSeekScanBoundsGeo(mapInstance, mapReady)
-  }
-
-
+  const TERRAIN_SOURCE = "terrain-dem";
+  const TERRAIN_HILLSHADE = "terrain-hillshade";
+  const BASEMAP_REFERENCE_SOURCE = "basemap-reference";
+  const BASEMAP_REFERENCE_LAYER = "basemap-reference";
+  const SITES_SOURCE = "sites";
+  const SITES_CIRCLE = "sites-circle";
+  const SITES_LABELS = "sites-labels";
+  const SITES_SELECTED = "sites-selected";
+  const LINKS_SOURCE = "site-links";
+  const LINKS_LAYER = "site-links-line";
+  const LINKS_LABELS_LAYER = "site-links-label";
+  const DRAFT_LINKS_SOURCE = "draft-site-links";
+  const DRAFT_LINKS_LAYER = "draft-site-links-line";
+  const DRAFT_LINKS_LABELS_LAYER = "draft-site-links-label";
+  const EDIT_HISTORY_LINKS_SOURCE = "edit-history-links";
+  const EDIT_HISTORY_LINKS_LAYER = "edit-history-links-line";
+  const EDIT_HISTORY_LINKS_LABELS_LAYER = "edit-history-links-label";
+  const SEEK_CANDIDATES_SOURCE = "seek-candidates";
+  const SEEK_CANDIDATES_LAYER = "seek-candidates-circle";
+  const SEEK_CANDIDATES_LABELS_LAYER = "seek-candidates-label";
+  const SEEK_LINES_SOURCE = "seek-candidate-lines";
+  const SEEK_LINES_LAYER = "seek-candidate-lines-line";
+  const SEEK_LINES_LABELS_LAYER = "seek-candidate-lines-label";
+  const SEEK_PATH_SOURCE = "seek-path";
+  const SEEK_PATH_LAYER = "seek-path-line";
+  const SEEK_GOAL_LINE_SOURCE = "seek-goal-line";
+  const SEEK_GOAL_LINE_LAYER = "seek-goal-line";
+  const SEEK_WEDGE_SOURCE = "seek-goal-wedge";
+  const SEEK_WEDGE_FILL_LAYER = "seek-goal-wedge-fill";
+  const SEEK_WEDGE_OUTLINE_LAYER = "seek-goal-wedge-outline";
+  const SEEK_WEDGE_NEAR_DEG = 10;
+  const SEEK_WEDGE_FAR_DEG = 50;
+  const SEEK_ANCILLARY_LINES_SOURCE = "seek-ancillary-lines";
+  const SEEK_ANCILLARY_LINES_LAYER = "seek-ancillary-lines-line";
+  const SEEK_ANCILLARY_LINES_LABELS_LAYER = "seek-ancillary-lines-label";
+  const SEEK_ANCILLARY_LINKS_DEBOUNCE_MS = 450;
+  const SEEK_STATE_KEY = `peaky.seek.v1.${projectSlug}`;
+  const SEEK_REDO_KEY = `peaky.seek.redo.v1.${projectSlug}`;
+  const SEEK_PLAN_SAVE_MS = 400;
+  const SEEK_PEAK_BIN_MIN_M = 500;
+  const SEEK_PEAK_BIN_MAX_M = 1500;
+  const SEEK_PEAK_BINS_ACROSS_VIEWPORT = 20;
+  const SEEK_SCAN_PIN = "__seek_scan__";
+  const SEEK_PROGRESS_POLL_MS = 400;
+  const SEEK_GOAL_SAME_AS_START_M = 50;
+  const SEEK_HOP_VIEWSHED_PREFIX = "_seek_hop_";
+  const LAND_DEFAULT_FILL_COLOR = "#4a6cf7";
+  const LAND_DEFAULT_FILL_OPACITY = 0.48;
+  const LAND_DEFAULT_LINE_COLOR = "#1e40af";
+  const LAND_LINE_WIDTH = 1.25;
+  const LAND_PREVIEW_LINE_WIDTH = 2.5;
+  const VIEWSHED_OPACITY_DEFAULT = 0.75;
+  const DRAFT_VIEWSHED_SLUG = "_draft";
+  const VIEWSHED_PREVIEW_QUALITY = 1;
   const SKADI_DEM_SPACING_M = 30;
+  const VIEWSHED_QUALITY_MIN = 1;
+  const VIEWSHED_QUALITY_MAX = 5;
   const VIEWSHED_RASTER_MIN = 128;
   const VIEWSHED_RASTER_MAX = 4096;
+  const COORD_PREFETCH_MS = 350;
+  const DRAFT_MARKER_COLOR = "#fbbf24";
+  const simDefaults = config.simulation || {};
+  const VIEWSHED_RADIUS_KM_MIN = Number(simDefaults.radius_km_min) || 1;
+  const VIEWSHED_RADIUS_KM_MAX = Number(simDefaults.radius_km_max) || 100;
+  const PITCH_TERRAIN_ON = 12;
+  const PITCH_TERRAIN_OFF = 6;
+  const SITE_FIT_BUFFER_KM = 30;
+  const MAP_STATE_KEY = `peaky.map.v1.${projectSlug}`;
+  const MAP_STATE_SAVE_MS = 400;
+  const MAP_GLYPHS_URL =
     "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf";
+  const MAP_TEXT_FONT = ["Noto Sans Regular"];
+  const MAP_LABEL_FONT = ["Noto Sans Medium"];
 
+  function demNativeRasterDimension(radiusKm) {
+    const px = Math.ceil((radiusKm * 1000) / SKADI_DEM_SPACING_M);
+    return Math.max(VIEWSHED_RASTER_MIN, Math.min(VIEWSHED_RASTER_MAX, px));
+  }
 
+  function rasterUpgradeLadder(minPx, targetPx) {
+    const min = Math.max(VIEWSHED_RASTER_MIN, Math.min(VIEWSHED_RASTER_MAX, minPx));
+    const target = Math.max(min, Math.min(VIEWSHED_RASTER_MAX, targetPx));
+    const ladder = [min];
+    let cur = min;
+    while (cur < target) {
+      const next = Math.min(cur * 2, target);
+      if (next <= cur) break;
+      ladder.push(next);
+      cur = next;
+    }
+    return ladder;
+  }
 
+  function computeViewshedRaster(quality, radiusKm) {
+    const q = Math.max(
+      VIEWSHED_QUALITY_MIN,
+      Math.min(VIEWSHED_QUALITY_MAX, Math.round(Number(quality) || VIEWSHED_QUALITY_MIN)),
+    );
+    if (q === 1) return VIEWSHED_RASTER_MIN;
+    const full = demNativeRasterDimension(radiusKm);
+    if (q === 5 || full <= VIEWSHED_RASTER_MIN) return full;
+    const ladder = rasterUpgradeLadder(VIEWSHED_RASTER_MIN, full);
+    const idx = Math.round(((q - 1) / (VIEWSHED_QUALITY_MAX - 1)) * (ladder.length - 1));
+    return ladder[Math.min(idx, ladder.length - 1)];
+  }
 
+  function compareHuman(left, right) {
+    return String(left).localeCompare(String(right), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+  }
 
+  function syncOpacitySlider() {
+    const opacityEl = document.getElementById("viewshed-opacity");
+    if (opacityEl) opacityEl.value = String(Math.round(viewshedOpacity * 100));
+  }
 
+  function mapToolIcon(name, label) {
+    return `<wa-icon name="${name}" label="${label}"></wa-icon>`;
+  }
 
+  function installMapToolbar(navGroup) {
+    const basemapDropdown = document.createElement("wa-dropdown");
+    basemapDropdown.className = "map-toolbar-dropdown";
+    basemapDropdown.placement = "bottom-end";
+
+    const basemapBtn = document.createElement("button");
+    basemapBtn.type = "button";
+    basemapBtn.slot = "trigger";
+    basemapBtn.id = "map-tool-basemap";
+    basemapBtn.className = "map-toolbar-tool";
+    basemapBtn.setAttribute("aria-label", "Base map");
+    basemapBtn.title = "Base map";
+    basemapBtn.innerHTML = mapToolIcon("layer-group", "Base map");
+
+    for (const [key, label] of [
+      ["street", "Street"],
+      ["topo", "USGS Topo"],
+      ["skadi", "Skadi relief (analysis DEM)"],
+      ["satellite", "Satellite"],
+    ]) {
+      const item = document.createElement("wa-dropdown-item");
+      item.setAttribute("data-basemap", key);
+      item.value = key;
+      item.textContent = label;
+      basemapDropdown.appendChild(item);
+    }
+    basemapDropdown.insertBefore(basemapBtn, basemapDropdown.firstChild);
+
+    const seekBtn = document.createElement("button");
+    seekBtn.type = "button";
+    seekBtn.id = "map-tool-seek";
+    seekBtn.className = "map-toolbar-tool";
+    seekBtn.setAttribute("aria-pressed", "false");
+    seekBtn.setAttribute("aria-controls", "seek-panel");
+    seekBtn.setAttribute("aria-label", "Goal seek");
+    seekBtn.title = "Goal seek";
+    seekBtn.innerHTML = mapToolIcon("route", "Goal seek");
+
+    const sitesBtn = document.createElement("button");
+    sitesBtn.type = "button";
+    sitesBtn.id = "map-tool-sites";
+    sitesBtn.className = "map-toolbar-tool";
+    sitesBtn.setAttribute("aria-pressed", "false");
+    sitesBtn.setAttribute("aria-controls", "entity-panel");
+    sitesBtn.setAttribute("aria-label", "Sites");
+    sitesBtn.title = "Sites";
+    sitesBtn.innerHTML = mapToolIcon("tower-broadcast", "Sites");
+
+    const settingsBtn = document.createElement("button");
+    settingsBtn.type = "button";
+    settingsBtn.id = "home-settings-open";
+    settingsBtn.className = "map-toolbar-tool";
+    settingsBtn.setAttribute("aria-label", "Settings");
+    settingsBtn.title = "Settings";
+    settingsBtn.innerHTML = mapToolIcon("gear", "Settings");
+
+    const opacityDropdown = document.createElement("wa-dropdown");
+    opacityDropdown.className = "map-toolbar-dropdown";
+    opacityDropdown.placement = "bottom-end";
+
+    const opacityBtn = document.createElement("button");
+    opacityBtn.type = "button";
+    opacityBtn.slot = "trigger";
+    opacityBtn.id = "map-tool-opacity";
+    opacityBtn.className = "map-toolbar-tool";
+    opacityBtn.setAttribute("aria-label", "Viewshed opacity");
+    opacityBtn.title = "Viewshed opacity";
+    opacityBtn.innerHTML = mapToolIcon("droplet", "Viewshed opacity");
+
+    const opacityMenu = document.createElement("div");
+    opacityMenu.id = "map-opacity-menu";
+    opacityMenu.className = "map-opacity-menu";
+
+    const opacityLabel = document.createElement("label");
+    opacityLabel.className = "pf-label";
+    opacityLabel.htmlFor = "viewshed-opacity";
+    opacityLabel.textContent = "Viewshed opacity";
+
+    const opacitySlider = document.createElement("input");
+    opacitySlider.type = "range";
+    opacitySlider.id = "viewshed-opacity";
+    opacitySlider.className = "pf-range";
+    opacitySlider.min = "0";
+    opacitySlider.max = "100";
+    opacitySlider.value = String(Math.round(viewshedOpacity * 100));
+    opacitySlider.title = "Viewshed opacity";
+
+    opacityMenu.appendChild(opacityLabel);
+    opacityMenu.appendChild(opacitySlider);
+    opacityDropdown.appendChild(opacityBtn);
+    opacityDropdown.appendChild(opacityMenu);
+
+    for (const el of [
+      basemapDropdown,
+      seekBtn,
+      sitesBtn,
+      opacityDropdown,
+      settingsBtn,
+    ]) {
+      navGroup.appendChild(el);
+    }
+
+    syncOpacitySlider();
+
+    return {
+      mapBasemapMenu: basemapDropdown,
+      mapToolSeek: seekBtn,
+      mapToolSites: sitesBtn,
+      viewshedOpacityInput: opacitySlider,
+      mapToolSettings: settingsBtn,
+    };
+  }
 
   const BASEMAPS = {
     street: {
@@ -118,17 +275,41 @@ export function initProjectMap() {
     },
   };
 
+  function isValidSavedState(saved) {
+    if (!saved || !Array.isArray(saved.center) || saved.center.length !== 2)
+      return false;
+    if (!BASEMAPS[saved.basemap]) return false;
+    if (typeof saved.zoom !== "number") return false;
+    return true;
+  }
 
+  function loadMapState() {
+    try {
+      const raw = localStorage.getItem(MAP_STATE_KEY);
+      if (!raw) return null;
+      const saved = JSON.parse(raw);
+      return isValidSavedState(saved) ? saved : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
+  function persistMapState(state) {
+    try {
+      localStorage.setItem(MAP_STATE_KEY, JSON.stringify(state));
+    } catch (_) {
+      /* private mode or quota */
+    }
+  }
 
-  const savedMapState = scope.loadMapState();
+  const savedMapState = loadMapState();
   let currentBasemapKey =
     savedMapState && BASEMAPS[savedMapState.basemap]
       ? savedMapState.basemap
       : "street";
   let showSiteLinks = savedMapState?.showLinks ?? true;
   let viewshedOpacity =
-    savedMapState?.viewshedOpacity ?? C.VIEWSHED_OPACITY_DEFAULT;
+    savedMapState?.viewshedOpacity ?? VIEWSHED_OPACITY_DEFAULT;
   const defaultRadiusKm = Number(simDefaults.radius_km) || 60;
   const defaultViewshedQuality = Number(simDefaults.viewshed_quality) || 3;
   const defaultTxHeightM = Number(simDefaults.transmitter?.height_m) || 2;
@@ -139,8 +320,8 @@ export function initProjectMap() {
     Math.min(VIEWSHED_RADIUS_KM_MAX, viewshedRadiusKm),
   );
   viewshedQuality = Math.max(
-    C.VIEWSHED_QUALITY_MIN,
-    Math.min(C.VIEWSHED_QUALITY_MAX, Math.round(viewshedQuality)),
+    VIEWSHED_QUALITY_MIN,
+    Math.min(VIEWSHED_QUALITY_MAX, Math.round(viewshedQuality)),
   );
 
   function syncToolbarFromSaved(saved) {
@@ -149,14 +330,26 @@ export function initProjectMap() {
     if (typeof saved.showLinks === "boolean") showSiteLinks = saved.showLinks;
     if (typeof saved.viewshedOpacity === "number") {
       viewshedOpacity = saved.viewshedOpacity;
-      scope.syncOpacitySlider();
+      syncOpacitySlider();
     }
   }
 
+  function clampRadiusKm(km) {
+    return Math.max(
+      VIEWSHED_RADIUS_KM_MIN,
+      Math.min(VIEWSHED_RADIUS_KM_MAX, Number(km)),
+    );
+  }
 
+  function clampViewshedQuality(quality) {
+    return Math.max(
+      VIEWSHED_QUALITY_MIN,
+      Math.min(VIEWSHED_QUALITY_MAX, Math.round(Number(quality))),
+    );
+  }
 
   function setViewshedSimulation(radiusKm, quality) {
-    const nextRadius = clampRadiusKm(radiusKm, VIEWSHED_RADIUS_KM_MIN, VIEWSHED_RADIUS_KM_MAX);
+    const nextRadius = clampRadiusKm(radiusKm);
     const nextQuality = clampViewshedQuality(quality);
     const changed =
       nextRadius !== viewshedRadiusKm || nextQuality !== viewshedQuality;
@@ -171,14 +364,196 @@ export function initProjectMap() {
     return changed;
   }
 
-  scope.syncToolbarFromSaved(savedMapState);
+  syncToolbarFromSaved(savedMapState);
   setViewshedSimulation(defaultRadiusKm, defaultViewshedQuality);
 
+  function basemapStyle(key) {
+    const bm = BASEMAPS[key] || BASEMAPS.street;
+    const layers = [];
+    if (bm.analysisDem) {
+      layers.push({
+        id: "background",
+        type: "background",
+        paint: { "background-color": "#3d4654" },
+      });
+    }
+    layers.push({ id: "basemap", type: "raster", source: "basemap" });
+    return {
+      version: 8,
+      glyphs: MAP_GLYPHS_URL,
+      sources: {
+        basemap: {
+          type: "raster",
+          tiles: bm.tiles,
+          tileSize: 256,
+          maxzoom: bm.maxzoom,
+        },
+      },
+      layers,
+    };
+  }
 
+  function usesSkadiAnalysisDem() {
+    return Boolean(BASEMAPS[currentBasemapKey]?.analysisDem);
+  }
 
+  function terrainDemSourceSpec() {
+    if (usesSkadiAnalysisDem()) {
+      return {
+        type: "raster-dem",
+        tiles: ["/api/dem/terrarium/{z}/{x}/{y}"],
+        tileSize: 256,
+        maxzoom: 13,
+        encoding: "terrarium",
+      };
+    }
+    return {
+      type: "raster-dem",
+      tiles: [
+        "https://elevation-tiles-prod.s3.amazonaws.com/v2/terrarium/{z}/{x}/{y}.png",
+      ],
+      tileSize: 256,
+      maxzoom: 15,
+      encoding: "terrarium",
+    };
+  }
 
+  function kmToDegreeDeltas(latDeg, km) {
+    const m = km * 1000;
+    const latDelta = m / 111_320;
+    const lonDelta = m / (111_320 * Math.cos((latDeg * Math.PI) / 180));
+    return { latDelta, lonDelta };
+  }
 
   /** True when the map is pitched into 3D terrain view. */
+  function isMapTiltedView(mapInstance = map) {
+    return Boolean(
+      mapInstance && mapReady && mapInstance.getPitch() >= PITCH_TERRAIN_ON,
+    );
+  }
+
+  /** Geographic bounds for the same center/zoom as overhead view (ignores pitch/bearing). */
+  function mapOverheadEquivalentBounds(mapInstance) {
+    const center = mapInstance.getCenter();
+    const zoom = mapInstance.getZoom();
+    const canvas = mapInstance.getCanvas();
+    const w = Math.max(1, canvas.clientWidth);
+    const h = Math.max(1, canvas.clientHeight);
+    const latRad = (center.lat * Math.PI) / 180;
+    const worldSize = 512 * 2 ** zoom;
+    const metersPerPixel = (40_075_016.686 * Math.cos(latRad)) / worldSize;
+    const halfWidthM = (w / 2) * metersPerPixel;
+    const halfHeightM = (h / 2) * metersPerPixel;
+    const latDelta = halfHeightM / 111_320;
+    const lonDelta = halfWidthM / (111_320 * Math.max(1e-6, Math.cos(latRad)));
+    const west = center.lng - lonDelta;
+    const east = center.lng + lonDelta;
+    const south = center.lat - latDelta;
+    const north = center.lat + latDelta;
+    return {
+      getWest: () => west,
+      getEast: () => east,
+      getSouth: () => south,
+      getNorth: () => north,
+    };
+  }
+
+  /** Bounds used for warm priorities and sidebar "in view" when the map is flat. */
+  function mapDataViewportBounds(mapInstance = map) {
+    if (isMapTiltedView(mapInstance))
+      return mapOverheadEquivalentBounds(mapInstance);
+    return mapInstance.getBounds();
+  }
+
+  function lngLatBoundsFromPoints(points) {
+    let west = Infinity;
+    let east = -Infinity;
+    let south = Infinity;
+    let north = -Infinity;
+    for (const ll of points) {
+      if (!ll || !Number.isFinite(ll.lng) || !Number.isFinite(ll.lat)) continue;
+      if (Math.abs(ll.lat) > 90 || Math.abs(ll.lng) > 180) continue;
+      west = Math.min(west, ll.lng);
+      east = Math.max(east, ll.lng);
+      south = Math.min(south, ll.lat);
+      north = Math.max(north, ll.lat);
+    }
+    if (!Number.isFinite(west)) return null;
+    return {
+      getWest: () => west,
+      getEast: () => east,
+      getSouth: () => south,
+      getNorth: () => north,
+    };
+  }
+
+  function padMapBounds(bounds, minSpanM) {
+    if (!bounds || minSpanM <= 0) return bounds;
+    const centerLat = (bounds.getNorth() + bounds.getSouth()) / 2;
+    const latRad = (centerLat * Math.PI) / 180;
+    const minLatDelta = minSpanM / 111320;
+    const minLonDelta = minSpanM / (111320 * Math.max(1e-6, Math.cos(latRad)));
+    let west = bounds.getWest();
+    let east = bounds.getEast();
+    let south = bounds.getSouth();
+    let north = bounds.getNorth();
+    if (east - west < minLonDelta) {
+      const cx = (east + west) / 2;
+      west = cx - minLonDelta / 2;
+      east = cx + minLonDelta / 2;
+    }
+    if (north - south < minLatDelta) {
+      const cy = (north + south) / 2;
+      south = cy - minLatDelta / 2;
+      north = cy + minLatDelta / 2;
+    }
+    return {
+      getWest: () => west,
+      getEast: () => east,
+      getSouth: () => south,
+      getNorth: () => north,
+    };
+  }
+
+  /** Geographic bounds of terrain visible on screen (pitch-aware). */
+  function mapSeekScanBounds(mapInstance = map) {
+    if (!mapInstance || !mapReady) return mapDataViewportBounds(mapInstance);
+    if (!isMapTiltedView(mapInstance)) return mapInstance.getBounds();
+    const canvas = mapInstance.getCanvas();
+    const w = Math.max(1, canvas.clientWidth);
+    const h = Math.max(1, canvas.clientHeight);
+    const yMin = h * 0.1;
+    const cols = 7;
+    const rows = 7;
+    const points = [];
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const x = ((col + 0.5) / cols) * w;
+        const y = yMin + ((row + 0.5) / rows) * (h - yMin);
+        points.push(mapInstance.unproject([x, y]));
+      }
+    }
+    const bounds = lngLatBoundsFromPoints(points);
+    if (bounds) return bounds;
+    return mapInstance.getBounds();
+  }
+
+  function seekPeakBinSizeMForBounds(bounds) {
+    const centerLat = (bounds.getNorth() + bounds.getSouth()) / 2;
+    const lngSpan = Math.abs(bounds.getEast() - bounds.getWest());
+    const metersPerDegLng = 111320 * Math.cos((centerLat * Math.PI) / 180);
+    const viewportWidthM = lngSpan * metersPerDegLng;
+    const raw = viewportWidthM / SEEK_PEAK_BINS_ACROSS_VIEWPORT;
+    return Math.round(
+      Math.max(SEEK_PEAK_BIN_MIN_M, Math.min(SEEK_PEAK_BIN_MAX_M, raw)),
+    );
+  }
+
+  function seekScanBoundsForRequest() {
+    const raw = mapSeekScanBounds();
+    const binM = seekPeakBinSizeMForBounds(raw);
+    return padMapBounds(raw, Math.max(binM * 4, SEEK_PEAK_BIN_MIN_M * 2));
+  }
 
   function sitesGeoJson() {
     return {
@@ -223,7 +598,7 @@ export function initProjectMap() {
 
   const map = new maplibregl.Map({
     container: "map",
-    style: scope.basemapStyle(currentBasemapKey),
+    style: basemapStyle(currentBasemapKey),
     center: savedMapState ? savedMapState.center : [-98.35, 39.5],
     zoom: savedMapState ? savedMapState.zoom : 4,
     maxPitch: 85,
@@ -245,11 +620,11 @@ export function initProjectMap() {
       if (pinOverlayResizeRaf) cancelAnimationFrame(pinOverlayResizeRaf);
       pinOverlayResizeRaf = requestAnimationFrame(() => {
         pinOverlayResizeRaf = 0;
-        scope.updatePinOverlays();
+        updatePinOverlays();
       });
     }).observe(mapContainer);
   }
-  const mapToolbarRefs = scope.installMapToolbar(navControl._container);
+  const mapToolbarRefs = installMapToolbar(navControl._container);
   const mapBasemapMenu = mapToolbarRefs.mapBasemapMenu;
   const mapToolSeek = mapToolbarRefs.mapToolSeek;
   const mapToolSites = mapToolbarRefs.mapToolSites;
@@ -330,11 +705,56 @@ export function initProjectMap() {
   /** @type {Map<string, { raster?: number, target?: number, step?: number, total?: number, phase?: string }>} */
   const sitePinProgress = new Map();
 
+  function setSitePinProgress(slug, partial) {
+    if (!slug) return;
+    sitePinProgress.set(slug, { ...(sitePinProgress.get(slug) || {}), ...partial });
+  }
 
+  function clearSitePinProgress(slug) {
+    sitePinProgress.delete(slug);
+  }
 
+  function sitePinProgressLabel(slug) {
+    if (siteViewshedReady.has(slug) && !siteOutboundLinksReady.has(slug)) {
+      return "links…";
+    }
+    const p = sitePinProgress.get(slug);
+    if (p?.step > 0 && p?.total > 0 && p?.raster > 0) {
+      return `${p.step}/${p.total} · ${p.raster}px`;
+    }
+    if (p?.step > 0 && p?.total > 0) {
+      return `${p.step}/${p.total}`;
+    }
+    if (p?.raster > 0 && p?.target > 0) {
+      return `${p.raster}/${p.target}px`;
+    }
+    return "warm…";
+  }
 
+  function sitePinProgressFraction(slug) {
+    if (siteViewshedReady.has(slug) && siteOutboundLinksReady.has(slug)) return 1;
+    if (siteViewshedReady.has(slug) && !siteOutboundLinksReady.has(slug)) return 0.92;
+    const p = sitePinProgress.get(slug);
+    // Prefer ladder steps (equal weight) over raw px ratio.
+    if (p?.total > 0 && p.step > 0) {
+      return Math.min(0.88, 0.06 + 0.82 * (p.step / p.total));
+    }
+    if (p?.target > 0 && p.raster > 0) {
+      return Math.min(0.88, 0.06 + 0.82 * (p.raster / p.target));
+    }
+    return 0.06;
+  }
 
+  const PIN_LOAD_MARKER_OFFSET = [0, 10];
 
+  function coordsUsableForMarker(lon, lat) {
+    return (
+      Number.isFinite(lon) &&
+      Number.isFinite(lat) &&
+      Math.abs(lat) <= 90 &&
+      Math.abs(lon) <= 180
+    );
+  }
 
   function setMarkerLngLatSafe(marker, lon, lat) {
     if (!marker || !coordsUsableForMarker(lon, lat)) return false;
@@ -347,8 +767,56 @@ export function initProjectMap() {
     }
   }
 
+  function ensurePinLoadMarker(slug, kind = "overlay") {
+    let marker = pinLoadMarkers.get(slug);
+    if (!marker) {
+      const el = document.createElement("div");
+      el.setAttribute("data-slug", slug);
+      if (kind === "spinner") {
+        el.className = "pin-load-spinner";
+      } else {
+        el.className = "pin-load-overlay";
+        el.innerHTML =
+          '<div class="pin-load-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">' +
+          '<div class="pin-load-progress__fill"></div></div>' +
+          '<div class="pin-load-progress__label"></div>';
+      }
+      // Never addTo(map) until setLngLat — MapLibre smart_wrap crashes on undefined lng.
+      marker = new maplibregl.Marker({
+        element: el,
+        anchor: kind === "spinner" ? "center" : "top",
+        offset: kind === "spinner" ? [0, 0] : PIN_LOAD_MARKER_OFFSET,
+      });
+      pinLoadMarkers.set(slug, marker);
+    }
+    return marker;
+  }
 
+  function hidePinLoadMarker(slug) {
+    const marker = pinLoadMarkers.get(slug);
+    if (!marker) return;
+    marker.remove();
+    pinLoadMarkers.delete(slug);
+  }
 
+  function renderPinLoadOverlay(slug, lon, lat) {
+    if (!mapReady || !coordsUsableForMarker(lon, lat)) return;
+    const marker = ensurePinLoadMarker(slug);
+    if (!setMarkerLngLatSafe(marker, lon, lat)) return;
+    const el = marker.getElement();
+    const frac = sitePinProgressFraction(slug);
+    const pct = Math.round(frac * 100);
+    const fill = el.querySelector(".pin-load-progress__fill");
+    const label = el.querySelector(".pin-load-progress__label");
+    const bar = el.querySelector(".pin-load-progress");
+    if (fill) fill.style.width = `${pct}%`;
+    if (label) label.textContent = sitePinProgressLabel(slug);
+    if (bar) {
+      bar.setAttribute("aria-valuenow", String(pct));
+      bar.setAttribute("aria-label", `${slug} ${sitePinProgressLabel(slug)}`);
+    }
+    el.hidden = false;
+  }
   let draftPlacementLat = null;
   let draftPlacementLon = null;
   let editMode = false;
@@ -435,13 +903,6 @@ export function initProjectMap() {
     "site-panel-edit-copy-coords",
   );
   const sitePanelCopyCoords = document.getElementById("site-panel-copy-coords");
-  const sitePanelCopyPlss = document.getElementById("site-panel-copy-plss");
-  const sitePanelEditCopyPlss = document.getElementById(
-    "site-panel-edit-copy-plss",
-  );
-  const sitePanelCreateCopyPlss = document.getElementById(
-    "site-panel-create-copy-plss",
-  );
   const sitePanelEditCoordHistory = document.getElementById(
     "site-panel-edit-coord-history",
   );
@@ -562,6 +1023,10 @@ export function initProjectMap() {
   const importSitesPointList = document.getElementById(
     "import-sites-point-list",
   );
+  const landFolderModal = document.getElementById("land-folder-modal");
+  const landFolderName = document.getElementById("land-folder-name");
+  const landFolderError = document.getElementById("land-folder-error");
+  const landFolderSave = document.getElementById("land-folder-save");
   const bulkTagModal = document.getElementById("bulk-tag-modal");
   const bulkTagError = document.getElementById("bulk-tag-error");
   const bulkTagStatus = document.getElementById("bulk-tag-status");
@@ -630,6 +1095,17 @@ export function initProjectMap() {
       landVisible.set(key, !!visible);
     }
   }
+  const landSourceBatchVisible = new Map();
+  if (
+    savedMapState?.landSourceBatchVisible &&
+    typeof savedMapState.landSourceBatchVisible === "object"
+  ) {
+    for (const [key, visible] of Object.entries(
+      savedMapState.landSourceBatchVisible,
+    )) {
+      landSourceBatchVisible.set(key, !!visible);
+    }
+  }
   const landLabelsVisible = new Map();
   if (
     savedMapState?.landLabelsVisible &&
@@ -683,24 +1159,127 @@ export function initProjectMap() {
   const landPreviewLoadingCounts = new Map();
   const landPreviewLoadingOverlays = new Map();
 
+  function ensureTerrainSource() {
+    if (map.getSource(TERRAIN_SOURCE)) {
+      const spec = terrainDemSourceSpec();
+      const src = map.getSource(TERRAIN_SOURCE);
+      if (src && typeof src.setTiles === "function") {
+        src.setTiles(spec.tiles);
+      }
+      return;
+    }
+    map.addSource(TERRAIN_SOURCE, terrainDemSourceSpec());
+  }
 
+  function refreshTerrainSourceIfNeeded() {
+    if (!mapReady) return;
+    const wasActive = terrainActive;
+    if (wasActive) {
+      terrainActive = false;
+      hideTerrainOverlays();
+    }
+    if (wasActive) syncTerrainFromPitch();
+  }
 
+  function ensureHillshadeLayer() {
+    if (map.getLayer(TERRAIN_HILLSHADE)) return;
+    ensureTerrainSource();
+    map.addLayer(
+      {
+        id: TERRAIN_HILLSHADE,
+        type: "hillshade",
+        source: TERRAIN_SOURCE,
+        paint: {
+          "hillshade-exaggeration": 0.45,
+          "hillshade-shadow-color": "#3d4654",
+          "hillshade-highlight-color": "#f8fafc",
+          "hillshade-accent-color": "#94a3b8",
+        },
+      },
+      "basemap",
+    );
+  }
 
+  function removeHillshadeLayer() {
+    if (map.getLayer(TERRAIN_HILLSHADE)) map.removeLayer(TERRAIN_HILLSHADE);
+  }
 
+  function removeTerrainSource() {
+    removeHillshadeLayer();
+    if (map.getSource(TERRAIN_SOURCE)) map.removeSource(TERRAIN_SOURCE);
+  }
 
+  function linksApiUrl() {
+    return `/api/p/${projectSlug}/links`;
+  }
 
+  function siteLinksApiUrl(slug) {
+    return `/api/p/${projectSlug}/sites/${encodeURIComponent(slug)}/links`;
+  }
 
+  function linksWarmApiUrl() {
+    return `/api/p/${projectSlug}/links/warm`;
+  }
 
+  function warmPrioritiesApiUrl() {
+    return `/api/p/${projectSlug}/warm/priorities`;
+  }
 
   const WARM_PRIORITY_INTERACTIVE = 0;
   const WARM_PRIORITY_VIEWPORT = 10;
   const WARM_VIEWPORT_SLUG_CAP = 48;
   let warmPrioritiesTimer = null;
 
+  function warmPrioritySlugsInViewport() {
+    const slugs = [];
+    for (const site of sites) {
+      if (isSiteMapHidden(site.slug) || !isViewshedVisible(site.slug)) continue;
+      if (siteVisibleInMap(site)) slugs.push(site.slug);
+      if (slugs.length >= WARM_VIEWPORT_SLUG_CAP) break;
+    }
+    return slugs;
+  }
 
+  function bumpWarmPriorities(slugs, priority) {
+    const list = Array.isArray(slugs) ? slugs.filter(Boolean) : [];
+    if (!list.length) return;
+    fetch(warmPrioritiesApiUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slugs: list, priority }),
+    }).catch(() => {
+      /* background warm is best-effort */
+    });
+  }
 
+  function syncWarmPriorities() {
+    if (!mapReady) return;
+    const viewport = warmPrioritySlugsInViewport();
+    const slugs = new Set(viewport);
+    if (selectedSlug && isViewshedVisible(selectedSlug))
+      slugs.add(selectedSlug);
+    if (!slugs.size) return;
+    if (selectedSlug && slugs.has(selectedSlug)) {
+      void bumpWarmPriorities([selectedSlug], WARM_PRIORITY_INTERACTIVE);
+      slugs.delete(selectedSlug);
+    }
+    if (slugs.size) {
+      void bumpWarmPriorities([...slugs], WARM_PRIORITY_VIEWPORT);
+    }
+  }
 
+  function scheduleWarmPrioritiesSync() {
+    if (warmPrioritiesTimer) clearTimeout(warmPrioritiesTimer);
+    warmPrioritiesTimer = setTimeout(() => {
+      warmPrioritiesTimer = null;
+      syncWarmPriorities();
+    }, 300);
+  }
 
+  function onMapMoveEndForWarmPriorities() {
+    if (isMapTiltedView()) return;
+    scheduleWarmPrioritiesSync();
+  }
 
   const WA_DIALOG_WAIT_MS = 5000;
 
@@ -782,60 +1361,344 @@ export function initProjectMap() {
     }
   }
 
-
-
-  function previewSlugForName(name) {
-    return previewSlugForNameFromGeo(name, new Set([...siteBySlug.keys()]))
+  function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
   }
 
+  function slugifyName(name) {
+    let base = String(name || "")
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .replace(/[\s_]+/g, "-")
+      .toLowerCase()
+      .replace(/^-+|-+$/g, "");
+    return base || "site";
+  }
 
+  function previewSlugForName(name) {
+    const base = slugifyName(name);
+    const taken = new Set([...siteBySlug.keys()]);
+    if (!taken.has(base)) return base;
+    let n = 2;
+    while (taken.has(`${base}-${n}`)) n += 1;
+    return `${base}-${n}`;
+  }
 
+  function showPanelView() {
+    createMode = false;
+    editMode = false;
+    sitePanelView.hidden = false;
+    sitePanelCreate.hidden = true;
+    if (sitePanelEdit) sitePanelEdit.hidden = true;
+    syncEditMapShell();
+  }
 
+  function showPanelEdit() {
+    createMode = false;
+    editMode = true;
+    sitePanelView.hidden = true;
+    sitePanelCreate.hidden = true;
+    if (sitePanelEdit) sitePanelEdit.hidden = false;
+    syncEditMapShell();
+  }
 
+  function showPanelCreate() {
+    createMode = true;
+    editMode = false;
+    selectedSlug = null;
+    updateSelectedLayer();
+    sitePanelView.hidden = true;
+    sitePanelCreate.hidden = false;
+    if (sitePanelEdit) sitePanelEdit.hidden = true;
+    syncCreatePanelForKind();
+    syncEditMapShell();
+  }
 
+  function setCreateError(message) {
+    if (!message) {
+      sitePanelCreateError.hidden = true;
+      sitePanelCreateError.textContent = "";
+      return;
+    }
+    sitePanelCreateError.textContent = message;
+    sitePanelCreateError.hidden = false;
+  }
 
+  function removeDraftMarker() {
+    if (draftMarker) {
+      draftMarker.remove();
+      draftMarker = null;
+    }
+  }
 
+  function syncEditMapShell() {
+    if (mapShell) mapShell.classList.toggle("edit-mode", editMode);
+    syncMapCursor();
+  }
 
+  function syncMapCursor() {
+    if (!mapReady) return;
+    map.getCanvas().style.cursor =
+      addPlacementMode || editMode || seekGoalPlacementMode ? "crosshair" : "";
+  }
 
+  function clearAddPlacementMode() {
+    addPlacementMode = null;
+    if (entityPanelAddSite) {
+      entityPanelAddSite.classList.remove("active");
+    }
+    if (mapShell) {
+      mapShell.classList.remove("add-placement-mode", "add-site-mode");
+    }
+    syncMapCursor();
+  }
 
+  function setAddPlacementMode(kind) {
+    addPlacementMode = kind;
+    if (entityPanelAddSite) {
+      entityPanelAddSite.classList.toggle("active", kind === "site");
+    }
+    if (mapShell) {
+      mapShell.classList.toggle("add-placement-mode", !!kind);
+      mapShell.classList.toggle("add-site-mode", !!kind);
+    }
+    syncMapCursor();
+    if (!kind) cancelCreate();
+  }
 
+  function syncBasemapMenu() {
+    if (!mapBasemapMenu) return;
+    for (const btn of mapBasemapMenu.querySelectorAll("[data-basemap]")) {
+      const active = btn.getAttribute("data-basemap") === currentBasemapKey;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-current", active ? "true" : "false");
+    }
+  }
 
+  function syncEntityPanelToggles() {
+    if (mapToolSites) {
+      const active = entityPanelOpen;
+      mapToolSites.classList.toggle("active", active);
+      mapToolSites.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+  }
+
+  function syncMapViewport() {
+    if (mapShell) {
+      mapShell.classList.toggle(
+        "site-panel-open",
+        sitePanel && !sitePanel.hidden,
+      );
+    }
+  }
+
+  function setEntityPanelOpen(open) {
+    entityPanelOpen = !!open;
+    if (entityPanel) entityPanel.hidden = !entityPanelOpen;
+    if (mapShell)
+      mapShell.classList.toggle("entity-panel-open", entityPanelOpen);
+    if (entityPanelToggle) {
+      entityPanelToggle.setAttribute(
+        "aria-expanded",
+        entityPanelOpen ? "true" : "false",
+      );
+      entityPanelToggle.setAttribute(
+        "aria-label",
+        entityPanelOpen ? "Hide sites" : "Show sites",
+      );
+    }
+    syncEntityPanelToggles();
+    scheduleSaveMapState();
+    if (mapReady) {
+      map.resize();
+      requestAnimationFrame(() => updatePinOverlays());
+    }
+  }
 
   setEntityPanelOpen(entityPanelOpen);
 
+  function toggleEntityPanel() {
+    setEntityPanelOpen(!entityPanelOpen);
+  }
 
+  function combineLayerFilters(...parts) {
+    const filters = parts.filter(Boolean);
+    if (!filters.length) return true;
+    if (filters.length === 1) return filters[0];
+    return ["all", ...filters];
+  }
 
+  function editSiteLayerFilter() {
+    if (editMode && editSlug) {
+      return ["!=", ["get", "slug"], editSlug];
+    }
+    return null;
+  }
 
+  function siteVisibilityFilter() {
+    const hidden = [];
+    for (const site of sites) {
+      if (isSiteMapHidden(site.slug)) hidden.push(site.slug);
+    }
+    if (!hidden.length) return null;
+    return ["!", ["in", ["get", "slug"], ["literal", hidden]]];
+  }
 
+  function applySiteLayerFilters() {
+    if (!mapReady) return;
+    const filter = combineLayerFilters(
+      siteVisibilityFilter(),
+      editSiteLayerFilter(),
+    );
+    for (const layerId of [SITES_CIRCLE, SITES_LABELS]) {
+      if (!map.getLayer(layerId)) continue;
+      map.setFilter(layerId, filter);
+    }
+    updateSelectedLayer();
+  }
 
+  function editCoordsMovedFromSnapshot() {
+    const coords = readEditCoords();
+    if (!coords || !editSnapshot) return false;
+    return !coordsMatchEditSnapshot(coords.lat, coords.lon);
+  }
 
+  function linkFeatureTouchesSnapshotCoords(feature) {
+    if (!editMode || !editSnapshot || !editCoordsMovedFromSnapshot())
+      return false;
+    const geom = feature.geometry;
+    if (!geom || geom.type !== "LineString" || !Array.isArray(geom.coordinates))
+      return false;
+    const snapLon = Number(editSnapshot.lon);
+    const snapLat = Number(editSnapshot.lat);
+    for (const pt of geom.coordinates) {
+      if (!Array.isArray(pt) || pt.length < 2) continue;
+      const lon = Number(pt[0]);
+      const lat = Number(pt[1]);
+      if (Math.abs(lon - snapLon) < 1e-5 && Math.abs(lat - snapLat) < 1e-5)
+        return true;
+    }
+    return false;
+  }
 
+  function filterSiteLinksGeoJson(geojson) {
+    if (!geojson || !geojson.features) return geojson;
+    const chainPairs = seekSessionActive() ? seekChainSitePairKeys() : null;
+    const features = geojson.features.filter((feature) => {
+      const props = feature.properties || {};
+      if (isSiteMapHidden(props.a) || isSiteMapHidden(props.b)) return false;
+      if (editMode && editSlug) {
+        if (props.a === editSlug || props.b === editSlug) return false;
+      }
+      if (linkFeatureTouchesSnapshotCoords(feature)) return false;
+      if (chainPairs?.size) {
+        const key = canonicalSitePairKey(String(props.a), String(props.b));
+        if (chainPairs.has(key)) return false;
+      }
+      return true;
+    });
+    return { type: geojson.type || "FeatureCollection", features };
+  }
 
+  function refreshFilteredLinks() {
+    if (siteLinksPayload && siteLinksPayload.geojson) {
+      addSiteLinksLayer(siteLinksPayload.geojson);
+    }
+  }
 
+  function applyViewshedVisibilityForSite(slug) {
+    const layerId = viewshedLayerId(slug);
+    if (!map.getLayer(layerId)) return;
+    const visible = !isSiteMapHidden(slug) && isViewshedVisible(slug);
+    map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
+  }
 
   /** Warm a viewshed that was skipped while the site was hidden/filtered. */
+  function ensureViewshedLoadedForSlug(slug) {
+    if (isSiteMapHidden(slug) || !isViewshedVisible(slug)) return;
+    if (map.getLayer(viewshedLayerId(slug))) return;
+    if (sitePinSpinning(slug) || viewshedPendingEpoch.has(slug)) return;
+    if (slug === DRAFT_VIEWSHED_SLUG) {
+      const lat = draftPlacementLat ?? pendingCreateLat;
+      const lon = draftPlacementLon ?? pendingCreateLon;
+      if (lat != null && lon != null) void loadDraftViewshedAt(lat, lon);
+      return;
+    }
+    const site = siteBySlug.get(slug);
+    if (site) scheduleViewshedLoad(site);
+  }
 
+  function resetSiteProgress(slug) {
+    siteViewshedReady.delete(slug);
+    siteOutboundLinksReady.delete(slug);
+    clearSitePinProgress(slug);
+  }
 
+  function markSiteViewshedReady(slug) {
+    siteViewshedReady.add(slug);
+    if (siteOutboundLinksReady.has(slug)) {
+      clearSitePinProgress(slug);
+    } else {
+      setSitePinProgress(slug, { phase: "links" });
+    }
+    viewshedLoading.delete(slug);
+    viewshedPendingEpoch.delete(slug);
+    updatePinOverlays();
+    if (slug === selectedSlug) syncViewshedCheckbox();
+  }
 
+  function markSiteOutboundLinksReady(slug) {
+    siteOutboundLinksReady.add(slug);
+    if (siteViewshedReady.has(slug)) {
+      clearSitePinProgress(slug);
+    }
+    updatePinOverlays();
+  }
 
+  function sitePinSpinning(slug) {
+    if (isSiteMapHidden(slug)) return false;
+    if (!isViewshedVisible(slug)) return false;
+    return !siteViewshedReady.has(slug) || !siteOutboundLinksReady.has(slug);
+  }
 
   /** Parallel cache probe only — one warm-priority bump for the batch. */
   function probeViewshedCacheForSite(site) {
     removeViewshedLayer(site.slug);
-    scope.resetSiteProgress(site.slug);
+    resetSiteProgress(site.slug);
     viewshedLoading.add(site.slug);
     viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch);
-    void scope.tryLoadViewshedFromCache(site.slug);
+    void tryLoadViewshedFromCache(site.slug);
   }
 
+  function ensureViewshedsForNewlyVisibleSites() {
+    let queued = false;
+    for (const site of sites) {
+      if (isSiteMapHidden(site.slug) || !isViewshedVisible(site.slug)) continue;
+      if (map.getLayer(viewshedLayerId(site.slug))) continue;
+      if (sitePinSpinning(site.slug) || viewshedPendingEpoch.has(site.slug))
+        continue;
+      probeViewshedCacheForSite(site);
+      queued = true;
+    }
+    if (queued) {
+      updatePinOverlays();
+      syncWarmPriorities();
+    }
+  }
 
   function applyEntityVisibility() {
     applySiteLayerFilters();
     for (const site of sites) {
-      scope.applyViewshedVisibilityForSite(site.slug);
+      applyViewshedVisibilityForSite(site.slug);
     }
     refreshFilteredLinks();
-    if (seekState?.running) scope.refreshSeekAncillaryLinksDisplay();
+    if (seekState?.running) refreshSeekAncillaryLinksDisplay();
     renderEntityPanel();
   }
 
@@ -912,9 +1775,9 @@ export function initProjectMap() {
 
   function isEphemeralViewshedSlug(slug) {
     return (
-      slug === C.DRAFT_VIEWSHED_SLUG ||
+      slug === DRAFT_VIEWSHED_SLUG ||
       String(slug).startsWith("_edit_hist_") ||
-      String(slug).startsWith(C.SEEK_HOP_VIEWSHED_PREFIX)
+      String(slug).startsWith(SEEK_HOP_VIEWSHED_PREFIX)
     );
   }
 
@@ -923,7 +1786,7 @@ export function initProjectMap() {
     if (siteHidden.has(slug)) return true;
     const site = siteBySlug.get(slug);
     if (!site) return true;
-    if (scope.isSiteInSeekPlan(slug)) return false;
+    if (isSiteInSeekPlan(slug)) return false;
     if (tagFilterBypassSlugs.has(slug)) return false;
     return !sitePassesTagFilter(site);
   }
@@ -946,8 +1809,8 @@ export function initProjectMap() {
     else activeTagFilters.add(value);
     pruneActiveTagFilters();
     applyEntityVisibility();
-    scope.ensureViewshedsForNewlyVisibleSites();
-    scope.refreshSeekStartSelectIfOpen();
+    ensureViewshedsForNewlyVisibleSites();
+    refreshSeekStartSelectIfOpen();
     scheduleSaveMapState();
   }
 
@@ -957,7 +1820,7 @@ export function initProjectMap() {
     tagFilterMode = next;
     applyEntityVisibility();
     renderEntityPanel();
-    scope.refreshSeekStartSelectIfOpen();
+    refreshSeekStartSelectIfOpen();
     scheduleSaveMapState();
   }
 
@@ -970,12 +1833,12 @@ export function initProjectMap() {
   }
 
   function removeViewshedLayer(slug) {
-    const layerId = scope.viewshedLayerId(slug);
-    const sourceId = scope.viewshedSourceId(slug);
+    const layerId = viewshedLayerId(slug);
+    const sourceId = viewshedSourceId(slug);
     if (map.getLayer(layerId)) map.removeLayer(layerId);
     if (map.getSource(sourceId)) map.removeSource(sourceId);
     viewshedLoading.delete(slug);
-    scope.updatePinOverlays();
+    updatePinOverlays();
   }
 
   function siteDeleteUrl(slug) {
@@ -1003,6 +1866,20 @@ export function initProjectMap() {
     addSiteLinksLayer(siteLinksPayload.geojson);
   }
 
+  function unregisterSite(slug) {
+    const idx = sites.findIndex((s) => s.slug === slug);
+    if (idx >= 0) sites.splice(idx, 1);
+    siteBySlug.delete(slug);
+    siteHidden.delete(slug);
+    tagFilterBypassSlugs.delete(slug);
+    viewshedVisible.delete(slug);
+    removeViewshedLayer(slug);
+    purgeSiteLinksForSlug(slug);
+    if (selectedSlug === slug) deselectSite();
+    addSiteLayers();
+    renderEntityPanel();
+    refreshSeekStartSelectIfOpen();
+  }
 
   async function deleteSite(slug) {
     const site = siteBySlug.get(slug);
@@ -1113,7 +1990,7 @@ export function initProjectMap() {
         entityPanelSitesList.appendChild(buildSiteEntityRow(site));
       }
     }
-    if (bulkTagModalOpen) scope.syncBulkTagModalStatus();
+    if (bulkTagModalOpen) syncBulkTagModalStatus();
   }
 
   function onMapMoveEndForEntityPanel() {
@@ -1126,14 +2003,33 @@ export function initProjectMap() {
     entityPanelBulkTag.disabled = !mapReady || count === 0;
   }
 
+  function bulkTagListTags() {
+    const found = new Set([
+      ...allProjectTags(),
+      ...bulkTagInitialCounts.keys(),
+      ...bulkTagPending.keys(),
+    ]);
+    return [...found].sort((a, b) => a.localeCompare(b));
+  }
 
+  function bulkTagVisualState(tag) {
+    const total = bulkTagTargetSlugs.length;
+    if (!total) return "none";
+    const pending = bulkTagPending.get(tag);
+    if (pending === "all") return "full";
+    if (pending === "none") return "none";
+    const count = bulkTagInitialCounts.get(tag) || 0;
+    if (count === 0) return "none";
+    if (count >= total) return "full";
+    return "partial";
+  }
 
   function toggleBulkTag(tag) {
-    const state = scope.bulkTagVisualState(tag);
+    const state = bulkTagVisualState(tag);
     if (state === "full") bulkTagPending.set(tag, "none");
     else bulkTagPending.set(tag, "all");
-    scope.renderBulkTagTags();
-    scope.syncBulkTagSaveButton();
+    renderBulkTagTags();
+    syncBulkTagSaveButton();
   }
 
   function computeBulkTagOps() {
@@ -1148,6 +2044,10 @@ export function initProjectMap() {
     return { addTags, removeTags };
   }
 
+  function bulkTagHasChanges() {
+    const { addTags, removeTags } = computeBulkTagOps();
+    return addTags.length > 0 || removeTags.length > 0;
+  }
 
   function setBulkTagError(message) {
     if (!bulkTagError) return;
@@ -1175,7 +2075,7 @@ export function initProjectMap() {
       bulkTagPending = new Map();
     } else {
       for (const tag of bulkTagPending.keys()) {
-        if (!scope.bulkTagListTags().includes(tag)) bulkTagPending.delete(tag);
+        if (!bulkTagListTags().includes(tag)) bulkTagPending.delete(tag);
       }
     }
     const count = bulkTagTargetSlugs.length;
@@ -1189,16 +2089,16 @@ export function initProjectMap() {
         : count === 1
           ? `Apply to 1 site${scope}`
           : `Apply to ${count} sites${scope}`;
-    scope.renderBulkTagTags();
-    scope.syncBulkTagAddSuggestions();
-    scope.syncBulkTagSaveButton();
+    renderBulkTagTags();
+    syncBulkTagAddSuggestions();
+    syncBulkTagSaveButton();
   }
 
   function renderBulkTagTags() {
     if (!bulkTagTagsEl) return;
     bulkTagTagsEl.innerHTML = "";
-    for (const tag of scope.bulkTagListTags()) {
-      const state = scope.bulkTagVisualState(tag);
+    for (const tag of bulkTagListTags()) {
+      const state = bulkTagVisualState(tag);
       const chip = document.createElement("button");
       chip.type = "button";
       chip.className = "site-tag site-tag--toggle";
@@ -1222,7 +2122,7 @@ export function initProjectMap() {
         state === "full"
           ? `Remove ${tag} from all sites in view`
           : `Add ${tag} to all sites in view`;
-      chip.addEventListener("click", () => scope.toggleBulkTag(tag));
+      chip.addEventListener("click", () => toggleBulkTag(tag));
       bulkTagTagsEl.appendChild(chip);
     }
   }
@@ -1239,7 +2139,7 @@ export function initProjectMap() {
 
   function syncBulkTagSaveButton() {
     if (!bulkTagSave) return;
-    bulkTagSave.disabled = !bulkTagTargetSlugs.length || !scope.bulkTagHasChanges();
+    bulkTagSave.disabled = !bulkTagTargetSlugs.length || !bulkTagHasChanges();
   }
 
   function addBulkTagFromInput() {
@@ -1249,8 +2149,8 @@ export function initProjectMap() {
     if (!tag) return;
     if (!bulkTagInitialCounts.has(tag)) bulkTagInitialCounts.set(tag, 0);
     bulkTagPending.set(tag, "all");
-    scope.renderBulkTagTags();
-    scope.syncBulkTagSaveButton();
+    renderBulkTagTags();
+    syncBulkTagSaveButton();
   }
 
   function closeBulkTagModal() {
@@ -1260,22 +2160,22 @@ export function initProjectMap() {
 
   async function openBulkTagModal() {
     if (!bulkTagModal) return;
-    scope.setBulkTagError("");
+    setBulkTagError("");
     await customElements.whenDefined("wa-dialog");
-    scope.syncBulkTagModalStatus({ resetPending: true });
+    syncBulkTagModalStatus({ resetPending: true });
     bulkTagModal.open = true;
   }
 
   async function saveBulkTagModal() {
-    scope.addBulkTagFromInput();
-    scope.syncBulkTagModalStatus();
+    addBulkTagFromInput();
+    syncBulkTagModalStatus();
     const slugs = sidebarSiteSlugs();
-    const { addTags, removeTags } = scope.computeBulkTagOps();
+    const { addTags, removeTags } = computeBulkTagOps();
     if (!slugs.length || (!addTags.length && !removeTags.length)) {
-      scope.setBulkTagError("Change at least one tag.");
+      setBulkTagError("Change at least one tag.");
       return;
     }
-    scope.setBulkTagError("");
+    setBulkTagError("");
     if (bulkTagSave) bulkTagSave.disabled = true;
     try {
       const body = { slugs, add_tags: addTags, remove_tags: removeTags };
@@ -1286,22 +2186,22 @@ export function initProjectMap() {
       });
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        scope.setBulkTagError(payload.error || `Tag update failed (${resp.status})`);
+        setBulkTagError(payload.error || `Tag update failed (${resp.status})`);
         return;
       }
       const updated = Array.isArray(payload.sites) ? payload.sites : [];
-      scope.closeBulkTagModal();
+      closeBulkTagModal();
       for (const site of updated) {
-        scope.applySiteRowUpdate(site, { refreshGeoJson: false });
-        scope.syncTagFilterBypassForSite(site.slug);
+        applySiteRowUpdate(site, { refreshGeoJson: false });
+        syncTagFilterBypassForSite(site.slug);
       }
       applyEntityVisibility();
       renderTagFilters();
       scheduleSaveMapState();
     } catch (_) {
-      scope.setBulkTagError("Could not reach server.");
+      setBulkTagError("Could not reach server.");
     } finally {
-      scope.syncBulkTagSaveButton();
+      syncBulkTagSaveButton();
     }
   }
 
@@ -1325,7 +2225,7 @@ export function initProjectMap() {
     btn.setAttribute("aria-label", label);
     if (active !== undefined)
       btn.setAttribute("aria-pressed", active ? "true" : "false");
-    btn.innerHTML = scope.mapToolIcon(icon, label);
+    btn.innerHTML = mapToolIcon(icon, label);
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       onClick(ev);
@@ -1366,14 +2266,14 @@ export function initProjectMap() {
     controls.className = "entity-panel__controls";
 
     const siteVisible = !isSiteHidden(site.slug);
-    const eyeBtn = scope.makeEntityPanelActionBtn({
+    const eyeBtn = makeEntityPanelActionBtn({
       icon: siteVisible ? "eye" : "eye-slash",
       label: siteVisible ? "Hide site on map" : "Show site on map",
       active: siteVisible,
       onClick: () => setSiteHidden(site.slug, siteVisible),
     });
 
-    const vsBtn = scope.makeEntityPanelActionBtn({
+    const vsBtn = makeEntityPanelActionBtn({
       icon: "droplet",
       label: "Viewshed coverage",
       active: isViewshedVisible(site.slug),
@@ -1385,7 +2285,7 @@ export function initProjectMap() {
       },
     });
 
-    const delBtn = scope.makeEntityPanelActionBtn({
+    const delBtn = makeEntityPanelActionBtn({
       icon: "trash",
       label: "Delete site",
       danger: true,
@@ -1404,6 +2304,22 @@ export function initProjectMap() {
     return row;
   }
 
+  function registerSite(site) {
+    const row = normalizeSiteFromApi(site);
+    if (!row) return;
+    const ix = sites.findIndex((s) => s.slug === row.slug);
+    if (ix >= 0) sites[ix] = row;
+    else sites.push(row);
+    siteBySlug.set(row.slug, row);
+    ensureSiteVisibleAfterAdd(row);
+    addSiteLayers();
+    applyEntityVisibility();
+    renderEntityPanel();
+    updateSelectedLayer();
+    raiseSiteLayers();
+    refreshSeekStartSelectIfOpen();
+    scheduleSaveMapState();
+  }
 
   function syncCreateSlugPreview() {
     const name = sitePanelCreateName.value;
@@ -1471,30 +2387,51 @@ export function initProjectMap() {
       sitePanelCreateViewshedSection.hidden = false;
   }
 
+  function openCreatePanel(lat, lon) {
+    pendingCreateLat = lat;
+    pendingCreateLon = lon;
+    setCreateError("");
+    sitePanelCreateName.value = "";
+    sitePanelCreateCoords.textContent = `${formatCoord(lat)}, ${formatCoord(lon)}`;
+    resetCreatePanelTags();
+    syncCreateSlugPreview();
+    syncCreatePanelForKind();
+    resetCreatePrefetchUI();
+    removeDraftMarker();
+    const markerColor = DRAFT_MARKER_COLOR;
+    draftMarker = new maplibregl.Marker({ color: markerColor })
+      .setLngLat([lon, lat])
+      .addTo(map);
+    sitePanel.hidden = false;
+    syncMapViewport();
+    showPanelCreate();
+    viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
+    syncCreateViewshedCheckbox();
+    void loadDraftViewshedAt(lat, lon);
+    sitePanelCreateName.focus();
+  }
 
   function resetCreatePrefetchUI() {
-    setSectionVisible("site-panel-create-plss-section", false);
     setSectionVisible("site-panel-create-links-section", false);
-    document.getElementById("site-panel-create-plss").textContent = "";
     const linksEl = document.getElementById("site-panel-create-links");
     if (linksEl) linksEl.innerHTML = "";
     removeDraftLinksLayer();
   }
 
   function removeDraftLinksLayer() {
-    if (map.getLayer(C.DRAFT_LINKS_LABELS_LAYER))
-      map.removeLayer(C.DRAFT_LINKS_LABELS_LAYER);
-    if (map.getLayer(C.DRAFT_LINKS_LAYER)) map.removeLayer(C.DRAFT_LINKS_LAYER);
-    if (map.getSource(C.DRAFT_LINKS_SOURCE)) map.removeSource(C.DRAFT_LINKS_SOURCE);
+    if (map.getLayer(DRAFT_LINKS_LABELS_LAYER))
+      map.removeLayer(DRAFT_LINKS_LABELS_LAYER);
+    if (map.getLayer(DRAFT_LINKS_LAYER)) map.removeLayer(DRAFT_LINKS_LAYER);
+    if (map.getSource(DRAFT_LINKS_SOURCE)) map.removeSource(DRAFT_LINKS_SOURCE);
   }
 
   function removeEditHistoryLinksLayer() {
-    if (map.getLayer(C.EDIT_HISTORY_LINKS_LABELS_LAYER))
-      map.removeLayer(C.EDIT_HISTORY_LINKS_LABELS_LAYER);
-    if (map.getLayer(C.EDIT_HISTORY_LINKS_LAYER))
-      map.removeLayer(C.EDIT_HISTORY_LINKS_LAYER);
-    if (map.getSource(C.EDIT_HISTORY_LINKS_SOURCE))
-      map.removeSource(C.EDIT_HISTORY_LINKS_SOURCE);
+    if (map.getLayer(EDIT_HISTORY_LINKS_LABELS_LAYER))
+      map.removeLayer(EDIT_HISTORY_LINKS_LABELS_LAYER);
+    if (map.getLayer(EDIT_HISTORY_LINKS_LAYER))
+      map.removeLayer(EDIT_HISTORY_LINKS_LAYER);
+    if (map.getSource(EDIT_HISTORY_LINKS_SOURCE))
+      map.removeSource(EDIT_HISTORY_LINKS_SOURCE);
   }
 
   function linksGeoJsonWithLabels(geojson) {
@@ -1512,6 +2449,48 @@ export function initProjectMap() {
     };
   }
 
+  function seekSiteCandidateLabelsLayerSpec(layerId, sourceId) {
+    return {
+      id: layerId,
+      type: "symbol",
+      source: sourceId,
+      filter: [
+        "any",
+        [
+          "all",
+          ["boolean", ["get", "is_site"], false],
+          ["has", "site_name"],
+          ["!=", ["get", "site_name"], ""],
+        ],
+        [
+          "all",
+          ["!", ["boolean", ["get", "is_goal"], false]],
+          ["!", ["boolean", ["get", "is_site"], false]],
+          ["has", "elev_m"],
+        ],
+      ],
+      layout: {
+        "text-field": [
+          "case",
+          ["boolean", ["get", "is_site"], false],
+          ["get", "site_name"],
+          ["concat", ["to-string", ["round", ["get", "elev_m"]]], "m"],
+        ],
+        "text-size": 12,
+        "text-offset": [0, -1.4],
+        "text-anchor": "bottom",
+        "text-font": MAP_LABEL_FONT,
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+        visibility: "visible",
+      },
+      paint: {
+        "text-color": "#e8eaed",
+        "text-halo-color": "#1a1a1a",
+        "text-halo-width": 2,
+      },
+    };
+  }
 
   function createSeekSiteHopMarkerElement(siteName) {
     const wrap = document.createElement("div");
@@ -1538,7 +2517,7 @@ export function initProjectMap() {
         "symbol-placement": "line-center",
         "text-field": ["get", "label"],
         "text-size": 11,
-        "text-font": C.MAP_TEXT_FONT,
+        "text-font": MAP_TEXT_FONT,
         "text-allow-overlap": true,
         "text-ignore-placement": true,
         visibility,
@@ -1562,10 +2541,10 @@ export function initProjectMap() {
       return;
     }
     const labeled = linksGeoJsonWithLabels(geojson);
-    if (map.getSource(C.DRAFT_LINKS_SOURCE)) {
-      map.getSource(C.DRAFT_LINKS_SOURCE).setData(labeled);
-      if (map.getLayer(C.DRAFT_LINKS_LAYER)) {
-        map.setPaintProperty(C.DRAFT_LINKS_LAYER, "line-color", [
+    if (map.getSource(DRAFT_LINKS_SOURCE)) {
+      map.getSource(DRAFT_LINKS_SOURCE).setData(labeled);
+      if (map.getLayer(DRAFT_LINKS_LAYER)) {
+        map.setPaintProperty(DRAFT_LINKS_LAYER, "line-color", [
           "case",
           ["get", "manual"],
           "#0d9488",
@@ -1575,12 +2554,12 @@ export function initProjectMap() {
       raiseSiteLayers();
       return;
     }
-    map.addSource(C.DRAFT_LINKS_SOURCE, { type: "geojson", data: labeled });
+    map.addSource(DRAFT_LINKS_SOURCE, { type: "geojson", data: labeled });
     map.addLayer(
       {
-        id: C.DRAFT_LINKS_LAYER,
+        id: DRAFT_LINKS_LAYER,
         type: "line",
-        source: C.DRAFT_LINKS_SOURCE,
+        source: DRAFT_LINKS_SOURCE,
         paint: {
           "line-color": ["case", ["get", "manual"], "#0d9488", "#4a6cf7"],
           "line-width": 2.5,
@@ -1592,21 +2571,21 @@ export function initProjectMap() {
           visibility: "visible",
         },
       },
-      C.SITES_CIRCLE,
+      SITES_CIRCLE,
     );
     map.addLayer(
       linkLabelsLayerSpec(
-        C.DRAFT_LINKS_LABELS_LAYER,
-        C.DRAFT_LINKS_SOURCE,
+        DRAFT_LINKS_LABELS_LAYER,
+        DRAFT_LINKS_SOURCE,
         "visible",
       ),
-      C.SITES_CIRCLE,
+      SITES_CIRCLE,
     );
     raiseSiteLayers();
   }
 
   function editHistoryLinksLineColor() {
-    return C.DRAFT_MARKER_COLOR;
+    return DRAFT_MARKER_COLOR;
   }
 
   function addEditHistoryLinksLayer(geojson) {
@@ -1621,23 +2600,23 @@ export function initProjectMap() {
     }
     const labeled = linksGeoJsonWithLabels(geojson);
     const lineColor = editHistoryLinksLineColor();
-    if (map.getSource(C.EDIT_HISTORY_LINKS_SOURCE)) {
-      map.getSource(C.EDIT_HISTORY_LINKS_SOURCE).setData(labeled);
-      if (map.getLayer(C.EDIT_HISTORY_LINKS_LAYER)) {
-        map.setPaintProperty(C.EDIT_HISTORY_LINKS_LAYER, "line-color", lineColor);
+    if (map.getSource(EDIT_HISTORY_LINKS_SOURCE)) {
+      map.getSource(EDIT_HISTORY_LINKS_SOURCE).setData(labeled);
+      if (map.getLayer(EDIT_HISTORY_LINKS_LAYER)) {
+        map.setPaintProperty(EDIT_HISTORY_LINKS_LAYER, "line-color", lineColor);
       }
       raiseSiteLayers();
       return;
     }
-    map.addSource(C.EDIT_HISTORY_LINKS_SOURCE, {
+    map.addSource(EDIT_HISTORY_LINKS_SOURCE, {
       type: "geojson",
       data: labeled,
     });
     map.addLayer(
       {
-        id: C.EDIT_HISTORY_LINKS_LAYER,
+        id: EDIT_HISTORY_LINKS_LAYER,
         type: "line",
-        source: C.EDIT_HISTORY_LINKS_SOURCE,
+        source: EDIT_HISTORY_LINKS_SOURCE,
         paint: {
           "line-color": lineColor,
           "line-width": 2,
@@ -1650,15 +2629,15 @@ export function initProjectMap() {
           visibility: "visible",
         },
       },
-      C.SITES_CIRCLE,
+      SITES_CIRCLE,
     );
     map.addLayer(
       linkLabelsLayerSpec(
-        C.EDIT_HISTORY_LINKS_LABELS_LAYER,
-        C.EDIT_HISTORY_LINKS_SOURCE,
+        EDIT_HISTORY_LINKS_LABELS_LAYER,
+        EDIT_HISTORY_LINKS_SOURCE,
         "visible",
       ),
-      C.SITES_CIRCLE,
+      SITES_CIRCLE,
     );
     raiseSiteLayers();
   }
@@ -1772,9 +2751,6 @@ export function initProjectMap() {
   }
 
   function renderCreatePrefetch(payload) {
-    const plss = payload.plss || "";
-    setSectionVisible("site-panel-create-plss-section", !!plss);
-    document.getElementById("site-panel-create-plss").textContent = plss || "—";
     const links = Array.isArray(payload.links) ? payload.links : [];
     const linked = links.filter((row) => row.linked !== false);
     setSectionVisible("site-panel-create-links-section", linked.length > 0);
@@ -1793,6 +2769,28 @@ export function initProjectMap() {
     else removeDraftLinksLayer();
   }
 
+  function cancelCreate() {
+    if (!createMode && !draftMarker) return;
+    createMode = false;
+    pendingCreateLat = null;
+    pendingCreateLon = null;
+    removeDraftMarker();
+    removeDraftViewshed();
+    resetCreatePrefetchUI();
+    resetCreatePanelTags();
+    setCreateError("");
+    if (selectedSlug) {
+      sitePanel.hidden = false;
+      syncMapViewport();
+      showPanelView();
+      renderPanel(siteBySlug.get(selectedSlug));
+    } else {
+      sitePanel.hidden = true;
+      syncMapViewport();
+      sitePanelView.hidden = false;
+      sitePanelCreate.hidden = true;
+    }
+  }
 
   async function saveNewPlacement() {
     const name = sitePanelCreateName.value.trim();
@@ -1831,7 +2829,7 @@ export function initProjectMap() {
         return;
       }
       removeDraftMarker();
-      scope.removeDraftViewshed();
+      removeDraftViewshed();
       pendingCreateLat = null;
       pendingCreateLon = null;
       createMode = false;
@@ -1844,15 +2842,47 @@ export function initProjectMap() {
     }
   }
 
+  function landApiUrl() {
+    return `/api/p/${projectSlug}/land`;
+  }
 
+  function landSidebarApiUrl() {
+    return `/api/p/${projectSlug}/land/sidebar`;
+  }
 
+  function landDataGdbsUrl() {
+    return `/api/p/${projectSlug}/land/data-gdbs`;
+  }
 
+  function landImportPreviewApiUrl() {
+    return `/api/p/${projectSlug}/land/import/preview`;
+  }
 
+  function landImportApiUrl() {
+    return `/api/p/${projectSlug}/land/import`;
+  }
 
+  function landSourceApiUrl(sourceId) {
+    return `/api/p/${projectSlug}/land/sources/${encodeURIComponent(sourceId)}`;
+  }
 
+  function landLayerGeoJsonUrl(sourceId, layer) {
+    return `/api/p/${projectSlug}/land/sources/${encodeURIComponent(sourceId)}/layers/${encodeURIComponent(layer)}/geojson`;
+  }
 
+  function landPreviewGeoJsonUrl(path, layer) {
+    const params = new URLSearchParams({ path, layer });
+    return `/api/p/${projectSlug}/land/preview/geojson?${params}`;
+  }
 
+  function landPreviewCacheKey(path, layer) {
+    return `preview|${path}|${layer}`;
+  }
 
+  function landLayerCacheKey(sourceId, layer, digest) {
+    const d = digest ? String(digest) : "";
+    return d ? `layer|${sourceId}|${layer}|${d}` : `layer|${sourceId}|${layer}`;
+  }
 
   function clearLandLayerGeoJsonCacheForLayer(sourceId, layerKey) {
     const prefix = `layer|${sourceId}|${layerKey}`;
@@ -1886,8 +2916,19 @@ export function initProjectMap() {
     return promise;
   }
 
+  function landFieldsApiUrl(path, layer) {
+    const params = new URLSearchParams({ path, layer });
+    return `/api/p/${projectSlug}/land/import/preview/fields?${params}`;
+  }
 
+  function landValuesApiUrl(path, layer, field) {
+    const params = new URLSearchParams({ path, layer, field });
+    return `/api/p/${projectSlug}/land/import/preview/values?${params}`;
+  }
 
+  function landPreviewGeoJsonPostUrl() {
+    return `/api/p/${projectSlug}/land/preview/geojson`;
+  }
 
   function defaultLandLayerConfig() {
     return {
@@ -1903,7 +2944,7 @@ export function initProjectMap() {
 
   function ensureLandLayerConfig(configs, layerName) {
     if (!configs.has(layerName))
-      configs.set(layerName, scope.defaultLandLayerConfig());
+      configs.set(layerName, defaultLandLayerConfig());
     return configs.get(layerName);
   }
 
@@ -1912,7 +2953,7 @@ export function initProjectMap() {
       const name = layer;
       return {
         name,
-        key: scope.landLayerSlug(name),
+        key: landLayerSlug(name),
         role: null,
         digest: null,
         style: null,
@@ -1925,7 +2966,7 @@ export function initProjectMap() {
     const name = layer.name;
     return {
       name,
-      key: layer.key || scope.landLayerSlug(name),
+      key: layer.key || landLayerSlug(name),
       role: layer.role || null,
       digest: layer.digest || null,
       style: layer.style || null,
@@ -1936,7 +2977,43 @@ export function initProjectMap() {
     };
   }
 
+  function landLayerShortLabel(spec) {
+    if (spec.role === "include") return "Public land";
+    if (spec.role === "exclude") return friendlyLandLayerName(spec.name);
+    for (const filt of spec.include || []) {
+      const values = (filt.values || []).filter(Boolean);
+      if (values.length === 1) {
+        if (filt.field === "ABBR") return values[0];
+        return filt.field ? `${filt.field}: ${values[0]}` : values[0];
+      }
+      if (values.length > 1) return values.join(", ");
+    }
+    if (spec.id) return String(spec.id).toUpperCase();
+    return friendlyLandLayerName(spec.name);
+  }
 
+  function landLayerDisplayName(spec) {
+    const parts = [spec.name];
+    const includeValues = (spec.include || [])
+      .flatMap((filt) => (Array.isArray(filt.values) ? filt.values : []))
+      .filter(Boolean);
+    if (includeValues.length) parts.push(`(${includeValues.join(", ")})`);
+    const excludeValues = (spec.exclude || [])
+      .flatMap((filt) => (Array.isArray(filt.values) ? filt.values : []))
+      .filter(Boolean);
+    if (excludeValues.length) parts.push(`(−${excludeValues.join(", ")})`);
+    return parts.join(" ");
+  }
+
+  function landPathBasename(path) {
+    let raw = path;
+    if (Array.isArray(raw)) raw = raw.join("/");
+    raw = String(raw ?? "")
+      .trim()
+      .replace(/^data\//, "");
+    const base = raw.split("/").pop() || raw;
+    return base.replace(/\.gdb$/i, "");
+  }
 
   function humanizeLandText(text) {
     return (
@@ -1950,19 +3027,71 @@ export function initProjectMap() {
   }
 
   function friendlyLandLayerName(name) {
-    return scope.humanizeLandText(String(name).replace(/^BLM[_\s-]+/i, ""));
+    return humanizeLandText(String(name).replace(/^BLM[_\s-]+/i, ""));
   }
 
   function friendlyLandSourceTitle(source) {
     const explicit = String(source.label || "").trim();
     if (explicit && explicit !== source.id) return explicit;
-    return scope.humanizeLandText(scope.landPathBasename(source.path));
+    return humanizeLandText(landPathBasename(source.path));
   }
 
+  function landSourceDisplayTitles(sources) {
+    const titles = new Map();
+    const groups = new Map();
+    for (const source of sources) {
+      const title = friendlyLandSourceTitle(source);
+      titles.set(source.id, title);
+      if (!groups.has(title)) groups.set(title, []);
+      groups.get(title).push(source.id);
+    }
+    for (const ids of groups.values()) {
+      if (ids.length <= 1) continue;
+      ids.forEach((id, idx) => {
+        const suffix = id.match(/-(\d+)$/);
+        const base = titles.get(id);
+        titles.set(
+          id,
+          suffix ? `${base} (${suffix[1]})` : `${base} (${idx + 1})`,
+        );
+      });
+    }
+    return titles;
+  }
 
+  function landLayerRoleBadgeSpec(role) {
+    const normalized = String(role || "")
+      .trim()
+      .toLowerCase();
+    if (normalized === "aoi") {
+      return {
+        label: "AOI",
+        className:
+          "entity-panel__land-role-badge entity-panel__land-role-badge--aoi",
+        title: "Area of interest — unioned clip boundary for other layers",
+      };
+    }
+    if (normalized === "include") {
+      return {
+        label: "Include",
+        className:
+          "entity-panel__land-role-badge entity-panel__land-role-badge--include",
+        title: "Eligible land for goal seek (include − exclude)",
+      };
+    }
+    if (normalized === "exclude") {
+      return {
+        label: "Exclude",
+        className:
+          "entity-panel__land-role-badge entity-panel__land-role-badge--exclude",
+        title: "Subtracted from include layers for goal seek",
+      };
+    }
+    return null;
+  }
 
   function appendLandLayerRoleBadge(parent, role) {
-    const spec = scope.landLayerRoleBadgeSpec(role);
+    const spec = landLayerRoleBadgeSpec(role);
     if (!spec) return null;
     const badge = document.createElement("span");
     badge.className = spec.className;
@@ -1986,37 +3115,39 @@ export function initProjectMap() {
     spinner.hidden = true;
     spinnerSlot.appendChild(spinner);
     controls.appendChild(spinnerSlot);
-    controls.appendChild(scope.buildLandLayerEyeBtn(sourceId, layerKey));
+    controls.appendChild(buildLandLayerEyeBtn(sourceId, layerKey));
     if (labelField) {
-      controls.appendChild(scope.buildLandLayerLabelBtn(sourceId, layerKey));
+      controls.appendChild(buildLandLayerLabelBtn(sourceId, layerKey));
     }
     return controls;
   }
 
-  function appendLandLayerMeta(parent, spec) {
+  function appendLandLayerMeta(parent, spec, { showFilters = true, showLegend = true } = {}) {
     const meta = document.createElement("div");
     meta.className = "entity-panel__meta";
     let hasMeta = false;
 
-    for (const filt of spec.include || []) {
-      const field = filt.field || "";
-      for (const value of filt.values || []) {
-        if (!value) continue;
-        const pill = document.createElement("span");
-        pill.className =
-          "entity-panel__meta-tag entity-panel__meta-tag--active";
-        pill.textContent = field ? `${field}: ${value}` : String(value);
-        meta.appendChild(pill);
-        hasMeta = true;
+    if (showFilters) {
+      for (const filt of spec.include || []) {
+        const field = filt.field || "";
+        for (const value of filt.values || []) {
+          if (!value) continue;
+          const pill = document.createElement("span");
+          pill.className =
+            "entity-panel__meta-tag entity-panel__meta-tag--active";
+          pill.textContent = field ? `${field}: ${value}` : String(value);
+          meta.appendChild(pill);
+          hasMeta = true;
+        }
       }
     }
 
-    const styleMap = scope.styleMapFromLayerSpec(spec);
-    if (styleMap && Object.keys(styleMap).length) {
+    const styleMap = styleMapFromLayerSpec(spec);
+    if (showLegend && styleMap && Object.keys(styleMap).length) {
       const legend = document.createElement("div");
       legend.className = "entity-panel__land-legend";
       for (const [key, rawStyle] of Object.entries(styleMap)) {
-        const style = scope.normalizeLandLayerStyle(rawStyle);
+        const style = normalizeLandLayerStyle(rawStyle);
         const chip = document.createElement("span");
         chip.className = "entity-panel__land-legend-chip";
         const swatch = document.createElement("span");
@@ -2047,22 +3178,22 @@ export function initProjectMap() {
   }
 
   function flatStyleFromLayerSpec(spec) {
-    if (!spec?.style) return scope.defaultLandLayerStyle();
+    if (!spec?.style) return defaultLandLayerStyle();
     if (typeof spec.style === "object" && "color" in spec.style) {
-      return scope.normalizeLandLayerStyle(spec.style);
+      return normalizeLandLayerStyle(spec.style);
     }
     if (spec.styleField && typeof spec.style === "object") {
       const first = Object.values(spec.style)[0];
-      return scope.normalizeLandLayerStyle(first);
+      return normalizeLandLayerStyle(first);
     }
-    return scope.defaultLandLayerStyle();
+    return defaultLandLayerStyle();
   }
 
   function buildStyleMatchExpression(styleMap, prop, fallback) {
-    const normalized = scope.normalizeLandLayerStyle(fallback);
+    const normalized = normalizeLandLayerStyle(fallback);
     const expr = ["match", ["get", prop]];
     for (const [key, rawStyle] of Object.entries(styleMap || {})) {
-      const style = scope.normalizeLandLayerStyle(rawStyle);
+      const style = normalizeLandLayerStyle(rawStyle);
       expr.push(String(key), style.color);
     }
     expr.push(normalized.color);
@@ -2070,10 +3201,10 @@ export function initProjectMap() {
   }
 
   function buildOpacityMatchExpression(styleMap, prop, fallback) {
-    const normalized = scope.normalizeLandLayerStyle(fallback);
+    const normalized = normalizeLandLayerStyle(fallback);
     const expr = ["match", ["get", prop]];
     for (const [key, rawStyle] of Object.entries(styleMap || {})) {
-      const style = scope.normalizeLandLayerStyle(rawStyle);
+      const style = normalizeLandLayerStyle(rawStyle);
       expr.push(String(key), style.opacity);
     }
     expr.push(normalized.opacity);
@@ -2081,18 +3212,24 @@ export function initProjectMap() {
   }
 
   function layerConfigToPayload(name, layerStyles, layerConfigs) {
-    const config = layerConfigs.get(name) || scope.defaultLandLayerConfig();
+    const config = layerConfigs.get(name) || defaultLandLayerConfig();
     const row = { name };
     if (config.role) row.role = config.role;
     if (config.labelField) row.labelField = config.labelField;
     if (config.include?.length) row.include = config.include;
     if (config.exclude?.length) row.exclude = config.exclude;
     if (layerStyles.has(name)) {
-      row.style = scope.normalizeLandLayerStyle(layerStyles.get(name));
+      row.style = normalizeLandLayerStyle(layerStyles.get(name));
     }
     return row;
   }
 
+  function landColumnSortKey(name) {
+    const upper = String(name).toUpperCase();
+    if (upper === "NAME") return "0";
+    if (upper === "ABBR") return "1";
+    return `9${upper}`;
+  }
 
   function excludedValuesForField(config, field) {
     if (!field) return new Set();
@@ -2118,7 +3255,7 @@ export function initProjectMap() {
   }
 
   function configFromRegisteredLayer(layer) {
-    const spec = scope.normalizeRegisteredLayer(layer);
+    const spec = normalizeRegisteredLayer(layer);
     return {
       labelField: spec.labelField || "",
       role: spec.role || "",
@@ -2130,14 +3267,121 @@ export function initProjectMap() {
     };
   }
 
+  function resolveRegisteredPreviewLayerName(registeredName, previewLayers) {
+    const previewNames = (previewLayers || []).map((layer) => layer.name);
+    if (previewNames.includes(registeredName)) return registeredName;
+    if (previewNames.length === 1) return previewNames[0];
+    return null;
+  }
+
+  function registeredLayersForPreviewName(previewName, registeredLayers, previewLayers) {
+    return (registeredLayers || []).filter((raw) => {
+      const spec = normalizeRegisteredLayer(raw);
+      if (spec.name === previewName) return true;
+      return resolveRegisteredPreviewLayerName(spec.name, previewLayers) === previewName;
+    });
+  }
+
+  function initialEditLandSelected(source, previewLayers) {
+    const selected = new Set();
+    for (const rawLayer of source?.layers || []) {
+      const spec = normalizeRegisteredLayer(rawLayer);
+      const previewName = resolveRegisteredPreviewLayerName(
+        spec.name,
+        previewLayers,
+      );
+      if (previewName) selected.add(previewName);
+    }
+    const previewNames = previewLayers.map((layer) => layer.name);
+    if (!selected.size && previewNames.length === 1 && (source?.layers || []).length) {
+      selected.add(previewNames[0]);
+    }
+    return selected;
+  }
+
+  function buildEditLandLayerState(source, previewLayers) {
+    const configs = new Map();
+    const styles = new Map();
+    for (const previewLayer of previewLayers) {
+      const previewName = previewLayer.name;
+      const matching = registeredLayersForPreviewName(
+        previewName,
+        source?.layers,
+        previewLayers,
+      );
+      const primary =
+        matching.find(
+          (raw) => normalizeRegisteredLayer(raw).role === "include",
+        ) || matching[0];
+      if (!primary) continue;
+      const spec = normalizeRegisteredLayer(primary);
+      configs.set(previewName, configFromRegisteredLayer(primary));
+      ensureLandLayerStyleState(
+        styles,
+        previewName,
+        flatStyleFromLayerSpec(spec),
+      );
+    }
+    return { configs, styles };
+  }
+
+  function registeredLayerToSavePayload(raw, previewName) {
+    const spec = normalizeRegisteredLayer(raw);
+    const row = { name: previewName };
+    if (raw.id != null && raw.id !== "") row.id = raw.id;
+    if (spec.role) row.role = spec.role;
+    if (spec.labelField) row.labelField = spec.labelField;
+    if (spec.include?.length) row.include = spec.include;
+    if (spec.exclude?.length) row.exclude = spec.exclude;
+    if (spec.styleField) row.styleField = spec.styleField;
+    if (spec.style) row.style = normalizeLandLayerStyle(flatStyleFromLayerSpec(spec));
+    return row;
+  }
+
+  function collectEditLandSavePayloads(
+    listEl,
+    layerStyles,
+    layerConfigs,
+    prevSource,
+    previewLayers,
+  ) {
+    const selectedNames = collectSelectedLandLayers(listEl);
+    if (!selectedNames.length) return [];
+    const payloads = [];
+    for (const previewName of selectedNames) {
+      const prevMatching = registeredLayersForPreviewName(
+        previewName,
+        prevSource?.layers,
+        previewLayers,
+      );
+      if (prevMatching.length > 1) {
+        for (const raw of prevMatching) {
+          payloads.push(registeredLayerToSavePayload(raw, previewName));
+        }
+        continue;
+      }
+      const payload = layerConfigToPayload(
+        previewName,
+        layerStyles,
+        layerConfigs,
+      );
+      if (prevMatching.length === 1) {
+        const raw = prevMatching[0];
+        if (raw.id != null && raw.id !== "") payload.id = raw.id;
+      }
+      payloads.push(payload);
+    }
+    return payloads;
+  }
+
   function collectSelectedLayerPayloads(listEl, layerStyles, layerConfigs) {
-    return scope.collectSelectedLandLayers(listEl).map((name) =>
-      scope.layerConfigToPayload(name, layerStyles, layerConfigs),
+    return collectSelectedLandLayers(listEl).map((name) =>
+      layerConfigToPayload(name, layerStyles, layerConfigs),
     );
   }
 
   async function fetchLandLayerFields(path, layer) {
-    const resp = await fetch(scope.landFieldsApiUrl(path, layer));
+    const resp = await fetch(landFieldsApiUrl(path, layer));
     const payload = await resp.json().catch(() => ({}));
     if (!resp.ok)
       throw new Error(payload.error || `Fields failed (${resp.status})`);
@@ -2145,17 +3389,51 @@ export function initProjectMap() {
   }
 
   async function fetchLandFieldValues(path, layer, field) {
-    const resp = await fetch(scope.landValuesApiUrl(path, layer, field));
+    const resp = await fetch(landValuesApiUrl(path, layer, field));
     const payload = await resp.json().catch(() => ({}));
     if (!resp.ok)
       throw new Error(payload.error || `Values failed (${resp.status})`);
     return payload;
   }
 
+  function landPreviewLayerConfig(config) {
+    if (!config) return null;
+    if (
+      config.labelField ||
+      config.include?.length ||
+      config.exclude?.length ||
+      config.styleField
+    ) {
+      return config;
+    }
+    return null;
+  }
+
+  function decorateLandGeoJsonProperties(
+    geojson,
+    { labelField = "", styleField = "" } = {},
+  ) {
+    if (!geojson?.features?.length) return geojson;
+    const labelKey = String(labelField || "").trim();
+    const styleKey = String(styleField || "").trim();
+    if (!labelKey && !styleKey) return geojson;
+    for (const feat of geojson.features) {
+      if (!feat.properties) feat.properties = {};
+      if (labelKey) {
+        const raw = feat.properties[labelKey];
+        if (raw != null && raw !== "") feat.properties.label = String(raw);
+      }
+      if (styleKey) {
+        const raw = feat.properties[styleKey];
+        if (raw != null && raw !== "") feat.properties.style_key = String(raw);
+      }
+    }
+    return geojson;
+  }
 
   async function fetchLandPreviewGeoJson(path, layer, layerConfig) {
-    const cacheKey = `${scope.landPreviewCacheKey(path, layer)}|${JSON.stringify(layerConfig || {})}`;
-    return scope.fetchCachedGeoJson(
+    const cacheKey = `${landPreviewCacheKey(path, layer)}|${JSON.stringify(layerConfig || {})}`;
+    return fetchCachedGeoJson(
       landPreviewGeoJsonCache,
       landPreviewGeoJsonInflight,
       cacheKey,
@@ -2176,7 +3454,7 @@ export function initProjectMap() {
             styleField: layerConfig.styleField || undefined,
             role: layerConfig.role || undefined,
           };
-          const resp = await fetch(scope.landPreviewGeoJsonPostUrl(), {
+          const resp = await fetch(landPreviewGeoJsonPostUrl(), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
@@ -2185,31 +3463,31 @@ export function initProjectMap() {
           if (!resp.ok || !payload.geojson) {
             throw new Error(payload.error || `Preview failed (${resp.status})`);
           }
-          return payload.geojson;
+          return decorateLandGeoJsonProperties(payload.geojson, layerConfig || {});
         }
-        const resp = await fetch(scope.landPreviewGeoJsonUrl(path, layer));
+        const resp = await fetch(landPreviewGeoJsonUrl(path, layer));
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok || !payload.geojson) {
           throw new Error(payload.error || `Preview failed (${resp.status})`);
         }
-        return payload.geojson;
+        return decorateLandGeoJsonProperties(payload.geojson, layerConfig || {});
       },
     );
   }
 
   async function fetchLandLayerGeoJson(sourceId, layerKey, digest) {
-    return scope.fetchCachedGeoJson(
+    return fetchCachedGeoJson(
       landLayerGeoJsonCache,
       landLayerGeoJsonInflight,
-      scope.landLayerCacheKey(sourceId, layerKey, digest),
+      landLayerCacheKey(sourceId, layerKey, digest),
       async () => {
-        const resp = await fetch(scope.landLayerGeoJsonUrl(sourceId, layerKey));
+        const resp = await fetch(landLayerGeoJsonUrl(sourceId, layerKey));
         if (!resp.ok) throw new Error(`GeoJSON failed (${resp.status})`);
         const data = await resp.json();
         const respDigest = resp.headers.get("X-Peaky-Digest");
         if (respDigest && respDigest !== digest) {
           landLayerGeoJsonCache.set(
-            scope.landLayerCacheKey(sourceId, layerKey, respDigest),
+            landLayerCacheKey(sourceId, layerKey, respDigest),
             data,
           );
         }
@@ -2218,6 +3496,11 @@ export function initProjectMap() {
     );
   }
 
+  function landPreviewMapPrefix(sourceIdPrefix) {
+    return sourceIdPrefix === "import"
+      ? IMPORT_LAND_PREVIEW_SOURCE
+      : EDIT_LAND_PREVIEW_SOURCE;
+  }
 
   function ensureLandPreviewLoadingOverlay(mapEl) {
     if (!mapEl) return null;
@@ -2245,7 +3528,7 @@ export function initProjectMap() {
   }
 
   function setLandPreviewMapLoading(mapEl, loading) {
-    const overlay = scope.ensureLandPreviewLoadingOverlay(mapEl);
+    const overlay = ensureLandPreviewLoadingOverlay(mapEl);
     if (!overlay) return;
     overlay.hidden = !loading;
   }
@@ -2254,14 +3537,14 @@ export function initProjectMap() {
     if (!mapEl) return;
     const next = (landPreviewLoadingCounts.get(mapEl) || 0) + 1;
     landPreviewLoadingCounts.set(mapEl, next);
-    scope.setLandPreviewMapLoading(mapEl, true);
+    setLandPreviewMapLoading(mapEl, true);
   }
 
   function endLandPreviewMapFetch(mapEl) {
     if (!mapEl) return;
     const next = Math.max(0, (landPreviewLoadingCounts.get(mapEl) || 0) - 1);
     landPreviewLoadingCounts.set(mapEl, next);
-    scope.setLandPreviewMapLoading(mapEl, next > 0);
+    setLandPreviewMapLoading(mapEl, next > 0);
   }
 
   function setLandLayerRowLoading(listEl, layerName, loading) {
@@ -2281,14 +3564,28 @@ export function initProjectMap() {
 
   function defaultLandLayerStyle() {
     return {
-      color: C.LAND_DEFAULT_FILL_COLOR,
-      opacity: C.LAND_DEFAULT_FILL_OPACITY,
+      color: LAND_DEFAULT_FILL_COLOR,
+      opacity: LAND_DEFAULT_FILL_OPACITY,
     };
   }
 
+  function landLineColorFromFill(hex) {
+    const normalized = String(hex || "").replace("#", "");
+    if (normalized.length !== 6) return LAND_DEFAULT_LINE_COLOR;
+    const r = Number.parseInt(normalized.slice(0, 2), 16);
+    const g = Number.parseInt(normalized.slice(2, 4), 16);
+    const b = Number.parseInt(normalized.slice(4, 6), 16);
+    if ([r, g, b].some((n) => Number.isNaN(n))) return LAND_DEFAULT_LINE_COLOR;
+    const factor = 0.55;
+    const toHex = (n) =>
+      Math.round(n * factor)
+        .toString(16)
+        .padStart(2, "0");
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
 
   function normalizeLandLayerStyle(raw) {
-    const defaults = scope.defaultLandLayerStyle();
+    const defaults = defaultLandLayerStyle();
     if (!raw || typeof raw !== "object") return { ...defaults };
     const color =
       typeof raw.color === "string" && /^#[0-9a-fA-F]{6}$/.test(raw.color)
@@ -2304,11 +3601,11 @@ export function initProjectMap() {
   function resolveLandLayerStyle(sourceId, layerKey) {
     const source = landSources.find((s) => s.id === sourceId);
     if (!source || !Array.isArray(source.layers))
-      return scope.defaultLandLayerStyle();
+      return defaultLandLayerStyle();
     const spec = source.layers
-      .map((layer) => scope.normalizeRegisteredLayer(layer))
+      .map((layer) => normalizeRegisteredLayer(layer))
       .find((layer) => layer.key === layerKey);
-    return scope.flatStyleFromLayerSpec(spec);
+    return flatStyleFromLayerSpec(spec);
   }
 
   function resolveLandLayerSpec(sourceId, layerKey) {
@@ -2316,42 +3613,104 @@ export function initProjectMap() {
     if (!source || !Array.isArray(source.layers)) return null;
     return (
       source.layers
-        .map((layer) => scope.normalizeRegisteredLayer(layer))
+        .map((layer) => normalizeRegisteredLayer(layer))
         .find((layer) => layer.key === layerKey) || null
     );
   }
 
+  function landPreviewSourceId(prefix, layerName) {
+    return `${prefix}-${landLayerSlug(layerName)}`;
+  }
 
+  function landLayerKey(sourceId, layer) {
+    return `${sourceId}/${layer}`;
+  }
 
+  function landLayerSlug(text) {
+    return (
+      String(text)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "layer"
+    );
+  }
 
+  function landMapSourceId(sourceId, layer) {
+    return `land-${sourceId}-${landLayerSlug(layer)}`;
+  }
 
   function isLandLayerVisible(sourceId, layer) {
-    const key = scope.landLayerKey(sourceId, layer);
+    const key = landLayerKey(sourceId, layer);
     if (!landVisible.has(key)) return false;
     return landVisible.get(key) === true;
   }
 
-  function setLandLayerVisible(sourceId, layer, visible) {
-    landVisible.set(scope.landLayerKey(sourceId, layer), !!visible);
-    scheduleSaveMapState();
-    scope.syncLandMapLayerVisibility(sourceId, layer);
-    scope.syncLandMapLabelLayer(sourceId, layer);
+  function isLandSourceBatchVisible(sourceId) {
+    if (!landSourceBatchVisible.has(sourceId)) return true;
+    return landSourceBatchVisible.get(sourceId) === true;
   }
 
+  function isLandLayerEffectivelyVisible(sourceId, layer) {
+    if (!isLandSourceBatchVisible(sourceId)) return false;
+    return isLandLayerVisible(sourceId, layer);
+  }
+
+  function setLandSourceBatchVisible(sourceId, visible) {
+    landSourceBatchVisible.set(sourceId, !!visible);
+    scheduleSaveMapState();
+    const source = landSourceRecord(sourceId);
+    if (!source || !Array.isArray(source.layers)) return;
+    for (const rawLayer of source.layers) {
+      const spec = normalizeRegisteredLayer(rawLayer);
+      syncLandMapLayerVisibility(sourceId, spec.key);
+      syncLandMapLabelLayer(sourceId, spec.key);
+    }
+  }
+
+  function setLandLayerVisible(sourceId, layer, visible) {
+    landVisible.set(landLayerKey(sourceId, layer), !!visible);
+    scheduleSaveMapState();
+    syncLandMapLayerVisibility(sourceId, layer);
+    syncLandMapLabelLayer(sourceId, layer);
+  }
+
+  function landLayerHasLabels(sourceId, layer) {
+    const spec = resolveLandLayerSpec(sourceId, layer);
+    return !!spec?.labelField;
+  }
 
   function isLandLayerLabelsVisible(sourceId, layer) {
-    if (!scope.landLayerHasLabels(sourceId, layer)) return false;
-    const key = scope.landLayerKey(sourceId, layer);
+    if (!landLayerHasLabels(sourceId, layer)) return false;
+    const key = landLayerKey(sourceId, layer);
     if (!landLabelsVisible.has(key)) return true;
     return landLabelsVisible.get(key) === true;
   }
 
   function setLandLayerLabelsVisible(sourceId, layer, visible) {
-    landLabelsVisible.set(scope.landLayerKey(sourceId, layer), !!visible);
+    landLabelsVisible.set(landLayerKey(sourceId, layer), !!visible);
     scheduleSaveMapState();
-    scope.syncLandMapLabelLayer(sourceId, layer);
+    syncLandMapLabelLayer(sourceId, layer);
   }
 
+  function normalizeLandSidebarInput(raw) {
+    const folders = Array.isArray(raw?.folders)
+      ? raw.folders
+          .map((folder) => ({
+            id: String(folder?.id || "").trim(),
+            label: String(folder?.label || folder?.id || "").trim(),
+            sources: Array.isArray(folder?.sources)
+              ? folder.sources.map((sid) => String(sid).trim()).filter(Boolean)
+              : [],
+          }))
+          .filter((folder) => folder.id)
+      : [];
+    const unfiledSources = Array.isArray(raw?.unfiledSources)
+      ? raw.unfiledSources.map((sid) => String(sid).trim()).filter(Boolean)
+      : Array.isArray(raw?.unfiled_sources)
+        ? raw.unfiled_sources.map((sid) => String(sid).trim()).filter(Boolean)
+        : [];
+    return { folders, unfiledSources };
+  }
 
   function cloneLandSidebar(sidebar = landSidebar) {
     return {
@@ -2364,13 +3723,16 @@ export function initProjectMap() {
     };
   }
 
+  function landSourceRecord(sourceId) {
+    return landSources.find((source) => source.id === sourceId) || null;
+  }
 
   function allLandSourceIds() {
     return landSources.map((source) => source.id);
   }
 
   function syncLandSidebarWithSources() {
-    const valid = new Set(scope.allLandSourceIds());
+    const valid = new Set(allLandSourceIds());
     const assigned = new Set();
     const folders = [];
     for (const folder of landSidebar.folders) {
@@ -2384,14 +3746,14 @@ export function initProjectMap() {
       (sid) => valid.has(sid) && !assigned.has(sid),
     );
     unfiledSources.forEach((sid) => assigned.add(sid));
-    for (const sid of scope.allLandSourceIds()) {
+    for (const sid of allLandSourceIds()) {
       if (!assigned.has(sid)) unfiledSources.push(sid);
     }
     landSidebar = { folders, unfiledSources };
   }
 
   function orderedLandSourceIds() {
-    scope.syncLandSidebarWithSources();
+    syncLandSidebarWithSources();
     const ids = [];
     for (const folder of landSidebar.folders) {
       for (const sid of folder.sources) ids.push(sid);
@@ -2426,14 +3788,14 @@ export function initProjectMap() {
     if (landSidebarSaveTimer) clearTimeout(landSidebarSaveTimer);
     landSidebarSaveTimer = setTimeout(() => {
       landSidebarSaveTimer = null;
-      void scope.persistLandSidebar();
+      void persistLandSidebar();
     }, LAND_SIDEBAR_SAVE_MS);
   }
 
   async function persistLandSidebar({ refreshMap = false } = {}) {
-    scope.syncLandSidebarWithSources();
+    syncLandSidebarWithSources();
     try {
-      const resp = await fetch(scope.landSidebarApiUrl(), {
+      const resp = await fetch(landSidebarApiUrl(), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(landSidebar),
@@ -2445,7 +3807,7 @@ export function initProjectMap() {
       }
       if (payload.sidebar)
         landSidebar = normalizeLandSidebarInput(payload.sidebar);
-      if (refreshMap) await scope.refreshLandMapLayers();
+      if (refreshMap) await refreshLandMapLayers();
       return true;
     } catch (_) {
       window.alert("Could not reach server.");
@@ -2456,7 +3818,7 @@ export function initProjectMap() {
   async function maybeMigrateLandSidebarFromLayerOrder() {
     if (!landSidebarMigrationPending) return;
     landSidebarMigrationPending = false;
-    await scope.persistLandSidebar();
+    await persistLandSidebar();
   }
 
   function queueLandSidebarMigrationFromLayerOrder() {
@@ -2470,7 +3832,7 @@ export function initProjectMap() {
       seen.add(sid);
       order.push(sid);
     }
-    for (const sid of scope.allLandSourceIds()) {
+    for (const sid of allLandSourceIds()) {
       if (!seen.has(sid)) order.push(sid);
     }
     landSidebar = { folders: [], unfiledSources: order };
@@ -2484,45 +3846,129 @@ export function initProjectMap() {
   function setLandFolderCollapsed(folderId, collapsed) {
     landFoldersCollapsed.set(folderId, !!collapsed);
     scheduleSaveMapState();
-    scope.renderLandPanel();
+    renderLandPanel();
   }
 
+  function landFolderLayerRefs(folderId) {
+    const folder = landSidebar.folders.find((item) => item.id === folderId);
+    if (!folder) return [];
+    const refs = [];
+    for (const sourceId of folder.sources) {
+      const source = landSourceRecord(sourceId);
+      if (!source || !Array.isArray(source.layers)) continue;
+      for (const rawLayer of source.layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        refs.push(landLayerKey(sourceId, spec.key));
+      }
+    }
+    return refs;
+  }
 
   function isLandFolderVisible(folderId) {
-    const refs = scope.landFolderLayerRefs(folderId);
+    const refs = landFolderLayerRefs(folderId);
     if (!refs.length) return false;
-    return refs.every((key) => landVisible.get(key) === true);
+    return refs.every((key) => {
+      const slash = key.indexOf("/");
+      if (slash < 0) return false;
+      const sourceId = key.slice(0, slash);
+      const layerKey = key.slice(slash + 1);
+      return isLandLayerEffectivelyVisible(sourceId, layerKey);
+    });
   }
 
   function setLandFolderVisible(folderId, visible) {
     const folder = landSidebar.folders.find((item) => item.id === folderId);
     if (!folder) return;
     for (const sourceId of folder.sources) {
-      const source = scope.landSourceRecord(sourceId);
+      setLandSourceBatchVisible(sourceId, visible);
+      const source = landSourceRecord(sourceId);
       if (!source || !Array.isArray(source.layers)) continue;
       for (const rawLayer of source.layers) {
-        const spec = scope.normalizeRegisteredLayer(rawLayer);
-        scope.setLandLayerVisible(sourceId, spec.key, visible);
+        const spec = normalizeRegisteredLayer(rawLayer);
+        setLandLayerVisible(sourceId, spec.key, visible);
       }
     }
-    scope.renderLandPanel();
+    renderLandPanel();
   }
 
+  function landFolderLabeledLayers(folderId) {
+    const folder = landSidebar.folders.find((item) => item.id === folderId);
+    if (!folder) return [];
+    const layers = [];
+    for (const sourceId of folder.sources) {
+      const source = landSourceRecord(sourceId);
+      if (!source || !Array.isArray(source.layers)) continue;
+      for (const rawLayer of source.layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        if (landLayerHasLabels(sourceId, spec.key)) {
+          layers.push({ sourceId, layerKey: spec.key });
+        }
+      }
+    }
+    return layers;
+  }
 
+  function isLandFolderLabelsVisible(folderId) {
+    const layers = landFolderLabeledLayers(folderId);
+    if (!layers.length) return false;
+    return layers.every(({ sourceId, layerKey }) =>
+      isLandLayerLabelsVisible(sourceId, layerKey),
+    );
+  }
+
+  function setLandFolderLabelsVisible(folderId, visible) {
+    const folder = landSidebar.folders.find((item) => item.id === folderId);
+    if (!folder) return;
+    for (const sourceId of folder.sources) {
+      const source = landSourceRecord(sourceId);
+      if (!source || !Array.isArray(source.layers)) continue;
+      for (const rawLayer of source.layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        if (landLayerHasLabels(sourceId, spec.key)) {
+          setLandLayerLabelsVisible(sourceId, spec.key, visible);
+        }
+      }
+    }
+    renderLandPanel();
+  }
+
+  function landLayerRowsRaw() {
+    const rows = [];
+    for (const sourceId of orderedLandSourceIds()) {
+      const source = landSourceRecord(sourceId);
+      if (!source) continue;
+      const layers = Array.isArray(source.layers) ? source.layers : [];
+      for (const rawLayer of layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        rows.push({
+          sourceId: source.id,
+          label: source.label || source.id,
+          path: source.path,
+          layerKey: spec.key,
+          spec,
+        });
+      }
+    }
+    return rows;
+  }
+
+  function landLayerRows() {
+    return landLayerRowsRaw();
+  }
 
   function applyLandSidebarMutation(mutator) {
-    const next = scope.cloneLandSidebar();
+    const next = cloneLandSidebar();
     mutator(next);
     landSidebar = next;
-    scope.syncLandSidebarWithSources();
-    scope.renderLandPanel();
-    scope.syncLandMapLayerOrder();
-    scope.schedulePersistLandSidebar();
+    syncLandSidebarWithSources();
+    renderLandPanel();
+    syncLandMapLayerOrder();
+    schedulePersistLandSidebar();
   }
 
   function reorderLandFolder(fromFolderId, beforeFolderId) {
     if (!fromFolderId || fromFolderId === beforeFolderId) return;
-    scope.applyLandSidebarMutation((sidebar) => {
+    applyLandSidebarMutation((sidebar) => {
       const fromIdx = sidebar.folders.findIndex(
         (folder) => folder.id === fromFolderId,
       );
@@ -2540,8 +3986,8 @@ export function initProjectMap() {
     { folderId = null, beforeSourceId = null } = {},
   ) {
     if (!sourceId) return;
-    scope.applyLandSidebarMutation((sidebar) => {
-      scope.removeSourceFromSidebar(sidebar, sourceId);
+    applyLandSidebarMutation((sidebar) => {
+      removeSourceFromSidebar(sidebar, sourceId);
       if (folderId) {
         const folder = sidebar.folders.find((item) => item.id === folderId);
         if (!folder) return;
@@ -2572,8 +4018,8 @@ export function initProjectMap() {
 
   function reorderLandSource(fromSourceId, beforeSourceId, folderId = null) {
     if (!fromSourceId || fromSourceId === beforeSourceId) return;
-    scope.applyLandSidebarMutation((sidebar) => {
-      scope.removeSourceFromSidebar(sidebar, fromSourceId);
+    applyLandSidebarMutation((sidebar) => {
+      removeSourceFromSidebar(sidebar, fromSourceId);
       if (folderId) {
         const folder = sidebar.folders.find((item) => item.id === folderId);
         if (!folder) return;
@@ -2598,25 +4044,95 @@ export function initProjectMap() {
     });
   }
 
-  function createLandFolder() {
-    const label = window.prompt("Folder name");
-    if (!label || !label.trim()) return;
-    const trimmed = label.trim();
-    const id = scope.slugifyLandFolderId(trimmed, landSidebar.folders);
-    scope.applyLandSidebarMutation((sidebar) => {
-      sidebar.folders.push({ id, label: trimmed, sources: [] });
+  let landFolderModalMode = "create";
+  let landFolderEditId = null;
+
+  function setLandFolderError(message) {
+    if (!landFolderError) return;
+    if (message) {
+      landFolderError.textContent = message;
+      landFolderError.hidden = false;
+    } else {
+      landFolderError.textContent = "";
+      landFolderError.hidden = true;
+    }
+  }
+
+  function closeLandFolderModal() {
+    if (!landFolderModal) return;
+    landFolderModal.open = false;
+    landFolderModalMode = "create";
+    landFolderEditId = null;
+  }
+
+  function resetLandFolderModal() {
+    if (landFolderName) landFolderName.value = "";
+    setLandFolderError("");
+  }
+
+  async function openCreateLandFolderModal() {
+    if (!landFolderModal) return;
+    landFolderModalMode = "create";
+    landFolderEditId = null;
+    landFolderModal.label = "New folder";
+    resetLandFolderModal();
+    await openWaDialog(landFolderModal);
+    requestAnimationFrame(() => {
+      landFolderName?.focus();
     });
   }
 
-  function renameLandFolder(folderId) {
+  async function openRenameLandFolderModal(folderId) {
     const folder = landSidebar.folders.find((item) => item.id === folderId);
-    if (!folder) return;
-    const label = window.prompt("Folder name", folder.label);
-    if (!label || !label.trim() || label.trim() === folder.label) return;
-    scope.applyLandSidebarMutation((sidebar) => {
-      const target = sidebar.folders.find((item) => item.id === folderId);
-      if (target) target.label = label.trim();
+    if (!folder || !landFolderModal) return;
+    landFolderModalMode = "rename";
+    landFolderEditId = folderId;
+    landFolderModal.label = "Rename folder";
+    setLandFolderError("");
+    if (landFolderName) landFolderName.value = folder.label;
+    await openWaDialog(landFolderModal);
+    requestAnimationFrame(() => {
+      landFolderName?.focus();
+      landFolderName?.select();
     });
+  }
+
+  function saveLandFolderModal() {
+    const trimmed = (landFolderName?.value || "").trim();
+    if (!trimmed) {
+      setLandFolderError("Name is required.");
+      landFolderName?.focus();
+      return;
+    }
+    if (landFolderModalMode === "rename") {
+      const folder = landSidebar.folders.find((item) => item.id === landFolderEditId);
+      if (!folder) {
+        closeLandFolderModal();
+        return;
+      }
+      if (trimmed === folder.label) {
+        closeLandFolderModal();
+        return;
+      }
+      applyLandSidebarMutation((sidebar) => {
+        const target = sidebar.folders.find((item) => item.id === landFolderEditId);
+        if (target) target.label = trimmed;
+      });
+    } else {
+      const id = slugifyLandFolderId(trimmed, landSidebar.folders);
+      applyLandSidebarMutation((sidebar) => {
+        sidebar.folders.push({ id, label: trimmed, sources: [] });
+      });
+    }
+    closeLandFolderModal();
+  }
+
+  function createLandFolder() {
+    void openCreateLandFolderModal();
+  }
+
+  function renameLandFolder(folderId) {
+    void openRenameLandFolderModal(folderId);
   }
 
   function deleteLandFolder(folderId) {
@@ -2628,7 +4144,7 @@ export function initProjectMap() {
       )
     )
       return;
-    scope.applyLandSidebarMutation((sidebar) => {
+    applyLandSidebarMutation((sidebar) => {
       const idx = sidebar.folders.findIndex((item) => item.id === folderId);
       if (idx < 0) return;
       const [removed] = sidebar.folders.splice(idx, 1);
@@ -2638,11 +4154,11 @@ export function initProjectMap() {
 
   function syncLandMapLayerOrder() {
     if (!mapReady) return;
-    const rows = scope.landLayerRows();
-    const anchor = scope.viewshedLayerInsertBefore();
+    const rows = landLayerRows();
+    const anchor = viewshedLayerInsertBefore();
     for (let i = rows.length - 1; i >= 0; i -= 1) {
       const row = rows[i];
-      const sourceMapId = scope.landMapSourceId(row.sourceId, row.layerKey);
+      const sourceMapId = landMapSourceId(row.sourceId, row.layerKey);
       for (const suffix of ["-fill", "-line", "-labels"]) {
         const id = `${sourceMapId}${suffix}`;
         if (map.getLayer(id)) {
@@ -2664,7 +4180,7 @@ export function initProjectMap() {
     handle.draggable = true;
     handle.title = "Drag to reorder";
     handle.setAttribute("aria-label", label || "Drag to reorder");
-    handle.innerHTML = scope.mapToolIcon("grip-vertical", label || "Drag to reorder");
+    handle.innerHTML = mapToolIcon("grip-vertical", label || "Drag to reorder");
     handle.addEventListener("mousedown", (ev) => ev.stopPropagation());
     handle.addEventListener("click", (ev) => ev.stopPropagation());
     handle.addEventListener("dragstart", (ev) => {
@@ -2740,20 +4256,20 @@ export function initProjectMap() {
       const targetId = row.dataset.landDragId;
       const targetFolderId = row.dataset.landFolderId || null;
       if (landDragKind === "folder" && targetKind === "folder") {
-        scope.reorderLandFolder(landDragId, targetId);
+        reorderLandFolder(landDragId, targetId);
         return;
       }
       if (landDragKind === "source") {
         if (targetKind === "folder") {
-          scope.moveLandSource(landDragId, { folderId: targetId });
+          moveLandSource(landDragId, { folderId: targetId });
           return;
         }
         if (targetKind === "unfiled") {
-          scope.moveLandSource(landDragId, {});
+          moveLandSource(landDragId, {});
           return;
         }
         if (targetKind === "source") {
-          scope.reorderLandSource(landDragId, targetId, targetFolderId);
+          reorderLandSource(landDragId, targetId, targetFolderId);
         }
       }
     });
@@ -2769,7 +4285,7 @@ export function initProjectMap() {
     }
     if (entityPanelSitesPane) entityPanelSitesPane.hidden = next !== "sites";
     if (entityPanelLandPane) entityPanelLandPane.hidden = next !== "land";
-    if (next === "land") void scope.maybeMigrateLandSidebarFromLayerOrder();
+    if (next === "land") void maybeMigrateLandSidebarFromLayerOrder();
     if (entityPanelToggle) {
       entityPanelToggle.title = next === "land" ? "Land" : "Sites";
       entityPanelToggle.setAttribute(
@@ -2803,7 +4319,7 @@ export function initProjectMap() {
         layout: {
           "text-field": ["get", "label"],
           "text-size": 11,
-          "text-font": C.MAP_LABEL_FONT,
+          "text-font": MAP_LABEL_FONT,
           "text-allow-overlap": true,
           "text-max-width": 14,
           visibility: vis,
@@ -2821,51 +4337,51 @@ export function initProjectMap() {
 
   function syncLandMapLabelLayer(sourceId, layerKey) {
     if (!mapReady) return;
-    const sourceMapId = scope.landMapSourceId(sourceId, layerKey);
+    const sourceMapId = landMapSourceId(sourceId, layerKey);
     const labelsId = `${sourceMapId}-labels`;
-    const layerVisible = scope.isLandLayerVisible(sourceId, layerKey);
+    const layerVisible = isLandLayerEffectivelyVisible(sourceId, layerKey);
     const labelsVisible =
-      layerVisible && scope.isLandLayerLabelsVisible(sourceId, layerKey);
+      layerVisible && isLandLayerLabelsVisible(sourceId, layerKey);
     const vis = labelsVisible ? "visible" : "none";
-    scope.syncGeoJsonLabelLayer(
+    syncGeoJsonLabelLayer(
       map,
       sourceMapId,
       labelsId,
-      scope.landLayerHasLabels(sourceId, layerKey),
+      landLayerHasLabels(sourceId, layerKey),
       vis,
     );
   }
 
   function syncLandMapLayerVisibility(sourceId, layer) {
     if (!mapReady) return;
-    const sourceMapId = scope.landMapSourceId(sourceId, layer);
+    const sourceMapId = landMapSourceId(sourceId, layer);
     const fillId = `${sourceMapId}-fill`;
     const lineId = `${sourceMapId}-line`;
-    const vis = scope.isLandLayerVisible(sourceId, layer) ? "visible" : "none";
+    const vis = isLandLayerEffectivelyVisible(sourceId, layer) ? "visible" : "none";
     if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
     if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
   }
 
   function applyLandMapLayerStyle(sourceId, layerKey) {
     if (!mapReady) return;
-    const sourceMapId = scope.landMapSourceId(sourceId, layerKey);
+    const sourceMapId = landMapSourceId(sourceId, layerKey);
     const fillId = `${sourceMapId}-fill`;
     const lineId = `${sourceMapId}-line`;
-    const spec = scope.resolveLandLayerSpec(sourceId, layerKey);
-    const styleMap = scope.styleMapFromLayerSpec(spec);
-    const fallback = scope.flatStyleFromLayerSpec(spec);
-    const lineFallback = scope.landLineColorFromFill(fallback.color);
+    const spec = resolveLandLayerSpec(sourceId, layerKey);
+    const styleMap = styleMapFromLayerSpec(spec);
+    const fallback = flatStyleFromLayerSpec(spec);
+    const lineFallback = landLineColorFromFill(fallback.color);
     if (map.getLayer(fillId)) {
       if (spec?.styleField && styleMap) {
         map.setPaintProperty(
           fillId,
           "fill-color",
-          scope.buildStyleMatchExpression(styleMap, "style_key", fallback),
+          buildStyleMatchExpression(styleMap, "style_key", fallback),
         );
         map.setPaintProperty(
           fillId,
           "fill-opacity",
-          scope.buildOpacityMatchExpression(styleMap, "style_key", fallback),
+          buildOpacityMatchExpression(styleMap, "style_key", fallback),
         );
       } else {
         map.setPaintProperty(fillId, "fill-color", fallback.color);
@@ -2875,7 +4391,7 @@ export function initProjectMap() {
     }
     if (map.getLayer(lineId)) {
       map.setPaintProperty(lineId, "line-color", lineFallback);
-      map.setPaintProperty(lineId, "line-width", C.LAND_LINE_WIDTH);
+      map.setPaintProperty(lineId, "line-width", LAND_LINE_WIDTH);
     }
   }
 
@@ -2885,22 +4401,22 @@ export function initProjectMap() {
     { force = false } = {},
   ) {
     if (!mapReady) return;
-    const sourceMapId = scope.landMapSourceId(sourceId, layerKey);
+    const sourceMapId = landMapSourceId(sourceId, layerKey);
     const fillId = `${sourceMapId}-fill`;
     const lineId = `${sourceMapId}-line`;
-    const spec = scope.resolveLandLayerSpec(sourceId, layerKey);
-    const styleMap = scope.styleMapFromLayerSpec(spec);
-    const fallback = scope.flatStyleFromLayerSpec(spec);
-    const lineColor = scope.landLineColorFromFill(fallback.color);
+    const spec = resolveLandLayerSpec(sourceId, layerKey);
+    const styleMap = styleMapFromLayerSpec(spec);
+    const fallback = flatStyleFromLayerSpec(spec);
+    const lineColor = landLineColorFromFill(fallback.color);
     const fillPaint =
       spec?.styleField && styleMap
         ? {
-            "fill-color": scope.buildStyleMatchExpression(
+            "fill-color": buildStyleMatchExpression(
               styleMap,
               "style_key",
               fallback,
             ),
-            "fill-opacity": scope.buildOpacityMatchExpression(
+            "fill-opacity": buildOpacityMatchExpression(
               styleMap,
               "style_key",
               fallback,
@@ -2913,19 +4429,21 @@ export function initProjectMap() {
             "fill-outline-color": lineColor,
           };
     if (map.getSource(sourceMapId) && !force) {
-      scope.applyLandMapLayerStyle(sourceId, layerKey);
-      scope.syncLandMapLayerVisibility(sourceId, layerKey);
-      scope.syncLandMapLabelLayer(sourceId, layerKey);
+      applyLandMapLayerStyle(sourceId, layerKey);
+      syncLandMapLayerVisibility(sourceId, layerKey);
+      syncLandMapLabelLayer(sourceId, layerKey);
       return;
     }
     if (force && map.getSource(sourceMapId)) {
-      scope.removeLandMapLayer(sourceId, layerKey);
+      removeLandMapLayer(sourceId, layerKey);
     }
     try {
-      const geojson = await scope.fetchLandLayerGeoJson(
-        sourceId,
-        layerKey,
-        spec?.digest || "",
+      const geojson = decorateLandGeoJsonProperties(
+        await fetchLandLayerGeoJson(sourceId, layerKey, spec?.digest || ""),
+        {
+          labelField: spec?.labelField || "",
+          styleField: spec?.styleField || "",
+        },
       );
       map.addSource(sourceMapId, { type: "geojson", data: geojson });
       map.addLayer(
@@ -2935,12 +4453,12 @@ export function initProjectMap() {
           source: sourceMapId,
           paint: fillPaint,
           layout: {
-            visibility: scope.isLandLayerVisible(sourceId, layerKey)
+            visibility: isLandLayerEffectivelyVisible(sourceId, layerKey)
               ? "visible"
               : "none",
           },
         },
-        scope.viewshedLayerInsertBefore(),
+        viewshedLayerInsertBefore(),
       );
       map.addLayer(
         {
@@ -2949,17 +4467,17 @@ export function initProjectMap() {
           source: sourceMapId,
           paint: {
             "line-color": lineColor,
-            "line-width": C.LAND_LINE_WIDTH,
+            "line-width": LAND_LINE_WIDTH,
           },
           layout: {
-            visibility: scope.isLandLayerVisible(sourceId, layerKey)
+            visibility: isLandLayerEffectivelyVisible(sourceId, layerKey)
               ? "visible"
               : "none",
           },
         },
-        scope.viewshedLayerInsertBefore(),
+        viewshedLayerInsertBefore(),
       );
-      scope.syncLandMapLabelLayer(sourceId, layerKey);
+      syncLandMapLabelLayer(sourceId, layerKey);
       raiseSiteLayers();
     } catch (_) {
       /* network */
@@ -2968,29 +4486,29 @@ export function initProjectMap() {
 
   async function refreshLandMapLayer(sourceId, layerKey) {
     if (!mapReady) return;
-    if (!scope.isLandLayerVisible(sourceId, layerKey)) return;
-    scope.setLandSidebarRowLoading(sourceId, layerKey, true);
+    if (!isLandLayerEffectivelyVisible(sourceId, layerKey)) return;
+    setLandSidebarRowLoading(sourceId, layerKey, true);
     try {
-      scope.clearLandLayerGeoJsonCacheForLayer(sourceId, layerKey);
-      await scope.ensureLandMapLayer(sourceId, layerKey, { force: true });
+      clearLandLayerGeoJsonCacheForLayer(sourceId, layerKey);
+      await ensureLandMapLayer(sourceId, layerKey, { force: true });
     } finally {
-      scope.setLandSidebarRowLoading(sourceId, layerKey, false);
+      setLandSidebarRowLoading(sourceId, layerKey, false);
     }
   }
 
   async function reloadClippedLandLayers() {
-    const rows = scope.landLayerRows().filter((row) => {
+    const rows = landLayerRows().filter((row) => {
       if (row.spec.role === "aoi") return false;
-      return scope.isLandLayerVisible(row.sourceId, row.layerKey);
+      return isLandLayerEffectivelyVisible(row.sourceId, row.layerKey);
     });
     await Promise.all(
-      rows.map((row) => scope.refreshLandMapLayer(row.sourceId, row.layerKey)),
+      rows.map((row) => refreshLandMapLayer(row.sourceId, row.layerKey)),
     );
   }
 
   function removeLandMapLayer(sourceId, layer) {
     if (!mapReady) return;
-    const sourceMapId = scope.landMapSourceId(sourceId, layer);
+    const sourceMapId = landMapSourceId(sourceId, layer);
     const fillId = `${sourceMapId}-fill`;
     const lineId = `${sourceMapId}-line`;
     const labelsId = `${sourceMapId}-labels`;
@@ -3002,98 +4520,179 @@ export function initProjectMap() {
 
   async function refreshLandMapLayers() {
     await Promise.all(
-      scope.landLayerRows().map((row) =>
-        scope.ensureLandMapLayer(row.sourceId, row.layerKey),
+      landLayerRows().map((row) =>
+        ensureLandMapLayer(row.sourceId, row.layerKey),
       ),
     );
-    scope.syncLandMapLayerOrder();
+    syncLandMapLayerOrder();
+  }
+
+  function buildLandFilterBadge(sourceId, spec) {
+    const rowKey = landLayerKey(sourceId, spec.key);
+    const active = isLandLayerVisible(sourceId, spec.key);
+    const batchHidden = !isLandSourceBatchVisible(sourceId);
+    const style = flatStyleFromLayerSpec(spec);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "entity-panel__land-filter-badge";
+    btn.dataset.landKey = rowKey;
+    if (active) btn.classList.add("entity-panel__land-filter-badge--active");
+    if (batchHidden)
+      btn.classList.add("entity-panel__land-filter-badge--batch-hidden");
+    if (spec.role === "include")
+      btn.classList.add("entity-panel__land-filter-badge--include");
+    btn.style.setProperty("--land-filter-color", style.color);
+    btn.textContent = landLayerShortLabel(spec);
+    btn.title = landLayerDisplayName(spec);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+    btn.addEventListener("click", () => {
+      const next = !isLandLayerVisible(sourceId, spec.key);
+      setLandLayerVisible(sourceId, spec.key, next);
+      if (next) setLandSourceBatchVisible(sourceId, true);
+      renderLandPanel();
+      if (next && isLandSourceBatchVisible(sourceId)) {
+        void ensureLandMapLayer(sourceId, spec.key);
+      }
+    });
+    return btn;
+  }
+
+  function buildLandSourceFilterBadges(sourceId, layers) {
+    const host = document.createElement("div");
+    host.className = "entity-panel__land-source-filters";
+    for (const rawLayer of layers) {
+      const spec = normalizeRegisteredLayer(rawLayer);
+      host.appendChild(buildLandFilterBadge(sourceId, spec));
+    }
+    return host;
+  }
+
+  function buildLandSourceEyeBtn(sourceId, layers) {
+    const visible = isLandSourceBatchVisible(sourceId);
+    return makeEntityPanelActionBtn({
+      icon: visible ? "eye" : "eye-slash",
+      label: visible ? "Hide all layers on map" : "Show all layers on map",
+      active: visible,
+      onClick: () => {
+        const next = !isLandSourceBatchVisible(sourceId);
+        setLandSourceBatchVisible(sourceId, next);
+        renderLandPanel();
+        if (!next) return;
+        for (const rawLayer of layers) {
+          const spec = normalizeRegisteredLayer(rawLayer);
+          if (isLandLayerVisible(sourceId, spec.key)) {
+            void ensureLandMapLayer(sourceId, spec.key);
+          }
+        }
+      },
+    });
   }
 
   function buildLandLayerEyeBtn(sourceId, layerKey) {
-    const visible = scope.isLandLayerVisible(sourceId, layerKey);
-    return scope.makeEntityPanelActionBtn({
+    const visible = isLandLayerVisible(sourceId, layerKey);
+    return makeEntityPanelActionBtn({
       icon: visible ? "eye" : "eye-slash",
       label: visible ? "Hide layer on map" : "Show layer on map",
       active: visible,
       onClick: () => {
-        const next = !scope.isLandLayerVisible(sourceId, layerKey);
-        scope.setLandLayerVisible(sourceId, layerKey, next);
-        scope.renderLandPanel();
-        if (next) void scope.ensureLandMapLayer(sourceId, layerKey);
+        const next = !isLandLayerVisible(sourceId, layerKey);
+        setLandLayerVisible(sourceId, layerKey, next);
+        renderLandPanel();
+        if (next) void ensureLandMapLayer(sourceId, layerKey);
       },
     });
   }
 
   function buildLandLayerLabelBtn(sourceId, layerKey) {
-    const layerVisible = scope.isLandLayerVisible(sourceId, layerKey);
-    const labelsVisible = scope.isLandLayerLabelsVisible(sourceId, layerKey);
-    return scope.makeEntityPanelActionBtn({
+    const layerVisible = isLandLayerVisible(sourceId, layerKey);
+    const labelsVisible = isLandLayerLabelsVisible(sourceId, layerKey);
+    return makeEntityPanelActionBtn({
       icon: "font",
       label: labelsVisible ? "Hide labels" : "Show labels",
       active: labelsVisible,
       disabled: !layerVisible,
       extraClass: "entity-panel__land-label-toggle",
       onClick: () => {
-        scope.setLandLayerLabelsVisible(
+        setLandLayerLabelsVisible(
           sourceId,
           layerKey,
-          !scope.isLandLayerLabelsVisible(sourceId, layerKey),
+          !isLandLayerLabelsVisible(sourceId, layerKey),
         );
-        scope.renderLandPanel();
+        renderLandPanel();
       },
     });
   }
 
   function buildLandSourceActionBtns(sourceId) {
-    const editBtn = scope.makeEntityPanelActionBtn({
+    const editBtn = makeEntityPanelActionBtn({
       icon: "pen",
       label: "Edit layers",
       onClick: () => {
-        void scope.openEditLandModal(sourceId);
+        void openEditLandModal(sourceId);
       },
     });
-    const deleteBtn = scope.makeEntityPanelActionBtn({
+    const deleteBtn = makeEntityPanelActionBtn({
       icon: "trash",
       label: "Remove source",
       danger: true,
       onClick: () => {
-        void scope.deleteLandSource(sourceId);
+        void deleteLandSource(sourceId);
       },
     });
     return [editBtn, deleteBtn];
   }
 
   function buildLandFolderEyeBtn(folderId) {
-    const visible = scope.isLandFolderVisible(folderId);
-    return scope.makeEntityPanelActionBtn({
+    const visible = isLandFolderVisible(folderId);
+    return makeEntityPanelActionBtn({
       icon: visible ? "eye" : "eye-slash",
       label: visible
         ? "Hide all layers in folder"
         : "Show all layers in folder",
       active: visible,
       onClick: () => {
-        scope.setLandFolderVisible(folderId, !visible);
+        setLandFolderVisible(folderId, !visible);
+      },
+    });
+  }
+
+  function buildLandFolderLabelBtn(folderId) {
+    const labeledLayers = landFolderLabeledLayers(folderId);
+    const labelsVisible = isLandFolderLabelsVisible(folderId);
+    return makeEntityPanelActionBtn({
+      icon: "font",
+      label: labelsVisible
+        ? "Hide all labels in folder"
+        : "Show all labels in folder",
+      active: labelsVisible,
+      disabled: !labeledLayers.length,
+      extraClass: "entity-panel__land-label-toggle",
+      onClick: () => {
+        setLandFolderLabelsVisible(
+          folderId,
+          !isLandFolderLabelsVisible(folderId),
+        );
       },
     });
   }
 
   function buildLandFolderActionBtns(folderId) {
-    const renameBtn = scope.makeEntityPanelActionBtn({
+    const renameBtn = makeEntityPanelActionBtn({
       icon: "pen",
       label: "Rename folder",
-      onClick: () => scope.renameLandFolder(folderId),
+      onClick: () => renameLandFolder(folderId),
     });
-    const deleteBtn = scope.makeEntityPanelActionBtn({
+    const deleteBtn = makeEntityPanelActionBtn({
       icon: "trash",
       label: "Delete folder",
       danger: true,
-      onClick: () => scope.deleteLandFolder(folderId),
+      onClick: () => deleteLandFolder(folderId),
     });
     return [renameBtn, deleteBtn];
   }
 
   function buildLandFolderRow(folder) {
-    const collapsed = scope.isLandFolderCollapsed(folder.id);
+    const collapsed = isLandFolderCollapsed(folder.id);
     const el = document.createElement("div");
     el.className = "entity-panel__land-folder";
 
@@ -3111,17 +4710,17 @@ export function initProjectMap() {
       "aria-label",
       collapsed ? "Expand folder" : "Collapse folder",
     );
-    collapseBtn.innerHTML = scope.mapToolIcon(
+    collapseBtn.innerHTML = mapToolIcon(
       collapsed ? "chevron-right" : "chevron-down",
       "Toggle folder",
     );
     collapseBtn.addEventListener("click", () => {
-      scope.setLandFolderCollapsed(folder.id, !collapsed);
+      setLandFolderCollapsed(folder.id, !collapsed);
     });
 
     header.appendChild(collapseBtn);
     header.appendChild(
-      scope.buildLandDragHandle({
+      buildLandDragHandle({
         kind: "folder",
         id: folder.id,
         label: "Drag to reorder folder",
@@ -3136,8 +4735,9 @@ export function initProjectMap() {
 
     const controls = document.createElement("div");
     controls.className = "entity-panel__land-source-actions";
-    controls.appendChild(scope.buildLandFolderEyeBtn(folder.id));
-    for (const btn of scope.buildLandFolderActionBtns(folder.id))
+    controls.appendChild(buildLandFolderEyeBtn(folder.id));
+    controls.appendChild(buildLandFolderLabelBtn(folder.id));
+    for (const btn of buildLandFolderActionBtns(folder.id))
       controls.appendChild(btn);
     header.appendChild(controls);
     el.appendChild(header);
@@ -3146,7 +4746,7 @@ export function initProjectMap() {
     body.className = "entity-panel__land-folder-body";
     body.hidden = collapsed;
     for (const sourceId of folder.sources) {
-      const group = scope.buildLandSourceGroup(sourceId, { folderId: folder.id });
+      const group = buildLandSourceGroup(sourceId, { folderId: folder.id });
       if (group) body.appendChild(group);
     }
     el.appendChild(body);
@@ -3154,13 +4754,14 @@ export function initProjectMap() {
   }
 
   function buildLandSourceGroup(sourceId, { folderId = null } = {}) {
-    const source = scope.landSourceRecord(sourceId);
+    const source = landSourceRecord(sourceId);
     if (!source) return null;
-    const displayTitles = scope.landSourceDisplayTitles(landSources);
+    const displayTitles = landSourceDisplayTitles(landSources);
     const sourceTitle = displayTitles.get(sourceId) || source.label || sourceId;
     const layers = Array.isArray(source.layers) ? source.layers : [];
     const singleLayer = layers.length === 1;
-    const singleSpec = singleLayer ? scope.normalizeRegisteredLayer(layers[0]) : null;
+    const singleSpec = singleLayer ? normalizeRegisteredLayer(layers[0]) : null;
+    const multiLayer = layers.length > 1;
 
     const el = document.createElement("div");
     el.className = "entity-panel__land-source-group";
@@ -3172,13 +4773,15 @@ export function initProjectMap() {
     header.dataset.landDragId = sourceId;
     if (folderId) header.dataset.landFolderId = folderId;
     if (singleSpec)
-      header.dataset.landKey = scope.landLayerKey(sourceId, singleSpec.key);
-    if (singleSpec && !scope.isLandLayerVisible(sourceId, singleSpec.key)) {
+      header.dataset.landKey = landLayerKey(sourceId, singleSpec.key);
+    if (multiLayer && !isLandSourceBatchVisible(sourceId)) {
+      header.classList.add("entity-panel__row--hidden");
+    } else if (singleSpec && !isLandLayerVisible(sourceId, singleSpec.key)) {
       header.classList.add("entity-panel__row--hidden");
     }
 
     header.appendChild(
-      scope.buildLandDragHandle({
+      buildLandDragHandle({
         kind: "source",
         id: sourceId,
         label: "Drag to move source",
@@ -3187,7 +4790,7 @@ export function initProjectMap() {
 
     const titleRow = document.createElement("div");
     titleRow.className = "entity-panel__land-source-title-row";
-    if (singleSpec) scope.appendLandLayerRoleBadge(titleRow, singleSpec.role);
+    if (singleSpec) appendLandLayerRoleBadge(titleRow, singleSpec.role);
     const title = document.createElement("div");
     title.className = "entity-panel__land-source-title";
     title.textContent = sourceTitle;
@@ -3197,14 +4800,16 @@ export function initProjectMap() {
 
     const controls = document.createElement("div");
     controls.className = "entity-panel__land-source-actions";
-    if (singleSpec) {
+    if (multiLayer) {
+      controls.appendChild(buildLandSourceEyeBtn(sourceId, layers));
+    } else if (singleSpec) {
       controls.appendChild(
-        scope.buildLandLayerControls(sourceId, singleSpec.key, {
+        buildLandLayerControls(sourceId, singleSpec.key, {
           labelField: singleSpec.labelField,
         }),
       );
     }
-    for (const btn of scope.buildLandSourceActionBtns(sourceId))
+    for (const btn of buildLandSourceActionBtns(sourceId))
       controls.appendChild(btn);
     header.appendChild(controls);
     el.appendChild(header);
@@ -3212,31 +4817,16 @@ export function initProjectMap() {
     if (singleSpec) {
       const metaHost = document.createElement("div");
       metaHost.className = "entity-panel__land-source-meta";
-      scope.appendLandLayerMeta(metaHost, singleSpec);
+      appendLandLayerMeta(metaHost, singleSpec);
       if (metaHost.childNodes.length) el.appendChild(metaHost);
-    } else if (layers.length > 1) {
-      const layerList = document.createElement("div");
-      layerList.className = "entity-panel__land-source-layers";
-      for (const rawLayer of layers) {
-        const spec = scope.normalizeRegisteredLayer(rawLayer);
-        layerList.appendChild(
-          scope.buildLandEntityRow(
-            {
-              sourceId,
-              layerKey: spec.key,
-              spec,
-            },
-            { showName: true },
-          ),
-        );
-      }
-      el.appendChild(layerList);
+    } else if (multiLayer) {
+      el.appendChild(buildLandSourceFilterBadges(sourceId, layers));
     }
     return el;
   }
 
   function buildLandUnfiledSection({ showHeader = true } = {}) {
-    scope.syncLandSidebarWithSources();
+    syncLandSidebarWithSources();
     if (!landSidebar.unfiledSources.length && !showHeader) return null;
     const el = document.createElement("div");
     el.className = "entity-panel__land-unfiled";
@@ -3252,7 +4842,7 @@ export function initProjectMap() {
     }
 
     for (const sourceId of landSidebar.unfiledSources) {
-      const group = scope.buildLandSourceGroup(sourceId);
+      const group = buildLandSourceGroup(sourceId);
       if (group) el.appendChild(group);
     }
     return el;
@@ -3260,9 +4850,9 @@ export function initProjectMap() {
 
   function renderLandPanel() {
     if (!entityPanelLandList) return;
-    scope.syncLandSidebarWithSources();
-    const rows = scope.landLayerRows();
-    const sourceCount = scope.orderedLandSourceIds().length;
+    syncLandSidebarWithSources();
+    const rows = landLayerRows();
+    const sourceCount = orderedLandSourceIds().length;
     if (entityPanelLandCount) {
       if (!sourceCount) {
         entityPanelLandCount.textContent = "No land sources";
@@ -3280,89 +4870,56 @@ export function initProjectMap() {
     }
     const hasFolders = landSidebar.folders.length > 0;
     for (const folder of landSidebar.folders) {
-      entityPanelLandList.appendChild(scope.buildLandFolderRow(folder));
+      entityPanelLandList.appendChild(buildLandFolderRow(folder));
     }
     if (hasFolders) {
-      const unfiled = scope.buildLandUnfiledSection({ showHeader: true });
+      const unfiled = buildLandUnfiledSection({ showHeader: true });
       if (unfiled) entityPanelLandList.appendChild(unfiled);
     } else {
-      const unfiled = scope.buildLandUnfiledSection({ showHeader: false });
+      const unfiled = buildLandUnfiledSection({ showHeader: false });
       if (unfiled) entityPanelLandList.appendChild(unfiled);
     }
   }
 
   function setLandSidebarRowLoading(sourceId, layerKey, loading) {
     if (!entityPanelLandList) return;
-    const rowKey = scope.landLayerKey(sourceId, layerKey);
+    const rowKey = landLayerKey(sourceId, layerKey);
     const row =
       entityPanelLandList.querySelector(
         `.entity-panel__row--land[data-land-key="${rowKey}"]`,
-      ) || entityPanelLandList.querySelector(`[data-land-key="${rowKey}"]`);
+      ) ||
+      entityPanelLandList.querySelector(
+        `.entity-panel__land-filter-badge[data-land-key="${rowKey}"]`,
+      ) ||
+      entityPanelLandList.querySelector(`[data-land-key="${rowKey}"]`);
     if (!row) return;
     row.classList.toggle("entity-panel__row--land-loading", !!loading);
+    row.classList.toggle("entity-panel__land-filter-badge--loading", !!loading);
     const spinner = row.querySelector(".entity-panel__land-row-spinner");
     if (spinner) spinner.hidden = !loading;
-  }
-
-  function buildLandEntityRow(row, { showName = false } = {}) {
-    const rowKey = scope.landLayerKey(row.sourceId, row.layerKey);
-    const el = document.createElement("div");
-    el.className =
-      "entity-panel__row entity-panel__row--land entity-panel__row--land-nested";
-    el.dataset.landKey = rowKey;
-    const visible = scope.isLandLayerVisible(row.sourceId, row.layerKey);
-    if (!visible) el.classList.add("entity-panel__row--hidden");
-
-    const main = document.createElement("div");
-    main.className = "entity-panel__main";
-    if (showName) {
-      const titleRow = document.createElement("div");
-      titleRow.className = "entity-panel__land-title-row";
-      scope.appendLandLayerRoleBadge(titleRow, row.spec.role);
-      const name = document.createElement("div");
-      name.className = "entity-panel__name";
-      const nameText = scope.friendlyLandLayerName(row.spec.name);
-      name.textContent = nameText;
-      name.title = nameText;
-      titleRow.appendChild(name);
-      main.appendChild(titleRow);
-    }
-    scope.appendLandLayerMeta(main, row.spec);
-
-    const controls = document.createElement("div");
-    controls.className = "entity-panel__controls";
-    controls.appendChild(
-      scope.buildLandLayerControls(row.sourceId, row.layerKey, {
-        labelField: row.spec.labelField,
-      }),
-    );
-
-    el.appendChild(main);
-    el.appendChild(controls);
-    return el;
   }
 
   async function reloadLandSources({ refreshMap = true } = {}) {
     const prevAoiDigest = landAoiDigest;
     try {
-      const resp = await fetch(scope.landApiUrl());
+      const resp = await fetch(landApiUrl());
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) return;
       landSources = Array.isArray(payload.sources) ? payload.sources : [];
       if (payload.sidebar)
         landSidebar = normalizeLandSidebarInput(payload.sidebar);
-      scope.syncLandSidebarWithSources();
+      syncLandSidebarWithSources();
       const nextAoiDigest =
         typeof payload.aoiDigest === "string" ? payload.aoiDigest : "none";
       const aoiChanged = nextAoiDigest !== prevAoiDigest;
       landAoiDigest = nextAoiDigest;
-      scope.renderLandPanel();
+      renderLandPanel();
       if (!refreshMap) return;
       if (aoiChanged) {
-        scope.clearAllLandLayerGeoJsonCache();
-        await scope.reloadClippedLandLayers();
+        clearAllLandLayerGeoJsonCache();
+        await reloadClippedLandLayers();
       } else {
-        await scope.refreshLandMapLayers();
+        await refreshLandMapLayers();
       }
     } catch (_) {
       /* network */
@@ -3373,7 +4930,7 @@ export function initProjectMap() {
     if (!window.confirm(`Remove land source "${sourceId}"?`)) return;
     const prevAoiDigest = landAoiDigest;
     try {
-      const resp = await fetch(scope.landSourceApiUrl(sourceId), {
+      const resp = await fetch(landSourceApiUrl(sourceId), {
         method: "DELETE",
       });
       const payload = await resp.json().catch(() => ({}));
@@ -3384,17 +4941,18 @@ export function initProjectMap() {
       const source = landSources.find((s) => s.id === sourceId);
       if (source && Array.isArray(source.layers)) {
         for (const rawLayer of source.layers) {
-          const spec = scope.normalizeRegisteredLayer(rawLayer);
-          scope.removeLandMapLayer(sourceId, spec.key);
-          landVisible.delete(scope.landLayerKey(sourceId, spec.key));
-          landLabelsVisible.delete(scope.landLayerKey(sourceId, spec.key));
-          scope.clearLandLayerGeoJsonCacheForLayer(sourceId, spec.key);
+          const spec = normalizeRegisteredLayer(rawLayer);
+          removeLandMapLayer(sourceId, spec.key);
+          landVisible.delete(landLayerKey(sourceId, spec.key));
+          landSourceBatchVisible.delete(sourceId);
+          landLabelsVisible.delete(landLayerKey(sourceId, spec.key));
+          clearLandLayerGeoJsonCacheForLayer(sourceId, spec.key);
         }
       }
-      await scope.reloadLandSources({ refreshMap: false });
+      await reloadLandSources({ refreshMap: false });
       if (landAoiDigest !== prevAoiDigest) {
-        scope.clearAllLandLayerGeoJsonCache();
-        await scope.reloadClippedLandLayers();
+        clearAllLandLayerGeoJsonCache();
+        await reloadClippedLandLayers();
       }
       scheduleSaveMapState();
     } catch (_) {
@@ -3446,7 +5004,7 @@ export function initProjectMap() {
     }
     const preview = new maplibregl.Map({
       container: el,
-      style: scope.basemapStyle(currentBasemapKey),
+      style: basemapStyle(currentBasemapKey),
       center: map.getCenter(),
       zoom: map.getZoom(),
       bearing: 0,
@@ -3475,7 +5033,7 @@ export function initProjectMap() {
   function resetLandPreviewMapLoading(mapEl) {
     if (!mapEl) return;
     landPreviewLoadingCounts.set(mapEl, 0);
-    scope.setLandPreviewMapLoading(mapEl, false);
+    setLandPreviewMapLoading(mapEl, false);
   }
 
   function fitPreviewMapToBboxes(previewMap, bboxes) {
@@ -3498,7 +5056,7 @@ export function initProjectMap() {
 
   function ensureLandLayerStyleState(layerStyles, layerName, seed) {
     if (!layerStyles.has(layerName)) {
-      layerStyles.set(layerName, scope.normalizeLandLayerStyle(seed));
+      layerStyles.set(layerName, normalizeLandLayerStyle(seed));
     }
     return layerStyles.get(layerName);
   }
@@ -3563,7 +5121,7 @@ export function initProjectMap() {
       for (const field of fields
         .slice()
         .sort((a, b) =>
-          scope.landColumnSortKey(a.name).localeCompare(scope.landColumnSortKey(b.name)),
+          landColumnSortKey(a.name).localeCompare(landColumnSortKey(b.name)),
         )) {
         const opt = document.createElement("option");
         opt.value = field.name;
@@ -3586,7 +5144,7 @@ export function initProjectMap() {
       valuesHint.hidden = false;
       valuesEl.innerHTML = '<span class="wa-caption pf-muted">Loading…</span>';
       try {
-        const payload = await scope.fetchLandFieldValues(
+        const payload = await fetchLandFieldValues(
           gdbPath,
           layerName,
           config.labelField,
@@ -3598,7 +5156,7 @@ export function initProjectMap() {
             '<span class="wa-caption pf-muted">No values</span>';
           return;
         }
-        const excluded = scope.excludedValuesForField(config, config.labelField);
+        const excluded = excludedValuesForField(config, config.labelField);
         for (const row of rows) {
           const item = document.createElement("label");
           item.className = "import-land-attrs-value-row";
@@ -3615,7 +5173,7 @@ export function initProjectMap() {
           text.textContent = `${row.value} (${row.count})`;
 
           checkbox.addEventListener("change", () => {
-            scope.setExcludedValueForField(
+            setExcludedValueForField(
               config,
               config.labelField,
               row.value,
@@ -3640,16 +5198,16 @@ export function initProjectMap() {
 
     async function ensureFields() {
       if (config.fields) {
-        scope.populateLabelSelect();
+        populateLabelSelect();
         return;
       }
       if (config.fieldsLoading) return;
       config.fieldsLoading = true;
       labelSelect.disabled = true;
       try {
-        const payload = await scope.fetchLandLayerFields(gdbPath, layerName);
+        const payload = await fetchLandLayerFields(gdbPath, layerName);
         config.fields = Array.isArray(payload.fields) ? payload.fields : [];
-        scope.populateLabelSelect();
+        populateLabelSelect();
       } catch (_) {
         labelSelect.innerHTML =
           '<option value="">Could not load fields</option>';
@@ -3661,7 +5219,7 @@ export function initProjectMap() {
 
     labelSelect.addEventListener("change", () => {
       config.labelField = labelSelect.value;
-      void scope.loadLabelValues();
+      void loadLabelValues();
       if (onLabelFieldChange) onLabelFieldChange(layerName);
     });
 
@@ -3673,8 +5231,8 @@ export function initProjectMap() {
     panel.appendChild(valuesHint);
     panel.appendChild(valuesEl);
 
-    void scope.ensureFields().then(() => {
-      if (config.labelField) void scope.loadLabelValues();
+    void ensureFields().then(() => {
+      if (config.labelField) void loadLabelValues();
     });
 
     return panel;
@@ -3699,8 +5257,8 @@ export function initProjectMap() {
     const selectedSet =
       selected instanceof Set ? selected : new Set(selected || []);
     for (const layer of layers) {
-      scope.ensureLandLayerStyleState(layerStyles, layer.name);
-      scope.ensureLandLayerConfig(layerConfigs, layer.name);
+      ensureLandLayerStyleState(layerStyles, layer.name);
+      ensureLandLayerConfig(layerConfigs, layer.name);
       const config = layerConfigs.get(layer.name);
       const row = document.createElement("div");
       row.className = "import-sites-point-row import-land-layer-row";
@@ -3774,7 +5332,7 @@ export function initProjectMap() {
       attrsToggle.textContent = "Attributes";
       attrsToggle.hidden = !checkbox.checked;
 
-      const attrsPanel = scope.buildLandLayerAttrPanel(
+      const attrsPanel = buildLandLayerAttrPanel(
         layer.name,
         gdbPath,
         config,
@@ -3799,6 +5357,31 @@ export function initProjectMap() {
     }
   }
 
+  function landPreviewLayerSpecs(sourceName, fillId, lineId, style) {
+    const normalized = normalizeLandLayerStyle(style);
+    const lineColor = landLineColorFromFill(normalized.color);
+    return [
+      {
+        id: fillId,
+        type: "fill",
+        source: sourceName,
+        paint: {
+          "fill-color": normalized.color,
+          "fill-opacity": normalized.opacity,
+          "fill-outline-color": lineColor,
+        },
+      },
+      {
+        id: lineId,
+        type: "line",
+        source: sourceName,
+        paint: {
+          "line-color": lineColor,
+          "line-width": LAND_PREVIEW_LINE_WIDTH,
+        },
+      },
+    ];
+  }
 
   function applyLandPreviewLayerStyle(
     previewMap,
@@ -3808,8 +5391,8 @@ export function initProjectMap() {
     style,
   ) {
     if (!previewMap) return;
-    const normalized = scope.normalizeLandLayerStyle(style);
-    const lineColor = scope.landLineColorFromFill(normalized.color);
+    const normalized = normalizeLandLayerStyle(style);
+    const lineColor = landLineColorFromFill(normalized.color);
     if (previewMap.getLayer(fillId)) {
       previewMap.setPaintProperty(fillId, "fill-color", normalized.color);
       previewMap.setPaintProperty(fillId, "fill-opacity", normalized.opacity);
@@ -3820,17 +5403,20 @@ export function initProjectMap() {
       previewMap.setPaintProperty(
         lineId,
         "line-width",
-        C.LAND_PREVIEW_LINE_WIDTH,
+        LAND_PREVIEW_LINE_WIDTH,
       );
     }
   }
 
+  function landPreviewLabelsLayerId(sourceName) {
+    return `${sourceName}-labels`;
+  }
 
   function syncLandPreviewLabelLayer(previewMap, sourceName, showLabels) {
-    scope.syncGeoJsonLabelLayer(
+    syncGeoJsonLabelLayer(
       previewMap,
       sourceName,
-      scope.landPreviewLabelsLayerId(sourceName),
+      landPreviewLabelsLayerId(sourceName),
       showLabels,
       "visible",
     );
@@ -3850,7 +5436,7 @@ export function initProjectMap() {
       try {
         if (!previewMap.getSource(sourceName)) {
           previewMap.addSource(sourceName, { type: "geojson", data });
-          for (const spec of scope.landPreviewLayerSpecs(
+          for (const spec of landPreviewLayerSpecs(
             sourceName,
             fillId,
             lineId,
@@ -3861,14 +5447,14 @@ export function initProjectMap() {
         } else {
           previewMap.getSource(sourceName).setData(data);
         }
-        scope.applyLandPreviewLayerStyle(
+        applyLandPreviewLayerStyle(
           previewMap,
           sourceName,
           fillId,
           lineId,
           style,
         );
-        scope.syncLandPreviewLabelLayer(previewMap, sourceName, !!config?.labelField);
+        syncLandPreviewLabelLayer(previewMap, sourceName, !!config?.labelField);
       } catch (_) {
         /* style/source race */
       }
@@ -3877,15 +5463,15 @@ export function initProjectMap() {
       apply();
       return Promise.resolve();
     }
-    return scope.whenPreviewMapReady(previewMap).then(apply);
+    return whenPreviewMapReady(previewMap).then(apply);
   }
 
   function removeLandPreviewLayer(previewMap, prefix, layerName) {
     if (!previewMap) return;
-    const sourceName = scope.landPreviewSourceId(prefix, layerName);
+    const sourceName = landPreviewSourceId(prefix, layerName);
     const fillId = `${sourceName}-fill`;
     const lineId = `${sourceName}-line`;
-    const labelsId = scope.landPreviewLabelsLayerId(sourceName);
+    const labelsId = landPreviewLabelsLayerId(sourceName);
     if (previewMap.getLayer(labelsId)) previewMap.removeLayer(labelsId);
     if (previewMap.getLayer(lineId)) previewMap.removeLayer(lineId);
     if (previewMap.getLayer(fillId)) previewMap.removeLayer(fillId);
@@ -3902,7 +5488,7 @@ export function initProjectMap() {
     const keep = new Set(keepLayerNames);
     for (const layerName of allLayerNames) {
       if (!keep.has(layerName))
-        scope.removeLandPreviewLayer(previewMap, prefix, layerName);
+        removeLandPreviewLayer(previewMap, prefix, layerName);
     }
   }
 
@@ -3915,31 +5501,31 @@ export function initProjectMap() {
     layerConfigs,
   ) {
     if (!previewMap || !path || !layerName) return;
-    const config = layerConfigs?.get(layerName) || scope.defaultLandLayerConfig();
-    const prefix = scope.landPreviewMapPrefix(sourceIdPrefix);
-    const sourceName = scope.landPreviewSourceId(prefix, layerName);
+    const config = layerConfigs?.get(layerName) || defaultLandLayerConfig();
+    const prefix = landPreviewMapPrefix(sourceIdPrefix);
+    const sourceName = landPreviewSourceId(prefix, layerName);
     const fillId = `${sourceName}-fill`;
     const lineId = `${sourceName}-line`;
-    const style = scope.normalizeLandLayerStyle(layerStyles.get(layerName));
-    await scope.whenPreviewMapReady(previewMap);
+    const style = normalizeLandLayerStyle(layerStyles.get(layerName));
+    await whenPreviewMapReady(previewMap);
     try {
-      const geojson = await scope.fetchLandPreviewGeoJson(
+      const geojson = await fetchLandPreviewGeoJson(
         path,
         layerName,
-        scope.landPreviewLayerConfig(config),
+        landPreviewLayerConfig(config),
       );
       if (previewMap.getSource(sourceName)) {
         previewMap.getSource(sourceName).setData(geojson);
-        scope.applyLandPreviewLayerStyle(
+        applyLandPreviewLayerStyle(
           previewMap,
           sourceName,
           fillId,
           lineId,
           style,
         );
-        scope.syncLandPreviewLabelLayer(previewMap, sourceName, !!config.labelField);
+        syncLandPreviewLabelLayer(previewMap, sourceName, !!config.labelField);
       } else {
-        await scope.applyLandPreviewMapData(
+        await applyLandPreviewMapData(
           previewMap,
           sourceName,
           fillId,
@@ -3966,27 +5552,27 @@ export function initProjectMap() {
     layerMetaList,
   ) {
     if (!previewMap || !path || !layerName) return;
-    const config = layerConfigs?.get(layerName) || scope.defaultLandLayerConfig();
-    const prefix = scope.landPreviewMapPrefix(sourceIdPrefix);
-    const sourceName = scope.landPreviewSourceId(prefix, layerName);
+    const config = layerConfigs?.get(layerName) || defaultLandLayerConfig();
+    const prefix = landPreviewMapPrefix(sourceIdPrefix);
+    const sourceName = landPreviewSourceId(prefix, layerName);
     const fillId = `${sourceName}-fill`;
     const lineId = `${sourceName}-line`;
-    const style = scope.normalizeLandLayerStyle(layerStyles.get(layerName));
-    await scope.whenPreviewMapReady(previewMap);
+    const style = normalizeLandLayerStyle(layerStyles.get(layerName));
+    await whenPreviewMapReady(previewMap);
     const hasSource = !!previewMap.getSource(sourceName);
     if (hasSource && !config.labelField) {
-      scope.applyLandPreviewLayerStyle(previewMap, sourceName, fillId, lineId, style);
-      scope.syncLandPreviewLabelLayer(previewMap, sourceName, false);
+      applyLandPreviewLayerStyle(previewMap, sourceName, fillId, lineId, style);
+      syncLandPreviewLabelLayer(previewMap, sourceName, false);
       return;
     }
-    if (!hasSource) scope.setLandLayerRowLoading(listEl, layerName, true);
+    if (!hasSource) setLandLayerRowLoading(listEl, layerName, true);
     try {
-      const geojson = await scope.fetchLandPreviewGeoJson(
+      const geojson = await fetchLandPreviewGeoJson(
         path,
         layerName,
-        scope.landPreviewLayerConfig(config),
+        landPreviewLayerConfig(config),
       );
-      await scope.applyLandPreviewMapData(
+      await applyLandPreviewMapData(
         previewMap,
         sourceName,
         fillId,
@@ -3996,12 +5582,12 @@ export function initProjectMap() {
         config,
       );
       const layerMeta = layerMetaList.find((layer) => layer.name === layerName);
-      if (layerMeta?.bbox) scope.fitPreviewMapToBboxes(previewMap, [layerMeta.bbox]);
+      if (layerMeta?.bbox) fitPreviewMapToBboxes(previewMap, [layerMeta.bbox]);
     } catch (_) {
       /* skip layer */
     } finally {
-      if (!hasSource) scope.setLandLayerRowLoading(listEl, layerName, false);
-      scope.resetLandPreviewMapLoading(mapEl);
+      if (!hasSource) setLandLayerRowLoading(listEl, layerName, false);
+      resetLandPreviewMapLoading(mapEl);
     }
   }
 
@@ -4013,13 +5599,13 @@ export function initProjectMap() {
     listEl,
   ) {
     if (!previewMap || !layerName) return;
-    scope.removeLandPreviewLayer(
+    removeLandPreviewLayer(
       previewMap,
-      scope.landPreviewMapPrefix(sourceIdPrefix),
+      landPreviewMapPrefix(sourceIdPrefix),
       layerName,
     );
-    scope.setLandLayerRowLoading(listEl, layerName, false);
-    scope.resetLandPreviewMapLoading(mapEl);
+    setLandLayerRowLoading(listEl, layerName, false);
+    resetLandPreviewMapLoading(mapEl);
   }
 
   async function updateLandPreviewLayerStyle(
@@ -4029,12 +5615,12 @@ export function initProjectMap() {
     layerStyles,
   ) {
     if (!previewMap || !layerName) return;
-    const prefix = scope.landPreviewMapPrefix(sourceIdPrefix);
-    const sourceName = scope.landPreviewSourceId(prefix, layerName);
+    const prefix = landPreviewMapPrefix(sourceIdPrefix);
+    const sourceName = landPreviewSourceId(prefix, layerName);
     if (!previewMap.getSource(sourceName)) return;
     const fillId = `${sourceName}-fill`;
     const lineId = `${sourceName}-line`;
-    scope.applyLandPreviewLayerStyle(
+    applyLandPreviewLayerStyle(
       previewMap,
       sourceName,
       fillId,
@@ -4057,13 +5643,13 @@ export function initProjectMap() {
   ) {
     if (!previewMap) return;
     const selected = [...selectedNames];
-    const prefix = scope.landPreviewMapPrefix(sourceIdPrefix);
-    scope.clearLandPreviewMapLayers(previewMap, prefix, allLayerNames, selected);
-    await scope.whenPreviewMapReady(previewMap);
+    const prefix = landPreviewMapPrefix(sourceIdPrefix);
+    clearLandPreviewMapLayers(previewMap, prefix, allLayerNames, selected);
+    await whenPreviewMapReady(previewMap);
     const bboxes = [];
     await Promise.all(
       selected.map(async (layerName) => {
-        await scope.showLandPreviewLayer(
+        await showLandPreviewLayer(
           previewMap,
           mapEl,
           listEl,
@@ -4080,18 +5666,18 @@ export function initProjectMap() {
         if (layerMeta?.bbox) bboxes.push(layerMeta.bbox);
       }),
     );
-    scope.fitPreviewMapToBboxes(previewMap, bboxes);
+    fitPreviewMapToBboxes(previewMap, bboxes);
   }
 
   function resetImportLandModal() {
-    scope.setImportLandError("");
+    setImportLandError("");
     importLandPreviewLayers = [];
     importLandPreviewPath = "";
     importLandPreviewBusy = false;
     importLandLayerStyles = new Map();
     importLandLayerConfigs = new Map();
     if (importLandPreviewMapEl) {
-      scope.resetLandPreviewMapLoading(importLandPreviewMapEl);
+      resetLandPreviewMapLoading(importLandPreviewMapEl);
     }
     if (importLandGdb) importLandGdb.value = "";
     if (importLandLabel) importLandLabel.value = "";
@@ -4101,7 +5687,7 @@ export function initProjectMap() {
     if (importLandPreviewField) importLandPreviewField.hidden = true;
     if (importLandLayerList) importLandLayerList.innerHTML = "";
     if (importLandSave) importLandSave.disabled = true;
-    scope.destroyImportLandPreviewMap();
+    destroyImportLandPreviewMap();
   }
 
   function fillImportLandGdbSelect(paths) {
@@ -4118,22 +5704,22 @@ export function initProjectMap() {
   async function populateImportLandGdbSelect() {
     if (!importLandGdb) return;
     if (landDataGdbPaths.length) {
-      scope.fillImportLandGdbSelect(landDataGdbPaths);
+      fillImportLandGdbSelect(landDataGdbPaths);
       return;
     }
     importLandGdb.innerHTML = '<option value="">Loading GDB list…</option>';
     importLandGdb.disabled = true;
     try {
-      const resp = await fetch(scope.landDataGdbsUrl());
+      const resp = await fetch(landDataGdbsUrl());
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        scope.fillImportLandGdbSelect([]);
+        fillImportLandGdbSelect([]);
         return;
       }
       landDataGdbPaths = Array.isArray(payload.paths) ? payload.paths : [];
-      scope.fillImportLandGdbSelect(landDataGdbPaths);
+      fillImportLandGdbSelect(landDataGdbPaths);
     } catch (_) {
-      scope.fillImportLandGdbSelect([]);
+      fillImportLandGdbSelect([]);
     } finally {
       importLandGdb.disabled = false;
     }
@@ -4141,22 +5727,22 @@ export function initProjectMap() {
 
   async function previewImportLandPath(path) {
     if (!path) {
-      scope.resetImportLandModal();
+      resetImportLandModal();
       return;
     }
-    scope.setImportLandError("");
+    setImportLandError("");
     importLandPreviewBusy = true;
     if (importLandSave) importLandSave.disabled = true;
     if (importLandStatus) importLandStatus.textContent = "Loading layers…";
     try {
-      const resp = await fetch(scope.landImportPreviewApiUrl(), {
+      const resp = await fetch(landImportPreviewApiUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
       });
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        scope.setImportLandError(payload.error || `Preview failed (${resp.status})`);
+        setImportLandError(payload.error || `Preview failed (${resp.status})`);
         if (importLandPreviewField) importLandPreviewField.hidden = true;
         return;
       }
@@ -4174,11 +5760,11 @@ export function initProjectMap() {
       if (importLandPreviewLayers.length === 1) {
         selected.add(importLandPreviewLayers[0].name);
       }
-      importLandPreviewMap = scope.ensureLandPreviewMap(
+      importLandPreviewMap = ensureLandPreviewMap(
         importLandPreviewMapEl,
         importLandPreviewMap,
       );
-      scope.renderLandLayerChecklist(importLandLayerList, importLandPreviewLayers, {
+      renderLandLayerChecklist(importLandLayerList, importLandPreviewLayers, {
         selected,
         layerStyles: importLandLayerStyles,
         layerConfigs: importLandLayerConfigs,
@@ -4192,7 +5778,7 @@ export function initProjectMap() {
           }
           if (importLandSave) importLandSave.disabled = selected.size === 0;
           if (checked) {
-            void scope.showLandPreviewLayer(
+            void showLandPreviewLayer(
               importLandPreviewMap,
               importLandPreviewMapEl,
               importLandLayerList,
@@ -4204,7 +5790,7 @@ export function initProjectMap() {
               importLandPreviewLayers,
             );
           } else {
-            scope.hideLandPreviewLayer(
+            hideLandPreviewLayer(
               importLandPreviewMap,
               "import",
               name,
@@ -4215,7 +5801,7 @@ export function initProjectMap() {
         },
         onStyleChange: (name) => {
           if (selected.has(name)) {
-            void scope.updateLandPreviewLayerStyle(
+            void updateLandPreviewLayerStyle(
               importLandPreviewMap,
               name,
               "import",
@@ -4225,7 +5811,7 @@ export function initProjectMap() {
         },
         onLabelFieldChange: (name) => {
           if (!selected.has(name)) return;
-          void scope.refreshLandPreviewLayerConfig(
+          void refreshLandPreviewLayerConfig(
             importLandPreviewMap,
             importLandPreviewPath,
             name,
@@ -4240,10 +5826,10 @@ export function initProjectMap() {
         importLandSelectAll.disabled = importLandPreviewLayers.length === 0;
       if (importLandClearAll)
         importLandClearAll.disabled = importLandPreviewLayers.length === 0;
-      await scope.whenPreviewMapReady(importLandPreviewMap);
+      await whenPreviewMapReady(importLandPreviewMap);
       requestAnimationFrame(() => importLandPreviewMap?.resize());
       for (const name of selected) {
-        await scope.showLandPreviewLayer(
+        await showLandPreviewLayer(
           importLandPreviewMap,
           importLandPreviewMapEl,
           importLandLayerList,
@@ -4255,12 +5841,12 @@ export function initProjectMap() {
           importLandPreviewLayers,
         );
       }
-      scope.fitPreviewMapToBboxes(
+      fitPreviewMapToBboxes(
         importLandPreviewMap,
         importLandPreviewLayers.map((layer) => layer.bbox).filter(Boolean),
       );
     } catch (_) {
-      scope.setImportLandError("Could not reach server.");
+      setImportLandError("Could not reach server.");
     } finally {
       importLandPreviewBusy = false;
     }
@@ -4270,11 +5856,11 @@ export function initProjectMap() {
     if (!importLandModal) return;
     setAddPlacementMode(null);
     setEntityPanelOpen(true);
-    scope.setEntityTab("land");
-    scope.resetImportLandModal();
+    setEntityTab("land");
+    resetImportLandModal();
     await customElements.whenDefined("wa-dialog");
     importLandModal.open = true;
-    void scope.populateImportLandGdbSelect();
+    void populateImportLandGdbSelect();
   }
 
   function collectSelectedLandLayers(listEl) {
@@ -4290,18 +5876,18 @@ export function initProjectMap() {
   }
 
   async function saveImportLandModal() {
-    const selected = scope.collectSelectedLandLayers(importLandLayerList);
+    const selected = collectSelectedLandLayers(importLandLayerList);
     if (!importLandPreviewPath || !selected.length) {
-      scope.setImportLandError("Select a GDB and at least one layer.");
+      setImportLandError("Select a GDB and at least one layer.");
       return;
     }
-    scope.setImportLandError("");
+    setImportLandError("");
     if (importLandSave) importLandSave.disabled = true;
     const prevAoiDigest = landAoiDigest;
     try {
       const body = {
         path: importLandPreviewPath,
-        layers: scope.collectSelectedLayerPayloads(
+        layers: collectSelectedLayerPayloads(
           importLandLayerList,
           importLandLayerStyles,
           importLandLayerConfigs,
@@ -4309,41 +5895,42 @@ export function initProjectMap() {
       };
       if (importLandLabel?.value.trim())
         body.label = importLandLabel.value.trim();
-      const resp = await fetch(scope.landImportApiUrl(), {
+      const resp = await fetch(landImportApiUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        scope.setImportLandError(payload.error || `Import failed (${resp.status})`);
+        setImportLandError(payload.error || `Import failed (${resp.status})`);
         return;
       }
       if (importLandModal) importLandModal.open = false;
-      await scope.reloadLandSources({ refreshMap: false });
+      await reloadLandSources({ refreshMap: false });
       const source = payload.source;
       if (source?.id && Array.isArray(source.layers)) {
         for (const rawLayer of source.layers) {
-          const spec = scope.normalizeRegisteredLayer(rawLayer);
-          scope.setLandLayerVisible(source.id, spec.key, true);
+          const spec = normalizeRegisteredLayer(rawLayer);
+          setLandLayerVisible(source.id, spec.key, true);
         }
-        scope.renderLandPanel();
+        setLandSourceBatchVisible(source.id, true);
+        renderLandPanel();
         if (landAoiDigest !== prevAoiDigest) {
-          scope.clearAllLandLayerGeoJsonCache();
-          await scope.reloadClippedLandLayers();
+          clearAllLandLayerGeoJsonCache();
+          await reloadClippedLandLayers();
         } else {
           await Promise.all(
             source.layers.map((rawLayer) => {
-              const spec = scope.normalizeRegisteredLayer(rawLayer);
-              return scope.refreshLandMapLayer(source.id, spec.key);
+              const spec = normalizeRegisteredLayer(rawLayer);
+              return refreshLandMapLayer(source.id, spec.key);
             }),
           );
         }
       } else {
-        await scope.refreshLandMapLayers();
+        await refreshLandMapLayers();
       }
     } catch (_) {
-      scope.setImportLandError("Could not reach server.");
+      setImportLandError("Could not reach server.");
     } finally {
       if (importLandSave) importLandSave.disabled = false;
     }
@@ -4354,44 +5941,33 @@ export function initProjectMap() {
     if (!source || !editLandModal) return;
     editLandSourceId = sourceId;
     editLandPreviewPath = source.path;
-    scope.setEditLandError("");
+    setEditLandError("");
     if (editLandSourcePath) editLandSourcePath.textContent = source.path;
     if (editLandLabel) editLandLabel.value = source.label || source.id;
     if (editLandSave) editLandSave.disabled = true;
     try {
-      const resp = await fetch(scope.landImportPreviewApiUrl(), {
+      const resp = await fetch(landImportPreviewApiUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: source.path }),
       });
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        scope.setEditLandError(payload.error || `Preview failed (${resp.status})`);
+        const message = payload.error || `Preview failed (${resp.status})`;
+        setEditLandError(message);
+        window.alert(message);
         return;
       }
       editLandPreviewLayers = Array.isArray(payload.layers)
         ? payload.layers
         : [];
-      editLandLayerStyles = new Map();
-      editLandLayerConfigs = new Map();
-      const registeredByName = new Map();
-      for (const rawLayer of source.layers || []) {
-        const spec = scope.normalizeRegisteredLayer(rawLayer);
-        registeredByName.set(spec.name, rawLayer);
-        editLandLayerConfigs.set(
-          spec.name,
-          scope.configFromRegisteredLayer(rawLayer),
-        );
-        scope.ensureLandLayerStyleState(
-          editLandLayerStyles,
-          spec.name,
-          scope.flatStyleFromLayerSpec(spec),
-        );
-      }
+      const layerState = buildEditLandLayerState(source, editLandPreviewLayers);
+      editLandLayerStyles = layerState.styles;
+      editLandLayerConfigs = layerState.configs;
       const allLayerNames = editLandPreviewLayers.map((layer) => layer.name);
-      const selected = new Set([...registeredByName.keys()]);
+      const selected = initialEditLandSelected(source, editLandPreviewLayers);
       const refreshEditPreview = () => {
-        void scope.syncLandPreviewMap(
+        void syncLandPreviewMap(
           editLandPreviewMap,
           editLandPreviewMapEl,
           editLandLayerList,
@@ -4404,7 +5980,7 @@ export function initProjectMap() {
           editLandPreviewLayers,
         );
       };
-      scope.renderLandLayerChecklist(editLandLayerList, editLandPreviewLayers, {
+      renderLandLayerChecklist(editLandLayerList, editLandPreviewLayers, {
         selected,
         layerStyles: editLandLayerStyles,
         layerConfigs: editLandLayerConfigs,
@@ -4418,7 +5994,7 @@ export function initProjectMap() {
           }
           if (editLandSave) editLandSave.disabled = selected.size === 0;
           if (checked) {
-            void scope.showLandPreviewLayer(
+            void showLandPreviewLayer(
               editLandPreviewMap,
               editLandPreviewMapEl,
               editLandLayerList,
@@ -4430,7 +6006,7 @@ export function initProjectMap() {
               editLandPreviewLayers,
             );
           } else {
-            scope.hideLandPreviewLayer(
+            hideLandPreviewLayer(
               editLandPreviewMap,
               "edit",
               name,
@@ -4441,7 +6017,7 @@ export function initProjectMap() {
         },
         onStyleChange: (name) => {
           if (selected.has(name)) {
-            void scope.updateLandPreviewLayerStyle(
+            void updateLandPreviewLayerStyle(
               editLandPreviewMap,
               name,
               "edit",
@@ -4451,7 +6027,7 @@ export function initProjectMap() {
         },
         onLabelFieldChange: (name) => {
           if (!selected.has(name)) return;
-          void scope.refreshLandPreviewLayerConfig(
+          void refreshLandPreviewLayerConfig(
             editLandPreviewMap,
             editLandPreviewPath,
             name,
@@ -4461,53 +6037,55 @@ export function initProjectMap() {
           );
         },
       });
-      editLandPreviewMap = scope.ensureLandPreviewMap(
+      editLandPreviewMap = ensureLandPreviewMap(
         editLandPreviewMapEl,
         editLandPreviewMap,
       );
       if (editLandSave) editLandSave.disabled = selected.size === 0;
       editLandPreviewRefresh = refreshEditPreview;
       if (selected.size) refreshEditPreview();
-      await customElements.whenDefined("wa-dialog");
-      editLandModal.open = true;
+      await openWaDialog(editLandModal);
     } catch (_) {
-      scope.setEditLandError("Could not reach server.");
+      setEditLandError("Could not reach server.");
+      window.alert("Could not reach server.");
     }
   }
 
   async function saveEditLandModal() {
     if (!editLandSourceId) return;
-    const selected = scope.collectSelectedLandLayers(editLandLayerList);
+    const selected = collectSelectedLandLayers(editLandLayerList);
     if (!selected.length) {
-      scope.setEditLandError("Select at least one layer.");
+      setEditLandError("Select at least one layer.");
       return;
     }
-    scope.setEditLandError("");
+    setEditLandError("");
     if (editLandSave) editLandSave.disabled = true;
     const prevAoiDigest = landAoiDigest;
     const prevSource = landSources.find((s) => s.id === editLandSourceId);
     const prevKeys = new Set(
       (prevSource?.layers || []).map(
-        (layer) => scope.normalizeRegisteredLayer(layer).key,
+        (layer) => normalizeRegisteredLayer(layer).key,
       ),
     );
     try {
       const body = {
-        layers: scope.collectSelectedLayerPayloads(
+        layers: collectEditLandSavePayloads(
           editLandLayerList,
           editLandLayerStyles,
           editLandLayerConfigs,
+          prevSource,
+          editLandPreviewLayers,
         ),
         label: editLandLabel?.value.trim() || editLandSourceId,
       };
-      const resp = await fetch(scope.landSourceApiUrl(editLandSourceId), {
+      const resp = await fetch(landSourceApiUrl(editLandSourceId), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        scope.setEditLandError(payload.error || `Save failed (${resp.status})`);
+        setEditLandError(payload.error || `Save failed (${resp.status})`);
         return;
       }
       if (editLandModal) editLandModal.open = false;
@@ -4515,39 +6093,79 @@ export function initProjectMap() {
         payload.source || landSources.find((s) => s.id === editLandSourceId);
       const newKeys = new Set(
         (updated?.layers || []).map(
-          (layer) => scope.normalizeRegisteredLayer(layer).key,
+          (layer) => normalizeRegisteredLayer(layer).key,
         ),
       );
       for (const key of prevKeys) {
         if (!newKeys.has(key)) {
-          scope.removeLandMapLayer(editLandSourceId, key);
-          landVisible.delete(scope.landLayerKey(editLandSourceId, key));
-          landLabelsVisible.delete(scope.landLayerKey(editLandSourceId, key));
-          scope.clearLandLayerGeoJsonCacheForLayer(editLandSourceId, key);
+          removeLandMapLayer(editLandSourceId, key);
+          landVisible.delete(landLayerKey(editLandSourceId, key));
+          landLabelsVisible.delete(landLayerKey(editLandSourceId, key));
+          clearLandLayerGeoJsonCacheForLayer(editLandSourceId, key);
         }
       }
       for (const key of newKeys) {
         if (!prevKeys.has(key))
-          scope.setLandLayerVisible(editLandSourceId, key, true);
+          setLandLayerVisible(editLandSourceId, key, true);
       }
-      await scope.reloadLandSources({ refreshMap: false });
+      await reloadLandSources({ refreshMap: false });
       if (landAoiDigest !== prevAoiDigest) {
-        scope.clearAllLandLayerGeoJsonCache();
-        await scope.reloadClippedLandLayers();
+        clearAllLandLayerGeoJsonCache();
+        await reloadClippedLandLayers();
       } else {
         await Promise.all(
-          [...newKeys].map((key) => scope.refreshLandMapLayer(editLandSourceId, key)),
+          [...newKeys].map((key) => refreshLandMapLayer(editLandSourceId, key)),
         );
       }
     } catch (_) {
-      scope.setEditLandError("Could not reach server.");
+      setEditLandError("Could not reach server.");
     } finally {
       if (editLandSave) editLandSave.disabled = false;
     }
   }
 
+  function captureMapState() {
+    const c = map.getCenter();
+    return {
+      v: 1,
+      center: [c.lng, c.lat],
+      zoom: map.getZoom(),
+      bearing: map.getBearing(),
+      pitch: map.getPitch(),
+      basemap: currentBasemapKey,
+      showLinks: showSiteLinks,
+      viewshedOpacity,
+      hiddenSites: [...siteHidden],
+      tagFilters: [...activeTagFilters].sort((a, b) => a.localeCompare(b)),
+      tagFilterMode,
+      filterByViewport: entityPanelFilterByViewport,
+      viewshedVisible: Object.fromEntries(viewshedVisible),
+      entityPanelOpen,
+      entityPanelTab,
+      landVisible: Object.fromEntries(landVisible),
+      landSourceBatchVisible: Object.fromEntries(landSourceBatchVisible),
+      landLabelsVisible: Object.fromEntries(landLabelsVisible),
+      landFoldersCollapsed: Object.fromEntries(landFoldersCollapsed),
+    };
+  }
 
+  function scheduleSaveMapState() {
+    if (!mapReady || restoring) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      persistMapState(captureMapState());
+    }, MAP_STATE_SAVE_MS);
+  }
 
+  function setSiteLinksVisible(visible) {
+    if (!mapReady) return;
+    const vis = visible ? "visible" : "none";
+    if (map.getLayer(LINKS_LAYER))
+      map.setLayoutProperty(LINKS_LAYER, "visibility", vis);
+    if (map.getLayer(LINKS_LABELS_LAYER))
+      map.setLayoutProperty(LINKS_LABELS_LAYER, "visibility", vis);
+  }
 
   function siteLinksLinePaint() {
     return {
@@ -4571,34 +6189,34 @@ export function initProjectMap() {
   }
 
   function addSiteLinksLayer(geojson) {
-    const filtered = scope.filterSiteLinksGeoJson(geojson);
+    const filtered = filterSiteLinksGeoJson(geojson);
     if (!filtered || !filtered.features || !filtered.features.length) {
-      if (map.getLayer(C.LINKS_LABELS_LAYER)) map.removeLayer(C.LINKS_LABELS_LAYER);
-      if (map.getLayer(C.LINKS_LAYER)) map.removeLayer(C.LINKS_LAYER);
-      if (map.getSource(C.LINKS_SOURCE)) map.removeSource(C.LINKS_SOURCE);
+      if (map.getLayer(LINKS_LABELS_LAYER)) map.removeLayer(LINKS_LABELS_LAYER);
+      if (map.getLayer(LINKS_LAYER)) map.removeLayer(LINKS_LAYER);
+      if (map.getSource(LINKS_SOURCE)) map.removeSource(LINKS_SOURCE);
       raiseSiteLayers();
       return;
     }
     const labeled = linksGeoJsonWithLabels(filtered);
     const linkVisibility = showSiteLinks ? "visible" : "none";
     const linePaint = siteLinksLinePaint();
-    if (map.getSource(C.LINKS_SOURCE)) {
-      map.getSource(C.LINKS_SOURCE).setData(labeled);
-      if (map.getLayer(C.LINKS_LAYER)) {
+    if (map.getSource(LINKS_SOURCE)) {
+      map.getSource(LINKS_SOURCE).setData(labeled);
+      if (map.getLayer(LINKS_LAYER)) {
         for (const [key, val] of Object.entries(linePaint)) {
-          map.setPaintProperty(C.LINKS_LAYER, key, val);
+          map.setPaintProperty(LINKS_LAYER, key, val);
         }
       }
       setSiteLinksVisible(showSiteLinks);
       raiseSiteLayers();
       return;
     }
-    map.addSource(C.LINKS_SOURCE, { type: "geojson", data: labeled });
+    map.addSource(LINKS_SOURCE, { type: "geojson", data: labeled });
     map.addLayer(
       {
-        id: C.LINKS_LAYER,
+        id: LINKS_LAYER,
         type: "line",
-        source: C.LINKS_SOURCE,
+        source: LINKS_SOURCE,
         paint: linePaint,
         layout: {
           "line-cap": "round",
@@ -4606,11 +6224,11 @@ export function initProjectMap() {
           visibility: linkVisibility,
         },
       },
-      C.SITES_CIRCLE,
+      SITES_CIRCLE,
     );
     map.addLayer(
-      linkLabelsLayerSpec(C.LINKS_LABELS_LAYER, C.LINKS_SOURCE, linkVisibility),
-      C.SITES_CIRCLE,
+      linkLabelsLayerSpec(LINKS_LABELS_LAYER, LINKS_SOURCE, linkVisibility),
+      SITES_CIRCLE,
     );
     raiseSiteLayers();
   }
@@ -4633,11 +6251,28 @@ export function initProjectMap() {
   const singleSiteLinksInflight = new Set();
 
   /** Fetch one site's links (existing footprints only) and merge into the mesh. */
+  async function loadSingleSiteLinks(slug) {
+    if (!slug || singleSiteLinksInflight.has(slug)) return;
+    singleSiteLinksInflight.add(slug);
+    try {
+      const resp = await fetch(siteLinksApiUrl(slug));
+      if (!resp.ok) {
+        scheduleSingleSiteLinksRetry(slug);
+        return;
+      }
+      const payload = await resp.json();
+      mergeSingleSiteLinks(slug, payload);
+    } catch (_) {
+      scheduleSingleSiteLinksRetry(slug);
+    } finally {
+      singleSiteLinksInflight.delete(slug);
+    }
+  }
 
   function scheduleSingleSiteLinksRetry(slug) {
     if (!slug || siteOutboundLinksReady.has(slug)) return;
     window.setTimeout(() => {
-      if (scope.sitePinSpinning(slug) && !siteOutboundLinksReady.has(slug)) {
+      if (sitePinSpinning(slug) && !siteOutboundLinksReady.has(slug)) {
         void loadSingleSiteLinks(slug);
       }
     }, 5000);
@@ -4678,30 +6313,70 @@ export function initProjectMap() {
     if (payload.outbound_ready !== false) {
       markSiteOutboundLinksReady(slug);
     }
-    if (selectedSlug) scope.renderPanel(siteBySlug.get(selectedSlug));
+    if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));
   }
 
+  function applySiteLinksPayload(payload) {
+    if (!payload) return;
+    if (payload.partial && payload.site) {
+      mergeSingleSiteLinks(payload.site, payload);
+      return;
+    }
+    const prevFeatures = siteLinksPayload?.geojson?.features;
+    const prevCount = Array.isArray(prevFeatures) ? prevFeatures.length : 0;
+    const nextFeatures = payload.geojson?.features;
+    const nextCount = Array.isArray(nextFeatures) ? nextFeatures.length : 0;
+    // Keep showing a ready mesh while a re-warm is pending (e.g. rename bumps
+    // config mtime but not link geometry). Empty pending payloads used to wipe
+    // all RF lines until the slow warm finished.
+    if (
+      payload.status === "pending" &&
+      siteLinksPayload &&
+      siteLinksPayload.status === "ready" &&
+      siteLinksPayload.geojson &&
+      prevCount > 0
+    ) {
+      return;
+    }
+    // Viewshed PNG warms can publish before GPKG footprints exist; do not wipe RF lines.
+    if (
+      payload.status === "ready" &&
+      siteLinksPayload?.status === "ready" &&
+      prevCount > 0 &&
+      nextCount === 0
+    ) {
+      return;
+    }
+    siteLinksPayload = payload;
+    if (payload.geojson) addSiteLinksLayer(payload.geojson);
+    if (payload.status === "ready" && !payload.partial) {
+      for (const site of sites) {
+        markSiteOutboundLinksReady(site.slug);
+      }
+    }
+    if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));
+  }
 
   function viewshedOverlaySlugs() {
     return [
       ...sites.map((site) => site.slug),
-      C.DRAFT_VIEWSHED_SLUG,
-      ...editCoordHistory.map((entry) => scope.editHistorySlug(entry.id)),
+      DRAFT_VIEWSHED_SLUG,
+      ...editCoordHistory.map((entry) => editHistorySlug(entry.id)),
       ...seekHopCoordViewshedSlugs,
     ];
   }
 
   function viewshedLayerInsertBefore() {
-    return map.getLayer(C.SITES_CIRCLE) ? C.SITES_CIRCLE : undefined;
+    return map.getLayer(SITES_CIRCLE) ? SITES_CIRCLE : undefined;
   }
 
   /** Land layer reorder moves fills to the top; keep RF overlays above land, below sites. */
   function raiseViewshedLayers() {
     if (!mapReady) return;
-    const beforeId = scope.viewshedLayerInsertBefore();
+    const beforeId = viewshedLayerInsertBefore();
     if (!beforeId) return;
-    for (const slug of scope.viewshedOverlaySlugs()) {
-      const layerId = scope.viewshedLayerId(slug);
+    for (const slug of viewshedOverlaySlugs()) {
+      const layerId = viewshedLayerId(slug);
       if (!map.getLayer(layerId)) continue;
       try {
         map.moveLayer(layerId, beforeId);
@@ -4711,21 +6386,53 @@ export function initProjectMap() {
     }
   }
 
+  function raiseSiteLayers() {
+    raiseViewshedLayers();
+    for (const id of [
+      EDIT_HISTORY_LINKS_LAYER,
+      EDIT_HISTORY_LINKS_LABELS_LAYER,
+      DRAFT_LINKS_LAYER,
+      DRAFT_LINKS_LABELS_LAYER,
+      LINKS_LAYER,
+      LINKS_LABELS_LAYER,
+      SEEK_WEDGE_FILL_LAYER,
+      SEEK_WEDGE_OUTLINE_LAYER,
+      SEEK_ANCILLARY_LINES_LAYER,
+      SEEK_ANCILLARY_LINES_LABELS_LAYER,
+      SEEK_LINES_LAYER,
+      SEEK_LINES_LABELS_LAYER,
+      SEEK_PATH_LAYER,
+      SEEK_GOAL_LINE_LAYER,
+      SEEK_CANDIDATES_LAYER,
+      SEEK_CANDIDATES_LABELS_LAYER,
+      SITES_CIRCLE,
+      SITES_LABELS,
+      SITES_SELECTED,
+    ]) {
+      if (map.getLayer(id)) {
+        try {
+          map.moveLayer(id);
+        } catch (_) {
+          /* layer may be mid-remove */
+        }
+      }
+    }
+  }
 
   function basemapRasterOpacityForTerrain() {
-    if (scope.usesSkadiAnalysisDem()) return 0;
+    if (usesSkadiAnalysisDem()) return 0;
     return 0.9;
   }
 
   function showTerrainOverlays() {
     ensureTerrainSource();
     ensureHillshadeLayer();
-    map.setTerrain({ source: C.TERRAIN_SOURCE, exaggeration: 1.35 });
+    map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: 1.35 });
     if (map.getLayer("basemap")) {
       map.setPaintProperty(
         "basemap",
         "raster-opacity",
-        scope.basemapRasterOpacityForTerrain(),
+        basemapRasterOpacityForTerrain(),
       );
     }
     raiseSiteLayers();
@@ -4742,19 +6449,19 @@ export function initProjectMap() {
   function syncTerrainFromPitch() {
     if (!mapReady) return;
     const pitch = map.getPitch();
-    if (!terrainActive && pitch >= C.PITCH_TERRAIN_ON) {
+    if (!terrainActive && pitch >= PITCH_TERRAIN_ON) {
       terrainActive = true;
-      scope.showTerrainOverlays();
-    } else if (terrainActive && pitch <= C.PITCH_TERRAIN_OFF) {
+      showTerrainOverlays();
+    } else if (terrainActive && pitch <= PITCH_TERRAIN_OFF) {
       terrainActive = false;
-      scope.hideTerrainOverlays();
+      hideTerrainOverlays();
     }
   }
 
   function ensureBasemapReference(bm) {
     if (!bm.referenceTiles) return;
-    if (!map.getSource(C.BASEMAP_REFERENCE_SOURCE)) {
-      map.addSource(C.BASEMAP_REFERENCE_SOURCE, {
+    if (!map.getSource(BASEMAP_REFERENCE_SOURCE)) {
+      map.addSource(BASEMAP_REFERENCE_SOURCE, {
         type: "raster",
         tiles: bm.referenceTiles,
         tileSize: 256,
@@ -4762,23 +6469,23 @@ export function initProjectMap() {
       });
       map.addLayer(
         {
-          id: C.BASEMAP_REFERENCE_LAYER,
+          id: BASEMAP_REFERENCE_LAYER,
           type: "raster",
-          source: C.BASEMAP_REFERENCE_SOURCE,
+          source: BASEMAP_REFERENCE_SOURCE,
         },
-        map.getLayer(C.SITES_CIRCLE) ? C.SITES_CIRCLE : undefined,
+        map.getLayer(SITES_CIRCLE) ? SITES_CIRCLE : undefined,
       );
     } else {
-      map.getSource(C.BASEMAP_REFERENCE_SOURCE).setTiles(bm.referenceTiles);
+      map.getSource(BASEMAP_REFERENCE_SOURCE).setTiles(bm.referenceTiles);
     }
     raiseSiteLayers();
   }
 
   function removeBasemapReference() {
-    if (map.getLayer(C.BASEMAP_REFERENCE_LAYER))
-      map.removeLayer(C.BASEMAP_REFERENCE_LAYER);
-    if (map.getSource(C.BASEMAP_REFERENCE_SOURCE))
-      map.removeSource(C.BASEMAP_REFERENCE_SOURCE);
+    if (map.getLayer(BASEMAP_REFERENCE_LAYER))
+      map.removeLayer(BASEMAP_REFERENCE_LAYER);
+    if (map.getSource(BASEMAP_REFERENCE_SOURCE))
+      map.removeSource(BASEMAP_REFERENCE_SOURCE);
   }
 
   function viewshedSourceId(slug) {
@@ -4789,11 +6496,20 @@ export function initProjectMap() {
     return `viewshed-${slug}-raster`;
   }
 
+  function applyViewshedOpacityToAllLayers() {
+    if (!mapReady) return;
+    for (const slug of viewshedOverlaySlugs()) {
+      const layerId = viewshedLayerId(slug);
+      if (map.getLayer(layerId)) {
+        map.setPaintProperty(layerId, "raster-opacity", viewshedOpacity);
+      }
+    }
+  }
 
   function setViewshedOpacity(opacity) {
     viewshedOpacity = Math.max(0, Math.min(1, opacity));
-    scope.syncOpacitySlider();
-    scope.applyViewshedOpacityToAllLayers();
+    syncOpacitySlider();
+    applyViewshedOpacityToAllLayers();
   }
 
   function viewshedSimQueryParams() {
@@ -4806,7 +6522,7 @@ export function initProjectMap() {
   function viewshedPreviewSimQueryParams() {
     const params = new URLSearchParams();
     params.set("radius_km", String(viewshedRadiusKm));
-    params.set("quality", String(C.VIEWSHED_PREVIEW_QUALITY));
+    params.set("quality", String(VIEWSHED_PREVIEW_QUALITY));
     return params;
   }
 
@@ -4815,14 +6531,14 @@ export function initProjectMap() {
   }
 
   function viewshedWarmUrl(siteSlug) {
-    const params = scope.viewshedSimQueryParams();
+    const params = viewshedSimQueryParams();
     return `/api/p/${projectSlug}/viewsheds/${siteSlug}/warm?${params}`;
   }
 
   function viewshedPrefetchWarmUrl(lat, lon, { preview = true } = {}) {
     const params = preview
-      ? scope.viewshedPreviewSimQueryParams()
-      : scope.viewshedSimQueryParams();
+      ? viewshedPreviewSimQueryParams()
+      : viewshedSimQueryParams();
     params.set("lat", String(lat));
     params.set("lon", String(lon));
     return `/api/p/${projectSlug}/viewsheds/prefetch/warm?${params}`;
@@ -4840,13 +6556,13 @@ export function initProjectMap() {
       serveEventsSource.close();
       serveEventsSource = null;
     }
-    serveEventsSource = new EventSource(scope.projectEventsUrl());
+    serveEventsSource = new EventSource(projectEventsUrl());
     serveEventsSource.addEventListener("hello", () => {
-      scope.reconcilePendingViewsheds();
+      reconcilePendingViewsheds();
     });
     serveEventsSource.addEventListener("viewshed", (ev) => {
       try {
-        scope.handleViewshedEvent(JSON.parse(ev.data));
+        handleViewshedEvent(JSON.parse(ev.data));
       } catch (_) {
         /* ignore malformed SSE payload */
       }
@@ -4881,30 +6597,30 @@ export function initProjectMap() {
         total: Number(vs.ladder_total) || 0,
       });
     }
-    if (!scope.viewshedAtTarget(vs)) {
-      scope.updatePinOverlays();
+    if (!viewshedAtTarget(vs)) {
+      updatePinOverlays();
       return;
     }
     markSiteViewshedReady(vs.slug);
-    if (vs.slug === C.DRAFT_VIEWSHED_SLUG) {
+    if (vs.slug === DRAFT_VIEWSHED_SLUG) {
       draftViewshedLoading = false;
-      scope.syncCreateViewshedCheckbox();
-      scope.syncEditViewshedCheckbox();
+      syncCreateViewshedCheckbox();
+      syncEditViewshedCheckbox();
     }
   }
 
   function handleViewshedReady(vs, epoch) {
     if (!vs || !vs.slug || !vs.url || !vs.coordinates) {
-      if (vs?.slug) scope.clearViewshedLoadingState(vs.slug);
+      if (vs?.slug) clearViewshedLoadingState(vs.slug);
       return;
     }
     const pendingEpoch = viewshedPendingEpoch.get(vs.slug);
     if (epoch != null && pendingEpoch != null && pendingEpoch !== epoch) return;
     if (String(vs.slug).startsWith("_edit_hist_")) {
-      scope.renderEditCoordHistory();
+      renderEditCoordHistory();
     }
-    scope.addViewshedLayer(vs);
-    scope.finalizeViewshedReady(vs);
+    addViewshedLayer(vs);
+    finalizeViewshedReady(vs);
     if (!isEphemeralViewshedSlug(vs.slug)) {
       void loadSingleSiteLinks(vs.slug);
     } else {
@@ -4915,8 +6631,8 @@ export function initProjectMap() {
   function acceptViewshedOverlay(vs) {
     if (!vs || !vs.slug || !vs.url || !vs.coordinates) return;
     if (isSiteMapHidden(vs.slug) || !isViewshedVisible(vs.slug)) return;
-    scope.addViewshedLayer(vs);
-    scope.finalizeViewshedReady(vs);
+    addViewshedLayer(vs);
+    finalizeViewshedReady(vs);
     if (!isEphemeralViewshedSlug(vs.slug)) {
       void loadSingleSiteLinks(vs.slug);
     } else {
@@ -4925,7 +6641,7 @@ export function initProjectMap() {
   }
 
   function routeDraftViewshedToSeekHops(data) {
-    if (data.slug !== C.DRAFT_VIEWSHED_SLUG || data.status !== "ready")
+    if (data.slug !== DRAFT_VIEWSHED_SLUG || data.status !== "ready")
       return false;
     if (data.lat == null || data.lon == null) return false;
     let routed = false;
@@ -4937,7 +6653,7 @@ export function initProjectMap() {
       )
         continue;
       const epoch = viewshedPendingEpoch.get(slug);
-      scope.handleViewshedReady({ ...data, slug }, epoch);
+      handleViewshedReady({ ...data, slug }, epoch);
       routed = true;
     }
     return routed;
@@ -4953,15 +6669,15 @@ export function initProjectMap() {
           step: Number(data.ladder_step) || 0,
           total: Number(data.ladder_total) || 0,
         });
-        scope.updatePinOverlays();
+        updatePinOverlays();
       }
-      if (scope.routeDraftViewshedToSeekHops(data)) return;
+      if (routeDraftViewshedToSeekHops(data)) return;
       const epoch = viewshedPendingEpoch.get(data.slug);
       if (epoch != null) {
-        scope.handleViewshedReady(data, epoch);
+        handleViewshedReady(data, epoch);
       }
       if (!siteViewshedReady.has(data.slug)) {
-        scope.acceptViewshedOverlay(data);
+        acceptViewshedOverlay(data);
       }
       return;
     }
@@ -4971,13 +6687,13 @@ export function initProjectMap() {
       viewshedPendingEpoch.delete(data.slug);
       viewshedLoading.delete(data.slug);
       clearSitePinProgress(data.slug);
-      if (data.slug === C.DRAFT_VIEWSHED_SLUG) {
+      if (data.slug === DRAFT_VIEWSHED_SLUG) {
         draftViewshedLoading = false;
-        scope.syncCreateViewshedCheckbox();
-        scope.syncEditViewshedCheckbox();
+        syncCreateViewshedCheckbox();
+        syncEditViewshedCheckbox();
       }
-      scope.updatePinOverlays();
-      if (data.slug === selectedSlug) scope.syncViewshedCheckbox();
+      updatePinOverlays();
+      if (data.slug === selectedSlug) syncViewshedCheckbox();
     }
   }
 
@@ -4986,25 +6702,25 @@ export function initProjectMap() {
     try {
       const active = new Set();
       for (const site of sites) {
-        if (!scope.sitePinSpinning(site.slug)) continue;
+        if (!sitePinSpinning(site.slug)) continue;
         if (!coordsUsableForMarker(site.lon, site.lat)) continue;
         active.add(site.slug);
         renderPinLoadOverlay(site.slug, site.lon, site.lat);
       }
       if (
-        viewshedLoading.has(C.DRAFT_VIEWSHED_SLUG) &&
+        viewshedLoading.has(DRAFT_VIEWSHED_SLUG) &&
         draftPlacementLat != null &&
         draftPlacementLon != null
       ) {
-        active.add(C.DRAFT_VIEWSHED_SLUG);
+        active.add(DRAFT_VIEWSHED_SLUG);
         renderPinLoadOverlay(
-          C.DRAFT_VIEWSHED_SLUG,
+          DRAFT_VIEWSHED_SLUG,
           draftPlacementLon,
           draftPlacementLat,
         );
       }
       for (const entry of editCoordHistory) {
-        const slug = scope.editHistorySlug(entry.id);
+        const slug = editHistorySlug(entry.id);
         if (!viewshedLoading.has(slug) || !entry.visible) continue;
         if (!coordsUsableForMarker(entry.lon, entry.lat)) continue;
         active.add(slug);
@@ -5020,8 +6736,8 @@ export function initProjectMap() {
       if (seekScanning && seekSessionActive()) {
         const from = seekCurrentFrom();
         if (from && coordsUsableForMarker(from.lon, from.lat)) {
-          active.add(C.SEEK_SCAN_PIN);
-          const marker = ensurePinLoadMarker(C.SEEK_SCAN_PIN, "spinner");
+          active.add(SEEK_SCAN_PIN);
+          const marker = ensurePinLoadMarker(SEEK_SCAN_PIN, "spinner");
           if (setMarkerLngLatSafe(marker, from.lon, from.lat)) {
             marker.getElement().hidden = false;
           }
@@ -5052,6 +6768,17 @@ export function initProjectMap() {
     });
   }
 
+  async function applyViewshedOverlaysBatched(overlays) {
+    for (let i = 0; i < overlays.length; i += VIEWSHED_OVERLAY_BATCH) {
+      const batch = overlays.slice(i, i + VIEWSHED_OVERLAY_BATCH);
+      for (const overlay of batch) {
+        acceptViewshedOverlay(overlay);
+      }
+      if (i + VIEWSHED_OVERLAY_BATCH < overlays.length) {
+        await waitForMapIdle();
+      }
+    }
+  }
 
   let viewshedLoadEpoch = 0;
 
@@ -5059,9 +6786,18 @@ export function initProjectMap() {
     viewshedLoadEpoch += 1;
   }
 
+  function viewshedMetaUrl(siteSlug, { lat, lon } = {}) {
+    const params = viewshedSimQueryParams();
+    if (lat != null && lon != null) {
+      params.set("lat", String(lat));
+      params.set("lon", String(lon));
+      return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
+    }
+    return `/api/p/${projectSlug}/viewsheds/${siteSlug}?${params}`;
+  }
 
   function viewshedPrefetchMetaUrl(lat, lon) {
-    const params = scope.viewshedPreviewSimQueryParams();
+    const params = viewshedPreviewSimQueryParams();
     params.set("lat", String(lat));
     params.set("lon", String(lon));
     return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
@@ -5071,22 +6807,22 @@ export function initProjectMap() {
     viewshedPendingEpoch.delete(slug);
     viewshedLoading.delete(slug);
     clearSitePinProgress(slug);
-    if (slug === C.DRAFT_VIEWSHED_SLUG) {
+    if (slug === DRAFT_VIEWSHED_SLUG) {
       draftViewshedLoading = false;
-      scope.syncCreateViewshedCheckbox();
-      scope.syncEditViewshedCheckbox();
+      syncCreateViewshedCheckbox();
+      syncEditViewshedCheckbox();
     }
-    scope.updatePinOverlays();
-    if (slug === selectedSlug) scope.syncViewshedCheckbox();
+    updatePinOverlays();
+    if (slug === selectedSlug) syncViewshedCheckbox();
   }
 
   async function tryLoadViewshedFromCache(slug, coords) {
     try {
-      const resp = await fetch(scope.viewshedMetaUrl(slug, coords || {}));
+      const resp = await fetch(viewshedMetaUrl(slug, coords || {}));
       if (!resp.ok) return false;
       const overlay = await resp.json();
       if (overlay.url && overlay.coordinates) {
-        scope.acceptViewshedOverlay({ ...overlay, slug, status: "ready" });
+        acceptViewshedOverlay({ ...overlay, slug, status: "ready" });
         return true;
       }
     } catch (_) {
@@ -5096,7 +6832,7 @@ export function initProjectMap() {
   }
 
   function viewshedIndexUrl() {
-    const params = scope.viewshedSimQueryParams();
+    const params = viewshedSimQueryParams();
     return `/api/p/${projectSlug}/viewsheds/index?${params}`;
   }
 
@@ -5111,25 +6847,94 @@ export function initProjectMap() {
       }
     }
     const workers = Math.min(OUTBOUND_LINKS_PARALLEL, slugs.length);
-    await Promise.all(Array.from({ length: workers }, () => scope.worker()));
+    await Promise.all(Array.from({ length: workers }, () => worker()));
   }
 
+  async function loadViewshedIndex() {
+    try {
+      const resp = await fetch(viewshedIndexUrl());
+      if (!resp.ok) {
+        ensureViewshedsForNewlyVisibleSites();
+        return;
+      }
+      const index = await resp.json();
+      const siteEntries = index.sites || {};
+      const readySlugs = [];
+      const readyOverlays = [];
+      const missing = [];
+      for (const site of sites) {
+        if (isSiteMapHidden(site.slug) || !isViewshedVisible(site.slug))
+          continue;
+        const entry = siteEntries[site.slug];
+        if (entry && entry.ready && entry.url && entry.coordinates) {
+          readyOverlays.push({
+            slug: site.slug,
+            url: entry.url,
+            coordinates: entry.coordinates,
+            ...entry,
+          });
+          readySlugs.push(site.slug);
+          if (entry.at_target === false) {
+            missing.push(site);
+          }
+        } else {
+          missing.push(site);
+        }
+      }
+      await applyViewshedOverlaysBatched(readyOverlays);
+      void fetchOutboundLinksParallel(readySlugs);
+      for (const site of missing) {
+        scheduleViewshedLoad(site);
+      }
+      if (missing.length) syncWarmPriorities();
+    } catch (_) {
+      ensureViewshedsForNewlyVisibleSites();
+    }
+  }
 
   function scheduleViewshedLoad(site) {
     removeViewshedLayer(site.slug);
-    scope.resetSiteProgress(site.slug);
+    resetSiteProgress(site.slug);
     viewshedLoading.add(site.slug);
     viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch);
-    scope.updatePinOverlays();
-    if (site.slug === selectedSlug) scope.syncViewshedCheckbox();
+    updatePinOverlays();
+    if (site.slug === selectedSlug) syncViewshedCheckbox();
     const priority =
       site.slug === selectedSlug
         ? WARM_PRIORITY_INTERACTIVE
         : WARM_PRIORITY_VIEWPORT;
     void bumpWarmPriorities([site.slug], priority);
-    void scope.tryLoadViewshedFromCache(site.slug);
+    void tryLoadViewshedFromCache(site.slug);
   }
 
+  function reloadViewshedsForSimChange() {
+    bumpViewshedLoadEpoch();
+    for (const site of sites) {
+      resetSiteProgress(site.slug);
+      if (!isSiteMapHidden(site.slug) && isViewshedVisible(site.slug)) {
+        removeViewshedLayer(site.slug);
+        viewshedLoading.add(site.slug);
+        viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch);
+      } else {
+        removeViewshedLayer(site.slug);
+        viewshedLoading.delete(site.slug);
+        viewshedPendingEpoch.delete(site.slug);
+      }
+    }
+    updatePinOverlays();
+    void loadViewshedIndex();
+    if (
+      createMode &&
+      draftPlacementLat != null &&
+      draftPlacementLon != null &&
+      isViewshedVisible(DRAFT_VIEWSHED_SLUG)
+    ) {
+      void loadDraftViewshedAt(draftPlacementLat, draftPlacementLon, {
+        refreshOnly: true,
+      });
+    }
+    if (seekState?.running) syncSeekHopViewsheds();
+  }
 
   function sitesPrefetchUrl(lat, lon, excludeSite) {
     const params = new URLSearchParams({
@@ -5165,14 +6970,14 @@ export function initProjectMap() {
         lon: Number(editSnapshot.lon),
       });
     }
-    const current = scope.readEditCoords();
+    const current = readEditCoords();
     if (current) out.push({ lat: current.lat, lon: current.lon });
     for (const entry of editCoordHistory) {
       out.push({ lat: entry.lat, lon: entry.lon });
     }
     if (excludeLat == null || excludeLon == null) return out;
     return out.filter(
-      (c) => !scope.coordsMatchPair(c.lat, c.lon, excludeLat, excludeLon),
+      (c) => !coordsMatchPair(c.lat, c.lon, excludeLat, excludeLon),
     );
   }
 
@@ -5180,7 +6985,7 @@ export function initProjectMap() {
     if (!geojson || !Array.isArray(geojson.features)) {
       return { type: "FeatureCollection", features: [] };
     }
-    const copyCoords = scope.editSiteCopyCoords(entryLat, entryLon);
+    const copyCoords = editSiteCopyCoords(entryLat, entryLon);
     const features = geojson.features.filter((feature) => {
       const props = feature.properties || {};
       if (editSlug && props.slug === editSlug) return false;
@@ -5195,9 +7000,9 @@ export function initProjectMap() {
         if (!Array.isArray(pt) || pt.length < 2) continue;
         const lon = Number(pt[0]);
         const lat = Number(pt[1]);
-        if (scope.coordsMatchPair(lat, lon, entryLat, entryLon)) continue;
+        if (coordsMatchPair(lat, lon, entryLat, entryLon)) continue;
         for (const c of copyCoords) {
-          if (scope.coordsMatchPair(lat, lon, c.lat, c.lon)) return false;
+          if (coordsMatchPair(lat, lon, c.lat, c.lon)) return false;
         }
       }
       return true;
@@ -5210,46 +7015,76 @@ export function initProjectMap() {
 
   function syncCreateViewshedCheckbox() {
     if (!sitePanelCreateViewshed || !createMode) return;
-    sitePanelCreateViewshed.checked = isViewshedVisible(C.DRAFT_VIEWSHED_SLUG);
+    sitePanelCreateViewshed.checked = isViewshedVisible(DRAFT_VIEWSHED_SLUG);
     const hint = document.getElementById("site-panel-create-viewshed-hint");
     if (hint) hint.textContent = draftViewshedLoading ? "Loading…" : "";
   }
 
   function removeDraftViewshed() {
     try {
-      const sourceId = scope.viewshedSourceId(C.DRAFT_VIEWSHED_SLUG);
-      const layerId = scope.viewshedLayerId(C.DRAFT_VIEWSHED_SLUG);
+      const sourceId = viewshedSourceId(DRAFT_VIEWSHED_SLUG);
+      const layerId = viewshedLayerId(DRAFT_VIEWSHED_SLUG);
       if (map.getLayer(layerId)) map.removeLayer(layerId);
       if (map.getSource(sourceId)) map.removeSource(sourceId);
     } catch (_) {
       /* map may be mid-resize */
     }
-    viewshedPendingEpoch.delete(C.DRAFT_VIEWSHED_SLUG);
-    viewshedLoading.delete(C.DRAFT_VIEWSHED_SLUG);
+    viewshedPendingEpoch.delete(DRAFT_VIEWSHED_SLUG);
+    viewshedLoading.delete(DRAFT_VIEWSHED_SLUG);
     draftViewshedLoading = false;
     draftPlacementLat = null;
     draftPlacementLon = null;
-    scope.updatePinOverlays();
+    updatePinOverlays();
   }
 
+  function applySavedSiteToMap(site, fallbackLat, fallbackLon) {
+    const row = normalizeSiteFromApi({
+      ...site,
+      lat: site.lat ?? fallbackLat,
+      lon: site.lon ?? fallbackLon,
+    });
+    if (!row) return false;
+    registerSite(row);
+    viewshedVisible.set(row.slug, true);
+    scheduleViewshedLoad(row);
+    void loadSiteLinks();
+    selectSite(row.slug);
+    return true;
+  }
 
+  async function loadPlacementPrefetchAt(lat, lon) {
+    const gen = ++placementPrefetchGen;
+    resetCreatePrefetchUI();
+    try {
+      const resp = await fetch(sitesPrefetchUrl(lat, lon));
+      if (gen !== placementPrefetchGen) return;
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      if (gen !== placementPrefetchGen) return;
+      if (payload && (payload.links || payload.links_geojson)) {
+        renderCreatePrefetch(payload);
+      }
+    } catch (_) {
+      /* placement prefetch optional */
+    }
+  }
 
   function clearDraftViewshedLoading() {
-    viewshedPendingEpoch.delete(C.DRAFT_VIEWSHED_SLUG);
-    viewshedLoading.delete(C.DRAFT_VIEWSHED_SLUG);
+    viewshedPendingEpoch.delete(DRAFT_VIEWSHED_SLUG);
+    viewshedLoading.delete(DRAFT_VIEWSHED_SLUG);
     draftViewshedLoading = false;
-    scope.updatePinOverlays();
-    scope.syncCreateViewshedCheckbox();
-    scope.syncEditViewshedCheckbox();
+    updatePinOverlays();
+    syncCreateViewshedCheckbox();
+    syncEditViewshedCheckbox();
   }
 
   async function tryLoadCoordViewshedFromCache(slug, lat, lon) {
     try {
-      const resp = await fetch(scope.viewshedPrefetchMetaUrl(lat, lon));
+      const resp = await fetch(viewshedPrefetchMetaUrl(lat, lon));
       if (!resp.ok) return false;
       const overlay = await resp.json();
       if (overlay.url && overlay.coordinates) {
-        scope.acceptViewshedOverlay({ ...overlay, slug, status: "ready" });
+        acceptViewshedOverlay({ ...overlay, slug, status: "ready" });
         return true;
       }
     } catch (_) {
@@ -5259,10 +7094,65 @@ export function initProjectMap() {
   }
 
   async function tryLoadDraftViewshedFromCache(lat, lon) {
-    return scope.tryLoadCoordViewshedFromCache(C.DRAFT_VIEWSHED_SLUG, lat, lon);
+    return tryLoadCoordViewshedFromCache(DRAFT_VIEWSHED_SLUG, lat, lon);
   }
 
+  async function loadDraftViewshedAt(lat, lon, options) {
+    const refreshOnly = Boolean(options && options.refreshOnly);
+    if (refreshOnly) {
+      removeViewshedLayer(DRAFT_VIEWSHED_SLUG);
+    } else {
+      removeDraftViewshed();
+      draftPlacementLat = lat;
+      draftPlacementLon = lon;
+    }
+    draftViewshedLoading = true;
+    viewshedLoading.add(DRAFT_VIEWSHED_SLUG);
+    const epoch = viewshedLoadEpoch;
+    viewshedPendingEpoch.set(DRAFT_VIEWSHED_SLUG, epoch);
+    updatePinOverlays();
+    syncCreateViewshedCheckbox();
+    syncEditViewshedCheckbox();
+    if (await tryLoadDraftViewshedFromCache(lat, lon)) {
+      if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) === epoch) {
+        viewshedPendingEpoch.delete(DRAFT_VIEWSHED_SLUG);
+        draftViewshedLoading = false;
+        syncCreateViewshedCheckbox();
+        syncEditViewshedCheckbox();
+      }
+      return;
+    }
+    try {
+      const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), {
+        method: "POST",
+      });
+      if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return;
+      if (!resp.ok) {
+        clearDraftViewshedLoading();
+        return;
+      }
+      const vs = await resp.json();
+      if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return;
+      if (vs && vs.status === "ready") {
+        handleViewshedReady({ ...vs, slug: DRAFT_VIEWSHED_SLUG }, epoch);
+      }
+    } catch (_) {
+      if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) === epoch) {
+        clearDraftViewshedLoading();
+      }
+    } finally {
+      if (!viewshedPendingEpoch.has(DRAFT_VIEWSHED_SLUG)) {
+        draftViewshedLoading = false;
+        updatePinOverlays();
+        syncCreateViewshedCheckbox();
+        syncEditViewshedCheckbox();
+      }
+    }
+  }
 
+  function isViewshedVisible(slug) {
+    return viewshedVisible.get(slug) !== false;
+  }
 
   function syncEntityPanelViewshedToggle(slug) {
     if (!entityPanelSitesList) return;
@@ -5292,7 +7182,7 @@ export function initProjectMap() {
       visible,
     );
     if (sitePanelViewshedHint) {
-      sitePanelViewshedHint.textContent = scope.sitePinSpinning(slug)
+      sitePanelViewshedHint.textContent = sitePinSpinning(slug)
         ? sitePinProgressLabel(slug)
         : "";
     }
@@ -5301,21 +7191,34 @@ export function initProjectMap() {
   /** Mirror viewshedVisible state into every checkbox bound to this site slug. */
   function syncViewshedUiForSlug(slug) {
     if (!slug) return;
-    scope.syncEntityPanelViewshedToggle(slug);
-    scope.syncSitePanelViewshedToggle(slug);
-    if (editMode && editSlug === slug) scope.syncEditViewshedCheckbox();
-    scope.updatePinOverlays();
+    syncEntityPanelViewshedToggle(slug);
+    syncSitePanelViewshedToggle(slug);
+    if (editMode && editSlug === slug) syncEditViewshedCheckbox();
+    updatePinOverlays();
   }
 
+  function setViewshedVisible(slug, visible) {
+    viewshedVisible.set(slug, visible);
+    if (map.getLayer(viewshedLayerId(slug))) {
+      applyViewshedVisibilityForSite(slug);
+    } else if (visible) {
+      ensureViewshedLoadedForSlug(slug);
+    }
+    syncViewshedUiForSlug(slug);
+    if (slug === DRAFT_VIEWSHED_SLUG) {
+      syncCreateViewshedCheckbox();
+      if (editMode) syncEditViewshedCheckbox();
+    }
+  }
 
   function syncViewshedCheckbox() {
     if (!selectedSlug) return;
-    scope.syncViewshedUiForSlug(selectedSlug);
+    syncViewshedUiForSlug(selectedSlug);
   }
 
   function addViewshedLayer(vs) {
-    const sourceId = scope.viewshedSourceId(vs.slug);
-    const layerId = scope.viewshedLayerId(vs.slug);
+    const sourceId = viewshedSourceId(vs.slug);
+    const layerId = viewshedLayerId(vs.slug);
     const existingSource = map.getSource(sourceId);
     if (existingSource) {
       if (typeof existingSource.updateImage === "function") {
@@ -5341,7 +7244,7 @@ export function initProjectMap() {
               "raster-fade-duration": 0,
             },
           },
-          scope.viewshedLayerInsertBefore(),
+          viewshedLayerInsertBefore(),
         );
       }
     } else {
@@ -5360,7 +7263,7 @@ export function initProjectMap() {
             "raster-fade-duration": 0,
           },
         },
-        scope.viewshedLayerInsertBefore(),
+        viewshedLayerInsertBefore(),
       );
     }
     if (!isViewshedVisible(vs.slug) || isSiteMapHidden(vs.slug)) {
@@ -5369,39 +7272,103 @@ export function initProjectMap() {
       map.setLayoutProperty(layerId, "visibility", "visible");
     }
     viewshedLoading.delete(vs.slug);
-    scope.updatePinOverlays();
-    if (vs.slug === selectedSlug) scope.syncViewshedCheckbox();
-    if (vs.slug === C.DRAFT_VIEWSHED_SLUG) {
+    updatePinOverlays();
+    if (vs.slug === selectedSlug) syncViewshedCheckbox();
+    if (vs.slug === DRAFT_VIEWSHED_SLUG) {
       draftViewshedLoading = false;
-      scope.syncCreateViewshedCheckbox();
-      scope.syncEditViewshedCheckbox();
+      syncCreateViewshedCheckbox();
+      syncEditViewshedCheckbox();
       if (draftPlacementLat != null && draftPlacementLon != null) {
-        void scope.loadPlacementPrefetchAt(draftPlacementLat, draftPlacementLon);
+        void loadPlacementPrefetchAt(draftPlacementLat, draftPlacementLon);
       }
     }
     raiseSiteLayers();
   }
 
+  function addSiteLayers() {
+    if (map.getSource(SITES_SOURCE)) {
+      map.getSource(SITES_SOURCE).setData(sitesGeoJson());
+      applySiteLayerFilters();
+      return;
+    }
+    map.addSource(SITES_SOURCE, { type: "geojson", data: sitesGeoJson() });
+    map.addLayer({
+      id: SITES_CIRCLE,
+      type: "circle",
+      source: SITES_SOURCE,
+      paint: {
+        "circle-radius": 7,
+        "circle-color": "#4a6cf7",
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#fff",
+      },
+    });
+    map.addLayer({
+      id: SITES_LABELS,
+      type: "symbol",
+      source: SITES_SOURCE,
+      layout: {
+        "text-field": ["get", "name"],
+        "text-size": 12,
+        "text-offset": [0, -1.4],
+        "text-anchor": "bottom",
+        "text-font": MAP_LABEL_FONT,
+        "text-allow-overlap": true,
+      },
+      paint: {
+        "text-color": "#e8eaed",
+        "text-halo-color": "#1a1a1a",
+        "text-halo-width": 2,
+      },
+    });
+    map.addLayer({
+      id: SITES_SELECTED,
+      type: "circle",
+      source: SITES_SOURCE,
+      filter: ["==", ["get", "slug"], ""],
+      paint: {
+        "circle-radius": 11,
+        "circle-color": "#4a6cf7",
+        "circle-stroke-width": 3,
+        "circle-stroke-color": "#fbbf24",
+        "circle-opacity": 0.35,
+      },
+    });
+    applySiteLayerFilters();
+  }
 
   function updateSelectedLayer() {
-    if (!map.getLayer(C.SITES_SELECTED)) return;
+    if (!map.getLayer(SITES_SELECTED)) return;
     if (editMode && selectedSlug === editSlug) {
-      map.setFilter(C.SITES_SELECTED, ["==", ["get", "slug"], ""]);
+      map.setFilter(SITES_SELECTED, ["==", ["get", "slug"], ""]);
       return;
     }
     const filter = combineLayerFilters(
       ["==", ["get", "slug"], selectedSlug || ""],
       siteVisibilityFilter(),
     );
-    map.setFilter(C.SITES_SELECTED, filter);
+    map.setFilter(SITES_SELECTED, filter);
   }
 
+  function formatCoord(n) {
+    return Number(n).toFixed(6);
+  }
 
   function setSectionVisible(sectionId, visible) {
     const el = document.getElementById(sectionId);
     if (el) el.hidden = !visible;
   }
 
+  function linkedPeersForSite(slug) {
+    if (!siteLinksPayload || !Array.isArray(siteLinksPayload.links)) return [];
+    const peers = [];
+    for (const row of siteLinksPayload.links) {
+      if (!row.linked) continue;
+      if (row.a === slug) peers.push(row.b);
+      else if (row.b === slug) peers.push(row.a);
+    }
+    return peers.sort();
+  }
 
   function normalizeTagInput(raw) {
     return String(raw || "")
@@ -5411,24 +7378,337 @@ export function initProjectMap() {
       .replace(/^-+|-+$/g, "");
   }
 
+  function setAddSiteError(message) {
+    if (!addSiteError) return;
+    if (message) {
+      addSiteError.textContent = message;
+      addSiteError.hidden = false;
+    } else {
+      addSiteError.textContent = "";
+      addSiteError.hidden = true;
+    }
+  }
 
+  function renderAddSiteTags() {
+    if (!addSiteTagsEl) return;
+    addSiteTagsEl.innerHTML = "";
+    const known = allProjectTags();
+    const selected = new Set(addSiteDraftTags);
+    const shown = new Set([...known, ...addSiteDraftTags]);
+    for (const tag of [...shown].sort((a, b) => a.localeCompare(b))) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = selected.has(tag)
+        ? "site-tag site-tag--toggle is-selected"
+        : "site-tag site-tag--toggle";
+      chip.textContent = tag;
+      chip.setAttribute("aria-pressed", selected.has(tag) ? "true" : "false");
+      chip.title = selected.has(tag) ? `Remove tag ${tag}` : `Add tag ${tag}`;
+      chip.addEventListener("click", () => {
+        if (selected.has(tag)) {
+          addSiteDraftTags = addSiteDraftTags.filter((t) => t !== tag);
+        } else {
+          addSiteDraftTags = [...addSiteDraftTags, tag];
+        }
+        renderAddSiteTags();
+        syncAddSiteTagSuggestions();
+      });
+      addSiteTagsEl.appendChild(chip);
+    }
+  }
 
+  function syncAddSiteTagSuggestions() {
+    if (!addSiteTagSuggestions) return;
+    addSiteTagSuggestions.innerHTML = "";
+    const selected = new Set(addSiteDraftTags);
+    for (const tag of allProjectTags()) {
+      if (selected.has(tag)) continue;
+      const opt = document.createElement("option");
+      opt.value = tag;
+      addSiteTagSuggestions.appendChild(opt);
+    }
+  }
 
+  function resetAddSiteModal() {
+    addSiteDraftTags = [];
+    if (addSiteName) addSiteName.value = "";
+    if (addSiteCoords) addSiteCoords.value = "";
+    if (addSiteTagInput) addSiteTagInput.value = "";
+    setAddSiteError("");
+    renderAddSiteTags();
+    syncAddSiteTagSuggestions();
+  }
 
+  async function openAddSiteModal() {
+    if (!addSiteModal) return;
+    setAddPlacementMode(null);
+    setEntityPanelOpen(true);
+    resetAddSiteModal();
+    await openWaDialog(addSiteModal);
+    requestAnimationFrame(() => {
+      addSiteName?.focus();
+    });
+  }
 
+  function closeAddSiteModal() {
+    if (!addSiteModal) return;
+    addSiteModal.open = false;
+  }
 
+  function addDraftTagFromInput() {
+    if (!addSiteTagInput) return;
+    const tag = normalizeTagInput(addSiteTagInput.value);
+    addSiteTagInput.value = "";
+    if (!tag) return;
+    if (!addSiteDraftTags.includes(tag)) {
+      addSiteDraftTags = [...addSiteDraftTags, tag];
+      renderAddSiteTags();
+      syncAddSiteTagSuggestions();
+    }
+  }
 
+  async function saveAddSiteModal() {
+    const name = (addSiteName?.value || "").trim();
+    if (!name) {
+      setAddSiteError("Name is required.");
+      addSiteName?.focus();
+      return;
+    }
+    const pair = parseCoordPairFromText(addSiteCoords?.value || "");
+    if (!pair) {
+      setAddSiteError(
+        "Coordinates required — paste lat, lng like 40.65495, -119.35161.",
+      );
+      addSiteCoords?.focus();
+      return;
+    }
+    if (pair.lat < -90 || pair.lat > 90 || pair.lon < -180 || pair.lon > 180) {
+      setAddSiteError("Coordinates out of range.");
+      addSiteCoords?.focus();
+      return;
+    }
+    setAddSiteError("");
+    if (addSiteSave) addSiteSave.disabled = true;
+    try {
+      const body = {
+        name,
+        lat: pair.lat,
+        lon: pair.lon,
+      };
+      if (addSiteDraftTags.length) body.tags = [...addSiteDraftTags];
+      const resp = await fetch(sitesApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setAddSiteError(payload.error || `Save failed (${resp.status})`);
+        return;
+      }
+      const site = payload.site;
+      if (!site || !site.slug) {
+        setAddSiteError("Unexpected server response.");
+        return;
+      }
+      closeAddSiteModal();
+      applySavedSiteToMap(site, pair.lat, pair.lon);
+      if (mapReady) {
+        const row = siteBySlug.get(site.slug) || site;
+        map.flyTo({
+          center: [row.lon, row.lat],
+          zoom: Math.max(map.getZoom(), 11),
+        });
+      }
+    } catch (_) {
+      setAddSiteError("Could not reach server.");
+    } finally {
+      if (addSiteSave) addSiteSave.disabled = false;
+    }
+  }
 
+  function setImportSitesError(message) {
+    if (!importSitesError) return;
+    if (message) {
+      importSitesError.textContent = message;
+      importSitesError.hidden = false;
+    } else {
+      importSitesError.textContent = "";
+      importSitesError.hidden = true;
+    }
+  }
 
+  function haversineMeters(lat1, lon1, lat2, lon2) {
+    const earthRadiusM = 6371000;
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * earthRadiusM * Math.asin(Math.sqrt(a));
+  }
 
+  function bearingDeg(lat1, lon1, lat2, lon2) {
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const toDeg = (rad) => (rad * 180) / Math.PI;
+    const phi1 = toRad(lat1);
+    const phi2 = toRad(lat2);
+    const dLon = toRad(lon2 - lon1);
+    const y = Math.sin(dLon) * Math.cos(phi2);
+    const x =
+      Math.cos(phi1) * Math.sin(phi2) -
+      Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLon);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
 
+  function seekHopRadiusM() {
+    const km = Number(simDefaults.radius_km) || 50;
+    return km * 1000;
+  }
 
+  function seekWedgeHalfAngleDeg(hopM, hopRadiusM) {
+    if (hopRadiusM <= 0) return SEEK_WEDGE_FAR_DEG;
+    const t = Math.min(1, Math.max(0, hopM / hopRadiusM));
+    return SEEK_WEDGE_NEAR_DEG + t * (SEEK_WEDGE_FAR_DEG - SEEK_WEDGE_NEAR_DEG);
+  }
 
+  function destinationPointLatLon(lat, lon, bearingDegVal, distanceM) {
+    const r = 6371000;
+    const brng = (bearingDegVal * Math.PI) / 180;
+    const lat1 = (lat * Math.PI) / 180;
+    const lon1 = (lon * Math.PI) / 180;
+    const ang = distanceM / r;
+    const lat2 = Math.asin(
+      Math.sin(lat1) * Math.cos(ang) +
+        Math.cos(lat1) * Math.sin(ang) * Math.cos(brng),
+    );
+    const lon2 =
+      lon1 +
+      Math.atan2(
+        Math.sin(brng) * Math.sin(ang) * Math.cos(lat1),
+        Math.cos(ang) - Math.sin(lat1) * Math.sin(lat2),
+      );
+    return [(lat2 * 180) / Math.PI, (lon2 * 180) / Math.PI];
+  }
 
+  function buildSeekWedgeFeature(from, goal, hopRadiusM) {
+    const goalBearing = bearingDeg(from.lat, from.lon, goal.lat, goal.lon);
+    const steps = 36;
+    const ring = [[from.lon, from.lat]];
+    for (let i = 0; i <= steps; i += 1) {
+      const t = i / steps;
+      const d = t * hopRadiusM;
+      const half = seekWedgeHalfAngleDeg(d, hopRadiusM);
+      const [lat, lon] = destinationPointLatLon(
+        from.lat,
+        from.lon,
+        goalBearing - half,
+        d,
+      );
+      ring.push([lon, lat]);
+    }
+    for (let i = steps; i >= 0; i -= 1) {
+      const t = i / steps;
+      const d = t * hopRadiusM;
+      const half = seekWedgeHalfAngleDeg(d, hopRadiusM);
+      const [lat, lon] = destinationPointLatLon(
+        from.lat,
+        from.lon,
+        goalBearing + half,
+        d,
+      );
+      ring.push([lon, lat]);
+    }
+    ring.push([from.lon, from.lat]);
+    return {
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [ring] },
+      properties: { kind: "seek-wedge" },
+    };
+  }
 
+  function buildSeekGoalLineFeature(from, goal) {
+    const distanceKm =
+      haversineMeters(from.lat, from.lon, goal.lat, goal.lon) / 1000;
+    return {
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates: [
+          [from.lon, from.lat],
+          [goal.lon, goal.lat],
+        ],
+      },
+      properties: {
+        distance_km: Math.round(distanceKm * 10) / 10,
+        bearing_deg: Math.round(bearingDeg(from.lat, from.lon, goal.lat, goal.lon)),
+        kind: "goal",
+      },
+    };
+  }
 
+  function removeSeekGoalLineLayer() {
+    if (map.getLayer(SEEK_GOAL_LINE_LAYER)) map.removeLayer(SEEK_GOAL_LINE_LAYER);
+    if (map.getSource(SEEK_GOAL_LINE_SOURCE)) map.removeSource(SEEK_GOAL_LINE_SOURCE);
+  }
 
+  function removeSeekWedgeLayers() {
+    if (map.getLayer(SEEK_WEDGE_OUTLINE_LAYER)) {
+      map.removeLayer(SEEK_WEDGE_OUTLINE_LAYER);
+    }
+    if (map.getLayer(SEEK_WEDGE_FILL_LAYER)) map.removeLayer(SEEK_WEDGE_FILL_LAYER);
+    if (map.getSource(SEEK_WEDGE_SOURCE)) map.removeSource(SEEK_WEDGE_SOURCE);
+  }
 
+  function syncSeekWedge() {
+    if (!mapReady || !seekSessionActive()) {
+      removeSeekWedgeLayers();
+      return;
+    }
+    const from = seekCurrentFrom();
+    const goal = seekGoalCoords();
+    if (!from || !goal) {
+      removeSeekWedgeLayers();
+      return;
+    }
+    const data = {
+      type: "FeatureCollection",
+      features: [buildSeekWedgeFeature(from, goal, seekHopRadiusM())],
+    };
+    if (map.getSource(SEEK_WEDGE_SOURCE)) {
+      map.getSource(SEEK_WEDGE_SOURCE).setData(data);
+      return;
+    }
+    map.addSource(SEEK_WEDGE_SOURCE, { type: "geojson", data });
+    map.addLayer(
+      {
+        id: SEEK_WEDGE_FILL_LAYER,
+        type: "fill",
+        source: SEEK_WEDGE_SOURCE,
+        paint: {
+          "fill-color": "#22c55e",
+          "fill-opacity": 0.1,
+        },
+      },
+      SITES_CIRCLE,
+    );
+    map.addLayer(
+      {
+        id: SEEK_WEDGE_OUTLINE_LAYER,
+        type: "line",
+        source: SEEK_WEDGE_SOURCE,
+        paint: {
+          "line-color": "#22c55e",
+          "line-width": 1.5,
+          "line-opacity": 0.45,
+          "line-dasharray": [2, 2],
+        },
+        layout: { "line-cap": "round", "line-join": "round" },
+      },
+      SITES_CIRCLE,
+    );
+  }
 
   function syncSeekGoalLine() {
     if (!mapReady) return;
@@ -5448,15 +7728,15 @@ export function initProjectMap() {
       type: "FeatureCollection",
       features: [buildSeekGoalLineFeature(from, goal)],
     };
-    if (map.getSource(C.SEEK_GOAL_LINE_SOURCE)) {
-      map.getSource(C.SEEK_GOAL_LINE_SOURCE).setData(data);
+    if (map.getSource(SEEK_GOAL_LINE_SOURCE)) {
+      map.getSource(SEEK_GOAL_LINE_SOURCE).setData(data);
     } else {
-      map.addSource(C.SEEK_GOAL_LINE_SOURCE, { type: "geojson", data });
+      map.addSource(SEEK_GOAL_LINE_SOURCE, { type: "geojson", data });
       map.addLayer(
         {
-          id: C.SEEK_GOAL_LINE_LAYER,
+          id: SEEK_GOAL_LINE_LAYER,
           type: "line",
-          source: C.SEEK_GOAL_LINE_SOURCE,
+          source: SEEK_GOAL_LINE_SOURCE,
           paint: {
             "line-color": "#22c55e",
             "line-width": 2,
@@ -5465,40 +7745,602 @@ export function initProjectMap() {
           },
           layout: { "line-cap": "round", "line-join": "round" },
         },
-        C.SITES_CIRCLE,
+        SITES_CIRCLE,
       );
     }
     syncSeekWedge();
     raiseSiteLayers();
   }
 
+  function annotateImportPoints(points) {
+    return points.map((point) => {
+      let nearest = null;
+      let nearestDist = Infinity;
+      for (const site of sites) {
+        const dist = haversineMeters(point.lat, point.lon, site.lat, site.lon);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = site;
+        }
+      }
+      const duplicate = nearest !== null && nearestDist <= IMPORT_DEDUPE_METERS;
+      return {
+        name: point.name,
+        lat: point.lat,
+        lon: point.lon,
+        ignored: duplicate,
+        duplicate,
+        duplicateDistM: duplicate ? Math.round(nearestDist) : null,
+        duplicateSlug: duplicate ? nearest.slug : null,
+        duplicateName: duplicate ? nearest.name : null,
+      };
+    });
+  }
 
+  function importablePreviewPoints() {
+    return importPreviewPoints.filter((point) => !point.ignored);
+  }
 
+  function pendingImportTagInput() {
+    if (!importSitesTagInput) return "";
+    return normalizeTagInput(importSitesTagInput.value);
+  }
 
+  function effectiveImportDraftTags() {
+    const tags = [...importDraftTags];
+    const pending = pendingImportTagInput();
+    if (pending && !tags.includes(pending)) tags.push(pending);
+    return tags;
+  }
 
+  function refreshImportPreviewMapData() {
+    if (!importPreviewMap || !importPreviewPoints.length) return;
+    const source = importPreviewMap.getSource(IMPORT_PREVIEW_SOURCE);
+    if (source) source.setData(importPreviewGeoJson(importPreviewPoints));
+  }
 
+  function setImportPointIgnored(index, ignored) {
+    const point = importPreviewPoints[index];
+    if (!point) return;
+    importPreviewPoints[index] = { ...point, ignored: !!ignored };
+    refreshImportPreviewMapData();
+    renderImportPointList();
+    syncImportSaveButton();
+  }
 
+  function setAllImportPointsIgnored(ignored) {
+    if (!importPreviewPoints.length) return;
+    importPreviewPoints = importPreviewPoints.map((point) => ({
+      ...point,
+      ignored: !!ignored,
+    }));
+    refreshImportPreviewMapData();
+    renderImportPointList();
+    syncImportSaveButton();
+  }
 
+  function syncImportBulkActions() {
+    const enabled = importPreviewPoints.length > 0 && !importPreviewBusy;
+    if (importSitesSelectAll) importSitesSelectAll.disabled = !enabled;
+    if (importSitesClearAll) importSitesClearAll.disabled = !enabled;
+  }
 
+  function syncImportSaveButton() {
+    if (!importSitesSave) return;
+    const ready =
+      importablePreviewPoints().length > 0 &&
+      effectiveImportDraftTags().length > 0 &&
+      !!importPreviewPayload &&
+      !importPreviewBusy;
+    importSitesSave.disabled = !ready;
+  }
 
+  function renderImportSiteTags() {
+    if (!importSitesTagsEl) return;
+    importSitesTagsEl.innerHTML = "";
+    const known = allProjectTags();
+    const selected = new Set(importDraftTags);
+    const shown = new Set([...known, ...importDraftTags]);
+    for (const tag of [...shown].sort((a, b) => a.localeCompare(b))) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = selected.has(tag)
+        ? "site-tag site-tag--toggle is-selected"
+        : "site-tag site-tag--toggle";
+      chip.textContent = tag;
+      chip.setAttribute("aria-pressed", selected.has(tag) ? "true" : "false");
+      chip.title = selected.has(tag) ? `Remove tag ${tag}` : `Add tag ${tag}`;
+      chip.addEventListener("click", () => {
+        if (selected.has(tag)) {
+          importDraftTags = importDraftTags.filter((t) => t !== tag);
+        } else {
+          importDraftTags = [...importDraftTags, tag];
+        }
+        renderImportSiteTags();
+        syncImportSiteTagSuggestions();
+        syncImportSaveButton();
+      });
+      importSitesTagsEl.appendChild(chip);
+    }
+  }
 
+  function syncImportSiteTagSuggestions() {
+    if (!importSitesTagSuggestions) return;
+    importSitesTagSuggestions.innerHTML = "";
+    const selected = new Set(importDraftTags);
+    for (const tag of allProjectTags()) {
+      if (selected.has(tag)) continue;
+      const opt = document.createElement("option");
+      opt.value = tag;
+      importSitesTagSuggestions.appendChild(opt);
+    }
+  }
 
+  function destroyImportPreviewMap() {
+    if (importPreviewMap) {
+      importPreviewMap.remove();
+      importPreviewMap = null;
+    }
+  }
 
+  function importPointVisibleInMap(point) {
+    if (!importPreviewMap || !point) return true;
+    return coordVisibleInMapViewport(importPreviewMap, point.lon, point.lat);
+  }
 
+  function syncImportListCount(shown, total) {
+    if (!importSitesListCount) return;
+    if (!total) {
+      importSitesListCount.textContent = "";
+      return;
+    }
+    const toImport = importPreviewPoints.filter(
+      (point) => !point.ignored,
+    ).length;
+    let text = "";
+    if (importFilterByViewport && shown < total) {
+      text = `${shown} of ${total} visible`;
+    } else {
+      text = `${total} point${total === 1 ? "" : "s"}`;
+    }
+    if (toImport < total) {
+      text += ` · ${toImport} to import`;
+    }
+    importSitesListCount.textContent = text;
+  }
 
+  function syncImportPreviewStatus() {
+    if (
+      !importSitesStatus ||
+      !importPreviewFileName ||
+      !importPreviewPoints.length
+    )
+      return;
+    const skippedNote =
+      importPreviewSkipped > 0
+        ? ` (${importPreviewSkipped} placemark(s) skipped)`
+        : "";
+    let text = `${importPreviewPoints.length} point(s) ready from ${importPreviewFileName}${skippedNote}`;
+    const dupes = importPreviewPoints.filter(
+      (point) => point.duplicate && point.ignored,
+    ).length;
+    if (dupes > 0) {
+      text += ` · ${dupes} near existing site(s), unchecked`;
+    }
+    importSitesStatus.textContent = text;
+  }
 
+  function renderImportPointList() {
+    if (!importSitesPointList) return;
+    const listScrollTop = importSitesPointList.scrollTop;
+    importSitesPointList.innerHTML = "";
+    const total = importPreviewPoints.length;
+    if (!total) {
+      syncImportListCount(0, 0);
+      syncImportBulkActions();
+      return;
+    }
 
+    let shown = 0;
+    for (let index = 0; index < importPreviewPoints.length; index++) {
+      const point = importPreviewPoints[index];
+      if (
+        importFilterByViewport &&
+        importPreviewMap &&
+        !importPointVisibleInMap(point)
+      ) {
+        continue;
+      }
+      shown += 1;
+      const row = document.createElement("div");
+      row.className = "import-sites-point-row";
+      row.setAttribute("role", "listitem");
+      if (index === importSelectedPointIndex) {
+        row.classList.add("import-sites-point-row--selected");
+      }
+      if (point.ignored) {
+        row.classList.add("import-sites-point-row--ignored");
+      }
+      if (point.duplicate) {
+        row.classList.add("import-sites-point-row--duplicate");
+      }
 
+      const main = document.createElement("button");
+      main.type = "button";
+      main.className = "import-sites-point-row__main";
+      const name = document.createElement("span");
+      name.className = "import-sites-point-row__name";
+      name.textContent = point.name || `Point ${index + 1}`;
+      const meta = document.createElement("span");
+      meta.className = "import-sites-point-row__meta";
+      let metaText = `${formatCoord(point.lat)}, ${formatCoord(point.lon)}`;
+      if (point.duplicate && point.duplicateName) {
+        metaText += ` · near ${point.duplicateName} (${point.duplicateDistM} m)`;
+      }
+      meta.textContent = metaText;
+      main.appendChild(name);
+      main.appendChild(meta);
+      main.addEventListener("click", () => {
+        focusImportPreviewPoint(index);
+      });
 
+      const importLabel = document.createElement("label");
+      importLabel.className = "import-sites-point-row__import pf-check";
+      const importCheck = document.createElement("input");
+      importCheck.type = "checkbox";
+      importCheck.checked = !point.ignored;
+      importCheck.setAttribute(
+        "aria-label",
+        `Import ${point.name || `point ${index + 1}`}`,
+      );
+      importCheck.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+      });
+      importCheck.addEventListener("change", () => {
+        setImportPointIgnored(index, !importCheck.checked);
+      });
+      importLabel.appendChild(importCheck);
 
+      row.appendChild(main);
+      row.appendChild(importLabel);
+      importSitesPointList.appendChild(row);
+    }
 
+    if (!shown) {
+      const empty = document.createElement("p");
+      empty.className = "import-sites-point-list__empty";
+      empty.textContent = importFilterByViewport
+        ? "No points in the current map view — pan or zoom out."
+        : "No points to show.";
+      importSitesPointList.appendChild(empty);
+    }
+    syncImportListCount(shown, total);
+    importSitesPointList.scrollTop = listScrollTop;
+    syncImportPreviewStatus();
+    syncImportBulkActions();
+  }
 
+  function focusImportPreviewPoint(index) {
+    const point = importPreviewPoints[index];
+    if (!point || !importPreviewMap) return;
+    importSelectedPointIndex = index;
+    importPreviewMap.flyTo({
+      center: [point.lon, point.lat],
+      zoom: Math.max(importPreviewMap.getZoom(), 12),
+      duration: 400,
+    });
+    renderImportPointList();
+  }
 
+  function onImportPreviewMapMoveEnd() {
+    if (importFilterByViewport) renderImportPointList();
+  }
 
+  function ensureImportPreviewMapHandlers() {
+    if (!importPreviewMap) return;
+    importPreviewMap.off("moveend", onImportPreviewMapMoveEnd);
+    importPreviewMap.on("moveend", onImportPreviewMapMoveEnd);
+  }
 
+  function importPreviewGeoJson(points) {
+    return {
+      type: "FeatureCollection",
+      features: points.map((point, index) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [point.lon, point.lat] },
+        properties: {
+          name: point.name || `Point ${index + 1}`,
+          ignored: !!point.ignored,
+          index,
+        },
+      })),
+    };
+  }
 
+  function fitImportPreviewBounds(points) {
+    if (!importPreviewMap || !points.length) return;
+    if (points.length === 1) {
+      const point = points[0];
+      importPreviewMap.jumpTo({
+        center: [point.lon, point.lat],
+        zoom: 11,
+      });
+      return;
+    }
+    const bounds = new maplibregl.LngLatBounds();
+    for (const point of points) bounds.extend([point.lon, point.lat]);
+    importPreviewMap.fitBounds(bounds, {
+      padding: 36,
+      maxZoom: 12,
+      duration: 0,
+    });
+  }
 
+  function renderImportPreview(points) {
+    importPreviewPoints = annotateImportPoints(
+      Array.isArray(points) ? points : [],
+    );
+    importSelectedPointIndex = -1;
+    if (!importPreviewPoints.length) {
+      if (importSitesPreviewField) importSitesPreviewField.hidden = true;
+      destroyImportPreviewMap();
+      renderImportPointList();
+      syncImportSaveButton();
+      return;
+    }
+    if (importSitesPreviewField) importSitesPreviewField.hidden = false;
+    if (!importSitesPreviewMapEl) return;
 
+    const geojson = importPreviewGeoJson(importPreviewPoints);
+    const applyData = () => {
+      if (!importPreviewMap) return;
+      const source = importPreviewMap.getSource(IMPORT_PREVIEW_SOURCE);
+      if (source) {
+        source.setData(geojson);
+      } else {
+        importPreviewMap.addSource(IMPORT_PREVIEW_SOURCE, {
+          type: "geojson",
+          data: geojson,
+        });
+      }
+      if (!importPreviewMap.getLayer(IMPORT_PREVIEW_LAYER)) {
+        importPreviewMap.addLayer({
+          id: IMPORT_PREVIEW_LAYER,
+          type: "circle",
+          source: IMPORT_PREVIEW_SOURCE,
+          paint: IMPORT_PREVIEW_CIRCLE_PAINT,
+        });
+      }
+      if (!importPreviewMap.getLayer(IMPORT_PREVIEW_LABEL_LAYER)) {
+        importPreviewMap.addLayer({
+          id: IMPORT_PREVIEW_LABEL_LAYER,
+          type: "symbol",
+          source: IMPORT_PREVIEW_SOURCE,
+          layout: {
+            "text-field": ["get", "name"],
+            "text-size": 11,
+            "text-offset": [0, -1.4],
+            "text-anchor": "bottom",
+            "text-font": MAP_LABEL_FONT,
+            "text-allow-overlap": true,
+          },
+          paint: IMPORT_PREVIEW_LABEL_PAINT,
+        });
+      }
+      importPreviewMap.resize();
+      fitImportPreviewBounds(importPreviewPoints);
+      ensureImportPreviewMapHandlers();
+      renderImportPointList();
+    };
+
+    if (!importPreviewMap) {
+      importPreviewMap = new maplibregl.Map({
+        container: importSitesPreviewMapEl,
+        style: basemapStyle(currentBasemapKey),
+        attributionControl: false,
+        dragRotate: false,
+        pitchWithRotate: false,
+        interactive: true,
+      });
+      importPreviewMap.addControl(
+        new maplibregl.NavigationControl({ showCompass: false }),
+        "top-right",
+      );
+      if (importPreviewMap.loaded()) {
+        applyData();
+      } else {
+        importPreviewMap.once("load", applyData);
+      }
+    } else {
+      applyData();
+    }
+    syncImportSaveButton();
+  }
+
+  function resetImportSitesModal() {
+    importDraftTags = ["imported"];
+    importPreviewPoints = [];
+    importPreviewPayload = null;
+    importPreviewFileName = "";
+    importPreviewSkipped = 0;
+    importPreviewBusy = false;
+    importFilterByViewport = true;
+    importSelectedPointIndex = -1;
+    if (importSitesFile) importSitesFile.value = "";
+    if (importSitesTagInput) importSitesTagInput.value = "";
+    if (importSitesFilterVisible) importSitesFilterVisible.checked = true;
+    if (importSitesStatus) {
+      importSitesStatus.textContent = "Choose a file with Point placemarks.";
+    }
+    if (importSitesPreviewField) importSitesPreviewField.hidden = true;
+    destroyImportPreviewMap();
+    renderImportPointList();
+    setImportSitesError("");
+    renderImportSiteTags();
+    syncImportSiteTagSuggestions();
+    syncImportSaveButton();
+  }
+
+  async function previewImportFile(file) {
+    if (!file) return;
+    const name = String(file.name || "").toLowerCase();
+    const isKmz = name.endsWith(".kmz");
+    const isKml = name.endsWith(".kml");
+    if (!isKml && !isKmz) {
+      setImportSitesError("Choose a .kml or .kmz file.");
+      renderImportPreview([]);
+      return;
+    }
+
+    importPreviewBusy = true;
+    setImportSitesError("");
+    if (importSitesStatus)
+      importSitesStatus.textContent = `Parsing ${file.name}…`;
+    syncImportSaveButton();
+    syncImportBulkActions();
+
+    try {
+      let body;
+      if (isKmz) {
+        const buffer = await file.arrayBuffer();
+        body = { kmz_b64: arrayBufferToBase64(buffer) };
+      } else {
+        body = { kml: await file.text() };
+      }
+      const resp = await fetch(sitesImportPreviewApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setImportSitesError(payload.error || `Preview failed (${resp.status})`);
+        importPreviewPayload = null;
+        renderImportPreview([]);
+        if (importSitesStatus)
+          importSitesStatus.textContent = "No points found.";
+        return;
+      }
+      importPreviewPayload = body;
+      const points = Array.isArray(payload.points) ? payload.points : [];
+      importPreviewFileName = file.name;
+      importPreviewSkipped = Number(payload.skipped) || 0;
+      renderImportPreview(points);
+      syncImportPreviewStatus();
+    } catch (_) {
+      setImportSitesError("Could not reach server.");
+      importPreviewPayload = null;
+      renderImportPreview([]);
+      if (importSitesStatus) importSitesStatus.textContent = "Preview failed.";
+    } finally {
+      importPreviewBusy = false;
+      syncImportSaveButton();
+      syncImportBulkActions();
+    }
+  }
+
+  async function openImportSitesModal() {
+    if (!importSitesModal) return;
+    setAddPlacementMode(null);
+    setEntityPanelOpen(true);
+    resetImportSitesModal();
+    await customElements.whenDefined("wa-dialog");
+    importSitesModal.open = true;
+    requestAnimationFrame(() => {
+      importSitesFile?.focus();
+    });
+  }
+
+  function closeImportSitesModal() {
+    if (!importSitesModal) return;
+    importSitesModal.open = false;
+  }
+
+  function addImportDraftTagFromInput() {
+    if (!importSitesTagInput) return;
+    const tag = normalizeTagInput(importSitesTagInput.value);
+    importSitesTagInput.value = "";
+    if (!tag) return;
+    if (!importDraftTags.includes(tag)) {
+      importDraftTags = [...importDraftTags, tag];
+      renderImportSiteTags();
+      syncImportSiteTagSuggestions();
+      syncImportSaveButton();
+    }
+  }
+
+  async function saveImportSitesModal() {
+    addImportDraftTagFromInput();
+    const pointsToImport = importablePreviewPoints();
+    const tags = effectiveImportDraftTags();
+    if (!tags.length || !pointsToImport.length) {
+      setImportSitesError(
+        "Choose at least one point to import and at least one tag.",
+      );
+      return;
+    }
+    setImportSitesError("");
+    if (importSitesSave) importSitesSave.disabled = true;
+    try {
+      const body = {
+        tags,
+        points: pointsToImport.map((point) => {
+          const row = {
+            name: point.name,
+            lat: point.lat,
+            lon: point.lon,
+          };
+          return row;
+        }),
+      };
+      const resp = await fetch(sitesImportApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setImportSitesError(payload.error || `Import failed (${resp.status})`);
+        return;
+      }
+      const imported = Array.isArray(payload.sites) ? payload.sites : [];
+      if (!imported.length) {
+        setImportSitesError("Import returned no sites.");
+        return;
+      }
+      const importedTags = [...tags];
+      closeImportSitesModal();
+      for (const site of imported) {
+        registerSite(site);
+      }
+      const firstTag = importedTags[0];
+      if (firstTag) {
+        activeTagFilters.clear();
+        activeTagFilters.add(firstTag);
+        pruneActiveTagFilters();
+        renderEntityPanel();
+      }
+      if (mapReady && imported.length) {
+        const bounds = new maplibregl.LngLatBounds();
+        for (const site of imported) bounds.extend([site.lon, site.lat]);
+        if (imported.length === 1) {
+          const site = imported[0];
+          map.flyTo({
+            center: [site.lon, site.lat],
+            zoom: Math.max(map.getZoom(), 11),
+          });
+        } else {
+          map.fitBounds(bounds, { padding: 80, maxZoom: 12, duration: 800 });
+        }
+      }
+      scheduleSaveMapState();
+      if (imported[0]?.slug) selectSite(imported[0].slug);
+    } catch (_) {
+      setImportSitesError("Could not reach server.");
+    } finally {
+      syncImportSaveButton();
+    }
+  }
 
   function syncTagFilterBypassForSite(slug) {
     tagFilterBypassSlugs.delete(slug);
@@ -5509,13 +8351,42 @@ export function initProjectMap() {
       tagFilterBypassSlugs.delete(slug);
       return;
     }
-    scope.syncTagFilterBypassForSite(slug);
+    syncTagFilterBypassForSite(slug);
     applyEntityVisibility();
     renderTagFilters();
   }
 
   const siteTagSaveQueue = new Map();
 
+  async function patchSiteTags(slug, tags, { immediate = false } = {}) {
+    let state = siteTagSaveQueue.get(slug);
+    if (!state) {
+      state = { pendingTags: null, timer: null, inflight: false, waiters: [] };
+      siteTagSaveQueue.set(slug, state);
+    }
+    state.pendingTags = tags;
+    const existing = siteBySlug.get(slug);
+    if (existing) {
+      applySiteRowUpdate(
+        { ...existing, tags: [...tags] },
+        { refreshGeoJson: false },
+      );
+    }
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = null;
+    const resultPromise = new Promise((resolve, reject) => {
+      state.waiters.push({ resolve, reject });
+    });
+    if (immediate) {
+      void flushSiteTagSave(slug);
+    } else {
+      state.timer = setTimeout(() => {
+        state.timer = null;
+        void flushSiteTagSave(slug);
+      }, 75);
+    }
+    return resultPromise;
+  }
 
   async function flushSiteTagSave(slug) {
     const state = siteTagSaveQueue.get(slug);
@@ -5537,17 +8408,69 @@ export function initProjectMap() {
       }
       const site = payload.site;
       if (!site) throw new Error("Tag update returned no site");
-      scope.applySiteRowUpdate(site);
-      scope.applySiteTagChange(site.slug);
+      applySiteRowUpdate(site);
+      applySiteTagChange(site.slug);
       for (const w of waiters) w.resolve(site);
     } catch (err) {
       for (const w of waiters) w.reject(err);
     } finally {
       state.inflight = false;
-      if (state.pendingTags != null) void scope.flushSiteTagSave(slug);
+      if (state.pendingTags != null) void flushSiteTagSave(slug);
     }
   }
 
+  function renderSiteTags(site) {
+    if (!sitePanelTags || !site) return;
+    sitePanelTags.innerHTML = "";
+    tagAddOpen = false;
+    const tags = siteTags(site);
+    for (const tag of tags) {
+      const chip = document.createElement("span");
+      chip.className = "site-tag";
+      const label = document.createElement("span");
+      label.textContent = tag;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "site-tag__remove";
+      remove.title = `Remove ${tag}`;
+      remove.setAttribute("aria-label", `Remove tag ${tag}`);
+      remove.textContent = "×";
+      remove.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        void (async () => {
+          try {
+            const current = siteTags(siteBySlug.get(site.slug) || site);
+            const next = current.filter((t) => t !== tag);
+            const updated = await patchSiteTags(site.slug, next, {
+              immediate: true,
+            });
+            if (selectedSlug === site.slug) renderSiteTags(updated);
+          } catch (_) {
+            if (selectedSlug === site.slug) {
+              renderSiteTags(siteBySlug.get(site.slug) || site);
+            }
+          }
+        })();
+      });
+      chip.appendChild(label);
+      chip.appendChild(remove);
+      sitePanelTags.appendChild(chip);
+    }
+
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "site-tag-add";
+    addBtn.title = "Add tag";
+    addBtn.setAttribute("aria-label", "Add tag");
+    addBtn.textContent = "+";
+    addBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (tagAddOpen) return;
+      tagAddOpen = true;
+      addBtn.replaceWith(buildTagAddForm(site, tags));
+    });
+    sitePanelTags.appendChild(addBtn);
+  }
 
   function buildTagAddForm(site, currentTags) {
     const form = document.createElement("form");
@@ -5571,7 +8494,7 @@ export function initProjectMap() {
     const finish = () => {
       tagAddOpen = false;
       if (selectedSlug === site.slug)
-        scope.renderSiteTags(siteBySlug.get(site.slug) || site);
+        renderSiteTags(siteBySlug.get(site.slug) || site);
     };
     const commitPendingTag = async () => {
       if (!tagAddOpen) return;
@@ -5580,17 +8503,17 @@ export function initProjectMap() {
       const current = siteTags(siteBySlug.get(site.slug) || site);
       if (!tag || current.includes(tag)) {
         if (selectedSlug === site.slug)
-          scope.renderSiteTags(siteBySlug.get(site.slug) || site);
+          renderSiteTags(siteBySlug.get(site.slug) || site);
         return;
       }
       try {
-        const updated = await scope.patchSiteTags(site.slug, [...current, tag], {
+        const updated = await patchSiteTags(site.slug, [...current, tag], {
           immediate: true,
         });
-        if (selectedSlug === site.slug) scope.renderSiteTags(updated);
+        if (selectedSlug === site.slug) renderSiteTags(updated);
       } catch (_) {
         if (selectedSlug === site.slug)
-          scope.renderSiteTags(siteBySlug.get(site.slug) || site);
+          renderSiteTags(siteBySlug.get(site.slug) || site);
       }
     };
     form.addEventListener("submit", (ev) => {
@@ -5617,7 +8540,7 @@ export function initProjectMap() {
     if (sitePanelViewshedSection) sitePanelViewshedSection.hidden = false;
     if (sitePanelTagsSection) sitePanelTagsSection.hidden = false;
     document.getElementById("site-panel-name").textContent = site.name;
-    scope.renderSiteTags(site);
+    renderSiteTags(site);
     document.getElementById("site-panel-coords").textContent =
       `${formatCoord(site.lat)}, ${formatCoord(site.lon)}`;
     const heightEl = document.getElementById("site-panel-height");
@@ -5631,9 +8554,6 @@ export function initProjectMap() {
         heightEl.classList.add("text-muted");
       }
     }
-    const plss = site.plss || "";
-    setSectionVisible("site-panel-plss-section", !!plss);
-    document.getElementById("site-panel-plss").textContent = plss;
     const desc = site.description || "";
     setSectionVisible("site-panel-desc-section", !!desc);
     document.getElementById("site-panel-desc").textContent = desc;
@@ -5649,7 +8569,7 @@ export function initProjectMap() {
     for (const peer of peers) {
       linksEl.appendChild(buildSitePanelLinkButton(peer, site.slug));
     }
-    scope.syncViewshedCheckbox();
+    syncViewshedCheckbox();
   }
 
   function setEditError(message) {
@@ -5664,24 +8584,18 @@ export function initProjectMap() {
   }
 
   function resetEditPrefetchPanelUI() {
-    setSectionVisible("site-panel-edit-plss-section", false);
     setSectionVisible("site-panel-edit-links-section", false);
-    const plssEl = document.getElementById("site-panel-edit-plss");
     const linksEl = document.getElementById("site-panel-edit-links");
-    if (plssEl) plssEl.textContent = "";
     if (linksEl) linksEl.innerHTML = "";
   }
 
   function resetEditPrefetchUI() {
-    scope.resetEditPrefetchPanelUI();
+    resetEditPrefetchPanelUI();
     removeDraftLinksLayer();
     removeEditHistoryLinksLayer();
   }
 
   function renderEditPrefetch(payload) {
-    const plss = payload.plss || "";
-    setSectionVisible("site-panel-edit-plss-section", !!plss);
-    document.getElementById("site-panel-edit-plss").textContent = plss || "—";
     const links = Array.isArray(payload.links) ? payload.links : [];
     const linked = links.filter((row) => {
       if (row.linked === false) return false;
@@ -5703,23 +8617,100 @@ export function initProjectMap() {
       li.textContent = dist ? `${label} — ${dist}` : label;
       linksEl.appendChild(li);
     }
-    if (scope.editShowsSitePreview() && payload.links_geojson) {
+    if (editShowsSitePreview() && payload.links_geojson) {
       addDraftLinksLayer(payload.links_geojson);
     } else {
       removeDraftLinksLayer();
     }
   }
 
+  function readEditCoords() {
+    const lat = Number.parseFloat(sitePanelEditLat.value);
+    const lon = Number.parseFloat(sitePanelEditLon.value);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return { lat, lon };
+  }
 
+  function parseCoordPairFromText(text) {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return null;
+    const parts = trimmed.split(/[,\s]+/).filter(Boolean);
+    if (parts.length < 2) return null;
+    const lat = Number.parseFloat(parts[0]);
+    const lon = Number.parseFloat(parts[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return { lat, lon };
+  }
 
+  function applyCoordPaste(text, targetField) {
+    const pair = parseCoordPairFromText(text);
+    if (!pair) return false;
+    sitePanelEditLat.value = formatCoord(pair.lat);
+    sitePanelEditLon.value = formatCoord(pair.lon);
+    onEditCoordsChanged();
+    return true;
+  }
 
+  function editShowsSitePreview() {
+    return editMode;
+  }
 
+  function editWantsDraftViewshed() {
+    if (!editMode || !editShowsSitePreview()) return false;
+    return !sitePanelEditViewshed || sitePanelEditViewshed.checked;
+  }
 
+  function ensureEditDraftViewshedEnabled() {
+    viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
+    if (sitePanelEditViewshed) sitePanelEditViewshed.checked = true;
+  }
 
+  function loadEditDraftViewshedAt(lat, lon) {
+    if (!editWantsDraftViewshed()) return;
+    ensureEditDraftViewshedEnabled();
+    hideViewshedLayerForEdit(editSlug);
+    void loadDraftViewshedAt(lat, lon);
+  }
 
+  function updateEditDraftMarker(lat, lon) {
+    removeDraftMarker();
+    const markerColor = DRAFT_MARKER_COLOR;
+    draftMarker = new maplibregl.Marker({ color: markerColor })
+      .setLngLat([lon, lat])
+      .addTo(map);
+  }
 
+  function syncEditViewshedCheckbox() {
+    if (!sitePanelEditViewshed || !editMode) return;
+    const coords = readEditCoords();
+    const atOriginal =
+      coords && coordsMatchEditSnapshot(coords.lat, coords.lon);
+    const hint = document.getElementById("site-panel-edit-viewshed-hint");
+    if (atOriginal && editSlug) {
+      sitePanelEditViewshed.checked = isViewshedVisible(editSlug);
+      if (hint)
+        hint.textContent = viewshedLoading.has(editSlug) ? "Loading…" : "";
+      return;
+    }
+    sitePanelEditViewshed.checked = isViewshedVisible(DRAFT_VIEWSHED_SLUG);
+    if (hint) hint.textContent = draftViewshedLoading ? "Loading…" : "";
+  }
 
+  function coordsMatchPair(lat1, lon1, lat2, lon2) {
+    return Math.abs(lat1 - lat2) < 1e-5 && Math.abs(lon1 - lon2) < 1e-5;
+  }
 
+  function coordSeparationM(lat1, lon1, lat2, lon2) {
+    const r = 6371000;
+    const phi1 = (lat1 * Math.PI) / 180;
+    const phi2 = (lat2 * Math.PI) / 180;
+    const dphi = ((lat2 - lat1) * Math.PI) / 180;
+    const dlambda = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dphi / 2) ** 2 +
+      Math.cos(phi1) * Math.cos(phi2) * Math.sin(dlambda / 2) ** 2;
+    return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
 
   const EDIT_COORD_HISTORY_MIN_M = 25;
 
@@ -5737,41 +8728,41 @@ export function initProjectMap() {
 
   function cancelEditHistoryViewshedLoad(id) {
     const entry = editCoordHistory.find((row) => row.id === id);
-    const slug = scope.editHistorySlug(id);
+    const slug = editHistorySlug(id);
     if (entry) entry.viewshedGen = (entry.viewshedGen || 0) + 1;
     viewshedPendingEpoch.delete(slug);
     viewshedLoading.delete(slug);
   }
 
   function hideEditHistoryViewshed(id) {
-    scope.cancelEditHistoryViewshedLoad(id);
-    const slug = scope.editHistorySlug(id);
+    cancelEditHistoryViewshedLoad(id);
+    const slug = editHistorySlug(id);
     viewshedVisible.set(slug, false);
-    const layerId = scope.viewshedLayerId(slug);
+    const layerId = viewshedLayerId(slug);
     if (map.getLayer(layerId)) {
       map.setLayoutProperty(layerId, "visibility", "none");
     }
-    scope.updatePinOverlays();
+    updatePinOverlays();
   }
 
   function showEditHistoryViewshed(entry) {
-    if (!scope.editShowsSitePreview()) return;
-    const slug = scope.editHistorySlug(entry.id);
+    if (!editShowsSitePreview()) return;
+    const slug = editHistorySlug(entry.id);
     viewshedVisible.set(slug, true);
-    const layerId = scope.viewshedLayerId(slug);
+    const layerId = viewshedLayerId(slug);
     if (map.getLayer(layerId)) {
       map.setLayoutProperty(layerId, "visibility", "visible");
-      scope.updatePinOverlays();
+      updatePinOverlays();
       return;
     }
-    void scope.loadEditHistoryViewshed(entry.id, entry.lat, entry.lon);
+    void loadEditHistoryViewshed(entry.id, entry.lat, entry.lon);
   }
 
   function removeEditHistoryMapArtifacts(id) {
     const entry = editCoordHistory.find((row) => row.id === id);
-    scope.removeEditHistoryMarker(id);
-    scope.cancelEditHistoryViewshedLoad(id);
-    const slug = scope.editHistorySlug(id);
+    removeEditHistoryMarker(id);
+    cancelEditHistoryViewshedLoad(id);
+    const slug = editHistorySlug(id);
     removeViewshedLayer(slug);
     viewshedVisible.delete(slug);
     if (entry) {
@@ -5781,23 +8772,46 @@ export function initProjectMap() {
     refreshEditHistoryLinksLayer();
   }
 
+  function clearEditCoordHistory() {
+    for (const entry of editCoordHistory) {
+      removeEditHistoryMapArtifacts(entry.id);
+    }
+    editCoordHistory = [];
+    editHistoryNextId = 0;
+    editCommittedCoords = null;
+    removeEditHistoryLinksLayer();
+    renderEditCoordHistory();
+  }
 
   function historyHasCoords(lat, lon) {
     return editCoordHistory.some((entry) =>
-      scope.coordsMatchPair(entry.lat, entry.lon, lat, lon),
+      coordsMatchPair(entry.lat, entry.lon, lat, lon),
     );
   }
 
+  function pushEditCoordHistory(lat, lon) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    if (historyHasCoords(lat, lon)) return;
+    const coords = readEditCoords();
+    if (coords && coordsMatchPair(coords.lat, coords.lon, lat, lon)) return;
+    editCoordHistory.unshift({
+      id: ++editHistoryNextId,
+      lat,
+      lon,
+      visible: false,
+    });
+    renderEditCoordHistory();
+  }
 
   function commitEditCoordMove() {
-    const coords = scope.readEditCoords();
+    const coords = readEditCoords();
     if (!coords) return;
     if (!editCommittedCoords) {
       editCommittedCoords = { lat: coords.lat, lon: coords.lon };
       return;
     }
     if (
-      scope.coordsMatchPair(
+      coordsMatchPair(
         coords.lat,
         coords.lon,
         editCommittedCoords.lat,
@@ -5806,14 +8820,14 @@ export function initProjectMap() {
     ) {
       return;
     }
-    const movedM = scope.coordSeparationM(
+    const movedM = coordSeparationM(
       editCommittedCoords.lat,
       editCommittedCoords.lon,
       coords.lat,
       coords.lon,
     );
     if (movedM >= EDIT_COORD_HISTORY_MIN_M) {
-      scope.pushEditCoordHistory(editCommittedCoords.lat, editCommittedCoords.lon);
+      pushEditCoordHistory(editCommittedCoords.lat, editCommittedCoords.lon);
     }
     editCommittedCoords = { lat: coords.lat, lon: coords.lon };
   }
@@ -5825,7 +8839,7 @@ export function initProjectMap() {
       marker.remove();
       editHistoryMarkers.delete(entry.id);
     }
-    const markerColor = C.DRAFT_MARKER_COLOR;
+    const markerColor = DRAFT_MARKER_COLOR;
     editHistoryMarkers.set(
       entry.id,
       new maplibregl.Marker({ color: markerColor })
@@ -5843,25 +8857,25 @@ export function initProjectMap() {
   }
 
   function clearEditHistoryViewshed(id) {
-    scope.cancelEditHistoryViewshedLoad(id);
-    const slug = scope.editHistorySlug(id);
+    cancelEditHistoryViewshedLoad(id);
+    const slug = editHistorySlug(id);
     removeViewshedLayer(slug);
     viewshedVisible.delete(slug);
   }
 
   async function loadEditHistoryViewshed(id, lat, lon) {
     const entry = editCoordHistory.find((row) => row.id === id);
-    if (!entry || !entry.visible || !scope.editShowsSitePreview()) return;
-    const slug = scope.editHistorySlug(id);
+    if (!entry || !entry.visible || !editShowsSitePreview()) return;
+    const slug = editHistorySlug(id);
     const gen = (entry.viewshedGen = (entry.viewshedGen || 0) + 1);
     removeViewshedLayer(slug);
     viewshedLoading.add(slug);
     const epoch = viewshedLoadEpoch;
     viewshedPendingEpoch.set(slug, epoch);
-    scope.updatePinOverlays();
-    scope.renderEditCoordHistory();
+    updatePinOverlays();
+    renderEditCoordHistory();
     try {
-      const resp = await fetch(scope.viewshedPrefetchWarmUrl(lat, lon), {
+      const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), {
         method: "POST",
       });
       if (!entry.visible || entry.viewshedGen !== gen) return;
@@ -5869,8 +8883,8 @@ export function initProjectMap() {
       if (!resp.ok) {
         viewshedPendingEpoch.delete(slug);
         viewshedLoading.delete(slug);
-        scope.updatePinOverlays();
-        scope.renderEditCoordHistory();
+        updatePinOverlays();
+        renderEditCoordHistory();
         return;
       }
       const vs = await resp.json();
@@ -5878,14 +8892,14 @@ export function initProjectMap() {
       if (viewshedPendingEpoch.get(slug) !== epoch) return;
       if (vs && vs.status === "ready") {
         viewshedVisible.set(slug, true);
-        scope.handleViewshedReady({ ...vs, slug }, epoch);
+        handleViewshedReady({ ...vs, slug }, epoch);
       }
     } catch (_) {
       if (entry.viewshedGen === gen) {
         viewshedPendingEpoch.delete(slug);
         viewshedLoading.delete(slug);
-        scope.updatePinOverlays();
-        scope.renderEditCoordHistory();
+        updatePinOverlays();
+        renderEditCoordHistory();
       }
     }
   }
@@ -5895,9 +8909,9 @@ export function initProjectMap() {
     if (!entry) return;
     const gen = (entry.linksGen = (entry.linksGen || 0) + 1);
     entry.linksLoading = true;
-    scope.renderEditCoordHistory();
+    renderEditCoordHistory();
     try {
-      const url = scope.sitesPrefetchUrl(lat, lon, editSlug);
+      const url = sitesPrefetchUrl(lat, lon, editSlug);
       const resp = await fetch(url);
       if (!entry.visible || entry.linksGen !== gen) return;
       if (!resp.ok) {
@@ -5907,10 +8921,10 @@ export function initProjectMap() {
       const payload = await resp.json();
       if (!entry.visible || entry.linksGen !== gen) return;
       let linksGeojson = payload.links_geojson;
-      const filtered = scope.filterEditSitePrefetchPayload({
+      const filtered = filterEditSitePrefetchPayload({
         links_geojson: linksGeojson,
       });
-      entry.linksGeojson = scope.filterHistoryEntryLinksGeojson(
+      entry.linksGeojson = filterHistoryEntryLinksGeojson(
         filtered.links_geojson,
         lat,
         lon,
@@ -5921,7 +8935,7 @@ export function initProjectMap() {
     } finally {
       if (entry.linksGen === gen) {
         entry.linksLoading = false;
-        scope.renderEditCoordHistory();
+        renderEditCoordHistory();
         refreshEditHistoryLinksLayer();
       }
     }
@@ -5929,8 +8943,8 @@ export function initProjectMap() {
 
   async function loadEditHistoryMapArtifacts(entry) {
     if (!entry.visible) return;
-    scope.showEditHistoryViewshed(entry);
-    if (!scope.editShowsSitePreview()) {
+    showEditHistoryViewshed(entry);
+    if (!editShowsSitePreview()) {
       if (entry.linksGeojson) entry.linksGeojson = null;
       refreshEditHistoryLinksLayer();
       return;
@@ -5943,7 +8957,7 @@ export function initProjectMap() {
       refreshEditHistoryLinksLayer();
       return;
     }
-    await scope.loadEditHistoryLinks(entry.id, entry.lat, entry.lon);
+    await loadEditHistoryLinks(entry.id, entry.lat, entry.lon);
   }
 
   function setEditHistoryEntryVisible(id, visible) {
@@ -5951,15 +8965,15 @@ export function initProjectMap() {
     if (!entry) return;
     entry.visible = visible;
     if (visible) {
-      scope.updateEditHistoryMarker(entry);
-      void scope.loadEditHistoryMapArtifacts(entry);
+      updateEditHistoryMarker(entry);
+      void loadEditHistoryMapArtifacts(entry);
     } else {
-      scope.removeEditHistoryMarker(id);
-      scope.hideEditHistoryViewshed(id);
+      removeEditHistoryMarker(id);
+      hideEditHistoryViewshed(id);
       entry.linksGen = (entry.linksGen || 0) + 1;
       refreshEditHistoryLinksLayer();
     }
-    scope.renderEditCoordHistory();
+    renderEditCoordHistory();
   }
 
   function deleteEditHistoryEntry(id) {
@@ -5967,9 +8981,9 @@ export function initProjectMap() {
     if (entry) {
       entry.linksGeojson = null;
     }
-    scope.removeEditHistoryMapArtifacts(id);
+    removeEditHistoryMapArtifacts(id);
     editCoordHistory = editCoordHistory.filter((row) => row.id !== id);
-    scope.renderEditCoordHistory();
+    renderEditCoordHistory();
   }
 
   async function copyCoordPair(lat, lon) {
@@ -5981,14 +8995,85 @@ export function initProjectMap() {
     }
   }
 
+  function renderEditCoordHistory() {
+    if (!sitePanelEditCoordHistory) return;
+    sitePanelEditCoordHistory.innerHTML = "";
+    sitePanelEditCoordHistory.hidden = editCoordHistory.length === 0;
+    for (const entry of editCoordHistory) {
+      const row = document.createElement("li");
+      row.className = "edit-coord-history__row";
+      if (entry.visible) row.classList.add("edit-coord-history__row--visible");
 
+      const viewBtn = document.createElement("wa-button");
+      viewBtn.appearance = "outlined";
+      viewBtn.size = "s";
+      viewBtn.className = `coord-action-btn${entry.visible ? " active" : ""}`;
+      viewBtn.title = entry.visible ? "Hide on map" : "Show on map";
+      viewBtn.textContent = entry.visible ? "◉" : "○";
+      viewBtn.addEventListener("click", () => {
+        setEditHistoryEntryVisible(entry.id, !entry.visible);
+      });
+
+      const coordsEl = document.createElement("span");
+      coordsEl.className = "edit-coord-history__coords";
+      coordsEl.textContent = `${formatCoord(entry.lat)}, ${formatCoord(entry.lon)}`;
+      const slug = editHistorySlug(entry.id);
+      const loadingParts = [];
+      if (editShowsSitePreview() && viewshedLoading.has(slug))
+        loadingParts.push("viewshed");
+      if (entry.linksLoading) loadingParts.push("links");
+      if (loadingParts.length)
+        coordsEl.textContent += ` (${loadingParts.join(", ")}…)`;
+
+      const actions = document.createElement("div");
+      actions.className = "edit-coord-history__actions";
+
+      const copyBtn = document.createElement("wa-button");
+      copyBtn.appearance = "outlined";
+      copyBtn.size = "s";
+      copyBtn.className = "coord-action-btn";
+      copyBtn.title = "Copy lat, lon";
+      copyBtn.innerHTML =
+        '<wa-icon name="copy" label="Copy coordinates"></wa-icon>';
+      copyBtn.addEventListener("click", () => {
+        void copyCoordPair(entry.lat, entry.lon);
+      });
+
+      const deleteBtn = document.createElement("wa-button");
+      deleteBtn.appearance = "outlined";
+      deleteBtn.size = "s";
+      deleteBtn.className = "coord-action-btn";
+      deleteBtn.title = "Remove from history";
+      deleteBtn.innerHTML =
+        '<wa-icon name="xmark" label="Remove from history"></wa-icon>';
+      deleteBtn.addEventListener("click", () => {
+        deleteEditHistoryEntry(entry.id);
+      });
+
+      actions.appendChild(copyBtn);
+      actions.appendChild(deleteBtn);
+
+      row.appendChild(viewBtn);
+      row.appendChild(coordsEl);
+      row.appendChild(actions);
+      sitePanelEditCoordHistory.appendChild(row);
+    }
+  }
+
+  function coordsMatchEditSnapshot(lat, lon) {
+    if (!editSnapshot) return false;
+    return (
+      Math.abs(lat - Number(editSnapshot.lat)) < 1e-5 &&
+      Math.abs(lon - Number(editSnapshot.lon)) < 1e-5
+    );
+  }
 
   async function runEditPrefetchAt(lat, lon) {
     const gen = ++editPrefetchGen;
-    const showSitePreview = scope.editShowsSitePreview();
-    const atOriginal = scope.coordsMatchEditSnapshot(lat, lon);
-    scope.resetEditPrefetchPanelUI();
-    scope.updateEditDraftMarker(lat, lon);
+    const showSitePreview = editShowsSitePreview();
+    const atOriginal = coordsMatchEditSnapshot(lat, lon);
+    resetEditPrefetchPanelUI();
+    updateEditDraftMarker(lat, lon);
     applySiteLayerFilters();
     refreshFilteredLinks();
     if (sitePanelEditViewshedSection) {
@@ -5996,52 +9081,206 @@ export function initProjectMap() {
     }
     if (showSitePreview) {
       if (atOriginal) {
-        scope.removeDraftViewshed();
-        scope.restoreEditHiddenViewshed();
+        removeDraftViewshed();
+        restoreEditHiddenViewshed();
       } else {
-        scope.loadEditDraftViewshedAt(lat, lon);
+        loadEditDraftViewshedAt(lat, lon);
       }
     } else {
-      scope.removeDraftViewshed();
+      removeDraftViewshed();
       removeDraftLinksLayer();
     }
     try {
-      const url = scope.sitesPrefetchUrl(lat, lon, editSlug);
+      const url = sitesPrefetchUrl(lat, lon, editSlug);
       const resp = await fetch(url);
       if (gen !== editPrefetchGen) return;
       if (!resp.ok) return;
       let payload = await resp.json();
       if (gen !== editPrefetchGen) return;
-      payload = scope.filterEditSitePrefetchPayload(payload);
-      scope.renderEditPrefetch(payload);
+      payload = filterEditSitePrefetchPayload(payload);
+      renderEditPrefetch(payload);
     } catch (_) {
       /* edit prefetch optional */
     }
   }
 
+  function onEditCoordsChanged() {
+    if (!editMode) return;
+    const coords = readEditCoords();
+    if (!coords) return;
+    const atOriginal = coordsMatchEditSnapshot(coords.lat, coords.lon);
+    updateEditDraftMarker(coords.lat, coords.lon);
+    if (!atOriginal) {
+      removeDraftLinksLayer();
+    }
+    refreshFilteredLinks();
+    scheduleEditPrefetch();
+  }
 
   function scheduleEditPrefetch() {
     if (!editMode) return;
     if (editPrefetchTimer) clearTimeout(editPrefetchTimer);
     editPrefetchTimer = setTimeout(() => {
       editPrefetchTimer = null;
-      const coords = scope.readEditCoords();
+      const coords = readEditCoords();
       if (!coords) return;
-      scope.commitEditCoordMove();
-      void scope.runEditPrefetchAt(coords.lat, coords.lon);
-    }, C.COORD_PREFETCH_MS);
+      commitEditCoordMove();
+      void runEditPrefetchAt(coords.lat, coords.lon);
+    }, COORD_PREFETCH_MS);
   }
 
   function restoreEditHiddenViewshed() {
     if (editHiddenViewshedSlug) {
-      scope.applyViewshedVisibilityForSite(editHiddenViewshedSlug);
+      applyViewshedVisibilityForSite(editHiddenViewshedSlug);
       editHiddenViewshedSlug = null;
     }
   }
 
+  function hideViewshedLayerForEdit(slug) {
+    const layerId = viewshedLayerId(slug);
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", "none");
+      editHiddenViewshedSlug = slug;
+    }
+  }
 
+  function openEditPanel() {
+    const slug = selectedSlug;
+    const entity = siteBySlug.get(slug);
+    if (!entity || !slug) return;
+    editKind = "site";
+    editSlug = slug;
+    editSnapshot = { ...entity };
+    clearEditCoordHistory();
+    editCommittedCoords = { lat: Number(entity.lat), lon: Number(entity.lon) };
+    setEditError("");
+    document.getElementById("site-panel-edit-title").textContent = entity.name;
+    sitePanelEditSlug.textContent = slug;
+    sitePanelEditName.value = entity.name;
+    sitePanelEditLat.value = formatCoord(entity.lat);
+    sitePanelEditLon.value = formatCoord(entity.lon);
+    if (sitePanelEditHeight) {
+      sitePanelEditHeight.value =
+        entity.height_m != null && Number.isFinite(Number(entity.height_m))
+          ? String(entity.height_m)
+          : "";
+    }
+    syncEditHeightHint();
+    if (sitePanelEditViewshedSection) {
+      sitePanelEditViewshedSection.hidden = !editShowsSitePreview();
+    }
+    showPanelEdit();
+    applySiteLayerFilters();
+    refreshFilteredLinks();
+    syncEditViewshedCheckbox();
+    void runEditPrefetchAt(entity.lat, entity.lon);
+  }
 
+  function cancelEdit() {
+    if (!editMode) return;
+    editMode = false;
+    editKind = null;
+    editSlug = null;
+    editSnapshot = null;
+    clearEditCoordHistory();
+    editPrefetchGen += 1;
+    if (editPrefetchTimer) {
+      clearTimeout(editPrefetchTimer);
+      editPrefetchTimer = null;
+    }
+    setEditError("");
+    removeDraftMarker();
+    removeDraftViewshed();
+    removeDraftLinksLayer();
+    restoreEditHiddenViewshed();
+    resetEditPrefetchUI();
+    applySiteLayerFilters();
+    refreshFilteredLinks();
+    syncEditMapShell();
+    sitePanel.hidden = false;
+    syncMapViewport();
+    showPanelView();
+    if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));
+  }
 
+  async function saveEdit() {
+    if (!editMode || !editSlug) return;
+    const name = sitePanelEditName.value.trim();
+    if (!name) {
+      setEditError("Name is required.");
+      return;
+    }
+    const coords = readEditCoords();
+    if (!coords) {
+      setEditError("Valid latitude and longitude are required.");
+      return;
+    }
+    setEditError("");
+    sitePanelEditSave.disabled = true;
+    const savedEditSlug = editSlug;
+    const apiUrl = `/api/p/${projectSlug}/sites/${savedEditSlug}`;
+    const body = {
+      name,
+      lat: coords.lat,
+      lon: coords.lon,
+    };
+    if (sitePanelEditHeight) {
+      const rawHeight = sitePanelEditHeight.value.trim();
+      if (rawHeight) {
+        const heightM = Number(rawHeight);
+        if (!Number.isFinite(heightM) || heightM < 1) {
+          setEditError("Antenna height must be at least 1 m.");
+          sitePanelEditSave.disabled = false;
+          return;
+        }
+        body.height_m = heightM;
+      } else {
+        body.height_m = null;
+      }
+    }
+    try {
+      const resp = await fetch(apiUrl, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setEditError(payload.error || `Save failed (${resp.status})`);
+        return;
+      }
+      cleanupEditSaveArtifacts();
+      if (payload.promoted && payload.site) {
+        const site = payload.site;
+        registerSite(site);
+        selectedSlug = site.slug;
+        viewshedVisible.set(site.slug, true);
+        scheduleViewshedLoad(site);
+        showPanelView();
+        renderPanel(site);
+        renderEntityPanel();
+        finishEditSaveUi();
+        void loadSiteLinks();
+        return;
+      }
+      if (payload.site) {
+        const site = payload.site;
+        applySiteRowUpdate(site);
+        selectedSlug = site.slug;
+        viewshedVisible.set(site.slug, true);
+        scheduleViewshedLoad(site);
+        showPanelView();
+        renderPanel(site);
+        renderEntityPanel();
+        finishEditSaveUi();
+        void loadSiteLinks();
+      }
+    } catch (_) {
+      setEditError("Could not reach server.");
+    } finally {
+      sitePanelEditSave.disabled = false;
+    }
+  }
 
   function applySiteRowUpdate(site, { refreshGeoJson = true } = {}) {
     const row = normalizeSiteFromApi(site);
@@ -6050,8 +9289,8 @@ export function initProjectMap() {
     if (ix >= 0) sites[ix] = row;
     else sites.push(row);
     siteBySlug.set(row.slug, row);
-    if (refreshGeoJson && map.getSource(C.SITES_SOURCE)) {
-      map.getSource(C.SITES_SOURCE).setData(sitesGeoJson());
+    if (refreshGeoJson && map.getSource(SITES_SOURCE)) {
+      map.getSource(SITES_SOURCE).setData(sitesGeoJson());
     }
     if (refreshGeoJson) {
       applySiteLayerFilters();
@@ -6070,10 +9309,10 @@ export function initProjectMap() {
 
   function cleanupEditSaveArtifacts() {
     removeDraftMarker();
-    scope.removeDraftViewshed();
+    removeDraftViewshed();
     removeDraftLinksLayer();
     editHiddenViewshedSlug = null;
-    scope.clearEditCoordHistory();
+    clearEditCoordHistory();
     editPrefetchGen += 1;
     if (editPrefetchTimer) {
       clearTimeout(editPrefetchTimer);
@@ -6086,23 +9325,42 @@ export function initProjectMap() {
   }
 
   async function copyEditCoords() {
-    const coords = scope.readEditCoords();
+    const coords = readEditCoords();
     if (!coords) return;
-    await scope.copyCoordPair(coords.lat, coords.lon);
+    await copyCoordPair(coords.lat, coords.lon);
   }
 
-  async function copyPlssFromElement(el) {
-    if (!el) return;
-    const text = (el.textContent || "").trim();
-    if (!text || text === "—") return;
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (_) {
-      /* clipboard optional */
+  function selectSite(slug) {
+    const site = siteBySlug.get(slug);
+    if (!site) return;
+    if (createMode) cancelCreate();
+    if (editMode) cancelEdit();
+    selectedSlug = slug;
+    sitePanel.hidden = false;
+    syncMapViewport();
+    showPanelView();
+    renderPanel(site);
+    updateSelectedLayer();
+    raiseSiteLayers();
+    renderEntityPanel();
+    syncWarmPriorities();
+    void loadSingleSiteLinks(slug);
+  }
+
+  function deselectSite() {
+    if (createMode) {
+      cancelCreate();
+      return;
     }
+    if (editMode) {
+      cancelEdit();
+      return;
+    }
+    selectedSlug = null;
+    sitePanel.hidden = true;
+    syncMapViewport();
+    updateSelectedLayer();
   }
-
-
 
   const LONG_PRESS_MS = 500;
   const LONG_PRESS_MOVE_PX = 12;
@@ -6122,7 +9380,48 @@ export function initProjectMap() {
     return map.unproject([clientX - rect.left, clientY - rect.top]);
   }
 
+  function beginCreateAtMapPoint(lat, lon) {
+    if (editMode) return;
+    if (createMode) cancelCreate();
+    setAddPlacementMode(null);
+    openCreatePanel(lat, lon);
+  }
 
+  function wireMapLongPress() {
+    const canvas = map.getCanvas();
+    canvas.addEventListener(
+      "touchstart",
+      (ev) => {
+        if (editMode || ev.touches.length !== 1) return;
+        const touch = ev.touches[0];
+        longPressStart = { x: touch.clientX, y: touch.clientY };
+        clearLongPressTimer();
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          if (!longPressStart || !mapReady) return;
+          const { x, y } = longPressStart;
+          longPressStart = null;
+          const lngLat = lngLatFromClientPoint(x, y);
+          beginCreateAtMapPoint(lngLat.lat, lngLat.lng);
+        }, LONG_PRESS_MS);
+      },
+      { passive: true },
+    );
+    canvas.addEventListener(
+      "touchmove",
+      (ev) => {
+        if (!longPressStart || !longPressTimer || ev.touches.length !== 1)
+          return;
+        const touch = ev.touches[0];
+        const dx = touch.clientX - longPressStart.x;
+        const dy = touch.clientY - longPressStart.y;
+        if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_PX) clearLongPressTimer();
+      },
+      { passive: true },
+    );
+    canvas.addEventListener("touchend", clearLongPressTimer);
+    canvas.addEventListener("touchcancel", clearLongPressTimer);
+  }
 
   let seekPanelOpen = false;
   let seekRunning = false;
@@ -6149,19 +9448,19 @@ export function initProjectMap() {
   }
 
   function invalidateSeekFetch() {
-    scope.abortSeekInFlight();
+    abortSeekInFlight();
     seekFetchEpoch += 1;
     if (seekFetchTimer) window.clearTimeout(seekFetchTimer);
     seekFetchTimer = null;
   }
 
   function cancelSeekScanUi() {
-    scope.invalidateSeekFetch();
-    scope.setSeekScanning(false);
+    invalidateSeekFetch();
+    setSeekScanning(false);
   }
 
   function beginSeekFetch() {
-    scope.abortSeekInFlight();
+    abortSeekInFlight();
     seekFetchEpoch += 1;
     const epoch = seekFetchEpoch;
     const ac = new AbortController();
@@ -6169,7 +9468,19 @@ export function initProjectMap() {
     return { epoch, signal: ac.signal };
   }
 
+  function seekSessionActive() {
+    return Boolean(seekState?.running && !seekState?.complete);
+  }
 
+  function seekGoalFromState() {
+    if (seekState?.goalLat != null && seekState?.goalLon != null) {
+      return { lat: seekState.goalLat, lon: seekState.goalLon };
+    }
+    if (seekPendingGoalLat != null && seekPendingGoalLon != null) {
+      return { lat: seekPendingGoalLat, lon: seekPendingGoalLon };
+    }
+    return null;
+  }
 
   function migrateSeekStateGoal(parsed) {
     if (!parsed || typeof parsed !== "object") return parsed;
@@ -6185,6 +9496,9 @@ export function initProjectMap() {
     return parsed;
   }
 
+  function seekGoalCoords() {
+    return seekGoalFromState();
+  }
 
   function updateSeekGoalCoordsDisplay() {
     const goal = seekGoalCoords();
@@ -6206,7 +9520,7 @@ export function initProjectMap() {
     if (!mapReady) return;
     const goal = seekGoalCoords();
     if (!goal) {
-      scope.removeSeekGoalMarker();
+      removeSeekGoalMarker();
       return;
     }
     if (!seekGoalMarker) {
@@ -6227,11 +9541,11 @@ export function initProjectMap() {
     }
     syncMapCursor();
     if (active) {
-      scope.setSeekStatus("Click the map to set goal");
+      setSeekStatus("Click the map to set goal");
     } else if (seekPanelOpen && !seekSessionActive()) {
       const goal = seekGoalCoords();
-      if (!goal) scope.setSeekStatus("Pick a start site and set goal on the map");
-      else scope.setSeekStatus("Pick a start site to begin");
+      if (!goal) setSeekStatus("Pick a start site and set goal on the map");
+      else setSeekStatus("Pick a start site to begin");
     }
   }
 
@@ -6247,29 +9561,29 @@ export function initProjectMap() {
       seekState.goalLat = lat;
       seekState.goalLon = lon;
       if (moved) {
-        scope.clearSeekRedoStack();
+        clearSeekRedoStack();
         seekState.complete = false;
-        scope.saveSeekState({ immediatePlan: true });
+        saveSeekState({ immediatePlan: true });
       }
     }
-    scope.setSeekGoalPlacementMode(false);
-    scope.updateSeekGoalCoordsDisplay();
-    scope.syncSeekGoalMarker();
+    setSeekGoalPlacementMode(false);
+    updateSeekGoalCoordsDisplay();
+    syncSeekGoalMarker();
     if (refresh && seekSessionActive()) {
       if (moved) {
-        scope.applySeekLayers({
+        applySeekLayers({
           candidates: { type: "FeatureCollection", features: [] },
           lines: { type: "FeatureCollection", features: [] },
         });
       }
-      scope.promptSeekManualRecalc();
-    } else scope.maybeAutoStartSeekFromSelects();
+      promptSeekManualRecalc();
+    } else maybeAutoStartSeekFromSelects();
   }
 
   function syncSeekGoalUi() {
-    scope.updateSeekGoalCoordsDisplay();
-    scope.syncSeekGoalMarker();
-    scope.syncSeekGoalLine();
+    updateSeekGoalCoordsDisplay();
+    syncSeekGoalMarker();
+    syncSeekGoalLine();
     if (seekSetGoalBtn) {
       seekSetGoalBtn.disabled = !seekPanelOpen || seekScanning;
     }
@@ -6294,7 +9608,70 @@ export function initProjectMap() {
     localStorage.setItem(SEEK_REDO_KEY, JSON.stringify(seekState.redoStack));
   }
 
+  function seekStateFromYamlPlan(plan) {
+    if (!plan || typeof plan !== "object") return null;
+    const startSlug = String(plan.start || "").trim();
+    const startSite = siteBySlug.get(startSlug);
+    if (!startSite) return null;
+    const goal = plan.goal;
+    if (!Array.isArray(goal) || goal.length !== 2) return null;
+    const goalLat = Number(goal[0]);
+    const goalLon = Number(goal[1]);
+    if (!Number.isFinite(goalLat) || !Number.isFinite(goalLon)) return null;
+    const hops = [];
+    for (const item of plan.hops || []) {
+      if (!item || typeof item !== "object") return null;
+      if (item.site) {
+        const site = siteBySlug.get(String(item.site));
+        if (!site) return null;
+        hops.push({
+          lat: site.lat,
+          lon: site.lon,
+          elev_m: site.height_m ?? null,
+          site_slug: site.slug,
+          site_name: site.name,
+        });
+        continue;
+      }
+      const loc = item.loc;
+      if (!Array.isArray(loc) || loc.length !== 2) return null;
+      const lat = Number(loc[0]);
+      const lon = Number(loc[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      hops.push({
+        lat,
+        lon,
+        elev_m: item.height_m != null ? Number(item.height_m) : null,
+      });
+    }
+    if (!hops.length) return null;
+    const last = hops[hops.length - 1];
+    return {
+      running: true,
+      startSlug,
+      goalLat,
+      goalLon,
+      hops,
+      currentFrom: { lat: last.lat, lon: last.lon },
+      complete: Boolean(plan.complete),
+      redoStack: loadSeekRedoStack(),
+    };
+  }
 
+  function seekStateToYamlPlan(state) {
+    if (!state?.running || !state.startSlug) return null;
+    if (state.goalLat == null || state.goalLon == null) return null;
+    if (!Array.isArray(state.hops) || !state.hops.length) return null;
+    return {
+      start: state.startSlug,
+      goal: [state.goalLat, state.goalLon],
+      complete: Boolean(state.complete),
+      hops: state.hops.map((hop) => {
+        if (hop.site_slug) return { site: hop.site_slug };
+        return { loc: [hop.lat, hop.lon] };
+      }),
+    };
+  }
 
   let seekPlanSaveTimer = null;
   let seekPlanSaveSeq = 0;
@@ -6313,7 +9690,7 @@ export function initProjectMap() {
         if (seq !== seekPlanSaveSeq) return;
         if (!resp.ok) {
           const body = await resp.json().catch(() => ({}));
-          scope.setSeekStatus(
+          setSeekStatus(
             body.error || `Failed to clear seek plan (${resp.status})`,
           );
           return;
@@ -6323,11 +9700,11 @@ export function initProjectMap() {
         }
       } catch (err) {
         if (seq !== seekPlanSaveSeq) return;
-        scope.setSeekStatus(String(err));
+        setSeekStatus(String(err));
       }
       return;
     }
-    const plan = scope.seekStateToYamlPlan(seekState);
+    const plan = seekStateToYamlPlan(seekState);
     if (!plan) return;
     try {
       const resp = await fetch(`/api/p/${projectSlug}/seek/plan`, {
@@ -6338,7 +9715,7 @@ export function initProjectMap() {
       if (seq !== seekPlanSaveSeq) return;
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
-        scope.setSeekStatus(
+        setSeekStatus(
           body.error || `Failed to save seek plan (${resp.status})`,
         );
         return;
@@ -6348,30 +9725,30 @@ export function initProjectMap() {
       }
     } catch (err) {
       if (seq !== seekPlanSaveSeq) return;
-      scope.setSeekStatus(String(err));
+      setSeekStatus(String(err));
     }
   }
 
   function persistSeekPlanToYaml({ immediate = false } = {}) {
     if (seekPlanSaveTimer) window.clearTimeout(seekPlanSaveTimer);
     if (immediate) {
-      void scope.flushSeekPlanToYaml({ immediate: true });
+      void flushSeekPlanToYaml({ immediate: true });
       return;
     }
     seekPlanSaveTimer = window.setTimeout(() => {
       seekPlanSaveTimer = null;
-      void scope.flushSeekPlanToYaml();
-    }, C.SEEK_PLAN_SAVE_MS);
+      void flushSeekPlanToYaml();
+    }, SEEK_PLAN_SAVE_MS);
   }
 
   function loadSeekStateFromLocalStorage() {
     try {
       const raw = localStorage.getItem(SEEK_STATE_KEY);
       if (!raw) return null;
-      const parsed = scope.migrateSeekStateGoal(JSON.parse(raw));
+      const parsed = migrateSeekStateGoal(JSON.parse(raw));
       if (!parsed || typeof parsed !== "object") return null;
       if (!Array.isArray(parsed.redoStack))
-        parsed.redoStack = scope.loadSeekRedoStack();
+        parsed.redoStack = loadSeekRedoStack();
       return parsed;
     } catch (_) {
       return null;
@@ -6381,7 +9758,7 @@ export function initProjectMap() {
   function rehydrateSeekStateFromConfig() {
     if (seekState?.running) return seekState;
     const fromYaml = config.seek?.plan
-      ? scope.seekStateFromYamlPlan(config.seek.plan)
+      ? seekStateFromYamlPlan(config.seek.plan)
       : null;
     if (!fromYaml) return null;
     seekState = fromYaml;
@@ -6394,19 +9771,19 @@ export function initProjectMap() {
 
   function initSeekState() {
     const yamlPlan = config.seek?.plan;
-    const fromYaml = yamlPlan ? scope.seekStateFromYamlPlan(yamlPlan) : null;
+    const fromYaml = yamlPlan ? seekStateFromYamlPlan(yamlPlan) : null;
     if (fromYaml) {
       localStorage.removeItem(SEEK_STATE_KEY);
       return fromYaml;
     }
-    return scope.loadSeekStateFromLocalStorage();
+    return loadSeekStateFromLocalStorage();
   }
 
   function loadSeekState() {
-    return scope.initSeekState();
+    return initSeekState();
   }
 
-  let seekState = scope.loadSeekState();
+  let seekState = loadSeekState();
   if (seekState?.goalLat != null && seekState?.goalLon != null) {
     seekPendingGoalLat = seekState.goalLat;
     seekPendingGoalLon = seekState.goalLon;
@@ -6433,13 +9810,13 @@ export function initProjectMap() {
   }
 
   function saveSeekState({ immediatePlan = false } = {}) {
-    scope.saveSeekRedoStack();
+    saveSeekRedoStack();
     if (!seekState) {
       localStorage.removeItem(SEEK_STATE_KEY);
-      scope.persistSeekPlanToYaml({ immediate: immediatePlan });
+      persistSeekPlanToYaml({ immediate: immediatePlan });
       return;
     }
-    scope.persistSeekPlanToYaml({ immediate: immediatePlan });
+    persistSeekPlanToYaml({ immediate: immediatePlan });
   }
 
   function setSeekStatus(text) {
@@ -6493,10 +9870,10 @@ export function initProjectMap() {
   }
 
   function startSeekProgressTick() {
-    scope.stopSeekProgressTick();
+    stopSeekProgressTick();
     seekProgressTickTimer = window.setInterval(() => {
       if (!seekScanning) return;
-      scope.updateSeekProgressUi(lastSeekProgress || { phase: "starting" });
+      updateSeekProgressUi(lastSeekProgress || { phase: "starting" });
     }, 1000);
   }
 
@@ -6511,8 +9888,8 @@ export function initProjectMap() {
   }
 
   function stopSeekProgressUi() {
-    scope.stopSeekProgressPoll();
-    scope.stopSeekProgressTick();
+    stopSeekProgressPoll();
+    stopSeekProgressTick();
     lastSeekProgress = null;
   }
 
@@ -6531,17 +9908,17 @@ export function initProjectMap() {
         });
       } catch (err) {
         if (err?.name === "AbortError") return { cancelled: true };
-        await scope.sleepMs(C.SEEK_PROGRESS_POLL_MS);
+        await sleepMs(SEEK_PROGRESS_POLL_MS);
         continue;
       }
       if (!resp.ok) {
-        await scope.sleepMs(C.SEEK_PROGRESS_POLL_MS);
+        await sleepMs(SEEK_PROGRESS_POLL_MS);
         continue;
       }
       const body = await resp.json().catch(() => ({}));
       if (body?.gen != null && body.gen !== expectedGen)
         return { cancelled: true };
-      if (body?.progress) scope.updateSeekProgressUi(body.progress);
+      if (body?.progress) updateSeekProgressUi(body.progress);
       if (body?.status === "done" && body?.result) {
         return { payload: { project: body.project, ...body.result } };
       }
@@ -6553,7 +9930,7 @@ export function initProjectMap() {
           notReady: body.error_status === 503,
         };
       }
-      await scope.sleepMs(C.SEEK_PROGRESS_POLL_MS);
+      await sleepMs(SEEK_PROGRESS_POLL_MS);
     }
   }
 
@@ -6562,17 +9939,17 @@ export function initProjectMap() {
     if (seekStatusEl) seekStatusEl.hidden = active;
     if (seekProgressEl) seekProgressEl.hidden = !active;
     if (active) {
-      scope.setSeekStatus("");
+      setSeekStatus("");
       seekScanStartedAt = Date.now();
-      scope.updateSeekProgressUi({ phase: "starting" });
-      scope.startSeekProgressTick();
+      updateSeekProgressUi({ phase: "starting" });
+      startSeekProgressTick();
     } else {
-      scope.stopSeekProgressUi();
+      stopSeekProgressUi();
       seekScanStartedAt = 0;
       if (seekProgressDetailEl) seekProgressDetailEl.textContent = "";
     }
-    scope.updatePinOverlays();
-    scope.syncSeekPanelUi();
+    updatePinOverlays();
+    syncSeekPanelUi();
   }
 
   function syncSeekPanelUi() {
@@ -6602,13 +9979,13 @@ export function initProjectMap() {
     }
     const seekStartLocked = Boolean(seekState?.running) || seekScanning;
     if (seekStartSelect) seekStartSelect.disabled = seekStartLocked;
-    scope.syncSeekGoalUi();
-    scope.syncSeekRefreshUi();
-    scope.syncSeekConvertSitesBtn();
+    syncSeekGoalUi();
+    syncSeekRefreshUi();
+    syncSeekConvertSitesBtn();
   }
 
   function countSeekLocHops() {
-    const plan = scope.seekStateToYamlPlan(seekState) || config.seek?.plan;
+    const plan = seekStateToYamlPlan(seekState) || config.seek?.plan;
     if (!plan || !Array.isArray(plan.hops)) return 0;
     return plan.hops.filter(
       (hop) => hop && typeof hop === "object" && hop.loc && !hop.site,
@@ -6616,7 +9993,7 @@ export function initProjectMap() {
   }
 
   function countSeekUniqueLocHops() {
-    const plan = scope.seekStateToYamlPlan(seekState) || config.seek?.plan;
+    const plan = seekStateToYamlPlan(seekState) || config.seek?.plan;
     if (!plan || !Array.isArray(plan.hops)) return 0;
     const seen = new Set();
     let n = 0;
@@ -6643,7 +10020,7 @@ export function initProjectMap() {
 
   function syncSeekConvertSitesBtn() {
     if (!seekConvertSitesBtn) return;
-    const locHops = scope.countSeekLocHops();
+    const locHops = countSeekLocHops();
     seekConvertSitesBtn.disabled = locHops === 0 || seekScanning;
     seekConvertSitesBtn.title =
       locHops > 0
@@ -6673,10 +10050,10 @@ export function initProjectMap() {
 
   function syncSeekConvertSaveButton() {
     if (!seekConvertSave) return;
-    const uniqueSites = scope.countSeekUniqueLocHops();
+    const uniqueSites = countSeekUniqueLocHops();
     const ready =
       uniqueSites > 0 &&
-      scope.effectiveSeekConvertDraftTags().length > 0 &&
+      effectiveSeekConvertDraftTags().length > 0 &&
       String(seekConvertNamePrefix?.value || "").trim().length > 0;
     seekConvertSave.disabled = !ready;
   }
@@ -6702,9 +10079,9 @@ export function initProjectMap() {
         } else {
           seekConvertDraftTags = [...seekConvertDraftTags, tag];
         }
-        scope.renderSeekConvertTags();
-        scope.syncSeekConvertTagSuggestions();
-        scope.syncSeekConvertSaveButton();
+        renderSeekConvertTags();
+        syncSeekConvertTagSuggestions();
+        syncSeekConvertSaveButton();
       });
       seekConvertTagsEl.appendChild(chip);
     }
@@ -6748,17 +10125,24 @@ export function initProjectMap() {
     return max;
   }
 
+  function seekConvertNamePreview(prefix, uniqueSites) {
+    const p = String(prefix || "").trim();
+    if (!p) return "prefix + number";
+    const start = maxExistingPrefixedSiteNumber(p) + 1;
+    if (uniqueSites <= 1) return `${p} ${start}`;
+    return `${p} ${start}–${start + uniqueSites - 1}`;
+  }
 
   function syncSeekConvertHopCountText() {
     if (!seekConvertHopCount) return;
-    const locHops = scope.countSeekLocHops();
-    const uniqueSites = scope.countSeekUniqueLocHops();
+    const locHops = countSeekLocHops();
+    const uniqueSites = countSeekUniqueLocHops();
     const prefix = String(seekConvertNamePrefix?.value || "").trim();
     if (locHops === 0) {
       seekConvertHopCount.textContent = "No coordinate hops in the saved path.";
       return;
     }
-    const names = scope.seekConvertNamePreview(prefix, uniqueSites);
+    const names = seekConvertNamePreview(prefix, uniqueSites);
     if (uniqueSites === locHops) {
       seekConvertHopCount.textContent = `${locHops} coordinate hop(s) will become ${uniqueSites} site(s). Names: ${names}.`;
     } else {
@@ -6767,20 +10151,20 @@ export function initProjectMap() {
   }
 
   function resetSeekConvertModal() {
-    scope.setSeekConvertError("");
+    setSeekConvertError("");
     seekConvertDraftTags = [];
     if (seekConvertTagInput) seekConvertTagInput.value = "";
     if (seekConvertNamePrefix) seekConvertNamePrefix.value = "Relay";
-    scope.syncSeekConvertHopCountText();
-    scope.renderSeekConvertTags();
-    scope.syncSeekConvertTagSuggestions();
-    scope.syncSeekConvertSaveButton();
+    syncSeekConvertHopCountText();
+    renderSeekConvertTags();
+    syncSeekConvertTagSuggestions();
+    syncSeekConvertSaveButton();
   }
 
   async function openSeekConvertModal() {
     if (!seekConvertSitesModal) return;
-    if (scope.countSeekLocHops() === 0) return;
-    scope.resetSeekConvertModal();
+    if (countSeekLocHops() === 0) return;
+    resetSeekConvertModal();
     await customElements.whenDefined("wa-dialog");
     seekConvertSitesModal.open = true;
     requestAnimationFrame(() => {
@@ -6801,29 +10185,29 @@ export function initProjectMap() {
     if (!tag) return;
     if (!seekConvertDraftTags.includes(tag)) {
       seekConvertDraftTags = [...seekConvertDraftTags, tag];
-      scope.renderSeekConvertTags();
-      scope.syncSeekConvertTagSuggestions();
-      scope.syncSeekConvertSaveButton();
+      renderSeekConvertTags();
+      syncSeekConvertTagSuggestions();
+      syncSeekConvertSaveButton();
     }
   }
 
   async function saveSeekConvertModal() {
-    scope.addSeekConvertTagFromInput();
+    addSeekConvertTagFromInput();
     const namePrefix = String(seekConvertNamePrefix?.value || "").trim();
-    const tags = scope.effectiveSeekConvertDraftTags();
+    const tags = effectiveSeekConvertDraftTags();
     if (!namePrefix) {
-      scope.setSeekConvertError("Name prefix is required.");
+      setSeekConvertError("Name prefix is required.");
       return;
     }
     if (!tags.length) {
-      scope.setSeekConvertError("Choose at least one tag.");
+      setSeekConvertError("Choose at least one tag.");
       return;
     }
-    if (scope.countSeekLocHops() === 0) {
-      scope.setSeekConvertError("No coordinate hops to convert.");
+    if (countSeekLocHops() === 0) {
+      setSeekConvertError("No coordinate hops to convert.");
       return;
     }
-    scope.setSeekConvertError("");
+    setSeekConvertError("");
     if (seekConvertSave) seekConvertSave.disabled = true;
     try {
       const resp = await fetch(
@@ -6836,19 +10220,19 @@ export function initProjectMap() {
       );
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        scope.setSeekConvertError(payload.error || `Convert failed (${resp.status})`);
+        setSeekConvertError(payload.error || `Convert failed (${resp.status})`);
         return;
       }
       const imported = Array.isArray(payload.sites) ? payload.sites : [];
       const plan = payload.plan;
-      scope.closeSeekConvertModal();
+      closeSeekConvertModal();
       for (const site of imported) {
         registerSite(site);
       }
       if (plan && config.seek && typeof config.seek === "object") {
         config.seek.plan = plan;
       }
-      const fromYaml = plan ? scope.seekStateFromYamlPlan(plan) : null;
+      const fromYaml = plan ? seekStateFromYamlPlan(plan) : null;
       if (fromYaml) {
         seekState = fromYaml;
         if (seekState.goalLat != null && seekState.goalLon != null) {
@@ -6856,7 +10240,7 @@ export function initProjectMap() {
           seekPendingGoalLon = seekState.goalLon;
         }
       }
-      scope.saveSeekState({ immediatePlan: true });
+      saveSeekState({ immediatePlan: true });
       const firstTag = tags[0];
       if (firstTag) {
         activeTagFilters.clear();
@@ -6864,20 +10248,20 @@ export function initProjectMap() {
         pruneActiveTagFilters();
         renderEntityPanel();
       }
-      scope.syncSeekPanelUi();
-      scope.updateSeekPathOverlay();
-      scope.populateSeekStartSelect();
+      syncSeekPanelUi();
+      updateSeekPathOverlay();
+      populateSeekStartSelect();
       const converted = payload.converted ?? 0;
       const tagged = payload.tagged ?? 0;
       let status = `Converted ${converted} hop(s) to sites`;
       if (tagged > 0) status += `; tagged ${tagged} existing site(s)`;
-      scope.setSeekStatus(status);
+      setSeekStatus(status);
       void loadSiteLinks();
       if (imported[0]?.slug) selectSite(imported[0].slug);
     } catch (err) {
-      scope.setSeekConvertError(String(err));
+      setSeekConvertError(String(err));
     } finally {
-      scope.syncSeekConvertSaveButton();
+      syncSeekConvertSaveButton();
     }
   }
 
@@ -6886,23 +10270,23 @@ export function initProjectMap() {
     if (seekState?.running) return;
     const startSlug = seekStartSelect?.value;
     if (!startSlug) {
-      scope.setSeekStatus("Pick a start site and set goal on the map");
+      setSeekStatus("Pick a start site and set goal on the map");
       return;
     }
     const startSite = siteBySlug.get(startSlug);
     const goal = seekGoalCoords();
     if (!startSite || !goal) {
-      if (!goal) scope.setSeekStatus("Set goal on the map, then pick start site");
+      if (!goal) setSeekStatus("Set goal on the map, then pick start site");
       return;
     }
     if (
       haversineMeters(startSite.lat, startSite.lon, goal.lat, goal.lon) <=
-      C.SEEK_GOAL_SAME_AS_START_M
+      SEEK_GOAL_SAME_AS_START_M
     ) {
-      scope.setSeekStatus("Goal overlaps start site — pick a different point");
+      setSeekStatus("Goal overlaps start site — pick a different point");
       return;
     }
-    scope.startSeekRun();
+    startSeekRun();
   }
 
   function populateSeekStartSelect() {
@@ -6938,46 +10322,50 @@ export function initProjectMap() {
   }
 
   function refreshSeekStartSelectIfOpen() {
-    if (seekPanelOpen) scope.populateSeekStartSelect();
+    if (seekPanelOpen) populateSeekStartSelect();
   }
 
+  function seekPanHintText() {
+    const hop = seekState?.hops?.length || 1;
+    return `Hop ${hop} — click Recalculate for candidates`;
+  }
 
   function promptSeekManualRecalc() {
     if (!seekSessionActive() || seekState?.complete) return;
-    scope.setSeekStatus(scope.seekPanHintText());
+    setSeekStatus(seekPanHintText());
   }
 
   function toggleSeekPanel(force) {
     const nextOpen = typeof force === "boolean" ? force : !seekPanelOpen;
     if (seekPanelOpen && !nextOpen) {
-      scope.setSeekGoalPlacementMode(false);
+      setSeekGoalPlacementMode(false);
       if (seekScanning) {
-        scope.cancelSeekScanUi();
+        cancelSeekScanUi();
         if (seekSessionActive()) {
-          scope.setSeekStatus(scope.seekPanHintText());
+          setSeekStatus(seekPanHintText());
         }
       }
     }
     seekPanelOpen = nextOpen;
     if (seekPanelOpen) {
-      scope.populateSeekStartSelect();
+      populateSeekStartSelect();
       if (seekState?.goalLat != null && seekState?.goalLon != null) {
         seekPendingGoalLat = seekState.goalLat;
         seekPendingGoalLon = seekState.goalLon;
       }
-      scope.syncSeekGoalUi();
+      syncSeekGoalUi();
       if (seekState?.running && !seekState?.complete) {
         seekRunning = true;
         if (!seekScanning) {
-          scope.promptSeekManualRecalc();
+          promptSeekManualRecalc();
         }
       } else if (!seekState?.running) {
-        scope.setSeekStatus("Pick a start site and set goal on the map");
+        setSeekStatus("Pick a start site and set goal on the map");
       }
     } else {
-      scope.syncSeekGoalUi();
+      syncSeekGoalUi();
     }
-    scope.syncSeekPanelUi();
+    syncSeekPanelUi();
   }
 
   function clearSeekMarkers() {
@@ -6987,61 +10375,106 @@ export function initProjectMap() {
 
   function removeSeekCandidateLayers() {
     const layerIds = [
-      C.SEEK_LINES_LABELS_LAYER,
-      C.SEEK_LINES_LAYER,
-      C.SEEK_CANDIDATES_LABELS_LAYER,
-      C.SEEK_CANDIDATES_LAYER,
-      C.SEEK_GOAL_LINE_LAYER,
+      SEEK_LINES_LABELS_LAYER,
+      SEEK_LINES_LAYER,
+      SEEK_CANDIDATES_LABELS_LAYER,
+      SEEK_CANDIDATES_LAYER,
+      SEEK_GOAL_LINE_LAYER,
     ];
     for (const id of layerIds) {
       if (map.getLayer(id)) map.removeLayer(id);
     }
     for (const src of [
-      C.SEEK_LINES_SOURCE,
-      C.SEEK_CANDIDATES_SOURCE,
-      C.SEEK_GOAL_LINE_SOURCE,
+      SEEK_LINES_SOURCE,
+      SEEK_CANDIDATES_SOURCE,
+      SEEK_GOAL_LINE_SOURCE,
     ]) {
       if (map.getSource(src)) map.removeSource(src);
     }
   }
 
   function removeSeekLayers() {
-    scope.removeSeekCandidateLayers();
-    if (map.getLayer(C.SEEK_PATH_LAYER)) map.removeLayer(C.SEEK_PATH_LAYER);
-    if (map.getSource(C.SEEK_PATH_SOURCE)) map.removeSource(C.SEEK_PATH_SOURCE);
-    scope.clearSeekMarkers();
+    removeSeekCandidateLayers();
+    if (map.getLayer(SEEK_PATH_LAYER)) map.removeLayer(SEEK_PATH_LAYER);
+    if (map.getSource(SEEK_PATH_SOURCE)) map.removeSource(SEEK_PATH_SOURCE);
+    clearSeekMarkers();
   }
 
+  function seekLinesGeoJsonWithLabels(geojson) {
+    if (!geojson || !geojson.features) return geojson;
+    return {
+      type: geojson.type || "FeatureCollection",
+      features: geojson.features.map((feature) => {
+        const props = feature.properties || {};
+        const dist = formatLinkDistanceKm(props.distance_km);
+        const bearing =
+          props.bearing_deg != null
+            ? `${Math.round(Number(props.bearing_deg))}°`
+            : "";
+        const label =
+          dist && bearing ? `${dist} · ${bearing}` : dist || bearing || "";
+        return { ...feature, properties: { ...props, label } };
+      }),
+    };
+  }
 
+  function seekCandidatesGeoJsonForDisplay(candidates) {
+    if (!candidates?.features) return candidates;
+    return {
+      type: candidates.type || "FeatureCollection",
+      features: candidates.features.map((feature) => {
+        const props = feature.properties || {};
+        const slug = props.site_slug;
+        if (!props.is_site || !slug) return feature;
+        const siteName = props.site_name || siteBySlug.get(slug)?.name || "";
+        const labelName = isSiteMapHidden(slug) ? siteName : "";
+        return { ...feature, properties: { ...props, site_name: labelName } };
+      }),
+    };
+  }
 
+  function seekRfViable(props) {
+    const v = props?.rf_viable;
+    return v === true || v === "true";
+  }
 
+  function seekSiteCandidateSlugsFromPayload(payload) {
+    const slugs = new Set();
+    for (const feature of payload?.candidates?.features || []) {
+      const props = feature?.properties || {};
+      if (props.is_site && props.site_slug && seekRfViable(props)) {
+        slugs.add(String(props.site_slug));
+      }
+    }
+    return slugs;
+  }
 
   function applySeekLayers(payload) {
     if (!mapReady || !payload) return;
-    scope.removeSeekCandidateLayers();
-    seekSiteCandidateSlugs = scope.seekSiteCandidateSlugsFromPayload(payload);
+    removeSeekCandidateLayers();
+    seekSiteCandidateSlugs = seekSiteCandidateSlugsFromPayload(payload);
 
     const lines = payload.lines;
     if (lines && lines.features && lines.features.length) {
-      const filteredLines = scope.filterSeekLineFeatures(lines.features);
+      const filteredLines = filterSeekLineFeatures(lines.features);
       if (filteredLines.length) {
-        const labeled = scope.seekLinesGeoJsonWithLabels({
+        const labeled = seekLinesGeoJsonWithLabels({
           ...lines,
           features: filteredLines,
         });
-        map.addSource(C.SEEK_LINES_SOURCE, { type: "geojson", data: labeled });
+        map.addSource(SEEK_LINES_SOURCE, { type: "geojson", data: labeled });
         map.addLayer(
           {
-            id: C.SEEK_LINES_LAYER,
+            id: SEEK_LINES_LAYER,
             type: "line",
-            source: C.SEEK_LINES_SOURCE,
+            source: SEEK_LINES_SOURCE,
             paint: {
               "line-color": [
                 "case",
                 ["boolean", ["get", "is_goal"], false],
                 "#22c55e",
                 ["boolean", ["get", "is_site"], false],
-                C.DRAFT_MARKER_COLOR,
+                DRAFT_MARKER_COLOR,
                 ["case", ["get", "rf_viable"], "#4a6cf7", "#94a3b8"],
               ],
               "line-width": [
@@ -7072,33 +10505,33 @@ export function initProjectMap() {
             },
             layout: { "line-cap": "round", "line-join": "round" },
           },
-          C.SITES_CIRCLE,
+          SITES_CIRCLE,
         );
         map.addLayer(
           linkLabelsLayerSpec(
-            C.SEEK_LINES_LABELS_LAYER,
-            C.SEEK_LINES_SOURCE,
+            SEEK_LINES_LABELS_LAYER,
+            SEEK_LINES_SOURCE,
             "visible",
           ),
-          C.SITES_CIRCLE,
+          SITES_CIRCLE,
         );
       }
     }
 
-    const candidates = scope.seekCandidatesGeoJsonForDisplay({
+    const candidates = seekCandidatesGeoJsonForDisplay({
       ...payload.candidates,
-      features: scope.filterSeekCandidateFeatures(payload.candidates?.features),
+      features: filterSeekCandidateFeatures(payload.candidates?.features),
     });
     if (candidates && candidates.features && candidates.features.length) {
-      map.addSource(C.SEEK_CANDIDATES_SOURCE, {
+      map.addSource(SEEK_CANDIDATES_SOURCE, {
         type: "geojson",
         data: candidates,
       });
       map.addLayer(
         {
-          id: C.SEEK_CANDIDATES_LAYER,
+          id: SEEK_CANDIDATES_LAYER,
           type: "circle",
-          source: C.SEEK_CANDIDATES_SOURCE,
+          source: SEEK_CANDIDATES_SOURCE,
           paint: {
             "circle-radius": [
               "case",
@@ -7130,54 +10563,143 @@ export function initProjectMap() {
             ],
           },
         },
-        C.SITES_CIRCLE,
+        SITES_CIRCLE,
       );
       map.addLayer(
         seekSiteCandidateLabelsLayerSpec(
-          C.SEEK_CANDIDATES_LABELS_LAYER,
-          C.SEEK_CANDIDATES_SOURCE,
+          SEEK_CANDIDATES_LABELS_LAYER,
+          SEEK_CANDIDATES_SOURCE,
         ),
-        C.SITES_CIRCLE,
+        SITES_CIRCLE,
       );
     }
 
     if (seekState?.running && Array.isArray(seekState.hops)) {
-      scope.updateSeekPathOverlay();
+      updateSeekPathOverlay();
     }
 
-    scope.syncSeekGoalLine();
+    syncSeekGoalLine();
     if (seekSessionActive() && siteLinksPayload?.geojson) {
       refreshFilteredLinks();
     }
     raiseSiteLayers();
   }
 
+  function seekViewportBbox() {
+    const b = seekScanBoundsForRequest();
+    return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
+      .map((v) => v.toFixed(6))
+      .join(",");
+  }
 
   /** Peak bin size (m) from map zoom: ~20 bins across viewport width, clamped 500–1500 m. */
+  function seekPeakBinSizeM() {
+    return seekPeakBinSizeMForBounds(seekScanBoundsForRequest());
+  }
 
+  function seekExcludeParam() {
+    if (!seekState || !Array.isArray(seekState.hops)) return "";
+    return seekState.hops.map((hop) => `${hop.lat},${hop.lon}`).join(";");
+  }
 
+  function seekExcludeSlugsParam() {
+    const slugs = new Set();
+    if (seekState?.startSlug) slugs.add(seekState.startSlug);
+    for (const hop of seekState?.hops || []) {
+      if (hop.site_slug) slugs.add(hop.site_slug);
+    }
+    return [...slugs].join(";");
+  }
 
+  function seekPathSiteSlugs() {
+    const slugs = new Set();
+    if (seekState?.startSlug) slugs.add(seekState.startSlug);
+    for (const hop of seekState?.hops || []) {
+      if (hop.site_slug) slugs.add(hop.site_slug);
+    }
+    return slugs;
+  }
 
+  function seekHopSiteSlug(hop) {
+    if (!hop) return null;
+    if (hop.site_slug) return hop.site_slug;
+    return seekSiteSlugNear(hop.lat, hop.lon);
+  }
 
   /** Site mesh pairs that duplicate the committed seek chain (both endpoints are consecutive hops). */
+  function seekChainSitePairKeys() {
+    const keys = new Set();
+    const hops = seekState?.hops;
+    if (!seekSessionActive() || !hops || hops.length < 2) return keys;
+    for (let i = 0; i < hops.length - 1; i += 1) {
+      const slugA = seekHopSiteSlug(hops[i]);
+      const slugB = seekHopSiteSlug(hops[i + 1]);
+      if (slugA && slugB) keys.add(canonicalSitePairKey(slugA, slugB));
+    }
+    return keys;
+  }
 
+  function seekSiteSlugNear(lat, lon, maxM = SEEK_GOAL_SAME_AS_START_M) {
+    let best = null;
+    let bestDist = maxM;
+    for (const site of sites) {
+      const dist = haversineMeters(lat, lon, site.lat, site.lon);
+      if (dist <= bestDist) {
+        bestDist = dist;
+        best = site.slug;
+      }
+    }
+    return best;
+  }
 
+  function seekSiteSlugForFrom(from) {
+    if (!from) return null;
+    for (const slug of seekPathSiteSlugs()) {
+      const site = siteBySlug.get(slug);
+      if (
+        site &&
+        haversineMeters(from.lat, from.lon, site.lat, site.lon) <=
+          SEEK_GOAL_SAME_AS_START_M
+      ) {
+        return slug;
+      }
+    }
+    return seekSiteSlugNear(from.lat, from.lon);
+  }
 
+  function seekCoordsNearGoal(lat, lon) {
+    const goal = seekGoalCoords();
+    if (!goal) return false;
+    return (
+      haversineMeters(lat, lon, goal.lat, goal.lon) <= SEEK_GOAL_SAME_AS_START_M
+    );
+  }
 
+  function seekLineFeatureIsRedundant(feature) {
+    const props = feature?.properties || {};
+    const coords = feature?.geometry?.coordinates;
+    if (!coords?.length) return false;
+    const [lon, lat] = coords[coords.length - 1];
+    if (props.is_site && props.site_slug && isSiteInSeekPlan(props.site_slug)) {
+      return true;
+    }
+    if (props.is_goal || seekCoordsNearGoal(lat, lon)) return true;
+    return false;
+  }
 
   function filterSeekLineFeatures(features) {
-    return (features || []).filter((f) => !scope.seekLineFeatureIsRedundant(f));
+    return (features || []).filter((f) => !seekLineFeatureIsRedundant(f));
   }
 
   function filterSeekCandidateFeatures(features) {
     return (features || []).filter((feature) => {
       const props = feature?.properties || {};
       if (props.is_goal) return true;
-      if (props.is_site && props.site_slug && scope.isSiteInSeekPlan(props.site_slug)) {
+      if (props.is_site && props.site_slug && isSiteInSeekPlan(props.site_slug)) {
         return false;
       }
       const coords = feature?.geometry?.coordinates;
-      if (coords?.length >= 2 && scope.seekCoordsNearGoal(coords[1], coords[0])) {
+      if (coords?.length >= 2 && seekCoordsNearGoal(coords[1], coords[0])) {
         return false;
       }
       return true;
@@ -7185,9 +10707,12 @@ export function initProjectMap() {
   }
 
   function isSiteInSeekPlan(slug) {
-    return Boolean(seekState?.running && scope.seekPathSiteSlugs().has(slug));
+    return Boolean(seekState?.running && seekPathSiteSlugs().has(slug));
   }
 
+  function seekHopCoordViewshedSlug(lat, lon) {
+    return `${SEEK_HOP_VIEWSHED_PREFIX}${Number(lat).toFixed(5)}_${Number(lon).toFixed(5)}`;
+  }
 
   function cancelSeekHopViewshedLoad(slug) {
     seekHopViewshedGen.set(slug, (seekHopViewshedGen.get(slug) || 0) + 1);
@@ -7196,7 +10721,7 @@ export function initProjectMap() {
   }
 
   function clearSeekHopViewshed(slug) {
-    scope.cancelSeekHopViewshedLoad(slug);
+    cancelSeekHopViewshedLoad(slug);
     removeViewshedLayer(slug);
     seekHopCoordViewshedSlugs.delete(slug);
     seekHopCoordViewshedCoords.delete(slug);
@@ -7205,92 +10730,105 @@ export function initProjectMap() {
 
   function clearAllSeekHopViewsheds() {
     for (const slug of [...seekHopCoordViewshedSlugs]) {
-      scope.clearSeekHopViewshed(slug);
+      clearSeekHopViewshed(slug);
     }
     seekHopCoordViewshedSlugs.clear();
     seekHopCoordViewshedCoords.clear();
   }
 
   async function loadSeekHopCoordViewshed(slug, lat, lon) {
-    if (!String(slug).startsWith(C.SEEK_HOP_VIEWSHED_PREFIX)) return;
+    if (!String(slug).startsWith(SEEK_HOP_VIEWSHED_PREFIX)) return;
     const gen = (seekHopViewshedGen.get(slug) || 0) + 1;
     seekHopViewshedGen.set(slug, gen);
     viewshedVisible.set(slug, true);
     seekHopCoordViewshedCoords.set(slug, { lat, lon });
-    if (await scope.tryLoadCoordViewshedFromCache(slug, lat, lon)) return;
+    if (await tryLoadCoordViewshedFromCache(slug, lat, lon)) return;
     removeViewshedLayer(slug);
     viewshedLoading.add(slug);
     const epoch = viewshedLoadEpoch;
     viewshedPendingEpoch.set(slug, epoch);
-    scope.updatePinOverlays();
+    updatePinOverlays();
     try {
-      const resp = await fetch(scope.viewshedPrefetchWarmUrl(lat, lon), {
+      const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), {
         method: "POST",
       });
       if ((seekHopViewshedGen.get(slug) || 0) !== gen) return;
       if (viewshedPendingEpoch.get(slug) !== epoch) return;
       if (!resp.ok) {
-        scope.cancelSeekHopViewshedLoad(slug);
-        scope.updatePinOverlays();
+        cancelSeekHopViewshedLoad(slug);
+        updatePinOverlays();
         return;
       }
       const vs = await resp.json();
       if ((seekHopViewshedGen.get(slug) || 0) !== gen) return;
       if (viewshedPendingEpoch.get(slug) !== epoch) return;
       if (vs && vs.status === "ready") {
-        scope.handleViewshedReady({ ...vs, slug }, epoch);
+        handleViewshedReady({ ...vs, slug }, epoch);
       }
     } catch (_) {
       if ((seekHopViewshedGen.get(slug) || 0) === gen) {
-        scope.cancelSeekHopViewshedLoad(slug);
-        scope.updatePinOverlays();
+        cancelSeekHopViewshedLoad(slug);
+        updatePinOverlays();
       }
     }
   }
 
   function syncSeekHopViewsheds() {
     if (!mapReady || !seekState?.running || !Array.isArray(seekState.hops)) {
-      scope.clearAllSeekHopViewsheds();
-      scope.cancelSeekAncillaryLinksFetch();
+      clearAllSeekHopViewsheds();
+      cancelSeekAncillaryLinksFetch();
       seekAncillaryLinksGen += 1;
-      scope.removeSeekAncillaryLinksLayer();
+      removeSeekAncillaryLinksLayer();
       return;
     }
     const wantedCoordSlugs = new Set();
     for (const hop of seekState.hops) {
-      const siteSlug = hop.site_slug || scope.seekSiteSlugNear(hop.lat, hop.lon);
+      const siteSlug = hop.site_slug || seekSiteSlugNear(hop.lat, hop.lon);
       if (siteSlug) {
-        const coordSlug = scope.seekHopCoordViewshedSlug(hop.lat, hop.lon);
+        const coordSlug = seekHopCoordViewshedSlug(hop.lat, hop.lon);
         if (seekHopCoordViewshedSlugs.has(coordSlug)) {
-          scope.clearSeekHopViewshed(coordSlug);
+          clearSeekHopViewshed(coordSlug);
         }
         viewshedVisible.set(siteSlug, true);
         ensureViewshedLoadedForSlug(siteSlug);
-        if (map.getLayer(scope.viewshedLayerId(siteSlug))) {
-          scope.applyViewshedVisibilityForSite(siteSlug);
+        if (map.getLayer(viewshedLayerId(siteSlug))) {
+          applyViewshedVisibilityForSite(siteSlug);
         }
         continue;
       }
-      const slug = scope.seekHopCoordViewshedSlug(hop.lat, hop.lon);
+      const slug = seekHopCoordViewshedSlug(hop.lat, hop.lon);
       wantedCoordSlugs.add(slug);
       seekHopCoordViewshedSlugs.add(slug);
       viewshedVisible.set(slug, true);
-      if (!map.getLayer(scope.viewshedLayerId(slug)) && !viewshedLoading.has(slug)) {
-        void scope.loadSeekHopCoordViewshed(slug, hop.lat, hop.lon);
-      } else if (map.getLayer(scope.viewshedLayerId(slug))) {
-        map.setLayoutProperty(scope.viewshedLayerId(slug), "visibility", "visible");
+      if (!map.getLayer(viewshedLayerId(slug)) && !viewshedLoading.has(slug)) {
+        void loadSeekHopCoordViewshed(slug, hop.lat, hop.lon);
+      } else if (map.getLayer(viewshedLayerId(slug))) {
+        map.setLayoutProperty(viewshedLayerId(slug), "visibility", "visible");
       }
     }
     for (const slug of [...seekHopCoordViewshedSlugs]) {
       if (!wantedCoordSlugs.has(slug)) {
-        scope.clearSeekHopViewshed(slug);
+        clearSeekHopViewshed(slug);
       }
     }
-    scope.raiseViewshedLayers();
-    scope.scheduleSeekAncillaryLinks();
+    raiseViewshedLayers();
+    scheduleSeekAncillaryLinks();
   }
 
+  function seekHopEndpointKey(hop) {
+    if (hop.site_slug) return `site:${hop.site_slug}`;
+    return `coord:${Number(hop.lat).toFixed(5)}_${Number(hop.lon).toFixed(5)}`;
+  }
 
+  function seekChainNeighborKeys(hopIndex) {
+    const hops = seekState?.hops;
+    const keys = new Set();
+    if (!hops || hopIndex < 0 || hopIndex >= hops.length) return keys;
+    if (hopIndex > 0) keys.add(seekHopEndpointKey(hops[hopIndex - 1]));
+    if (hopIndex < hops.length - 1)
+      keys.add(seekHopEndpointKey(hops[hopIndex + 1]));
+    return keys;
+  }
 
   function canonicalSitePairKey(slugA, slugB) {
     return slugA <= slugB ? `${slugA}|${slugB}` : `${slugB}|${slugA}`;
@@ -7321,22 +10859,33 @@ export function initProjectMap() {
   }
 
   function removeSeekAncillaryLinksLayer() {
-    if (map.getLayer(C.SEEK_ANCILLARY_LINES_LABELS_LAYER)) {
-      map.removeLayer(C.SEEK_ANCILLARY_LINES_LABELS_LAYER);
+    if (map.getLayer(SEEK_ANCILLARY_LINES_LABELS_LAYER)) {
+      map.removeLayer(SEEK_ANCILLARY_LINES_LABELS_LAYER);
     }
-    if (map.getLayer(C.SEEK_ANCILLARY_LINES_LAYER))
-      map.removeLayer(C.SEEK_ANCILLARY_LINES_LAYER);
-    if (map.getSource(C.SEEK_ANCILLARY_LINES_SOURCE))
-      map.removeSource(C.SEEK_ANCILLARY_LINES_SOURCE);
+    if (map.getLayer(SEEK_ANCILLARY_LINES_LAYER))
+      map.removeLayer(SEEK_ANCILLARY_LINES_LAYER);
+    if (map.getSource(SEEK_ANCILLARY_LINES_SOURCE))
+      map.removeSource(SEEK_ANCILLARY_LINES_SOURCE);
   }
 
+  function seekAncillaryLinkFeatureVisible(feature) {
+    const props = feature?.properties || {};
+    if (props.a && props.b) {
+      return (
+        !isSiteMapHidden(String(props.a)) && !isSiteMapHidden(String(props.b))
+      );
+    }
+    const slug = props.slug;
+    if (slug) return !isSiteMapHidden(String(slug));
+    return true;
+  }
 
   function refreshSeekAncillaryLinksDisplay() {
     if (!seekAncillaryLinksRawFeatures.length) {
-      scope.removeSeekAncillaryLinksLayer();
+      removeSeekAncillaryLinksLayer();
       return;
     }
-    scope.addSeekAncillaryLinksLayer({
+    addSeekAncillaryLinksLayer({
       type: "FeatureCollection",
       features: seekAncillaryLinksRawFeatures,
     });
@@ -7347,27 +10896,27 @@ export function initProjectMap() {
       seekAncillaryLinkFeatureVisible,
     );
     if (!mapReady || !features.length) {
-      scope.removeSeekAncillaryLinksLayer();
+      removeSeekAncillaryLinksLayer();
       return;
     }
     const labeled = linksGeoJsonWithLabels({
       type: "FeatureCollection",
       features,
     });
-    if (map.getSource(C.SEEK_ANCILLARY_LINES_SOURCE)) {
-      map.getSource(C.SEEK_ANCILLARY_LINES_SOURCE).setData(labeled);
+    if (map.getSource(SEEK_ANCILLARY_LINES_SOURCE)) {
+      map.getSource(SEEK_ANCILLARY_LINES_SOURCE).setData(labeled);
       raiseSiteLayers();
       return;
     }
-    map.addSource(C.SEEK_ANCILLARY_LINES_SOURCE, {
+    map.addSource(SEEK_ANCILLARY_LINES_SOURCE, {
       type: "geojson",
       data: labeled,
     });
     map.addLayer(
       {
-        id: C.SEEK_ANCILLARY_LINES_LAYER,
+        id: SEEK_ANCILLARY_LINES_LAYER,
         type: "line",
-        source: C.SEEK_ANCILLARY_LINES_SOURCE,
+        source: SEEK_ANCILLARY_LINES_SOURCE,
         paint: {
           "line-color": ["case", ["get", "manual"], "#0d9488", "#4a6cf7"],
           "line-width": 2.5,
@@ -7379,15 +10928,15 @@ export function initProjectMap() {
           visibility: "visible",
         },
       },
-      C.SITES_CIRCLE,
+      SITES_CIRCLE,
     );
     map.addLayer(
       linkLabelsLayerSpec(
-        C.SEEK_ANCILLARY_LINES_LABELS_LAYER,
-        C.SEEK_ANCILLARY_LINES_SOURCE,
+        SEEK_ANCILLARY_LINES_LABELS_LAYER,
+        SEEK_ANCILLARY_LINES_SOURCE,
         "visible",
       ),
-      C.SITES_CIRCLE,
+      SITES_CIRCLE,
     );
     raiseSiteLayers();
   }
@@ -7416,28 +10965,28 @@ export function initProjectMap() {
       if (seekSessionActive() && hopIndex === hops.length - 1) continue;
 
       const hop = hops[hopIndex];
-      const neighbors = scope.seekChainNeighborKeys(hopIndex);
+      const neighbors = seekChainNeighborKeys(hopIndex);
 
       if (hop.site_slug) {
-        await scope.ensureSiteLinksForSlug(hop.site_slug);
+        await ensureSiteLinksForSlug(hop.site_slug);
         if (signal?.aborted || gen !== seekAncillaryLinksGen) return null;
         for (const peerSlug of linkedPeersForSite(hop.site_slug)) {
           if (neighbors.has(`site:${peerSlug}`)) continue;
           if (isSiteMapHidden(peerSlug)) continue;
-          const linkFeature = scope.findSiteLinkFeature(hop.site_slug, peerSlug);
+          const linkFeature = findSiteLinkFeature(hop.site_slug, peerSlug);
           if (!linkFeature) continue;
-          if (!scope.seekAncillaryLinkFeatureVisible(linkFeature)) continue;
+          if (!seekAncillaryLinkFeatureVisible(linkFeature)) continue;
           const props = linkFeature.properties || {};
           addFeature(
             linkFeature,
-            scope.canonicalSitePairKey(String(props.a), String(props.b)),
+            canonicalSitePairKey(String(props.a), String(props.b)),
           );
         }
         continue;
       }
 
       try {
-        const resp = await fetch(scope.sitesPrefetchUrl(hop.lat, hop.lon), {
+        const resp = await fetch(sitesPrefetchUrl(hop.lat, hop.lon), {
           signal,
         });
         if (signal?.aborted || gen !== seekAncillaryLinksGen) return null;
@@ -7445,12 +10994,12 @@ export function initProjectMap() {
         const payload = await resp.json();
         const geojson = payload?.links_geojson;
         if (!geojson?.features?.length) continue;
-        const fromKey = scope.seekHopEndpointKey(hop);
+        const fromKey = seekHopEndpointKey(hop);
         for (const feature of geojson.features) {
           const slug = feature.properties?.slug;
           if (!slug) continue;
           if (neighbors.has(`site:${slug}`)) continue;
-          if (!scope.seekAncillaryLinkFeatureVisible(feature)) continue;
+          if (!seekAncillaryLinkFeatureVisible(feature)) continue;
           addFeature(feature, `${fromKey}|site:${slug}`);
         }
       } catch (err) {
@@ -7465,7 +11014,7 @@ export function initProjectMap() {
       window.clearTimeout(seekAncillaryLinksTimer);
       seekAncillaryLinksTimer = null;
     }
-    scope.cancelSeekAncillaryLinksFetch();
+    cancelSeekAncillaryLinksFetch();
     if (
       !mapReady ||
       !seekState?.running ||
@@ -7473,18 +11022,18 @@ export function initProjectMap() {
       !seekState.hops.length
     ) {
       seekAncillaryLinksRawFeatures = [];
-      scope.removeSeekAncillaryLinksLayer();
+      removeSeekAncillaryLinksLayer();
       return;
     }
     const gen = ++seekAncillaryLinksGen;
     const ac = new AbortController();
     seekAncillaryLinksAbort = ac;
-    const features = await scope.collectSeekAncillaryLinkFeatures(ac.signal, gen);
+    const features = await collectSeekAncillaryLinkFeatures(ac.signal, gen);
     if (gen !== seekAncillaryLinksGen) return;
     seekAncillaryLinksAbort = null;
     if (features == null) return;
     seekAncillaryLinksRawFeatures = features;
-    scope.addSeekAncillaryLinksLayer({
+    addSeekAncillaryLinksLayer({
       type: "FeatureCollection",
       features: seekAncillaryLinksRawFeatures,
     });
@@ -7494,8 +11043,8 @@ export function initProjectMap() {
     if (seekAncillaryLinksTimer) window.clearTimeout(seekAncillaryLinksTimer);
     seekAncillaryLinksTimer = window.setTimeout(() => {
       seekAncillaryLinksTimer = null;
-      void scope.flushSeekAncillaryLinks();
-    }, C.SEEK_ANCILLARY_LINKS_DEBOUNCE_MS);
+      void flushSeekAncillaryLinks();
+    }, SEEK_ANCILLARY_LINKS_DEBOUNCE_MS);
   }
 
   function appendSeekHopMarkers() {
@@ -7533,16 +11082,16 @@ export function initProjectMap() {
   }
 
   function updateSeekPathOverlay() {
-    scope.syncSeekHopViewsheds();
+    syncSeekHopViewsheds();
     if (
       !mapReady ||
       !seekState ||
       !Array.isArray(seekState.hops) ||
       seekState.hops.length < 2
     ) {
-      if (map.getLayer(C.SEEK_PATH_LAYER)) map.removeLayer(C.SEEK_PATH_LAYER);
-      if (map.getSource(C.SEEK_PATH_SOURCE)) map.removeSource(C.SEEK_PATH_SOURCE);
-      scope.clearSeekMarkers();
+      if (map.getLayer(SEEK_PATH_LAYER)) map.removeLayer(SEEK_PATH_LAYER);
+      if (map.getSource(SEEK_PATH_SOURCE)) map.removeSource(SEEK_PATH_SOURCE);
+      clearSeekMarkers();
       return;
     }
     const coords = seekState.hops.map((hop) => [hop.lon, hop.lat]);
@@ -7551,15 +11100,15 @@ export function initProjectMap() {
       geometry: { type: "LineString", coordinates: coords },
       properties: {},
     };
-    if (map.getSource(C.SEEK_PATH_SOURCE)) {
-      map.getSource(C.SEEK_PATH_SOURCE).setData(pathGeoJson);
+    if (map.getSource(SEEK_PATH_SOURCE)) {
+      map.getSource(SEEK_PATH_SOURCE).setData(pathGeoJson);
     } else {
-      map.addSource(C.SEEK_PATH_SOURCE, { type: "geojson", data: pathGeoJson });
+      map.addSource(SEEK_PATH_SOURCE, { type: "geojson", data: pathGeoJson });
       map.addLayer(
         {
-          id: C.SEEK_PATH_LAYER,
+          id: SEEK_PATH_LAYER,
           type: "line",
-          source: C.SEEK_PATH_SOURCE,
+          source: SEEK_PATH_SOURCE,
           paint: {
             "line-color": "#fbbf24",
             "line-width": 3,
@@ -7567,27 +11116,50 @@ export function initProjectMap() {
           },
           layout: { "line-cap": "round", "line-join": "round" },
         },
-        C.SITES_CIRCLE,
+        SITES_CIRCLE,
       );
     }
-    scope.clearSeekMarkers();
-    scope.appendSeekHopMarkers();
+    clearSeekMarkers();
+    appendSeekHopMarkers();
     applySiteLayerFilters();
-    scope.syncSeekGoalLine();
+    syncSeekGoalLine();
     if (seekSessionActive() && siteLinksPayload?.geojson) {
       refreshFilteredLinks();
     }
     raiseSiteLayers();
   }
 
+  function seekCurrentFrom() {
+    if (seekState?.currentFrom) return seekState.currentFrom;
+    const startSlug = seekState?.startSlug || seekStartSelect?.value;
+    const startSite = startSlug ? siteBySlug.get(startSlug) : null;
+    if (!startSite) return null;
+    return { lat: startSite.lat, lon: startSite.lon };
+  }
 
+  function seekFetchParamsKey() {
+    if (!seekSessionActive()) return null;
+    const from = seekCurrentFrom();
+    const goal = seekGoalCoords();
+    if (!from || !goal) return null;
+    return [
+      from.lat.toFixed(6),
+      from.lon.toFixed(6),
+      goal.lat.toFixed(6),
+      goal.lon.toFixed(6),
+      seekViewportBbox(),
+      String(seekPeakBinSizeM()),
+      seekExcludeParam(),
+      seekExcludeSlugsParam(),
+    ].join("|");
+  }
 
   function applySeekCandidatePayload(payload) {
     seekGoalInRange = Boolean(
       payload.meta?.goal_in_viewshed ?? payload.meta?.goal_reachable,
     );
-    scope.applySeekLayers(payload);
-    scope.syncSeekPanelUi();
+    applySeekLayers(payload);
+    syncSeekPanelUi();
     const n =
       payload.meta?.n_candidates ?? payload.candidates?.features?.length ?? 0;
     const nSites = payload.meta?.n_site_candidates ?? 0;
@@ -7615,31 +11187,31 @@ export function initProjectMap() {
     if (isMapTiltedView()) {
       statusText += " · scanning hop range in goal wedge";
     }
-    scope.setSeekStatus(statusText);
-    scope.resetSeekViewshedRetries();
+    setSeekStatus(statusText);
+    resetSeekViewshedRetries();
   }
 
   async function warmDraftViewshedForSeek(lat, lon, signal) {
-    const siteSlug = scope.seekSiteSlugForFrom({ lat, lon });
+    const siteSlug = seekSiteSlugForFrom({ lat, lon });
     if (siteSlug) {
-      setViewshedVisible(C.DRAFT_VIEWSHED_SLUG, false);
-      removeViewshedLayer(C.DRAFT_VIEWSHED_SLUG);
+      setViewshedVisible(DRAFT_VIEWSHED_SLUG, false);
+      removeViewshedLayer(DRAFT_VIEWSHED_SLUG);
       viewshedVisible.set(siteSlug, true);
       ensureViewshedLoadedForSlug(siteSlug);
-      return Boolean(map.getLayer(scope.viewshedLayerId(siteSlug)));
+      return Boolean(map.getLayer(viewshedLayerId(siteSlug)));
     }
-    viewshedVisible.set(C.DRAFT_VIEWSHED_SLUG, true);
-    if (await scope.tryLoadDraftViewshedFromCache(lat, lon)) return true;
+    viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true);
+    if (await tryLoadDraftViewshedFromCache(lat, lon)) return true;
     try {
-      const resp = await fetch(scope.viewshedPrefetchWarmUrl(lat, lon), {
+      const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), {
         method: "POST",
         signal,
       });
       if (!resp.ok) return false;
       const vs = await resp.json().catch(() => null);
       if (vs?.status === "ready" && vs.url && vs.coordinates) {
-        scope.handleViewshedReady(
-          { ...vs, slug: C.DRAFT_VIEWSHED_SLUG },
+        handleViewshedReady(
+          { ...vs, slug: DRAFT_VIEWSHED_SLUG },
           viewshedLoadEpoch,
         );
         return true;
@@ -7655,12 +11227,12 @@ export function initProjectMap() {
   }
 
   function scheduleSeekViewshedRetry(from, errorText, epoch) {
-    scope.resetSeekViewshedRetries();
+    resetSeekViewshedRetries();
     const hint =
       errorText && /tile|dem|skadi|mirror|waiting/i.test(errorText)
         ? "Skadi DEM tiles still loading"
         : errorText || "Seek scan not ready";
-    scope.setSeekStatus(`${hint} — click Recalculate`);
+    setSeekStatus(`${hint} — click Recalculate`);
     return false;
   }
 
@@ -7669,31 +11241,31 @@ export function initProjectMap() {
     const from = seekCurrentFrom();
     const goal = seekGoalCoords();
     if (!from || !goal) return;
-    const fetchKey = scope.seekFetchParamsKey();
+    const fetchKey = seekFetchParamsKey();
     if (!fetchKey) return;
     seekActiveFetchKey = fetchKey;
-    const { epoch, signal } = scope.beginSeekFetch();
+    const { epoch, signal } = beginSeekFetch();
     let seekRetryScheduled = false;
-    scope.setSeekScanning(true);
-    scope.updateSeekProgressUi({ phase: "viewshed", detail: "Warming viewshed…" });
+    setSeekScanning(true);
+    updateSeekProgressUi({ phase: "viewshed", detail: "Warming viewshed…" });
     try {
-      await scope.warmDraftViewshedForSeek(from.lat, from.lon, signal);
+      await warmDraftViewshedForSeek(from.lat, from.lon, signal);
     } catch (err) {
       if (err?.name === "AbortError") return;
     }
     if (epoch !== seekFetchEpoch) return;
-    scope.updateSeekProgressUi({ phase: "starting" });
+    updateSeekProgressUi({ phase: "starting" });
     const params = new URLSearchParams({
       from_lat: String(from.lat),
       from_lon: String(from.lon),
       goal_lat: String(goal.lat),
       goal_lon: String(goal.lon),
-      bbox: scope.seekViewportBbox(),
-      peak_bin_size_m: String(scope.seekPeakBinSizeM()),
+      bbox: seekViewportBbox(),
+      peak_bin_size_m: String(seekPeakBinSizeM()),
     });
-    const exclude = scope.seekExcludeParam();
+    const exclude = seekExcludeParam();
     if (exclude) params.set("exclude", exclude);
-    const excludeSlugs = scope.seekExcludeSlugsParam();
+    const excludeSlugs = seekExcludeSlugsParam();
     if (excludeSlugs) params.set("exclude_slugs", excludeSlugs);
     try {
       const resp = await fetch(
@@ -7704,49 +11276,49 @@ export function initProjectMap() {
       if (epoch !== seekFetchEpoch) return;
       if (!resp.ok) {
         seekGoalInRange = false;
-        scope.syncSeekPanelUi();
-        scope.setSeekStatus(kickoff.error || `Seek failed (${resp.status})`);
+        syncSeekPanelUi();
+        setSeekStatus(kickoff.error || `Seek failed (${resp.status})`);
         return;
       }
       if (resp.status !== 202 || kickoff.gen == null) {
-        scope.setSeekStatus("Unexpected seek response");
+        setSeekStatus("Unexpected seek response");
         return;
       }
-      const outcome = await scope.pollSeekUntilDone(kickoff.gen, signal, epoch);
+      const outcome = await pollSeekUntilDone(kickoff.gen, signal, epoch);
       if (epoch !== seekFetchEpoch) return;
       if (outcome.cancelled) return;
       if (outcome.error) {
         seekGoalInRange = false;
-        scope.syncSeekPanelUi();
+        syncSeekPanelUi();
         if (outcome.notReady) {
-          seekRetryScheduled = scope.scheduleSeekViewshedRetry(
+          seekRetryScheduled = scheduleSeekViewshedRetry(
             from,
             outcome.error,
             epoch,
           );
         } else {
-          scope.resetSeekViewshedRetries();
-          scope.setSeekStatus(outcome.error);
+          resetSeekViewshedRetries();
+          setSeekStatus(outcome.error);
         }
         return;
       }
-      scope.resetSeekViewshedRetries();
-      scope.applySeekCandidatePayload(outcome.payload);
+      resetSeekViewshedRetries();
+      applySeekCandidatePayload(outcome.payload);
     } catch (err) {
       if (err?.name === "AbortError") return;
       if (epoch !== seekFetchEpoch) return;
       seekGoalInRange = false;
-      scope.syncSeekPanelUi();
-      scope.setSeekStatus(String(err));
+      syncSeekPanelUi();
+      setSeekStatus(String(err));
     } finally {
       if (epoch === seekFetchEpoch) seekFetchAbort = null;
       if (epoch === seekFetchEpoch && !seekRetryScheduled)
-        scope.setSeekScanning(false);
+        setSeekScanning(false);
     }
   }
 
   function onMapMoveEndForSeek() {
-    scope.syncSeekRefreshUi();
+    syncSeekRefreshUi();
   }
 
   function syncSeekRefreshUi() {
@@ -7761,16 +11333,16 @@ export function initProjectMap() {
     const startSlug = seekStartSelect?.value;
     const goal = seekGoalCoords();
     if (!startSlug || !goal) {
-      scope.setSeekStatus("Pick a start site and set goal on the map");
+      setSeekStatus("Pick a start site and set goal on the map");
       return;
     }
     const startSite = siteBySlug.get(startSlug);
     if (!startSite) return;
     if (
       haversineMeters(startSite.lat, startSite.lon, goal.lat, goal.lon) <=
-      C.SEEK_GOAL_SAME_AS_START_M
+      SEEK_GOAL_SAME_AS_START_M
     ) {
-      scope.setSeekStatus("Goal overlaps start site — pick a different point");
+      setSeekStatus("Goal overlaps start site — pick a different point");
       return;
     }
     seekRunning = true;
@@ -7791,10 +11363,10 @@ export function initProjectMap() {
       complete: false,
       redoStack: [],
     };
-    scope.saveSeekState({ immediatePlan: true });
-    scope.syncSeekPanelUi();
-    scope.updateSeekPathOverlay();
-    scope.promptSeekManualRecalc();
+    saveSeekState({ immediatePlan: true });
+    syncSeekPanelUi();
+    updateSeekPathOverlay();
+    promptSeekManualRecalc();
   }
 
   function commitSeekCandidate(feature) {
@@ -7803,11 +11375,11 @@ export function initProjectMap() {
     if (props.is_goal) return;
     if (props.site_slug) {
       if (!seekSiteCandidateSlugs.has(String(props.site_slug))) return;
-    } else if (!scope.seekRfViable(props)) {
+    } else if (!seekRfViable(props)) {
       return;
     }
-    scope.abortSeekInFlight();
-    scope.clearSeekRedoStack();
+    abortSeekInFlight();
+    clearSeekRedoStack();
     const [lon, lat] = feature.geometry.coordinates;
     const hop = {
       lat,
@@ -7820,14 +11392,14 @@ export function initProjectMap() {
     }
     seekState.hops.push(hop);
     seekState.currentFrom = { lat, lon };
-    scope.saveSeekState({ immediatePlan: true });
-    scope.syncSeekPanelUi();
-    scope.updateSeekPathOverlay();
-    scope.applySeekLayers({
+    saveSeekState({ immediatePlan: true });
+    syncSeekPanelUi();
+    updateSeekPathOverlay();
+    applySeekLayers({
       candidates: { type: "FeatureCollection", features: [] },
       lines: { type: "FeatureCollection", features: [] },
     });
-    scope.promptSeekManualRecalc();
+    promptSeekManualRecalc();
   }
 
   function undoSeekHop() {
@@ -7837,7 +11409,7 @@ export function initProjectMap() {
       seekState.hops.length <= 1
     )
       return;
-    if (seekScanning) scope.cancelSeekScanUi();
+    if (seekScanning) cancelSeekScanUi();
     seekState.complete = false;
     seekRunning = true;
     if (!Array.isArray(seekState.redoStack)) seekState.redoStack = [];
@@ -7845,30 +11417,30 @@ export function initProjectMap() {
     seekState.redoStack.push(removed);
     const last = seekState.hops[seekState.hops.length - 1];
     seekState.currentFrom = { lat: last.lat, lon: last.lon };
-    scope.saveSeekState({ immediatePlan: true });
-    scope.syncSeekPanelUi();
-    scope.applySeekLayers({
+    saveSeekState({ immediatePlan: true });
+    syncSeekPanelUi();
+    applySeekLayers({
       candidates: { type: "FeatureCollection", features: [] },
       lines: { type: "FeatureCollection", features: [] },
     });
-    scope.promptSeekManualRecalc();
+    promptSeekManualRecalc();
   }
 
   function redoSeekHop() {
     if (!seekState?.redoStack?.length) return;
-    if (seekScanning) scope.cancelSeekScanUi();
+    if (seekScanning) cancelSeekScanUi();
     const hop = seekState.redoStack.pop();
     seekState.hops.push(hop);
     seekState.currentFrom = { lat: hop.lat, lon: hop.lon };
     seekState.complete = false;
     seekRunning = true;
-    scope.saveSeekState({ immediatePlan: true });
-    scope.syncSeekPanelUi();
-    scope.applySeekLayers({
+    saveSeekState({ immediatePlan: true });
+    syncSeekPanelUi();
+    applySeekLayers({
       candidates: { type: "FeatureCollection", features: [] },
       lines: { type: "FeatureCollection", features: [] },
     });
-    scope.promptSeekManualRecalc();
+    promptSeekManualRecalc();
   }
 
   function resetSeekRun() {
@@ -7878,32 +11450,32 @@ export function initProjectMap() {
     seekActiveFetchKey = null;
     seekPendingGoalLat = null;
     seekPendingGoalLon = null;
-    scope.setSeekGoalPlacementMode(false);
-    scope.cancelSeekScanUi();
-    scope.cancelSeekAncillaryLinksFetch();
+    setSeekGoalPlacementMode(false);
+    cancelSeekScanUi();
+    cancelSeekAncillaryLinksFetch();
     seekAncillaryLinksGen += 1;
     if (seekAncillaryLinksTimer) {
       window.clearTimeout(seekAncillaryLinksTimer);
       seekAncillaryLinksTimer = null;
     }
     seekState = null;
-    scope.saveSeekState({ immediatePlan: true });
-    scope.removeSeekLayers();
-    scope.clearAllSeekHopViewsheds();
-    scope.removeSeekAncillaryLinksLayer();
-    scope.removeSeekGoalMarker();
-    setViewshedVisible(C.DRAFT_VIEWSHED_SLUG, false);
-    scope.setSeekStatus("");
-    scope.syncSeekPanelUi();
+    saveSeekState({ immediatePlan: true });
+    removeSeekLayers();
+    clearAllSeekHopViewsheds();
+    removeSeekAncillaryLinksLayer();
+    removeSeekGoalMarker();
+    setViewshedVisible(DRAFT_VIEWSHED_SLUG, false);
+    setSeekStatus("");
+    syncSeekPanelUi();
     if (siteLinksPayload?.geojson) refreshFilteredLinks();
   }
 
   function restoreSeekSessionIfAny() {
-    scope.rehydrateSeekStateFromConfig();
+    rehydrateSeekStateFromConfig();
     if (!seekState?.running) return;
     if (!config.seek?.plan) {
-      const plan = scope.seekStateToYamlPlan(seekState);
-      if (plan) scope.persistSeekPlanToYaml({ immediate: true });
+      const plan = seekStateToYamlPlan(seekState);
+      if (plan) persistSeekPlanToYaml({ immediate: true });
     }
     applySiteLayerFilters();
     seekRunning = !seekState.complete;
@@ -7912,20 +11484,133 @@ export function initProjectMap() {
       seekPendingGoalLat = seekState.goalLat;
       seekPendingGoalLon = seekState.goalLon;
     }
-    scope.populateSeekStartSelect();
-    scope.syncSeekGoalUi();
-    scope.syncSeekPanelUi();
-    scope.updateSeekPathOverlay();
+    populateSeekStartSelect();
+    syncSeekGoalUi();
+    syncSeekPanelUi();
+    updateSeekPathOverlay();
     if (!seekState.complete) {
-      scope.promptSeekManualRecalc();
+      promptSeekManualRecalc();
     } else {
-      scope.applySeekLayers({
+      applySeekLayers({
         candidates: { type: "FeatureCollection", features: [] },
         lines: { type: "FeatureCollection", features: [] },
       });
     }
   }
 
+  function wireMapInteractions() {
+    const siteLayerIds = [SITES_CIRCLE, SITES_LABELS];
+    map.on("mousemove", (ev) => {
+      if (addPlacementMode || editMode || seekGoalPlacementMode) {
+        map.getCanvas().style.cursor = "crosshair";
+        return;
+      }
+      if (seekSessionActive()) {
+        if (map.getLayer(SEEK_CANDIDATES_LAYER)) {
+          const seekFeats = map.queryRenderedFeatures(ev.point, {
+            layers: [SEEK_CANDIDATES_LAYER],
+          });
+          if (seekFeats.length) {
+            map.getCanvas().style.cursor = "pointer";
+            return;
+          }
+        }
+        const siteFeats = map.queryRenderedFeatures(ev.point, {
+          layers: siteLayerIds,
+        });
+        if (siteFeats.length) {
+          const slug = siteFeats[0].properties?.slug;
+          if (slug && seekSiteCandidateSlugs.has(slug)) {
+            map.getCanvas().style.cursor = "pointer";
+            return;
+          }
+        }
+      }
+      syncMapCursor();
+    });
+    for (const layerId of siteLayerIds) {
+      map.on("mouseenter", layerId, () => {
+        if (addPlacementMode || editMode || seekGoalPlacementMode) {
+          map.getCanvas().style.cursor = "crosshair";
+          return;
+        }
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", layerId, () => {
+        syncMapCursor();
+      });
+    }
+    map.on("contextmenu", (ev) => {
+      if (editMode) return;
+      ev.preventDefault();
+      beginCreateAtMapPoint(ev.lngLat.lat, ev.lngLat.lng);
+    });
+    map.on("click", (ev) => {
+      if (editMode) {
+        sitePanelEditLat.value = formatCoord(ev.lngLat.lat);
+        sitePanelEditLon.value = formatCoord(ev.lngLat.lng);
+        onEditCoordsChanged();
+        return;
+      }
+      if (seekGoalPlacementMode && seekPanelOpen) {
+        setSeekGoalAt(ev.lngLat.lat, ev.lngLat.lng);
+        return;
+      }
+      if (seekSessionActive()) {
+        if (map.getLayer(SEEK_CANDIDATES_LAYER)) {
+          const seekFeats = map.queryRenderedFeatures(ev.point, {
+            layers: [SEEK_CANDIDATES_LAYER],
+          });
+          if (seekFeats.length) {
+            const props = seekFeats[0].properties || {};
+            if (!props.is_goal) {
+              commitSeekCandidate(seekFeats[0]);
+            }
+            return;
+          }
+        }
+        const siteSeekFeats = map.queryRenderedFeatures(ev.point, {
+          layers: siteLayerIds,
+        });
+        if (siteSeekFeats.length) {
+          const slug = siteSeekFeats[0].properties?.slug;
+          if (slug && seekSiteCandidateSlugs.has(slug)) {
+            const site = siteBySlug.get(slug);
+            if (site) {
+              commitSeekCandidate({
+                geometry: { type: "Point", coordinates: [site.lon, site.lat] },
+                properties: {
+                  is_site: true,
+                  site_slug: slug,
+                  site_name: site.name,
+                  elev_m: site.height_m ?? null,
+                },
+              });
+              return;
+            }
+          }
+        }
+      }
+      const feats = map.queryRenderedFeatures(ev.point, {
+        layers: siteLayerIds,
+      });
+      if (feats.length) {
+        const slug = feats[0].properties && feats[0].properties.slug;
+        if (slug) {
+          ev.preventDefault();
+          if (addPlacementMode) setAddPlacementMode(null);
+          selectSite(slug);
+        }
+        return;
+      }
+      if (addPlacementMode) {
+        openCreatePanel(ev.lngLat.lat, ev.lngLat.lng);
+        return;
+      }
+      deselectSite();
+    });
+    wireMapLongPress();
+  }
 
   function fitSites() {
     const points = [...sites];
@@ -7935,7 +11620,7 @@ export function initProjectMap() {
     const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
     const { latDelta, lonDelta } = kmToDegreeDeltas(
       centerLat,
-      C.SITE_FIT_BUFFER_KM,
+      SITE_FIT_BUFFER_KM,
     );
     map.fitBounds(
       [
@@ -7949,7 +11634,7 @@ export function initProjectMap() {
   function resetHomeView() {
     if (terrainActive) {
       terrainActive = false;
-      scope.hideTerrainOverlays();
+      hideTerrainOverlays();
     }
     map.resetNorthPitch();
   }
@@ -7963,39 +11648,50 @@ export function initProjectMap() {
     scheduleSaveMapState();
   }
 
+  function setBasemap(key) {
+    const bm = BASEMAPS[key];
+    if (!bm || !mapReady) return;
+    const src = map.getSource("basemap");
+    if (!src || typeof src.setTiles !== "function") return;
+    src.setTiles(bm.tiles);
+    map.setMaxZoom(bm.maxzoom);
+    if (bm.referenceTiles) ensureBasemapReference(bm);
+    else removeBasemapReference();
+    raiseSiteLayers();
+  }
 
   map.on("load", () => {
     mapReady = true;
     syncMapViewport();
     map.resize();
     addSiteLayers();
-    scope.wireMapInteractions();
-    scope.connectProjectEvents();
+    wireMapInteractions();
+    connectProjectEvents();
     renderEntityPanel();
-    scope.renderLandPanel();
-    scope.setEntityTab(entityPanelTab);
+    renderLandPanel();
+    setEntityTab(entityPanelTab);
     applyEntityVisibility();
     syncBasemapMenu();
     setBasemap(currentBasemapKey);
     if (savedMapState) {
       setSiteLinksVisible(showSiteLinks);
-      scope.syncTerrainFromPitch();
+      syncTerrainFromPitch();
     } else {
       fitSites();
     }
-    void scope.refreshLandMapLayers();
-    scope.restoreSeekSessionIfAny();
+    void refreshLandMapLayers();
+    restoreSeekSessionIfAny();
     restoring = false;
     map.once("idle", () => {
-      void scope.loadViewshedIndex();
+      void loadViewshedIndex();
       void loadSiteLinks();
     });
   });
 
   map.on("pitch", () => {
-    scope.syncTerrainFromPitch();
+    syncTerrainFromPitch();
     scheduleSaveMapState();
-    scope.syncSeekRefreshUi();
+    syncSeekRefreshUi();
   });
   map.on("moveend", scheduleSaveMapState);
   map.on("moveend", onMapMoveEndForEntityPanel);
@@ -8013,13 +11709,13 @@ export function initProjectMap() {
   }
   if (viewshedOpacityInput) {
     viewshedOpacityInput.addEventListener("input", (ev) => {
-      scope.setViewshedOpacity(Number(ev.target.value) / 100);
+      setViewshedOpacity(Number(ev.target.value) / 100);
       scheduleSaveMapState();
     });
   }
   sitePanelClose.addEventListener("click", deselectSite);
   if (sitePanelViewshedToggle) {
-    sitePanelViewshedToggle.innerHTML = scope.mapToolIcon(
+    sitePanelViewshedToggle.innerHTML = mapToolIcon(
       "droplet",
       "Viewshed coverage",
     );
@@ -8030,7 +11726,7 @@ export function initProjectMap() {
     });
   }
   if (sitePanelEditOpen) {
-    sitePanelEditOpen.addEventListener("click", () => scope.openEditPanel());
+    sitePanelEditOpen.addEventListener("click", () => openEditPanel());
   }
   if (sitePanelEditClose) {
     sitePanelEditClose.addEventListener("click", cancelEdit);
@@ -8040,70 +11736,53 @@ export function initProjectMap() {
   }
   if (sitePanelEditSave) {
     sitePanelEditSave.addEventListener("click", () => {
-      void scope.saveEdit();
+      void saveEdit();
     });
   }
   if (sitePanelEditCopyCoords) {
     sitePanelEditCopyCoords.addEventListener("click", () => {
-      void scope.copyEditCoords();
+      void copyEditCoords();
     });
   }
   if (sitePanelCopyCoords) {
     sitePanelCopyCoords.addEventListener("click", () => {
       const site = selectedSlug ? siteBySlug.get(selectedSlug) : null;
       if (!site) return;
-      void scope.copyCoordPair(site.lat, site.lon);
-    });
-  }
-  if (sitePanelCopyPlss) {
-    sitePanelCopyPlss.addEventListener("click", () => {
-      void scope.copyPlssFromElement(document.getElementById("site-panel-plss"));
-    });
-  }
-  if (sitePanelEditCopyPlss) {
-    sitePanelEditCopyPlss.addEventListener("click", () => {
-      void scope.copyPlssFromElement(document.getElementById("site-panel-edit-plss"));
-    });
-  }
-  if (sitePanelCreateCopyPlss) {
-    sitePanelCreateCopyPlss.addEventListener("click", () => {
-      void scope.copyPlssFromElement(
-        document.getElementById("site-panel-create-plss"),
-      );
+      void copyCoordPair(site.lat, site.lon);
     });
   }
   if (sitePanelEditLat) {
     sitePanelEditLat.addEventListener("input", onEditCoordsChanged);
     sitePanelEditLat.addEventListener("paste", (ev) => {
       const text = ev.clipboardData && ev.clipboardData.getData("text");
-      if (text && scope.applyCoordPaste(text, "lat")) ev.preventDefault();
+      if (text && applyCoordPaste(text, "lat")) ev.preventDefault();
     });
   }
   if (sitePanelEditLon) {
     sitePanelEditLon.addEventListener("input", onEditCoordsChanged);
     sitePanelEditLon.addEventListener("paste", (ev) => {
       const text = ev.clipboardData && ev.clipboardData.getData("text");
-      if (text && scope.applyCoordPaste(text, "lon")) ev.preventDefault();
+      if (text && applyCoordPaste(text, "lon")) ev.preventDefault();
     });
   }
   if (sitePanelEditViewshed) {
     sitePanelEditViewshed.addEventListener("change", (ev) => {
       if (!editMode) return;
-      const coords = scope.readEditCoords();
+      const coords = readEditCoords();
       const atOriginal =
-        coords && scope.coordsMatchEditSnapshot(coords.lat, coords.lon);
+        coords && coordsMatchEditSnapshot(coords.lat, coords.lon);
       const visible = ev.target.checked;
       if (atOriginal && editSlug) {
         setViewshedVisible(editSlug, visible);
-        if (!visible) scope.removeDraftViewshed();
+        if (!visible) removeDraftViewshed();
         return;
       }
-      setViewshedVisible(C.DRAFT_VIEWSHED_SLUG, visible);
+      setViewshedVisible(DRAFT_VIEWSHED_SLUG, visible);
       if (visible && coords) {
         hideViewshedLayerForEdit(editSlug);
         void loadDraftViewshedAt(coords.lat, coords.lon);
       } else {
-        scope.removeDraftViewshed();
+        removeDraftViewshed();
       }
     });
   }
@@ -8142,57 +11821,57 @@ export function initProjectMap() {
     });
   }
   if (mapToolSeek) {
-    mapToolSeek.addEventListener("click", () => scope.toggleSeekPanel());
+    mapToolSeek.addEventListener("click", () => toggleSeekPanel());
   }
   if (seekPanelClose) {
-    seekPanelClose.addEventListener("click", () => scope.toggleSeekPanel(false));
+    seekPanelClose.addEventListener("click", () => toggleSeekPanel(false));
   }
   if (seekStartSelect) {
     seekStartSelect.addEventListener("change", () =>
-      scope.maybeAutoStartSeekFromSelects(),
+      maybeAutoStartSeekFromSelects(),
     );
   }
   if (seekSetGoalBtn) {
     seekSetGoalBtn.addEventListener("click", () => {
       if (!seekPanelOpen || seekScanning) return;
-      scope.setSeekGoalPlacementMode(!seekGoalPlacementMode);
+      setSeekGoalPlacementMode(!seekGoalPlacementMode);
     });
   }
   if (seekUndoBtn) {
-    seekUndoBtn.addEventListener("click", () => scope.undoSeekHop());
+    seekUndoBtn.addEventListener("click", () => undoSeekHop());
   }
   if (seekRedoBtn) {
-    seekRedoBtn.addEventListener("click", () => scope.redoSeekHop());
+    seekRedoBtn.addEventListener("click", () => redoSeekHop());
   }
   if (seekResetBtn) {
-    seekResetBtn.addEventListener("click", () => scope.resetSeekRun());
+    seekResetBtn.addEventListener("click", () => resetSeekRun());
   }
   if (seekConvertSitesBtn) {
     seekConvertSitesBtn.addEventListener("click", () => {
-      void scope.openSeekConvertModal();
+      void openSeekConvertModal();
     });
   }
   if (seekConvertNamePrefix) {
     seekConvertNamePrefix.addEventListener("input", () => {
-      scope.syncSeekConvertHopCountText();
-      scope.syncSeekConvertSaveButton();
+      syncSeekConvertHopCountText();
+      syncSeekConvertSaveButton();
     });
   }
   if (seekConvertTagForm) {
     seekConvertTagForm.addEventListener("submit", (ev) => {
       ev.preventDefault();
-      scope.addSeekConvertTagFromInput();
+      addSeekConvertTagFromInput();
     });
   }
   if (seekConvertSave) {
     seekConvertSave.addEventListener("click", () => {
-      void scope.saveSeekConvertModal();
+      void saveSeekConvertModal();
     });
   }
   if (seekRefreshBtn) {
     seekRefreshBtn.addEventListener("click", () => {
       if (!seekSessionActive() || seekScanning) return;
-      void scope.refreshSeekCandidates();
+      void refreshSeekCandidates();
     });
   }
   if (mapToolSites) {
@@ -8207,34 +11886,47 @@ export function initProjectMap() {
   }
   if (entityPanelImportSites) {
     entityPanelImportSites.addEventListener("click", () => {
-      void scope.openImportSitesModal();
+      void openImportSitesModal();
     });
   }
   if (entityPanelImportLand) {
     entityPanelImportLand.addEventListener("click", () => {
-      void scope.openImportLandModal();
+      void openImportLandModal();
     });
   }
   if (entityPanelAddLandFolder) {
     entityPanelAddLandFolder.addEventListener("click", () => {
-      scope.createLandFolder();
+      void openCreateLandFolderModal();
     });
   }
-  scope.queueLandSidebarMigrationFromLayerOrder();
+  if (landFolderSave) {
+    landFolderSave.addEventListener("click", () => {
+      saveLandFolderModal();
+    });
+  }
+  if (landFolderName) {
+    landFolderName.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        saveLandFolderModal();
+      }
+    });
+  }
+  queueLandSidebarMigrationFromLayerOrder();
   for (const tabBtn of entityPanelTabs) {
     tabBtn.addEventListener("click", () => {
-      scope.setEntityTab(tabBtn.getAttribute("data-entity-tab") || "sites");
+      setEntityTab(tabBtn.getAttribute("data-entity-tab") || "sites");
     });
   }
-  scope.initLandPanelDragDrop();
+  initLandPanelDragDrop();
   if (importLandGdb) {
     importLandGdb.addEventListener("change", () => {
-      void scope.previewImportLandPath(importLandGdb.value);
+      void previewImportLandPath(importLandGdb.value);
     });
   }
   if (importLandSave) {
     importLandSave.addEventListener("click", () => {
-      void scope.saveImportLandModal();
+      void saveImportLandModal();
     });
   }
   if (importLandSelectAll) {
@@ -8265,12 +11957,12 @@ export function initProjectMap() {
         requestAnimationFrame(() => importLandPreviewMap.resize());
     });
     importLandModal.addEventListener("wa-after-hide", () => {
-      scope.resetImportLandModal();
+      resetImportLandModal();
     });
   }
   if (editLandSave) {
     editLandSave.addEventListener("click", () => {
-      void scope.saveEditLandModal();
+      void saveEditLandModal();
     });
   }
   if (editLandSelectAll) {
@@ -8305,7 +11997,7 @@ export function initProjectMap() {
       }
     });
     editLandModal.addEventListener("wa-after-hide", () => {
-      scope.destroyEditLandPreviewMap();
+      destroyEditLandPreviewMap();
       editLandSourceId = "";
       editLandPreviewRefresh = null;
       editLandPreviewLayers = [];
@@ -8313,23 +12005,23 @@ export function initProjectMap() {
       editLandLayerStyles = new Map();
       editLandLayerConfigs = new Map();
       if (editLandLayerList) editLandLayerList.innerHTML = "";
-      scope.setEditLandError("");
+      setEditLandError("");
     });
   }
   if (entityPanelBulkTag) {
     entityPanelBulkTag.addEventListener("click", () => {
-      void scope.openBulkTagModal();
+      void openBulkTagModal();
     });
   }
   if (bulkTagSave) {
     bulkTagSave.addEventListener("click", () => {
-      void scope.saveBulkTagModal();
+      void saveBulkTagModal();
     });
   }
   if (bulkTagAddForm) {
     bulkTagAddForm.addEventListener("submit", (ev) => {
       ev.preventDefault();
-      scope.addBulkTagFromInput();
+      addBulkTagFromInput();
     });
   }
   if (bulkTagModal) {
@@ -8338,50 +12030,50 @@ export function initProjectMap() {
     });
     bulkTagModal.addEventListener("wa-after-hide", () => {
       bulkTagModalOpen = false;
-      scope.setBulkTagError("");
+      setBulkTagError("");
     });
   }
   if (bulkTagAddInput) {
     bulkTagAddInput.addEventListener("input", () => {
-      scope.syncBulkTagSaveButton();
+      syncBulkTagSaveButton();
     });
   }
   if (importSitesFile) {
     importSitesFile.addEventListener("change", () => {
       const file = importSitesFile.files && importSitesFile.files[0];
-      if (file) void scope.previewImportFile(file);
+      if (file) void previewImportFile(file);
     });
   }
   if (importSitesSave) {
     importSitesSave.addEventListener("click", () => {
-      void scope.saveImportSitesModal();
+      void saveImportSitesModal();
     });
   }
   if (importSitesTagForm) {
     importSitesTagForm.addEventListener("submit", (ev) => {
       ev.preventDefault();
-      scope.addImportDraftTagFromInput();
+      addImportDraftTagFromInput();
     });
   }
   if (importSitesTagInput) {
     importSitesTagInput.addEventListener("input", () => {
-      scope.syncImportSaveButton();
+      syncImportSaveButton();
     });
   }
   if (importSitesFilterVisible) {
     importSitesFilterVisible.addEventListener("change", () => {
       importFilterByViewport = !!importSitesFilterVisible.checked;
-      scope.renderImportPointList();
+      renderImportPointList();
     });
   }
   if (importSitesSelectAll) {
     importSitesSelectAll.addEventListener("click", () => {
-      scope.setAllImportPointsIgnored(false);
+      setAllImportPointsIgnored(false);
     });
   }
   if (importSitesClearAll) {
     importSitesClearAll.addEventListener("click", () => {
-      scope.setAllImportPointsIgnored(true);
+      setAllImportPointsIgnored(true);
     });
   }
   if (importSitesModal) {
@@ -8393,7 +12085,7 @@ export function initProjectMap() {
       }
     });
     importSitesModal.addEventListener("wa-after-hide", () => {
-      scope.resetImportSitesModal();
+      resetImportSitesModal();
     });
   }
   if (addSiteSave) {
@@ -8435,8 +12127,8 @@ export function initProjectMap() {
     sitePanelCreateViewshed.addEventListener("change", (ev) => {
       if (!createMode) return;
       const visible = ev.target.checked;
-      setViewshedVisible(C.DRAFT_VIEWSHED_SLUG, visible);
-      if (!visible) scope.removeDraftViewshed();
+      setViewshedVisible(DRAFT_VIEWSHED_SLUG, visible);
+      if (!visible) removeDraftViewshed();
     });
   }
   document.addEventListener("keydown", (ev) => {
@@ -8446,146 +12138,23 @@ export function initProjectMap() {
       return;
     }
     if (seekPanelOpen && seekRunning) {
-      scope.resetSeekRun();
-      scope.toggleSeekPanel(false);
+      resetSeekRun();
+      toggleSeekPanel(false);
       return;
     }
     if (seekPanelOpen) {
-      scope.toggleSeekPanel(false);
+      toggleSeekPanel(false);
       return;
     }
     if (editMode) {
-      scope.cancelEdit();
+      cancelEdit();
       return;
     }
     if (selectedSlug) deselectSite();
   });
 
-
-  Object.assign(scope, {
-    config,
-    projectSlug,
-    simDefaults,
-    sites,
-    siteBySlug,
-    map,
-    mapReady,
-    restoring,
-    landSources,
-    landDataGdbPaths,
-    landAoiDigest,
-    landSidebar,
-    selectedSlug,
-    editMode,
-    createMode,
-    editKind,
-    editSlug,
-    entityPanelTab,
-    entityPanelFilterByViewport,
-    scheduleSaveMapState,
-    renderEntityPanel,
-    openWaDialog,
-    registerSite,
-    applySavedSiteToMap,
-    ensureSiteVisibleAfterAdd,
-    sitesApiUrl,
-    raiseSiteLayers,
-    loadDraftViewshedAt,
-    setViewshedVisible,
-    isViewshedVisible,
-    hideViewshedLayerForEdit,
-    viewshedVisible,
-    viewshedLoading,
-    siteViewshedReady,
-    viewshedLoadEpoch,
-    viewshedPendingEpoch,
-    viewshedRadiusKm,
-    viewshedQuality,
-    viewshedOpacity,
-    siteLinksPayload,
-    showSiteLinks,
-    siteOutboundLinksReady,
-    refreshFilteredLinks,
-    syncMapCursor,
-    setEntityPanelOpen,
-    selectSite,
-    deselectSite,
-    normalizeSiteFromApi,
-    compareHuman,
-    formatCoord,
-    parseCoordPairFromText,
-    coordsUsableForMarker,
-    slugifyName,
-    previewSlugForName,
-    arrayBufferToBase64,
-    lngLatBoundsFromPoints,
-    padMapBounds,
-    mapDataViewportBounds,
-    mapSeekScanBounds,
-    seekScanBoundsForRequest,
-    seekPeakBinSizeMForBounds,
-    isMapTiltedView,
-    mapOverheadEquivalentBounds,
-    clampRadiusKm,
-    clampViewshedQuality,
-    VIEWSHED_RADIUS_KM_MIN,
-    VIEWSHED_RADIUS_KM_MAX,
-    siteHidden,
-    activeTagFilters,
-    tagFilterMode,
-    tagFilterBypassSlugs,
-    sitePassesTagFilter,
-    allProjectTags,
-    renderTagToggleChips,
-    bulkTagModal,
-    bulkTagSave,
-    bulkTagError,
-    importSitesModal,
-    importSitesError,
-    importSitesSave,
-    ensureViewshedLoadedForSlug,
-    markSiteViewshedReady,
-    markSiteOutboundLinksReady,
-    applySiteLinksPayload,
-    linksApiUrl,
-    siteLinksApiUrl,
-    linksWarmApiUrl,
-    warmPrioritiesApiUrl,
-    syncWarmPriorities,
-    scheduleWarmPrioritiesSync,
-    onMapMoveEndForWarmPriorities,
-    bumpWarmPriorities,
-    warmPrioritySlugsInViewport,
-    serveEventsSource,
-    reloadViewshedsForSimChange,
-    setViewshedSimulation,
-    computeViewshedRaster,
-    haversineMeters,
-    bearingDeg,
-    destinationPointLatLon,
-    buildSeekWedgeFeature,
-    buildSeekGoalLineFeature,
-    seekWedgeHalfAngleDeg,
-    MAP_STATE_KEY,
-    SEEK_STATE_KEY,
-    SEEK_REDO_KEY,
-    C,
-  })
-  installLand(scope)
-  installImportSites(scope)
-  installBulkTag(scope)
-  installSeek(scope)
-  installMapState(scope)
-  installLinks(scope)
-  installViewsheds(scope)
-  installSitesEdit(scope)
-  installInteractions(scope)
-  installToolbar(scope)
-
-
   return {
     reloadViewshedsForSimChange,
     setViewshedSimulation,
-  }
-
+  };
 }
