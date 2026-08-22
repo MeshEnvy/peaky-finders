@@ -5889,7 +5889,9 @@
       });
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        setEditLandError(payload.error || `Preview failed (${resp.status})`);
+        const message = payload.error || `Preview failed (${resp.status})`;
+        setEditLandError(message);
+        window.alert(message);
         return;
       }
       editLandPreviewLayers = Array.isArray(payload.layers)
@@ -5978,10 +5980,10 @@
       if (editLandSave) editLandSave.disabled = selected.size === 0;
       editLandPreviewRefresh = refreshEditPreview;
       if (selected.size) refreshEditPreview();
-      await customElements.whenDefined("wa-dialog");
-      editLandModal.open = true;
+      await openWaDialog(editLandModal);
     } catch (_) {
       setEditLandError("Could not reach server.");
+      window.alert("Could not reach server.");
     }
   }
 

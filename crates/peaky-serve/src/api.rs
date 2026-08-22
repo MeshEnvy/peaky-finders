@@ -8,13 +8,14 @@ use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
-    routing::{delete, get, patch, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use peaky_geo::{parse_kml_point_placemarks, parse_kmz_point_placemarks};
 use peaky_preset::{
     insert_preset_site, load_preset, load_preset_raw, patch_preset_site, patch_preset_sites_tags,
-    preset_site_slugs, remove_preset_site, unique_site_slug, validate_coords, SiteEntry,
+    preset_site_slugs, remove_preset_site, unique_site_slug, validate_coords, LandSidebar,
+    SiteEntry,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -24,7 +25,13 @@ use crate::html::{project_error_html, project_html, site_api_row};
 use crate::links::{load_project_site_links, load_single_site_links};
 use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
 use crate::state::AppState;
-use crate::land::{list_land_payload, read_layer_geojson_bytes};
+use crate::land::{
+    land_data_gdbs_payload, land_delete_source, land_import_preview_payload, land_import_source,
+    land_patch_sidebar, land_patch_source, land_preview_fields_payload,
+    land_preview_geojson_filtered_payload, land_preview_geojson_payload, land_preview_values_payload,
+    list_land_payload, read_layer_geojson_bytes, LandImportBody, LandPatchSourceBody,
+    LandPreviewGeoJsonBody,
+};
 use crate::simulation::project_simulation_payload;
 use crate::viewshed::{
     coords_viewshed_overlay_if_ready, ensure_viewshed_png, read_coords_viewshed_png_if_ready,
@@ -81,6 +88,23 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/warm/status", get(warm_status))
         .route("/api/p/{slug}/events", get(project_events))
         .route("/api/p/{slug}/land", get(land_list))
+        .route("/api/p/{slug}/land/data-gdbs", get(land_data_gdbs))
+        .route("/api/p/{slug}/land/import/preview", post(land_import_preview))
+        .route(
+            "/api/p/{slug}/land/import/preview/fields",
+            get(land_import_preview_fields),
+        )
+        .route(
+            "/api/p/{slug}/land/import/preview/values",
+            get(land_import_preview_values),
+        )
+        .route("/api/p/{slug}/land/import", post(land_import))
+        .route("/api/p/{slug}/land/preview/geojson", get(land_preview_geojson_get).post(land_preview_geojson_post))
+        .route("/api/p/{slug}/land/sidebar", patch(land_sidebar_patch))
+        .route(
+            "/api/p/{slug}/land/sources/{source_id}",
+            patch(land_source_patch).delete(land_source_delete),
+        )
         .route(
             "/api/p/{slug}/land/sources/{source_id}/layers/{layer_key}/geojson",
             get(land_layer_geojson),
@@ -642,6 +666,193 @@ async fn land_list(State(state): State<AppState>,
     list_land_payload(&path)
         .map(Json)
         .map_err(|_| StatusCode::NOT_FOUND)
+}
+
+async fn land_data_gdbs(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    land_data_gdbs_payload(&state.preset_path()).map(Json).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })
+}
+
+#[derive(Deserialize)]
+struct LandPathBody {
+    path: String,
+}
+
+async fn land_import_preview(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Json(body): Json<LandPathBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    land_import_preview_payload(&state.preset_path(), &body.path)
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        })
+}
+
+async fn land_import(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Json(body): Json<LandImportBody>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    land_import_source(&state.preset_path(), body)
+        .map(|(source_id, source)| {
+            (
+                StatusCode::CREATED,
+                Json(json!({ "source": source, "sourceId": source_id })),
+            )
+        })
+        .map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        })
+}
+
+async fn land_source_patch(
+    State(state): State<AppState>,
+    Path((_slug, source_id)): Path<(String, String)>,
+    Json(body): Json<LandPatchSourceBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    land_patch_source(&state.preset_path(), &source_id, body)
+        .map(|source| Json(json!({ "source": source })))
+        .map_err(|e| {
+            let msg = e.to_string();
+            let status = if msg.contains("unknown land source") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::UNPROCESSABLE_ENTITY
+            };
+            (status, Json(json!({ "error": msg })))
+        })
+}
+
+async fn land_source_delete(
+    State(state): State<AppState>,
+    Path((_slug, source_id)): Path<(String, String)>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    land_delete_source(&state.preset_path(), &source_id)
+        .map(|_| Json(json!({ "deleted": source_id })))
+        .map_err(|e| {
+            let msg = e.to_string();
+            let status = if msg.contains("unknown land source") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::UNPROCESSABLE_ENTITY
+            };
+            (status, Json(json!({ "error": msg })))
+        })
+}
+
+async fn land_sidebar_patch(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Json(sidebar): Json<LandSidebar>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    land_patch_sidebar(&state.preset_path(), sidebar)
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        })
+}
+
+async fn land_preview_geojson_get(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let path = params.get("path").map(String::as_str).unwrap_or("").trim();
+    let layer = params.get("layer").map(String::as_str).unwrap_or("").trim();
+    if path.is_empty() || layer.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "path and layer query parameters are required" })),
+        ));
+    }
+    land_preview_geojson_payload(&state.preset_path(), path, layer)
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        })
+}
+
+async fn land_preview_geojson_post(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Json(body): Json<LandPreviewGeoJsonBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    land_preview_geojson_filtered_payload(&state.preset_path(), body)
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        })
+}
+
+async fn land_import_preview_fields(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let path = params.get("path").map(String::as_str).unwrap_or("").trim();
+    let layer = params.get("layer").map(String::as_str).unwrap_or("").trim();
+    if path.is_empty() || layer.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "path and layer query parameters are required" })),
+        ));
+    }
+    land_preview_fields_payload(&state.preset_path(), path, layer)
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        })
+}
+
+async fn land_import_preview_values(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let path = params.get("path").map(String::as_str).unwrap_or("").trim();
+    let layer = params.get("layer").map(String::as_str).unwrap_or("").trim();
+    let field = params.get("field").map(String::as_str).unwrap_or("").trim();
+    if path.is_empty() || layer.is_empty() || field.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "path, layer, and field query parameters are required" })),
+        ));
+    }
+    land_preview_values_payload(&state.preset_path(), path, layer, field)
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        })
 }
 
 async fn land_layer_geojson(State(state): State<AppState>,

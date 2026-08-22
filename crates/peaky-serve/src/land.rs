@@ -4,11 +4,17 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use peaky_geo::{transform_geojson_for_layer, resolve_land_layer_geojson_path};
+use peaky_geo::{
+    filter_geojson_preview, layer_field_values, layer_fields, list_land_data_gdbs,
+    list_preview_layers, preview_layers_json, read_layer_geojson_value, resolve_land_data_path,
+    resolve_land_layer_geojson_path, transform_geojson_for_layer,
+};
 use peaky_preset::{
-    load_preset, slugify_files_segment, LandLayerEntry, LandLayerRole, LandLayerStyleValue,
+    delete_land_source, import_land_source, load_preset, patch_land_sidebar, patch_land_source,
+    slugify_files_segment, LandLayerEntry, LandLayerRole, LandLayerStyleValue, LandSidebar,
     LandSourceEntry,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 pub fn resolved_land_cache_dir(preset_path: &Path) -> PathBuf {
@@ -273,4 +279,180 @@ pub fn read_layer_geojson_bytes(
     let bytes = apply_registered_layer_filters(&raw_bytes, layer)?;
     let digest = effective_layer_digest(&manifest, source_id, layer, Some(&bytes));
     Ok((bytes, digest))
+}
+
+fn project_dir_for(preset_path: &Path) -> Result<&Path> {
+    preset_path
+        .parent()
+        .context("preset path must have parent directory")
+}
+
+#[derive(Deserialize)]
+pub struct LandImportBody {
+    pub path: String,
+    pub layers: Vec<LandLayerEntry>,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct LandPatchSourceBody {
+    #[serde(default)]
+    pub layers: Option<Vec<LandLayerEntry>>,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct LandPreviewGeoJsonBody {
+    pub path: String,
+    pub layer: String,
+    #[serde(default)]
+    pub include: Vec<peaky_preset::LandAttributeFilter>,
+    #[serde(default)]
+    pub exclude: Vec<peaky_preset::LandAttributeFilter>,
+    #[serde(default, rename = "labelField")]
+    pub label_field: Option<String>,
+    #[serde(default, rename = "styleField")]
+    pub style_field: Option<String>,
+}
+
+pub fn land_data_gdbs_payload(preset_path: &Path) -> Result<Value> {
+    let project_dir = project_dir_for(preset_path)?;
+    let paths = list_land_data_gdbs(project_dir)?;
+    Ok(json!({ "paths": paths }))
+}
+
+pub fn land_import_preview_payload(preset_path: &Path, rel_path: &str) -> Result<Value> {
+    let project_dir = project_dir_for(preset_path)?;
+    let abs = resolve_land_data_path(project_dir, rel_path)?;
+    let layers = list_preview_layers(&abs)?;
+    if layers.is_empty() {
+        anyhow::bail!("no layers found in data source");
+    }
+    Ok(preview_layers_json(&layers))
+}
+
+pub fn land_import_source(
+    preset_path: &Path,
+    body: LandImportBody,
+) -> Result<(String, Value)> {
+    if body.layers.is_empty() {
+        anyhow::bail!("select at least one layer");
+    }
+    let project_dir = project_dir_for(preset_path)?;
+    resolve_land_data_path(project_dir, &body.path)?;
+    let (source_id, entry) = import_land_source(
+        preset_path,
+        body.path,
+        body.label,
+        body.layers,
+    )?;
+    let cache_root = resolved_land_cache_dir(preset_path);
+    let manifest = read_manifest(&cache_root);
+    Ok((
+        source_id.clone(),
+        serialize_land_source(&source_id, &entry, &manifest),
+    ))
+}
+
+pub fn land_patch_source(
+    preset_path: &Path,
+    source_id: &str,
+    body: LandPatchSourceBody,
+) -> Result<Value> {
+    if body.layers.is_none() && body.label.is_none() {
+        anyhow::bail!("layers or label required");
+    }
+    let preset = load_preset(preset_path)?;
+    let layers = match body.layers {
+        Some(layers) => {
+            if layers.is_empty() {
+                anyhow::bail!("select at least one layer");
+            }
+            layers
+        }
+        None => preset
+            .land
+            .sources
+            .get(source_id)
+            .map(|source| source.layers.clone())
+            .with_context(|| format!("unknown land source: {source_id}"))?,
+    };
+    let entry = patch_land_source(preset_path, source_id, body.label, layers)?;
+    let cache_root = resolved_land_cache_dir(preset_path);
+    let manifest = read_manifest(&cache_root);
+    Ok(serialize_land_source(source_id, &entry, &manifest))
+}
+
+pub fn land_delete_source(preset_path: &Path, source_id: &str) -> Result<()> {
+    delete_land_source(preset_path, source_id)
+}
+
+pub fn land_patch_sidebar(preset_path: &Path, sidebar: LandSidebar) -> Result<Value> {
+    let updated = patch_land_sidebar(preset_path, sidebar)?;
+    Ok(json!({ "sidebar": updated }))
+}
+
+pub fn land_preview_geojson_payload(
+    preset_path: &Path,
+    rel_path: &str,
+    layer: &str,
+) -> Result<Value> {
+    let project_dir = project_dir_for(preset_path)?;
+    let abs = resolve_land_data_path(project_dir, rel_path)?;
+    let geojson = read_layer_geojson_value(&abs, layer)?;
+    Ok(json!({
+        "path": rel_path,
+        "layer": layer,
+        "geojson": geojson,
+    }))
+}
+
+pub fn land_preview_geojson_filtered_payload(
+    preset_path: &Path,
+    body: LandPreviewGeoJsonBody,
+) -> Result<Value> {
+    let project_dir = project_dir_for(preset_path)?;
+    let abs = resolve_land_data_path(project_dir, &body.path)?;
+    let mut geojson = read_layer_geojson_value(&abs, &body.layer)?;
+    geojson = filter_geojson_preview(geojson, &body.include, &body.exclude);
+    geojson = transform_geojson_for_layer(
+        geojson,
+        &body.include,
+        &body.exclude,
+        body.label_field.as_deref(),
+        body.style_field.as_deref(),
+    );
+    Ok(json!({
+        "path": body.path,
+        "layer": body.layer,
+        "geojson": geojson,
+    }))
+}
+
+pub fn land_preview_fields_payload(
+    preset_path: &Path,
+    rel_path: &str,
+    layer: &str,
+) -> Result<Value> {
+    let project_dir = project_dir_for(preset_path)?;
+    let abs = resolve_land_data_path(project_dir, rel_path)?;
+    let fields = layer_fields(&abs, layer)?;
+    Ok(json!({ "fields": fields }))
+}
+
+pub fn land_preview_values_payload(
+    preset_path: &Path,
+    rel_path: &str,
+    layer: &str,
+    field: &str,
+) -> Result<Value> {
+    let project_dir = project_dir_for(preset_path)?;
+    let abs = resolve_land_data_path(project_dir, rel_path)?;
+    let values = layer_field_values(&abs, layer, field)?;
+    Ok(json!({
+        "values": values.values,
+        "truncated": values.truncated,
+    }))
 }
