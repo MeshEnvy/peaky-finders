@@ -9,7 +9,7 @@ use rayon::prelude::*;
 
 use crate::dem::DemMosaic;
 use crate::dem_mirror::DemMirror;
-use crate::engine::{run_batch_coverage_with_dem, run_coverage_with_dem, required_tile_names};
+use crate::engine::{run_coverage_with_dem, required_tile_names};
 use crate::hash::{splat_input_sha256, Request as CovRequest};
 use crate::propagate::{
     evaluate_link, evaluate_mutual_link_viable, evaluate_mutual_links_parallel,
@@ -25,8 +25,12 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(mirror_root: PathBuf, verbose: bool) -> Self {
-        let dem_mirror = Arc::new(DemMirror::start(mirror_root.clone(), verbose));
+    pub fn new(mirror_root: PathBuf, verbose: bool, dem_fetch_workers: usize) -> Self {
+        let dem_mirror = Arc::new(DemMirror::start(
+            mirror_root.clone(),
+            verbose,
+            dem_fetch_workers,
+        ));
         Self {
             mirror_root,
             dem: RwLock::new(DemMosaic::empty()),
@@ -483,22 +487,5 @@ impl Session {
         self.ensure_tiles_for_request(&parsed)?;
         let dem = self.dem.read().unwrap();
         run_coverage_with_dem(work_dir, &dem, self.verbose)
-    }
-
-    pub fn run_batch(&self, work_dir: &Path, batch_jobs: usize, requests_json: Option<&str>) -> Result<()> {
-        let requests: Vec<CovRequest> = if let Some(raw) = requests_json {
-            serde_json::from_str(raw).context("parse batch requests JSON")?
-        } else {
-            let req_path = work_dir.join("request.json");
-            let raw = std::fs::read_to_string(&req_path)
-                .with_context(|| format!("read {}", req_path.display()))?;
-            serde_json::from_str(&raw).context("parse request.json as [SplatCoverageRequest]")?
-        };
-        if requests.is_empty() {
-            anyhow::bail!("batch must contain at least one coverage request");
-        }
-        self.ensure_tiles_for_requests(&requests)?;
-        let dem = self.dem.read().unwrap();
-        run_batch_coverage_with_dem(work_dir, &dem, requests, self.verbose, batch_jobs)
     }
 }

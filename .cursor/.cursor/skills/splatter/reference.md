@@ -27,7 +27,6 @@ Preset mapping folds `environment.coverage_pessimism_db` into `modem.implementat
 
 ```
 <preset>/.peaky/cache/viewsheds/
-  request.json          # batch: JSON array of all workspace requests
   <64-char-hex-digest>/
     request.json        # single-site propagation object
     output.ppm
@@ -47,13 +46,13 @@ In-process via `splatter::Session` (shared resident DEM).
 | Method | Purpose |
 |--------|---------|
 | `ensure_tiles_for_points` | Tile union for lat/lon list + buffer |
-| `run` / `run_batch` | Coverage from `request.json` |
+| `run` | Single coverage from `request.json` |
 | `link_eval` / `link_viable` | One-way hop |
 | `link_mutual_viable` | Both directions must meet threshold |
 | `link_mutual_batch` | Parallel mutual checks |
 | `input_sha256` | Hash helper |
 
-Env: `SPLAT_CACHE` (Skadi HGT mirror), `SPLATTER_BATCH_JOBS` (rayon cap for one batch).
+Env: `SPLAT_CACHE` (Skadi HGT mirror).
 
 ## Physics summary
 

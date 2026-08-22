@@ -42,7 +42,7 @@ cargo test -p splatter
 
 | Module | Role |
 |--------|------|
-| `engine.rs` | Coverage raster, batch orchestration, SPLAT outputs |
+| `engine.rs` | Coverage raster, SPLAT outputs |
 | `propagate.rs` | Point-to-point link eval, mutual hop |
 | `session.rs` | Shared DEM session |
 | `peaks.rs` | GeoJSON polygon mask, binned local maxima |

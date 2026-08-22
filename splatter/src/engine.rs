@@ -145,14 +145,6 @@ fn mirror_root_from_work_dir(work_dir: &Path) -> PathBuf {
         .unwrap_or_else(|_| work_dir.join(".tile_cache"))
 }
 
-fn batch_jobs_from_env() -> usize {
-    std::env::var("SPLATTER_BATCH_JOBS")
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .filter(|n| *n >= 1)
-        .unwrap_or_else(|| rayon::current_num_threads().max(1))
-}
-
 pub fn run_coverage(work_dir: &Path, verbose: bool) -> Result<()> {
     let mirror_root = mirror_root_from_work_dir(work_dir);
     let req_path = work_dir.join("request.json");
@@ -178,116 +170,8 @@ pub fn run_coverage_with_dem(work_dir: &Path, dem: &DemMosaic, verbose: bool) ->
     let parsed: CovRequest =
         serde_json::from_str(&raw).context("parse request.json as SplatCoverageRequest")?;
     let job = prepare_job(parsed)?;
-    run_one_coverage(&job, dem, work_dir, verbose, true).context("single coverage run")?;
+    run_one_coverage(&job, dem, work_dir, verbose).context("coverage run")?;
     log("done.");
-    Ok(())
-}
-
-pub fn run_batch_coverage(work_dir: &Path, verbose: bool) -> Result<()> {
-    let mirror_root = mirror_root_from_work_dir(work_dir);
-    let req_path = work_dir.join("request.json");
-    let raw = fs::read_to_string(&req_path)
-        .with_context(|| format!("read {}", req_path.display()))?;
-    let requests: Vec<CovRequest> =
-        serde_json::from_str(&raw).context("parse request.json as [SplatCoverageRequest]")?;
-    let mut tile_set: Vec<String> = Vec::new();
-    for req in &requests {
-        tile_set.extend(required_tile_names(req.lat, req.lon, req.radius));
-    }
-    tile_set.sort();
-    tile_set.dedup();
-    let dem = DemMosaic::load_mirror(&mirror_root, &tile_set, verbose, None).context("DEM mosaic")?;
-    run_batch_coverage_with_dem(work_dir, &dem, requests, verbose, batch_jobs_from_env())
-}
-
-pub fn run_batch_coverage_with_dem(
-    work_dir: &Path,
-    dem: &DemMosaic,
-    requests: Vec<CovRequest>,
-    verbose: bool,
-    batch_jobs: usize,
-) -> Result<()> {
-    let log = |msg: &str| {
-        if verbose {
-            eprintln!("[splatter] {}", msg);
-        }
-    };
-
-    if requests.is_empty() {
-        bail!("batch must contain at least one coverage request");
-    }
-
-    let started = Instant::now();
-    let jobs: Vec<PreparedJob> = requests
-        .into_iter()
-        .map(prepare_job)
-        .collect::<Result<Vec<_>>>()?;
-
-    log(&format!(
-        "batch: {} request(s), {} DEM tile(s) in session",
-        jobs.len(),
-        dem.tile_count()
-    ));
-    if verbose {
-        log(&format!(
-            "batch DEM ready ({:.2}s)",
-            started.elapsed().as_secs_f64()
-        ));
-    }
-
-    let batch_workers = batch_jobs.max(1).min(jobs.len().max(1));
-    log(&format!("batch coverage workers={batch_workers}"));
-
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(batch_workers)
-        .build()
-        .context("build batch thread pool")?;
-
-    let done = AtomicUsize::new(0);
-    let fail_mx = Mutex::new(None::<anyhow::Error>);
-
-    pool.install(|| {
-        jobs.par_iter().for_each(|job| {
-            if fail_mx.lock().unwrap().is_some() {
-                return;
-            }
-            let out_dir = work_dir.join(&job.input_sha);
-            if let Err(e) = fs::create_dir_all(&out_dir).with_context(|| {
-                format!("create output dir {}", out_dir.display())
-            }) {
-                *fail_mx.lock().unwrap() = Some(e);
-                return;
-            }
-            let result = run_one_coverage(job, dem, &out_dir, verbose, false)
-                .with_context(|| format!("coverage digest={}", job.input_sha));
-            match result {
-                Ok(()) => {
-                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                    if verbose {
-                        eprintln!(
-                            "[splatter] batch completed {}/{} digest={}…",
-                            n,
-                            jobs.len(),
-                            &job.input_sha[..12.min(job.input_sha.len())]
-                        );
-                    }
-                }
-                Err(e) => {
-                    *fail_mx.lock().unwrap() = Some(e);
-                }
-            }
-        });
-    });
-
-    if let Some(err) = fail_mx.lock().unwrap().take() {
-        return Err(err);
-    }
-
-    log(&format!(
-        "batch done: {} request(s) in {:.2}s",
-        jobs.len(),
-        started.elapsed().as_secs_f64()
-    ));
     Ok(())
 }
 
@@ -323,7 +207,6 @@ fn run_one_coverage(
     dem: &DemMosaic,
     work_dir: &Path,
     verbose: bool,
-    parallel_rows: bool,
 ) -> Result<()> {
     let log = |msg: &str| {
         if verbose {
@@ -392,66 +275,35 @@ fn run_one_coverage(
     let log_mx = Mutex::new(());
     let report_every = ((h as usize) / 20).max(1);
 
-    let rows: Vec<Vec<u8>> = if parallel_rows {
-        (0..h)
-            .into_par_iter()
-            .map(|py| {
-                raster_row(
-                    py,
-                    w,
-                    h,
-                    north,
-                    south,
-                    east,
-                    west,
-                    req,
-                    dem,
-                    &terrain_cache,
-                    re_eff,
-                    freq_hz,
-                    fresnel_frac,
-                    z_tx_amsl,
-                    eirp_chain,
-                    threshold_dbm,
-                    &cmap,
-                    verbose,
-                    &rows_done,
-                    &log_mx,
-                    report_every,
-                    raster_started,
-                )
-            })
-            .collect()
-    } else {
-        (0..h)
-            .map(|py| {
-                raster_row(
-                    py,
-                    w,
-                    h,
-                    north,
-                    south,
-                    east,
-                    west,
-                    req,
-                    dem,
-                    &terrain_cache,
-                    re_eff,
-                    freq_hz,
-                    fresnel_frac,
-                    z_tx_amsl,
-                    eirp_chain,
-                    threshold_dbm,
-                    &cmap,
-                    verbose,
-                    &rows_done,
-                    &log_mx,
-                    report_every,
-                    raster_started,
-                )
-            })
-            .collect()
-    };
+    let rows: Vec<Vec<u8>> = (0..h)
+        .into_par_iter()
+        .map(|py| {
+            raster_row(
+                py,
+                w,
+                h,
+                north,
+                south,
+                east,
+                west,
+                req,
+                dem,
+                &terrain_cache,
+                re_eff,
+                freq_hz,
+                fresnel_frac,
+                z_tx_amsl,
+                eirp_chain,
+                threshold_dbm,
+                &cmap,
+                verbose,
+                &rows_done,
+                &log_mx,
+                report_every,
+                raster_started,
+            )
+        })
+        .collect();
 
     if verbose {
         log(&format!(
