@@ -1,6 +1,7 @@
-//! Peaky CLI — serve and find.
+//! Peaky CLI — serve, find, and freeze.
 
 mod find;
+mod freeze;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -35,6 +36,20 @@ enum Commands {
     Find {
         #[command(subcommand)]
         command: FindCommands,
+    },
+    /// Export a compact official project base (config.yaml + project.geojson)
+    Freeze {
+        /// Project directory (or path to config.yaml)
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
+        /// Output directory (default: <project>/{slug}-base-{date}/)
+        #[arg(short, long, value_name = "DIR")]
+        output: Option<PathBuf>,
+        /// Include sites in config.yaml
+        #[arg(long)]
+        include_sites: bool,
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -116,6 +131,14 @@ async fn main() -> Result<()> {
                 watch_port,
             )
             .await?;
+        }
+        Commands::Freeze {
+            project,
+            output,
+            include_sites,
+            verbose,
+        } => {
+            freeze::run(project, output, include_sites, verbose)?;
         }
     }
     Ok(())

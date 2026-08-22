@@ -23,6 +23,7 @@ Targets **v0.5.0** (first v5 release). Promote to `## [v0.5.0] - YYYY-MM-DD` whe
 - **Parallel workers** — `simulation.max_workers.dem` and `max_workers.coverage` tune Skadi fetch and viewshed warm pools.
 - **Release CI** — tagged builds for Linux x64 and macOS (x64 + arm64) on `v*` push.
 - **Auto-finder** — `peaky find path` for onX KML routes with optional `--watch` live map (included in v5 cutover).
+- **Official base export** — `peaky freeze <project>` writes a compact publishable directory (`config.yaml`, `project.geojson`, `freeze.json`) with land filters baked in and source attributes stripped; optional `--include-sites`.
 
 ### Changed
 

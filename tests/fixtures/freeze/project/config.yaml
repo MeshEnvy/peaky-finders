@@ -1,0 +1,67 @@
+modem_presets:
+  meshcore-us:
+    frequency_mhz: 910.525
+    bandwidth_khz: 62.5
+    spreading_factor: 7
+    coding_rate: 5
+    implementation_margin_db: 3.0
+    power_dbm: 22.0
+    sensitivity_dbm: -121.0
+environment_presets:
+  test-env:
+    climate: desert
+    polarization: vertical
+    clutter_height_m: 1.0
+    fresnel_clearance_fraction: 0.25
+    coverage_pessimism_db: 0.0
+    situation_pct: 95.0
+    time_pct: 95.0
+    ground_dielectric_v_m: 15.0
+    ground_conductivity_s_m: 0.005
+    atmosphere_bending_n: 301.0
+simulation:
+  provider: splatter
+  radius_km: 50.0
+  viewshed_quality: 3
+  modem: meshcore-us
+  environment: test-env
+  transmitter:
+    height_m: 1.5
+    gain_dbi: 3
+    loss_db: 2
+  receiver:
+    height_m: 2
+    gain_dbi: 3
+    loss_db: 2
+display:
+  colormap: plasma
+  transparency: 50.0
+  min_dbm: -130.0
+  max_dbm: -80.0
+land:
+  sources:
+    test:
+      path: data/land.geojson
+      enabled: true
+      layers:
+      - name: land
+        id: keep
+        role: include
+        include:
+        - field: kind
+          values:
+          - keep
+        exclude: []
+        style:
+          color: '#00ff00'
+          opacity: 0.35
+sites:
+  site-a:
+    name: Site A
+    loc:
+    - 39.0
+    - -119.0
+    description: null
+    tags:
+    - test
+links: []

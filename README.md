@@ -46,6 +46,17 @@ Skadi tiles and RF cache live under `<project>/.peaky/cache/`.
 
 Peaky merges split files at load time. Small projects can keep everything in one `config.yaml`.
 
+### Official base export
+
+Publish a compact project others can run without your `data/` tree or GDB sources:
+
+```bash
+peaky freeze /path/to/project
+peaky serve /path/to/project/my-project-base-2026-08-22 --port 8080
+```
+
+Default output: `<project>/{slug}-base-{date}/` with `config.yaml`, `project.geojson`, and `freeze.json`. Land attribute filters are executed at export; only baked geometry is kept. Pass `--include-sites` to embed the site list. Override the directory with `-o DIR` (must be empty).
+
 ### Land imports
 
 GeoJSON works out of the box. File Geodatabase (`.gdb`) imports need [GDAL](https://gdal.org/) installed (`ogr2ogr` on your `PATH`).

@@ -1,0 +1,19 @@
+[package]
+name = "peaky-freeze"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+peaky-geo.workspace = true
+peaky-preset.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+time = { version = "0.3", default-features = false, features = ["std"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

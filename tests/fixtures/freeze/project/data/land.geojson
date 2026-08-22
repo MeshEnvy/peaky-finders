@@ -1,0 +1,29 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "kind": "keep", "name": "A" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-119.01, 39.01], [-119.0, 39.01], [-119.0, 39.02], [-119.01, 39.02], [-119.01, 39.01]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "kind": "keep", "name": "B" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-118.99, 39.01], [-118.98, 39.01], [-118.98, 39.02], [-118.99, 39.02], [-118.99, 39.01]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "kind": "drop", "name": "C" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-119.05, 39.05], [-119.04, 39.05], [-119.04, 39.06], [-119.05, 39.06], [-119.05, 39.05]]]
+      }
+    }
+  ]
+}

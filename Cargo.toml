@@ -4,6 +4,7 @@ members = [
     "splatter",
     "crates/peaky-preset",
     "crates/peaky-geo",
+    "crates/peaky-freeze",
     "crates/peaky-serve",
     "crates/peaky-finder",
     "cmd/peaky",
@@ -24,6 +25,7 @@ geozero = { version = "0.14", default-features = false, features = ["with-geo", 
 geo = "0.28"
 geojson = { version = "0.24", features = ["geo-types"] }
 parking_lot = "0.12"
+peaky-freeze = { path = "crates/peaky-freeze" }
 peaky-geo = { path = "crates/peaky-geo" }
 peaky-preset = { path = "crates/peaky-preset" }
 peaky-serve = { path = "crates/peaky-serve" }

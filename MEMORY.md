@@ -29,7 +29,8 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | Path | Role |
 |------|------|
 | `Dockerfile` | `peaky:latest` — mount project at `/project` |
-| `cmd/peaky/` | CLI binary (`serve`, `find path`; `serve --fast-boot`) |
+| `cmd/peaky/` | CLI binary (`serve`, `find path`, `freeze`; `serve --fast-boot`) |
+| `crates/peaky-freeze/` | Official base export: bake land pipeline → `project.geojson` + distilled `config.yaml` |
 | `crates/peaky-finder/` | Auto-finder: route → min-site RF chain + config patch |
 | `crates/peaky-preset/` | Preset model, YAML I/O, paths, sites, home catalogs |
 | `crates/peaky-geo/` | GeoJSON land query, eligible land, KML import, PPM polygonize |
