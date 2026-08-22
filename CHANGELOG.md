@@ -10,7 +10,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
-Targets **v0.5.0** (first v5 release). Promote to `## [v0.5.0] - YYYY-MM-DD` when tagging.
+## [v0.5.0] - 2026-08-22
+
+First v5 release: Rust workspace, self-contained projects, land from GDB, release CI.
 
 ### Added
 
