@@ -28,13 +28,14 @@ pub use io::{
 };
 pub use yaml_io::read_preset_document;
 pub use model::{
-    default_viewshed_polygon_style, resolved_coverage_dispatcher_max_workers,
+    default_viewshed_polygon_style, resolved_coverage_max_workers, resolved_dem_fetch_max_workers,
     resolved_viewshed_polygon_style, slugify_files_segment, validate_preset,
     validate_project_preset_document, CoverageProvider, DisplayConfig, LandAttributeFilter,
     LandConfig, LandDownloadKind, LandLayerEntry, LandLayerRole, LandLayerStyle, LandLayerStyleValue,
     LandSidebar, LandSidebarFolder, LandSourceEntry, LandSourceRefresh, Preset, PresetResult,
     PresetValidationError, SeekConfig, SeekPlan, SeekPlanHop, SimulationConfig,
-    SimulationMaxWorkers, SiteEntry, ViewshedPolygonStyle,
+    SimulationMaxWorkers, SiteEntry, ViewshedPolygonStyle, DEFAULT_COVERAGE_MAX_WORKERS,
+    DEFAULT_DEM_MAX_WORKERS,
 };
 pub use viewshed_quality::{
     dem_native_raster_dimension, effective_radius_m, effective_target_raster_dimension,

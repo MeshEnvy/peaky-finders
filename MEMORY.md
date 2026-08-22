@@ -17,7 +17,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | Interface | `peaky serve <project>` — web UI for one project directory |
 | RF engine | `splatter/` crate (in-process `Session`, library only) |
 | Land | GeoJSON at runtime. GDB sources: `peaky serve` / `peaky land refresh` download stale/missing files (`land.sources[].refresh.*`) and warm `.peaky/cache/land/` via ogr2ogr. **WGS84 required.** |
-| Dev | Host: `cargo run -p peaky -- serve <project-dir>` (e.g. `peaky-nevada`). `--release` for long RF only. Docker: mount project at `/project` only. Skadi + map tiles under `<project>/.peaky/cache/skadi/`. Optional `SPLAT_CACHE` override. DEM fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8) |
+| Dev | Host: `cargo run -p peaky -- serve <project-dir>` (e.g. `peaky-nevada`). `--release` for long RF only. Docker: mount project at `/project` only. Skadi + map tiles under `<project>/.peaky/cache/skadi/`. Optional `SPLAT_CACHE` override. Parallelism: `simulation.max_workers.coverage` (default 2, serve warm queue; env `PEAKY_COVERAGE_WORKERS`), `simulation.max_workers.dem` (default 4, Skadi fetch pool; env `PEAKY_DEM_FETCH_WORKERS`) |
 | Auto-finder | `peaky find path` — onX KML route → min-site RF chain; cache under `.peaky/cache/finder/`; **`--watch`** live MapLibre + SSE on localhost:9847 |
 | Ops | Public-land site tags + FO export live in ops: `peaky_home/scripts/tag_public_land.py`, `export_blm_fo_packet.py`. **Fleet-tool direction (ops, 08-14, speculative):** nevada YAML is the canonical site/fleet list; later creds + telemetry history may live next to the preset. **Do not** put passwords or keypairs in git-tracked `config.yaml`. → `ops/initiatives/peaky-fleet-management.md` |
 | Reference preset | `peaky-nevada/config.yaml` (standalone project repo) |
@@ -98,7 +98,7 @@ preset → CovRequest JSON (rf_json) → Session::link_eval / link_mutual_viable
 
 | Use | Dataset | Notes |
 |-----|---------|-------|
-| RF, viewsheds, seek, site height | Skadi SRTM mirror (`<project>/.peaky/cache/skadi`, `.hgt.gz`) | Single analysis DEM; parallel fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8). Retries: `PEAKY_SKADI_FETCH_RETRIES` (5), `PEAKY_SKADI_FETCH_TIMEOUT_SECS` (180), `PEAKY_SKADI_FETCH_CONNECT_TIMEOUT_SECS` (30) |
+| RF, viewsheds, seek, site height | Skadi SRTM mirror (`<project>/.peaky/cache/skadi`, `.hgt.gz`) | Single analysis DEM; fetch pool from `simulation.max_workers.dem` (default 4). Retries: `PEAKY_SKADI_FETCH_RETRIES` (5), `PEAKY_SKADI_FETCH_TIMEOUT_SECS` (180), `PEAKY_SKADI_FETCH_CONNECT_TIMEOUT_SECS` (30) |
 | Skadi basemap + 3D terrain mesh | Same Skadi mirror, rendered to hillshade/terrarium PNGs | Must match on-disk HGT before tile serves |
 | USGS Topo / satellite / street basemaps | External tile APIs (MapLibre) | **Visualization only** — separate rasters from analysis DEM |
 

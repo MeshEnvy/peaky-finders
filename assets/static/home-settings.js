@@ -121,7 +121,7 @@ import {
     if (input && label) label.textContent = input.value;
   }
 
-  const SKIP_LIVE_OVERRIDE_KEYS = new Set(["max_workers.splatter"]);
+  const SKIP_LIVE_OVERRIDE_KEYS = new Set(["max_workers.coverage", "max_workers.dem"]);
 
   const FORM_FIELD_BY_PATH = {
     modem: "home-sim-modem",
@@ -134,7 +134,8 @@ import {
     "receiver.height_m": "home-sim-rx-height",
     "receiver.gain_dbi": "home-sim-rx-gain",
     "receiver.loss_db": "home-sim-rx-loss",
-    "max_workers.splatter": "home-sim-splatter-workers",
+    "max_workers.coverage": "home-sim-coverage-workers",
+    "max_workers.dem": "home-sim-dem-workers",
   };
 
   function getDefaultAtPath(path) {
@@ -303,7 +304,8 @@ import {
     setNum("home-sim-rx-gain", rx.gain_dbi);
     setNum("home-sim-rx-loss", rx.loss_db);
     const workers = sim.max_workers || {};
-    setNum("home-sim-splatter-workers", workers.splatter != null ? workers.splatter : 1);
+    setNum("home-sim-coverage-workers", workers.coverage != null ? workers.coverage : 2);
+    setNum("home-sim-dem-workers", workers.dem != null ? workers.dem : 4);
     applyOverrideStyles();
     updateGearSummary();
   }
@@ -476,7 +478,8 @@ import {
         loss_db: num("home-sim-rx-loss"),
       },
       max_workers: {
-        splatter: num("home-sim-splatter-workers"),
+        coverage: num("home-sim-coverage-workers"),
+        dem: num("home-sim-dem-workers"),
       },
     };
   }

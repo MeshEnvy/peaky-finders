@@ -408,14 +408,23 @@
                   </div>
                 </div>
               </div>
-                      <div class="home-sim-field home-sim-col" data-override-key="max_workers.splatter">
+                      <div class="home-sim-field home-sim-col" data-override-key="max_workers.coverage">
                 <div class="pf-field-head">
-                  <span class="pf-label">Splatter workers</span>
-                  <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="max_workers.splatter" hidden type="button" title="Reset to default" aria-label="Reset to default">
+                  <span class="pf-label">Coverage workers</span>
+                  <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="max_workers.coverage" hidden type="button" title="Reset to default" aria-label="Reset to default">
   <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
 </wa-button>
                 </div>
-                <input id="home-sim-splatter-workers" type="number" min="1" step="1" class="home-sim-field--narrow">
+                <input id="home-sim-coverage-workers" type="number" min="1" step="1" class="home-sim-field--narrow">
+              </div>
+                      <div class="home-sim-field home-sim-col" data-override-key="max_workers.dem">
+                <div class="pf-field-head">
+                  <span class="pf-label">DEM fetch workers</span>
+                  <wa-button class="home-sim-reset" appearance="plain" size="s" data-override-key="max_workers.dem" hidden type="button" title="Reset to default" aria-label="Reset to default">
+  <wa-icon name="arrow-rotate-left" label="Reset to default"></wa-icon>
+</wa-button>
+                </div>
+                <input id="home-sim-dem-workers" type="number" min="1" step="1" class="home-sim-field--narrow">
               </div>
       </div>
     </wa-tab-panel>

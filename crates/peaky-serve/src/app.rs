@@ -5,7 +5,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::Router;
-use peaky_preset::resolved_skadi_mirror_dir_for_project;
+use peaky_preset::{
+    load_preset, resolved_coverage_max_workers, resolved_dem_fetch_max_workers,
+    resolved_skadi_mirror_dir_for_project,
+};
 use splatter::Session;
 use tokio::sync::Semaphore;
 use tower_http::trace::TraceLayer;
@@ -39,14 +42,17 @@ pub async fn run_server(host: &str, port: u16, verbose: bool, project: &std::pat
     }
     tracing::info!("project {} ({})", slug, project_dir.display());
 
+    let preset = load_preset(&preset_path)?;
     let mirror = resolved_skadi_mirror_dir_for_project(&project_dir);
     std::fs::create_dir_all(&mirror)?;
-    let session = Arc::new(Session::new(mirror, verbose));
+    let dem_workers = resolved_dem_fetch_max_workers(&preset);
+    let coverage_workers = resolved_coverage_max_workers(&preset);
+    let session = Arc::new(Session::new(mirror, verbose, dem_workers));
     let events = crate::events::ServeEventHub::default();
     let state = AppState {
         session: session.clone(),
         events: events.clone(),
-        warm: WarmHub::new(session.clone(), events, verbose),
+        warm: WarmHub::new(session.clone(), events, verbose, coverage_workers),
         seek: SeekHub::new(session, verbose),
         verbose,
         dem_tile_render: Arc::new(Semaphore::new(crate::state::DEM_TILE_RENDER_PERMITS)),

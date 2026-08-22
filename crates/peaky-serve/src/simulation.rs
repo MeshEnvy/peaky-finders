@@ -36,7 +36,10 @@ pub fn serialize_simulation(sim: &SimulationConfig) -> Value {
         "raster_dimension": raster_dimension,
         "transmitter": sim.transmitter.iter().map(|(k, v)| (k.clone(), yaml_to_json(v))).collect::<HashMap<_, _>>(),
         "receiver": sim.receiver.iter().map(|(k, v)| (k.clone(), yaml_to_json(v))).collect::<HashMap<_, _>>(),
-        "max_workers": { "splatter": sim.max_workers.splatter },
+        "max_workers": {
+            "coverage": sim.max_workers.coverage,
+            "dem": sim.max_workers.dem,
+        },
     })
 }
 

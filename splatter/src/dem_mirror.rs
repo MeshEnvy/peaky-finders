@@ -1,7 +1,8 @@
 //! Priority queue worker pool for Skadi ``*.hgt.gz`` mirror downloads.
 //!
 //! On-demand callers block at [`PRIORITY_DEM_BLOCKING`]; background warm uses lower priority.
-//! Up to [`fetch_workers()`] concurrent downloads; duplicate enqueue bumps priority.
+//! Up to N concurrent downloads (from preset `simulation.max_workers.dem` at serve startup);
+//! duplicate enqueue bumps priority.
 //!
 //! Console tracing: run `peaky serve --verbose` or set `PEAKY_DEM_MIRROR_LOG=1`.
 
@@ -33,15 +34,6 @@ fn map_queue_cap() -> usize {
         .and_then(|v| v.parse().ok())
         .filter(|n| *n >= 1)
         .unwrap_or(128)
-}
-
-fn fetch_workers() -> usize {
-    env::var("PEAKY_DEM_FETCH_WORKERS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n >= 1)
-        .unwrap_or(8)
-        .min(16)
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -178,8 +170,9 @@ impl DemMirrorInner {
 }
 
 impl DemMirror {
-    pub fn start(mirror_root: PathBuf, verbose: bool) -> Self {
+    pub fn start(mirror_root: PathBuf, verbose: bool, fetch_workers: usize) -> Self {
         std::fs::create_dir_all(&mirror_root).ok();
+        let workers = fetch_workers.max(1).min(16);
         let inner = Arc::new(DemMirrorInner {
             mirror_root: mirror_root.clone(),
             verbose,
@@ -196,12 +189,11 @@ impl DemMirror {
         });
         if mirror_log_enabled(verbose) {
             inner.log(format!(
-                "worker pool started mirror={} workers={} (PEAKY_DEM_FETCH_WORKERS, PEAKY_DEM_MIRROR_LOG=1 or --verbose)",
+                "worker pool started mirror={} workers={} (simulation.max_workers.dem, PEAKY_DEM_FETCH_WORKERS override, PEAKY_DEM_MIRROR_LOG=1 or --verbose)",
                 mirror_root.display(),
-                fetch_workers()
+                workers
             ));
         }
-        let workers = fetch_workers();
         for _ in 0..workers {
             let worker = Arc::clone(&inner);
             thread::spawn(move || DemMirrorInner::run_worker(worker));
@@ -547,7 +539,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("N40W119.hgt.gz"), b"x").unwrap();
-        let mirror = DemMirror::start(dir.clone(), false);
+        let mirror = DemMirror::start(dir.clone(), false, 4);
         assert!(mirror.is_on_disk("N40W119.hgt.gz"));
         mirror.prefetch(&["N40W119.hgt.gz".into()], PRIORITY_DEM_BACKGROUND);
         assert_eq!(mirror.queue_depth(), 0);
@@ -559,7 +551,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dem-mirror-cap-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let mirror = DemMirror::start(dir.clone(), false);
+        let mirror = DemMirror::start(dir.clone(), false, 4);
         let cap = map_queue_cap();
         for i in 0..cap {
             let lat = 40 + (i / 10) as i32;

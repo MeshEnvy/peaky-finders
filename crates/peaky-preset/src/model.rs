@@ -29,15 +29,18 @@ pub enum CoverageProvider {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SimulationMaxWorkers {
-    pub splatter: u32,
-    pub splat: u32,
+    pub coverage: u32,
+    pub dem: u32,
 }
+
+pub const DEFAULT_COVERAGE_MAX_WORKERS: u32 = 2;
+pub const DEFAULT_DEM_MAX_WORKERS: u32 = 4;
 
 impl Default for SimulationMaxWorkers {
     fn default() -> Self {
         Self {
-            splatter: 1,
-            splat: 1,
+            coverage: DEFAULT_COVERAGE_MAX_WORKERS,
+            dem: DEFAULT_DEM_MAX_WORKERS,
         }
     }
 }
@@ -507,8 +510,25 @@ pub fn validate_preset(preset: &Preset) -> PresetResult<()> {
     Ok(())
 }
 
-pub fn resolved_coverage_dispatcher_max_workers(preset: &Preset) -> u32 {
-    preset.simulation.max_workers.splatter
+fn env_worker_override(var: &str) -> Option<u32> {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n >= 1)
+}
+
+/// Concurrent site viewshed warm jobs (`peaky-serve` coverage queue).
+/// Each job uses rayon row parallelism internally — keep this low.
+pub fn resolved_coverage_max_workers(preset: &Preset) -> usize {
+    env_worker_override("PEAKY_COVERAGE_WORKERS")
+        .unwrap_or(preset.simulation.max_workers.coverage.max(1)) as usize
+}
+
+/// Concurrent Skadi HGT download workers (`DemMirror` fetch pool).
+pub fn resolved_dem_fetch_max_workers(preset: &Preset) -> usize {
+    env_worker_override("PEAKY_DEM_FETCH_WORKERS")
+        .unwrap_or(preset.simulation.max_workers.dem.max(1))
+        .min(16) as usize
 }
 
 #[cfg(test)]

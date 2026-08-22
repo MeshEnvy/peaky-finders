@@ -3,7 +3,10 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use peaky_preset::{load_preset, resolved_skadi_mirror_dir_for_project};
+use peaky_preset::{
+    load_preset, resolved_dem_fetch_max_workers, resolved_skadi_mirror_dir_for_project,
+    DEFAULT_DEM_MAX_WORKERS,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use splatter::session::Session;
@@ -40,7 +43,10 @@ pub struct FindPathOutcome {
 pub fn new_session(project_dir: &std::path::Path, verbose: bool) -> Arc<Session> {
     let mirror = resolved_skadi_mirror_dir_for_project(project_dir);
     let _ = std::fs::create_dir_all(&mirror);
-    Arc::new(Session::new(mirror, verbose))
+    let dem_workers = load_preset(&project_dir.join("config.yaml"))
+        .map(|p| resolved_dem_fetch_max_workers(&p))
+        .unwrap_or(DEFAULT_DEM_MAX_WORKERS as usize);
+    Arc::new(Session::new(mirror, verbose, dem_workers))
 }
 
 pub fn run_find_path(

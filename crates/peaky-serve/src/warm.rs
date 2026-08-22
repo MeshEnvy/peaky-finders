@@ -34,14 +34,6 @@ pub const PRIORITY_BACKGROUND: i32 = 100;
 
 const LINKS_REFRESH_DEBOUNCE_MS: u64 = 2000;
 
-fn coverage_workers() -> usize {
-    std::env::var("PEAKY_COVERAGE_WORKERS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n >= 1)
-        .unwrap_or(4)
-}
-
 type JobFn = Box<dyn FnOnce() + Send>;
 
 struct JobState {
@@ -210,16 +202,23 @@ pub struct WarmHub {
     session: Arc<Session>,
     events: ServeEventHub,
     verbose: bool,
+    coverage_workers: usize,
     projects: Arc<Mutex<HashMap<String, Arc<ProjectWarm>>>>,
     workers_started: Arc<AtomicBool>,
 }
 
 impl WarmHub {
-    pub fn new(session: Arc<Session>, events: ServeEventHub, verbose: bool) -> Self {
+    pub fn new(
+        session: Arc<Session>,
+        events: ServeEventHub,
+        verbose: bool,
+        coverage_workers: usize,
+    ) -> Self {
         Self {
             session,
             events,
             verbose,
+            coverage_workers: coverage_workers.max(1),
             projects: Arc::new(Mutex::new(HashMap::new())),
             workers_started: Arc::new(AtomicBool::new(false)),
         }
@@ -229,7 +228,7 @@ impl WarmHub {
         if self.workers_started.swap(true, Ordering::SeqCst) {
             return;
         }
-        let workers = coverage_workers();
+        let workers = self.coverage_workers;
         for i in 0..workers {
             let q = queue.clone();
             thread::Builder::new()

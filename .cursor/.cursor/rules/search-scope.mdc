@@ -1,0 +1,32 @@
+---
+description: Scope code search to the Peaky v5 subtree that owns the symbol or behavior
+alwaysApply: true
+---
+
+# Search scope — Peaky Finders
+
+Peaky work lives in **`peaky_finders/`**. Enterprise routing: `ops/.cursor/rules/search-scope.mdc`. **Always pass an explicit path** to grep, glob, and codebase search. Do not search unscoped across sibling workspace roots.
+
+## Default search roots
+
+| Topic | Path | Examples |
+|-------|------|----------|
+| RF engine, coverage, links, DEM | `splatter/` | `Session::run`, propagate |
+| HTTP serve, warm queue, viewshed | `crates/peaky-serve/` | `warm.rs`, `viewshed.rs`, `api.rs` |
+| Preset YAML model, init | `crates/peaky-preset/` | `SimulationConfig`, `load_preset` |
+| `peaky find path` | `crates/peaky-finder/` | seek, route, search |
+| Geo / eligible land | `crates/peaky-geo/` | land fetch, polygonize |
+| CLI entry | `cmd/peaky/` | `serve`, `find` |
+| Static UI assets | `assets/` | `home-settings.js`, templates |
+
+**Project data** (sites, `config.yaml`, land caches) lives in the **project leaf** (e.g. `peaky-nevada/`), not in this repo.
+
+## When to widen
+
+Search outside this repo only for cross-leaf integration (project YAML, ops initiatives, meshenvy.org map). Name the target path in the tool call.
+
+## Anti-patterns
+
+- Unscoped search when open files or MEMORY already imply `splatter/` or `peaky-serve/`.
+- Searching all of `meshenvy/` for Peaky symbols.
+- Confusing v4 Python (`peaky-finders-v4/`) with v5 Rust — port reference only, not runtime search target.

@@ -1400,7 +1400,7 @@ mod tests {
         let preset_path = peaky_preset::resolve_preset_path("nevada");
         let preset = load_preset(&preset_path).expect("nevada preset");
         let rf_json = rf_json_for_preset(&preset).expect("rf json");
-        let session = Session::new(resolved_skadi_mirror_dir(), false);
+        let session = Session::new(resolved_skadi_mirror_dir(), false, 4);
         let from_lat = 36.4625;
         let from_lon = -116.06;
         let hop_m = 72_000.0;
@@ -1446,7 +1446,7 @@ mod tests {
         let preset_path = peaky_preset::resolve_preset_path("nevada");
         let preset = load_preset(&preset_path).expect("nevada preset");
         let rf_json = rf_json_for_preset(&preset).expect("rf json");
-        let session = Session::new(resolved_skadi_mirror_dir(), false);
+        let session = Session::new(resolved_skadi_mirror_dir(), false, 4);
         let from_lat = 38.648998;
         let from_lon = -119.100998;
         let sing_lat = 38.986095;
@@ -1632,7 +1632,7 @@ land:
             let preset_path = write_seek_fixture_project(home);
             let mirror = home.join("mirror");
             std::fs::create_dir_all(&mirror).expect("mirror");
-            let session = Arc::new(Session::new(mirror, false));
+            let session = Arc::new(Session::new(mirror, false, 4));
             session.install_dem_mosaic(seek_test_dem(3601));
             let hub = SeekHub::new(session, false);
             let req = seek_sample_request(&preset_path);
@@ -1667,14 +1667,14 @@ land:
             let preset_path = write_seek_fixture_project(home);
             let mirror = home.join("mirror");
             std::fs::create_dir_all(&mirror).expect("mirror");
-            let session = Arc::new(Session::new(mirror, false));
+            let session = Arc::new(Session::new(mirror, false, 4));
             session.install_dem_mosaic(seek_test_dem(3601));
             let events = ServeEventHub::default();
             let seek = SeekHub::new(Arc::clone(&session), false);
             let state = AppState {
                 session: Arc::clone(&session),
                 events: events.clone(),
-                warm: WarmHub::new(session, events, false),
+                warm: WarmHub::new(session, events, false, 2),
                 seek,
                 verbose: false,
                 dem_tile_render: Arc::new(Semaphore::new(crate::state::DEM_TILE_RENDER_PERMITS)),
