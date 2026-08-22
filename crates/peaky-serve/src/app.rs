@@ -51,7 +51,20 @@ pub async fn run_server(
 
     if land_refresh {
         tracing::info!("land: validating sources and refreshing stale data");
-        prepare_land_at_boot(&preset_path, verbose).context("land boot prepare")?;
+        let boot_preset = preset_path.clone();
+        let summary = tokio::task::spawn_blocking(move || prepare_land_at_boot(&boot_preset, verbose))
+            .await
+            .context("land boot prepare task")?
+            .context("land boot prepare")?;
+        if !summary.failed.is_empty() {
+            for failure in &summary.failed {
+                tracing::warn!(
+                    source_id = %failure.source_id,
+                    error = %failure.error,
+                    "land refresh failed (non-fatal)"
+                );
+            }
+        }
     }
 
     let preset = load_preset(&preset_path)?;

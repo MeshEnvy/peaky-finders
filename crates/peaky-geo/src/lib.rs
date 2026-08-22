@@ -3,6 +3,7 @@
 pub mod eligible_land;
 pub mod kml_import;
 pub mod land_aoi_clip;
+pub mod land_boot;
 pub mod land_cache;
 pub mod land_fetch;
 pub mod land_filter;

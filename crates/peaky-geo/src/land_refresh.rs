@@ -1,13 +1,16 @@
 //! Land source refresh metadata — staleness audit from preset YAML + on-disk mtime.
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use peaky_preset::{
     load_preset, patch_land_source_last_updated, LandDownloadKind, LandSourceEntry, Preset,
 };
+use rayon::prelude::*;
 use serde::Serialize;
 
+use crate::land_boot::{land_boot_pool, land_boot_workers};
 use crate::land_cache::ensure_land_caches_for_preset;
 use crate::land_fetch::refresh_land_source_file;
 use crate::land_validate::validate_land_source;
@@ -318,6 +321,31 @@ fn refreshable(row: &LandSourceRefreshRow, entry: &LandSourceEntry, force: bool)
     )
 }
 
+struct LandRefreshJob {
+    source_id: String,
+    path: String,
+    url: String,
+    kind: LandDownloadKind,
+}
+
+fn log_audit_row(row: &LandSourceRefreshRow, entry: &LandSourceEntry) {
+    if !entry.is_enabled() {
+        tracing::info!(
+            source_id = %row.source_id,
+            path = %row.path,
+            "land audit: disabled"
+        );
+        return;
+    }
+    tracing::info!(
+        source_id = %row.source_id,
+        path = %row.path,
+        status = ?row.status,
+        last_updated = row.last_updated.as_deref().unwrap_or("-"),
+        "land audit"
+    );
+}
+
 pub fn refresh_due_land_sources(
     preset_path: &Path,
     force: bool,
@@ -329,39 +357,93 @@ pub fn refresh_due_land_sources(
         .context("preset path must have parent")?;
     let report = audit_land_refresh_for_preset(preset_path)?;
     let today = today_utc_ymd_string();
+    let workers = land_boot_workers();
+
+    tracing::info!(sources = report.rows.len(), workers, "land: audit complete");
 
     let mut summary = LandRefreshRunSummary::default();
+    let mut jobs: Vec<LandRefreshJob> = Vec::new();
+
     for row in &report.rows {
         let Some(entry) = preset.land.sources.get(&row.source_id) else {
             continue;
         };
+        log_audit_row(row, entry);
         if !entry.is_enabled() {
             summary.skipped.push(row.source_id.clone());
             continue;
-        };
+        }
         if !refreshable(row, entry, force) {
             summary.skipped.push(row.source_id.clone());
             continue;
         }
         let refresh = entry.refresh.as_ref().context("refresh metadata missing")?;
         let url = refresh.download_url.as_ref().context("download_url missing")?;
-        let kind = refresh.download_kind.unwrap_or(LandDownloadKind::Filegdb);
-        if verbose {
-            eprintln!("refresh [{}]", row.source_id);
-        }
-        match refresh_land_source_file(project_dir, &entry.path, url, kind, verbose) {
-            Ok(()) => {
-                patch_land_source_last_updated(preset_path, &row.source_id, &today)
-                    .with_context(|| format!("stamp lastUpdated for {}", row.source_id))?;
-                summary.refreshed.push(row.source_id.clone());
+        jobs.push(LandRefreshJob {
+            source_id: row.source_id.clone(),
+            path: entry.path.clone(),
+            url: url.clone(),
+            kind: refresh.download_kind.unwrap_or(LandDownloadKind::Filegdb),
+        });
+    }
+
+    if jobs.is_empty() {
+        tracing::info!("land refresh: nothing due");
+    } else {
+        tracing::info!(count = jobs.len(), workers, "land refresh: downloading");
+        let preset_path = preset_path.to_path_buf();
+        let project_dir = project_dir.to_path_buf();
+        let results: Vec<(String, Result<()>)> = land_boot_pool().install(|| {
+            jobs.par_iter()
+                .map(|job| {
+                    tracing::info!(
+                        source_id = %job.source_id,
+                        path = %job.path,
+                        kind = ?job.kind,
+                        "land refresh: start"
+                    );
+                    let result = refresh_land_source_file(
+                        &project_dir,
+                        &job.source_id,
+                        &job.path,
+                        &job.url,
+                        job.kind,
+                        verbose,
+                    );
+                    match &result {
+                        Ok(()) => tracing::info!(
+                            source_id = %job.source_id,
+                            path = %job.path,
+                            "land refresh: done"
+                        ),
+                        Err(e) => tracing::warn!(
+                            source_id = %job.source_id,
+                            path = %job.path,
+                            error = %e,
+                            "land refresh: failed"
+                        ),
+                    }
+                    (job.source_id.clone(), result)
+                })
+                .collect()
+        });
+
+        for (source_id, result) in results {
+            match result {
+                Ok(()) => {
+                    patch_land_source_last_updated(&preset_path, &source_id, &today)
+                        .with_context(|| format!("stamp lastUpdated for {source_id}"))?;
+                    summary.refreshed.push(source_id);
+                }
+                Err(e) => summary.failed.push(LandRefreshFailure {
+                    source_id,
+                    error: format!("{e:#}"),
+                }),
             }
-            Err(e) => summary.failed.push(LandRefreshFailure {
-                source_id: row.source_id.clone(),
-                error: format!("{e:#}"),
-            }),
         }
     }
 
+    tracing::info!("land: warming layer cache");
     summary.cache = Some(ensure_land_caches_for_preset(preset_path, verbose)?);
     Ok(summary)
 }
@@ -393,16 +475,42 @@ pub fn prepare_land_at_boot(preset_path: &Path, verbose: bool) -> Result<LandRef
 
     let mut summary = refresh_due_land_sources(preset_path, false, verbose)?;
 
-    let mut failures: Vec<(String, String)> = Vec::new();
-    for (source_id, entry) in &preset.land.sources {
-        if !entry.is_enabled() {
-            continue;
-        }
-        if let Err(e) = validate_land_source(project_dir, entry) {
-            failures.push((source_id.clone(), e.to_string()));
-        }
-    }
+    let enabled: Vec<(String, LandSourceEntry)> = preset
+        .land
+        .sources
+        .iter()
+        .filter(|(_, entry)| entry.is_enabled())
+        .map(|(id, entry)| (id.clone(), entry.clone()))
+        .collect();
+    let workers = land_boot_workers();
+    tracing::info!(count = enabled.len(), workers, "land validate: checking enabled sources");
 
+    let failures: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+    land_boot_pool().install(|| {
+        enabled.par_iter().for_each(|(source_id, entry)| {
+            match validate_land_source(project_dir, entry) {
+                Ok(()) => tracing::info!(
+                    source_id = %source_id,
+                    path = %entry.path,
+                    "land validate: ok"
+                ),
+                Err(e) => {
+                    tracing::warn!(
+                        source_id = %source_id,
+                        path = %entry.path,
+                        error = %e,
+                        "land validate: failed"
+                    );
+                    failures
+                        .lock()
+                        .expect("land validate failure list")
+                        .push((source_id.clone(), e.to_string()));
+                }
+            }
+        });
+    });
+
+    let failures = failures.into_inner().expect("land validate failure list");
     if !failures.is_empty() {
         anyhow::bail!("{}", format_land_boot_wedge(&failures));
     }
@@ -410,6 +518,16 @@ pub fn prepare_land_at_boot(preset_path: &Path, verbose: bool) -> Result<LandRef
     if summary.cache.is_none() {
         summary.cache = Some(ensure_land_caches_for_preset(preset_path, verbose)?);
     }
+
+    let cache = summary.cache.as_ref();
+    tracing::info!(
+        refreshed = summary.refreshed.len(),
+        skipped = summary.skipped.len(),
+        failed = summary.failed.len(),
+        cache_exported = cache.map(|c| c.exported).unwrap_or(0),
+        cache_copied = cache.map(|c| c.copied).unwrap_or(0),
+        "land boot complete"
+    );
 
     Ok(summary)
 }

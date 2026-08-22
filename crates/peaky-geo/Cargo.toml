@@ -10,7 +10,9 @@ geo.workspace = true
 geojson.workspace = true
 geozero = { version = "0.14", default-features = false, features = ["with-geo", "with-wkb"] }
 peaky-preset.workspace = true
+rayon.workspace = true
 reqwest.workspace = true
+tracing.workspace = true
 rstar.workspace = true
 serde.workspace = true
 serde_json.workspace = true

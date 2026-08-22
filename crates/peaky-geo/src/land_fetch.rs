@@ -22,6 +22,86 @@ fn client() -> Result<Client> {
         .context("build HTTP client")
 }
 
+fn format_bytes(n: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    const KIB: u64 = 1024;
+    if n >= MIB {
+        format!("{:.1} MB", n as f64 / MIB as f64)
+    } else if n >= KIB {
+        format!("{:.1} KB", n as f64 / KIB as f64)
+    } else {
+        format!("{n} B")
+    }
+}
+
+fn log_refresh_progress(
+    source_id: &str,
+    path: &str,
+    fetched: u32,
+    total: Option<u64>,
+    last_logged_pct: &mut u8,
+) {
+    match total {
+        Some(total) if total > 0 => {
+            let pct = ((fetched as u64 * 100) / total).min(100) as u8;
+            if *last_logged_pct == 0
+                || pct >= last_logged_pct.saturating_add(5)
+                || (pct == 100 && *last_logged_pct < 100)
+            {
+                tracing::info!(
+                    source_id = %source_id,
+                    path = %path,
+                    fetched,
+                    total,
+                    pct,
+                    "land refresh: progress"
+                );
+                *last_logged_pct = pct;
+            }
+        }
+        _ => {
+            let bucket = fetched / 5000;
+            if fetched <= 500 || bucket > (*last_logged_pct as u32) {
+                tracing::info!(
+                    source_id = %source_id,
+                    path = %path,
+                    fetched,
+                    "land refresh: progress"
+                );
+                *last_logged_pct = bucket.min(255) as u8;
+            }
+        }
+    }
+}
+
+fn featureserver_total_features(query_base: &str, layer_base: &str) -> Option<u64> {
+    let http = client().ok()?;
+    let count_url = format!("{query_base}?where=1%3D1&returnCountOnly=true&f=json");
+    if let Ok(resp) = http
+        .get(&count_url)
+        .timeout(Duration::from_secs(120))
+        .send()
+    {
+        if resp.status().is_success() {
+            if let Ok(body) = resp.bytes() {
+                if let Ok(value) = serde_json::from_slice::<Value>(&body) {
+                    if let Some(count) = value.get("count").and_then(|v| v.as_u64()) {
+                        return Some(count);
+                    }
+                }
+            }
+        }
+    }
+    let meta_url = format!("{layer_base}?f=json");
+    let resp = http.get(&meta_url).timeout(Duration::from_secs(120)).send().ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body = resp.bytes().ok()?;
+    let value: Value = serde_json::from_slice(&body).ok()?;
+    value.get("count").and_then(|v| v.as_u64())
+}
+
 pub fn download_bytes(url: &str, timeout_secs: u64) -> Result<Vec<u8>> {
     let client = client()?;
     let resp = client
@@ -34,6 +114,45 @@ pub fn download_bytes(url: &str, timeout_secs: u64) -> Result<Vec<u8>> {
     resp.bytes()
         .context("read response body")
         .map(|b| b.to_vec())
+}
+
+fn download_bytes_with_progress(
+    source_id: &str,
+    path: &str,
+    url: &str,
+    timeout_secs: u64,
+) -> Result<Vec<u8>> {
+    let client = client()?;
+    let resp = client
+        .get(url)
+        .timeout(Duration::from_secs(timeout_secs))
+        .send()
+        .with_context(|| format!("GET {url}"))?
+        .error_for_status()
+        .with_context(|| format!("HTTP error for {url}"))?;
+    if let Some(len) = resp.content_length() {
+        tracing::info!(
+            source_id = %source_id,
+            path = %path,
+            size = %format_bytes(len),
+            "land refresh: downloading"
+        );
+    } else {
+        tracing::info!(
+            source_id = %source_id,
+            path = %path,
+            "land refresh: downloading (size unknown)"
+        );
+    }
+    let data = resp.bytes().context("read response body")?.to_vec();
+    tracing::info!(
+        source_id = %source_id,
+        path = %path,
+        size = %format_bytes(data.len() as u64),
+        pct = 100,
+        "land refresh: progress"
+    );
+    Ok(data)
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
@@ -78,10 +197,21 @@ fn find_first_gdb(root: &Path) -> Result<PathBuf> {
     walk(root)?.context("no .gdb found in download zip")
 }
 
-pub fn install_filegdb_zip(data: &[u8], dest_gdb: &Path) -> Result<()> {
+pub fn install_filegdb_zip(
+    source_id: &str,
+    path: &str,
+    data: &[u8],
+    dest_gdb: &Path,
+) -> Result<()> {
     if let Some(parent) = dest_gdb.parent() {
         fs::create_dir_all(parent)?;
     }
+    tracing::info!(
+        source_id = %source_id,
+        path = %path,
+        size = %format_bytes(data.len() as u64),
+        "land refresh: extracting zip"
+    );
     let cursor = Cursor::new(data);
     let mut archive = match ZipArchive::new(cursor) {
         Ok(a) => a,
@@ -101,6 +231,12 @@ pub fn install_filegdb_zip(data: &[u8], dest_gdb: &Path) -> Result<()> {
     archive
         .extract(tmp.path())
         .context("extract filegdb zip")?;
+    tracing::info!(
+        source_id = %source_id,
+        path = %path,
+        pct = 100,
+        "land refresh: progress"
+    );
     let gdb = find_first_gdb(tmp.path())?;
     remove_dir_all_if_exists(dest_gdb)?;
     copy_dir_all(&gdb, dest_gdb)?;
@@ -126,15 +262,37 @@ fn write_feature_collection(dest: &Path, features: &[Feature], name: &str) -> Re
     Ok(())
 }
 
-pub fn download_featureserver_geojson(service_layer_url: &str, dest: &Path, verbose: bool) -> Result<()> {
+pub fn download_featureserver_geojson(
+    source_id: &str,
+    path: &str,
+    service_layer_url: &str,
+    dest: &Path,
+    verbose: bool,
+) -> Result<()> {
     let mut base = service_layer_url.trim_end_matches('/').to_string();
     if !base.ends_with("/0") {
         base.push_str("/0");
     }
     let query_base = format!("{base}/query");
+    let total = featureserver_total_features(&query_base, &base);
+    match total {
+        Some(count) => tracing::info!(
+            source_id = %source_id,
+            path = %path,
+            total = count,
+            "land refresh: feature count"
+        ),
+        None => tracing::info!(
+            source_id = %source_id,
+            path = %path,
+            "land refresh: feature count unknown"
+        ),
+    }
+
     let mut page_size: u32 = 500;
     let mut offset: u32 = 0;
     let mut features: Vec<Feature> = Vec::new();
+    let mut last_logged_pct: u8 = 0;
 
     if verbose {
         eprintln!("  featureserver paginate: {base}");
@@ -198,6 +356,7 @@ pub fn download_featureserver_geojson(service_layer_url: &str, dest: &Path, verb
         let batch_len = batch.len();
         features.extend(batch);
         offset += batch_len as u32;
+        log_refresh_progress(source_id, path, offset, total, &mut last_logged_pct);
         if verbose {
             eprintln!("    fetched {offset} features");
         }
@@ -205,6 +364,10 @@ pub fn download_featureserver_geojson(service_layer_url: &str, dest: &Path, verb
             break;
         }
         thread::sleep(Duration::from_millis(150));
+    }
+
+    if last_logged_pct < 100 {
+        log_refresh_progress(source_id, path, offset, total.or(Some(offset as u64)), &mut last_logged_pct);
     }
 
     let stem = dest
@@ -216,6 +379,7 @@ pub fn download_featureserver_geojson(service_layer_url: &str, dest: &Path, verb
 
 pub fn refresh_land_source_file(
     project_dir: &Path,
+    source_id: &str,
     rel_path: &str,
     download_url: &str,
     kind: LandDownloadKind,
@@ -233,17 +397,19 @@ pub fn refresh_land_source_file(
         );
     }
     match kind {
-        LandDownloadKind::Featureserver => download_featureserver_geojson(download_url, &dest, verbose),
+        LandDownloadKind::Featureserver => {
+            download_featureserver_geojson(source_id, rel_path, download_url, &dest, verbose)
+        }
         LandDownloadKind::Geojson => {
-            let data = download_bytes(download_url, 300)?;
+            let data = download_bytes_with_progress(source_id, rel_path, download_url, 300)?;
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&dest, &data).with_context(|| format!("write {}", dest.display()))
         }
         LandDownloadKind::Filegdb => {
-            let data = download_bytes(download_url, 300)?;
-            install_filegdb_zip(&data, &dest)
+            let data = download_bytes_with_progress(source_id, rel_path, download_url, 300)?;
+            install_filegdb_zip(source_id, rel_path, &data, &dest)
         }
         LandDownloadKind::Manual => bail!("manual download kind cannot be refreshed automatically"),
     }
