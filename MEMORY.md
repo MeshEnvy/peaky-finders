@@ -15,9 +15,9 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | Repo | `peaky-finders-v5` — pure Rust workspace |
 | v4 | Frozen reference; do not delete until v5 soak |
 | Interface | `peaky serve` — progressive web UI over preset YAML |
-| RF engine | `splatter/` crate (in-process `Session`, no PyO3) |
+| RF engine | `splatter/` crate (in-process `Session`, library only) |
 | Land | GeoJSON-only at runtime (no GDB/GDAL). GDB preset paths resolve via `data/*.geojson` fallbacks or `.peaky/cache/land/` exports. **WGS84 required.** |
-| Dev | `cargo build`, `cargo test`, `cargo run -p peaky -- serve` (dev = fast incremental). Use `--release` for long RF runs only; release uses LTO and rebuilds slowly. Finder RF phases use rayon; DEM fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8) |
+| Dev | Host: `cargo build`, `cargo test`, `cargo run -p peaky -- serve` (fast incremental). `--release` for long RF only (LTO, slow rebuild). Docker: `docker build -t peaky:latest .` then mount `PEAKY_HOME` + `SPLAT_CACHE`. DEM fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8) |
 | Auto-finder | `peaky find path` — onX KML route → min-site RF chain; cache under `.peaky/cache/finder/`; **`--watch`** live MapLibre + SSE on localhost:9847 |
 | Ops | Public-land site tags + FO export live in ops: `peaky_home/scripts/tag_public_land.py`, `export_blm_fo_packet.py`. **Fleet-tool direction (ops, 08-14, speculative):** nevada YAML is the canonical site/fleet list; later creds + telemetry history may live next to the preset. **Do not** put passwords or keypairs in git-tracked `config.yaml`. → `ops/initiatives/peaky-fleet-management.md` |
 | Reference preset | `$PEAKY_HOME/projects/nevada/config.yaml` (default: `ops/peaky_home`) |
@@ -26,12 +26,13 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 
 | Path | Role |
 |------|------|
+| `Dockerfile` | `peaky:latest` — mount `PEAKY_HOME` + `SPLAT_CACHE` |
 | `cmd/peaky/` | CLI binary (`serve`, `find path`) |
 | `crates/peaky-finder/` | Auto-finder: route → min-site RF chain + config patch |
 | `crates/peaky-preset/` | Preset model, YAML I/O, paths, sites, home catalogs |
 | `crates/peaky-geo/` | GeoJSON land query, eligible land, KML import, PPM polygonize |
 | `crates/peaky-serve/` | Axum app, API routes, HTML, embedded static |
-| `splatter/` | RF coverage engine (Skadi DEM, Fresnel/FSPL) |
+| `splatter/` | RF coverage engine (Skadi DEM, Fresnel/FSPL). Library only |
 | `assets/static/project-map/` | ESM modules: `main.js`, `legacy.js`, `constants.js`, `geo.js`, `viewshed-raster.js`, `land/`, `seek.js`, `viewsheds.js`, `links.js`, …; `app.css`, favicons (rust-embed) |
 | `assets/finder-watch/` | Embedded MapLibre page for `peaky find path --watch` |
 | `assets/templates/` | Server-rendered HTML fragments |

@@ -40,42 +40,20 @@ Preset mapping folds `environment.coverage_pessimism_db` into `modem.implementat
 
 Sites with identical propagation inputs (coords excluded from hash) reuse one digest folder.
 
-## CLI
+## `Session` API
 
-Built with `--no-default-features` (no PyO3):
-
-```bash
-cargo build --release --bin splatter --no-default-features
-splatter run --work-dir /work [--verbose]
-splatter run-batch --work-dir /work [--verbose]
-splatter input-sha256 --request /work/request.json
-```
-
-Env:
-
-| Var | Default | Role |
-|-----|---------|------|
-| `SPLAT_CACHE` | `<work-dir>/.tile_cache` | Skadi HGT mirror root |
-| `SPLATTER_BATCH_JOBS` | Rayon thread count | Parallel coverage jobs in one batch |
-
-Docker: `splatter/Dockerfile` → `splatter:latest` (CLI only).
-
-## PyO3 `Session` API
-
-Process-wide singleton via `get_session(mirror_root=..., verbose=..., reset=...)`.
+In-process via `splatter::Session` (shared resident DEM).
 
 | Method | Purpose |
 |--------|---------|
-| `preload_tiles(names)` | Load HGT tiles into resident mosaic |
-| `ensure_tiles_for_points(points, buffer_m)` | Tile union for lat/lon list + buffer |
-| `run(work_dir)` | Single coverage from `work_dir/request.json` |
-| `run_batch(work_dir, batch_jobs, requests_json=None)` | Batch; JSON array inline or from `request.json` |
+| `ensure_tiles_for_points` | Tile union for lat/lon list + buffer |
+| `run` / `run_batch` | Coverage from `request.json` |
 | `link_eval` / `link_viable` | One-way hop |
 | `link_mutual_viable` | Both directions must meet threshold |
 | `link_mutual_batch` | Parallel mutual checks |
-| `input_sha256(req)` | Hash helper |
+| `input_sha256` | Hash helper |
 
-Module: `splatter._core` (maturin); thin wrapper in `splatter/python/splatter/__init__.py`.
+Env: `SPLAT_CACHE` (Skadi HGT mirror), `SPLATTER_BATCH_JOBS` (rayon cap for one batch).
 
 ## Physics summary
 
@@ -87,20 +65,8 @@ Module: `splatter._core` (maturin); thin wrapper in `splatter/python/splatter/__
 
 ## Schema version bump checklist
 
-1. Increment `SPLAT_CACHE_SCHEMA_VERSION` in `splatter/src/hash.rs` and `peaky_finders/splat_input_hash.py`.
-2. Update golden hash in `splatter/tests/fixtures/splat_request_hash_fixture.json` test + `test_coverage_binaries.py` if fixture unchanged.
-3. Run `cargo test` in `splatter/` and `./peaky test tests/test_peaky_los_input_hash.py tests/test_coverage_binaries.py`.
-4. Document breaking impact; users re-run `peaky build --force` on affected presets.
+1. Increment `SPLAT_CACHE_SCHEMA_VERSION` in `splatter/src/hash.rs`.
+2. Update golden hash in `splatter/tests/fixtures/splat_request_hash_fixture.json`.
+3. Run `cargo test -p splatter`.
+4. Document breaking impact; viewshed caches invalidate by digest.
 5. Update MEMORY.md if artifact or workflow semantics change.
-
-## Packaging
-
-```
-splatter/
-  pyproject.toml       # maturin, module splatter._core
-  python/splatter/     # get_session, reset_session
-  src/lib.rs           # re-exports Session, hash
-  src/python.rs        # PyO3 module
-```
-
-Poetry path dep: `peaky_finders/pyproject.toml` → `splatter = { path = "../splatter" }`.

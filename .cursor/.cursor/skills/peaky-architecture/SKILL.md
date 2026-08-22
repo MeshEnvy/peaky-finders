@@ -14,10 +14,10 @@ description: >-
 | Piece | Choice |
 |-------|--------|
 | Interface | **`peaky serve`** — MapLibre web UI, on-demand RF |
-| RF engine | `splatter` submodule (PyO3) |
+| RF engine | `splatter/` crate (`Session`, in-process) |
 | Config | `$PEAKY_HOME/projects/<slug>/config.yaml` |
-| Code | `core/` (preset, viewshed, links) + `serve/` (HTTP UI) |
-| Dev/test | `./peaky serve`, `./peaky test` (Docker) |
+| Code | workspace crates + `cmd/peaky` |
+| Dev/test | `cargo run -p peaky -- serve`, `cargo test`. Image: repo-root `Dockerfile` |
 
 ## Sites
 

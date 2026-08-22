@@ -1,0 +1,15 @@
+.git
+.gitignore
+target
+**/target
+**/*.rs.bk
+.DS_Store
+.idea
+.vscode
+attic
+.cursor
+**/.cursor
+docs
+*.md
+!README.md
+splatter/README.md

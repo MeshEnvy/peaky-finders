@@ -1,31 +1,37 @@
+---
+name: peaky-dev
+description: >-
+  Peaky v5 host cargo workflow and Docker image. Use when running locally
+  or packaging peaky to run in a container.
+---
+
 # Peaky v5 dev workflow
 
-Use for local build, serve, and test — **no Docker wrapper**.
+Read [MEMORY.md](../../MEMORY.md) for env vars.
 
-## Build
+## Host
 
 ```bash
-cd peaky-finders-v5
-cargo build          # debug
+cargo build
 cargo build --release
-```
-
-## Serve
-
-```bash
 export PEAKY_HOME=/Volumes/Code/repos/meshenvy/ops/peaky_home   # or rely on default
 cargo run -p peaky -- serve --host 127.0.0.1 --port 8080
+cargo test
 ```
 
-Skadi mirror: `$PEAKY_HOME/splat_cache` (or `SPLAT_CACHE` env).
+Skadi mirror: `$SPLAT_CACHE` or `$PEAKY_HOME/splat_cache`. Use `--release` only for long RF runs.
 
-## Test
+## Docker
 
 ```bash
-cargo test
-cargo test -p splatter
-cargo test -p peaky-preset
+docker build -t peaky:latest .
+docker run --rm -p 8080:8080 \
+  -v "$PEAKY_HOME:/peaky_home" \
+  -v "${SPLAT_CACHE:-$HOME/.cache/splat}:/splat_cache" \
+  peaky:latest
 ```
+
+Image `PEAKY_HOME=/peaky_home`, `SPLAT_CACHE=/splat_cache`. Extra args replace `serve` (e.g. `find path --help`).
 
 ## Ops (BLM — not in this repo)
 

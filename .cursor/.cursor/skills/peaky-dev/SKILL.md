@@ -1,54 +1,46 @@
 ---
 name: peaky-dev
 description: >-
-  Peaky Docker dev workflow: ./peaky serve and ./peaky test in peaky:dev image.
-  Use when running locally or debugging Docker/test issues.
+  Peaky v5 host cargo workflow and Docker image. Use when running locally
+  or packaging peaky to run in a container.
 ---
 
-# Peaky dev
+# Peaky v5 dev workflow
 
 Read [MEMORY.md](../../MEMORY.md) for env vars.
 
-## Commands
+## Host
 
 ```bash
-./peaky serve                  # fast start: skips rebuild when splatter unchanged
-./peaky serve --rebuild-splatter   # force Rust recompile
-./peaky serve --no-reload
-./peaky test                   # pytest in container
-./peaky test --build           # rebuild Docker image (Dockerfile / lockfile changes)
-./peaky run python3 …          # ops scripts (skips splatter)
+cargo build
+cargo build --release
+export PEAKY_HOME=/Volumes/Code/repos/meshenvy/ops/peaky_home   # or rely on default
+cargo run -p peaky -- serve --host 127.0.0.1 --port 8080
+cargo test
 ```
 
-Never `poetry run pytest` on the macOS host.
+Skadi mirror: `$SPLAT_CACHE` or `$PEAKY_HOME/splat_cache`. Use `--release` only for long RF runs.
 
-## What runs when
+## Docker
 
-| Action | When |
-|--------|------|
-| **`./peaky --build`** | Layered image build: `cargo fetch` → splatter wheel → `poetry install` (cached per lockfile / Cargo.lock) |
-| **`./peaky serve`** (normal) | Stamp check → skip splatter if sources unchanged; `pip install -e peaky_finders` only |
-| **`./peaky serve --rebuild-splatter`** | Force maturin rebuild (uses persisted cargo + target caches) |
-| **`./peaky test`** | Poetry dev deps once per lockfile stamp; splatter rebuild only if Rust sources changed |
+```bash
+docker build -t peaky:latest .
+docker run --rm -p 8080:8080 \
+  -v "$PEAKY_HOME:/peaky_home" \
+  -v "${SPLAT_CACHE:-$HOME/.cache/splat}:/splat_cache" \
+  peaky:latest
+```
 
-## Host caches (`~/.peaky/dev-cache/`)
+Image `PEAKY_HOME=/peaky_home`, `SPLAT_CACHE=/splat_cache`. Extra args replace `serve` (e.g. `find path --help`).
 
-| Path | Role |
-|------|------|
-| `cargo-registry/` | Downloaded Rust crates (survives container restarts) |
-| `cargo-git/` | Cargo git checkouts |
-| `splatter-target/` | Incremental Rust build artifacts |
-| `build-stamps/` | Source-hash stamps — skip redundant installs |
+## Ops (BLM — not in this repo)
 
-DEM mirror stays in `PEAKY_CACHE_DIR` (default `~/.peaky/splat_cache`).
+```bash
+# from ops/
+python3 peaky_home/scripts/tag_public_land.py --project nevada --dry-run
+python3 peaky_home/scripts/export_blm_fo_packet.py --project nevada --tag blm-sierra-fo --dry-run
+```
 
-## Mounts
+## v4 reference
 
-| Host | Container |
-|------|-----------|
-| `peaky_home/` | `/.peaky` (`PEAKY_HOME`) |
-| `peaky_finders/` | `/app/peaky_finders` |
-| `splatter/` | `/app/splatter` |
-| `PEAKY_CACHE_DIR` | `/.peaky/splat_cache` |
-
-Serve publishes `PEAKY_SERVE_PORT` (default 8080).
+Python serve and batch logic live in `peaky-finders-v4/`. Port behavior from there; do not import or depend on v4 at runtime.

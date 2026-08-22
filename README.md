@@ -19,6 +19,18 @@ cargo run -p peaky -- serve --port 8080
 
 Open `http://127.0.0.1:8080/` and pick a project (e.g. Nevada).
 
+## Docker
+
+```bash
+docker build -t peaky:latest .
+docker run --rm -p 8080:8080 \
+  -v /path/to/peaky_home:/peaky_home \
+  -v "${SPLAT_CACHE:-$HOME/.cache/splat}:/splat_cache" \
+  peaky:latest
+```
+
+Image defaults: `PEAKY_HOME=/peaky_home`, `SPLAT_CACHE=/splat_cache`, `peaky serve --host 0.0.0.0 --port 8080`. Override the command for `find path`.
+
 ## Ops (BLM tags / FO export)
 
 BLM inventory tagging and FO export live in **ops**, not this repo:

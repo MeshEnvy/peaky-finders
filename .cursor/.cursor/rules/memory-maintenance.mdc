@@ -26,7 +26,7 @@ Update MEMORY.md in the **same commit/PR** when you change anything in the table
 | CLI surface | `serve/cli.py` flags, defaults |
 | Web UI (`serve`) | Routes, on-demand APIs, progressive features over shared pipeline |
 | External HTTP | New backends, pool defaults |
-| Dev contract | `./peaky` (`test`, `serve`, `build`, …), Docker, env vars |
+| Dev contract | `cargo run -p peaky`, Dockerfile, env vars |
 | splatter / RF | Coverage outputs, viewshed pipeline |
 | Greenfield breaks | Removed APIs, renamed paths, invalidated caches |
 

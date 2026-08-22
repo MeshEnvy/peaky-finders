@@ -9,13 +9,8 @@ license = "MIT"
 name = "splatter"
 crate-type = ["rlib"]
 
-[[bin]]
-name = "splatter"
-path = "src/main.rs"
-
 [dependencies]
 anyhow = "1"
-clap = { version = "4.4.18", features = ["derive"] }
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 rayon = "1"
@@ -27,7 +22,3 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 statrs = "0.17"
-
-[profile.release]
-lto = true
-codegen-units = 1
