@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use peaky_geo::resolve_land_layer_geojson_path;
+use peaky_geo::{transform_geojson_for_layer, resolve_land_layer_geojson_path};
 use peaky_preset::{
     load_preset, slugify_files_segment, LandLayerEntry, LandLayerRole, LandLayerStyleValue,
     LandSourceEntry,
@@ -124,8 +124,8 @@ pub fn serialize_land_source(
         .layers
         .iter()
         .map(|layer| {
-            let digest = manifest_digest(manifest, source_id, &layer.layer_key());
-            serialize_land_layer(layer, digest.as_deref())
+            let digest = effective_layer_digest(manifest, source_id, layer, None);
+            serialize_land_layer(layer, Some(&digest))
         })
         .collect();
     json!({
@@ -168,6 +168,75 @@ fn digest_for_bytes(bytes: &[u8]) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+fn filter_digest_suffix(layer: &LandLayerEntry) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for filt in &layer.include {
+        filt.field.hash(&mut hasher);
+        for v in &filt.values {
+            v.hash(&mut hasher);
+        }
+    }
+    for filt in &layer.exclude {
+        filt.field.hash(&mut hasher);
+        for v in &filt.values {
+            v.hash(&mut hasher);
+        }
+    }
+    if let Some(label) = &layer.label_field {
+        label.hash(&mut hasher);
+    }
+    if let Some(style) = &layer.style_field {
+        style.hash(&mut hasher);
+    }
+    format!("{:08x}", hasher.finish())
+}
+
+fn layer_needs_geojson_transform(layer: &LandLayerEntry) -> bool {
+    !layer.include.is_empty()
+        || !layer.exclude.is_empty()
+        || layer
+            .label_field
+            .as_deref()
+            .is_some_and(|field| !field.is_empty())
+        || layer
+            .style_field
+            .as_deref()
+            .is_some_and(|field| !field.is_empty())
+}
+
+fn effective_layer_digest(
+    manifest: &HashMap<String, Value>,
+    source_id: &str,
+    layer: &LandLayerEntry,
+    filtered_bytes: Option<&[u8]>,
+) -> String {
+    if let Some(base) = manifest_digest(manifest, source_id, &layer.layer_key()) {
+        if !layer_needs_geojson_transform(layer) {
+            return base;
+        }
+        return format!("{base}:{}", filter_digest_suffix(layer));
+    }
+    filtered_bytes
+        .map(digest_for_bytes)
+        .unwrap_or_else(|| filter_digest_suffix(layer))
+}
+
+fn apply_registered_layer_filters(raw_bytes: &[u8], layer: &LandLayerEntry) -> Result<Vec<u8>> {
+    if !layer_needs_geojson_transform(layer) {
+        return Ok(raw_bytes.to_vec());
+    }
+    let geojson: Value = serde_json::from_slice(raw_bytes).context("parse layer GeoJSON")?;
+    let geojson = transform_geojson_for_layer(
+        geojson,
+        &layer.include,
+        &layer.exclude,
+        layer.label_field.as_deref(),
+        layer.style_field.as_deref(),
+    );
+    Ok(serde_json::to_vec(&geojson)?)
+}
+
 pub fn read_layer_geojson_bytes(
     preset_path: &Path,
     source_id: &str,
@@ -189,21 +258,19 @@ pub fn read_layer_geojson_bytes(
     let manifest = read_manifest(&cache_root);
     let cached = layer_cache_path(&cache_root, source_id, layer_key);
 
-    if cached.is_file() {
-        let bytes = std::fs::read(&cached)?;
-        let digest = manifest_digest(&manifest, source_id, layer_key)
-            .unwrap_or_else(|| digest_for_bytes(&bytes));
-        return Ok((bytes, digest));
-    }
+    let raw_bytes = if cached.is_file() {
+        std::fs::read(&cached)?
+    } else {
+        let geo_path = resolve_land_layer_geojson_path(
+            project_dir,
+            source_id,
+            &layer.name,
+            &source.path,
+        )?;
+        std::fs::read(&geo_path)?
+    };
 
-    let geo_path = resolve_land_layer_geojson_path(
-        project_dir,
-        source_id,
-        &layer.name,
-        &source.path,
-    )?;
-    let bytes = std::fs::read(&geo_path)?;
-    let digest = manifest_digest(&manifest, source_id, layer_key)
-        .unwrap_or_else(|| digest_for_bytes(&bytes));
+    let bytes = apply_registered_layer_filters(&raw_bytes, layer)?;
+    let digest = effective_layer_digest(&manifest, source_id, layer, Some(&bytes));
     Ok((bytes, digest))
 }
