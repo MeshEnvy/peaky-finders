@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
+use serde_yaml::Mapping;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -263,11 +264,36 @@ impl LandLayerEntry {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LandDownloadKind {
+    Featureserver,
+    Geojson,
+    Filegdb,
+    Manual,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LandSourceRefresh {
+    /// ISO date ``YYYY-MM-DD`` when ``path`` was last fetched or confirmed.
+    pub last_updated: Option<String>,
+    /// Human catalog page (ArcGIS Hub explore, agency portal, etc.).
+    pub source_url: Option<String>,
+    /// Machine fetch endpoint (FeatureServer layer URL, hub GeoJSON export, etc.).
+    pub download_url: Option<String>,
+    pub download_kind: Option<LandDownloadKind>,
+    /// Override ``land.refreshIntervalDays`` for this source.
+    pub interval_days: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LandSourceEntry {
     pub path: String,
     pub layers: Vec<LandLayerEntry>,
     pub label: Option<String>,
+    #[serde(default)]
+    pub refresh: Option<LandSourceRefresh>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,16 +313,27 @@ pub struct LandSidebar {
     pub unfiled_sources: Vec<String>,
 }
 
+fn default_land_refresh_interval_days() -> u32 {
+    90
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LandConfig {
     #[serde(default)]
     pub sources: HashMap<String, LandSourceEntry>,
     pub sidebar: Option<LandSidebar>,
+    /// Default staleness window for sources with ``refresh.lastUpdated`` set.
+    #[serde(default = "default_land_refresh_interval_days", rename = "refreshIntervalDays")]
+    pub refresh_interval_days: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preset {
+    #[serde(default, rename = "modem_presets")]
+    pub modem_presets: HashMap<String, Mapping>,
+    #[serde(default, rename = "environment_presets")]
+    pub environment_presets: HashMap<String, Mapping>,
     pub simulation: SimulationConfig,
     pub display: DisplayConfig,
     pub sites: HashMap<String, SiteEntry>,
@@ -311,6 +348,8 @@ pub struct Preset {
 impl Default for Preset {
     fn default() -> Self {
         Self {
+            modem_presets: HashMap::new(),
+            environment_presets: HashMap::new(),
             simulation: SimulationConfig::default(),
             display: DisplayConfig::default(),
             sites: HashMap::new(),

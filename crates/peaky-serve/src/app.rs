@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::Router;
-use peaky_preset::resolved_skadi_mirror_dir;
+use peaky_preset::resolved_skadi_mirror_dir_for_project;
 use splatter::Session;
 use tokio::sync::Semaphore;
 use tower_http::trace::TraceLayer;
@@ -36,7 +36,7 @@ pub async fn run_server(host: &str, port: u16, verbose: bool, project: &std::pat
     let slug = peaky_preset::resolved_preset_slug(&preset_path);
     tracing::info!("project {} ({})", slug, project_dir.display());
 
-    let mirror = resolved_skadi_mirror_dir();
+    let mirror = resolved_skadi_mirror_dir_for_project(&project_dir);
     std::fs::create_dir_all(&mirror)?;
     let session = Arc::new(Session::new(mirror, verbose));
     let events = crate::events::ServeEventHub::default();

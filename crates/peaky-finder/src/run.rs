@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use peaky_preset::{load_preset, resolved_skadi_mirror_dir};
+use peaky_preset::{load_preset, resolved_skadi_mirror_dir_for_project};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use splatter::session::Session;
@@ -37,8 +37,10 @@ pub struct FindPathOutcome {
 }
 
 /// Skadi analysis session (shared by finder + watch map when `--watch`).
-pub fn new_session(verbose: bool) -> Arc<Session> {
-    Arc::new(Session::new(resolved_skadi_mirror_dir(), verbose))
+pub fn new_session(project_dir: &std::path::Path, verbose: bool) -> Arc<Session> {
+    let mirror = resolved_skadi_mirror_dir_for_project(project_dir);
+    let _ = std::fs::create_dir_all(&mirror);
+    Arc::new(Session::new(mirror, verbose))
 }
 
 pub fn run_find_path(

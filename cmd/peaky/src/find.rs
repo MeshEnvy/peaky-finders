@@ -28,7 +28,12 @@ pub async fn run_path(
         quiet,
         simplify_m,
     )?;
-    let session = new_session(!quiet);
+    let session = new_session(
+        job.preset_path
+            .parent()
+            .expect("preset path has parent directory"),
+        !quiet,
+    );
     let watch_hub = if watch {
         Some(Arc::new(FinderWatchHub::new()))
     } else {

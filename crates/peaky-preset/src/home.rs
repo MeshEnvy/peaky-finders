@@ -1,38 +1,40 @@
-//! Global home catalog (modems, environments) from PEAKY_HOME.
+//! Project-local modem and environment preset catalogs.
 
 use std::collections::HashMap;
-use std::fs;
+use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_yaml::Mapping;
 
-use crate::paths::peaky_home;
+use crate::io::read_preset_document;
+use crate::model::Preset;
 
-pub fn load_modem_catalog() -> Result<HashMap<String, Mapping>> {
-    load_named_catalog("modems.yaml", "modem_presets")
+pub fn modem_catalog_from_preset(preset: &Preset) -> HashMap<String, Mapping> {
+    preset.modem_presets.clone()
 }
 
-pub fn load_environment_catalog() -> Result<HashMap<String, Mapping>> {
-    load_named_catalog("environments.yaml", "environment_presets")
+pub fn environment_catalog_from_preset(preset: &Preset) -> HashMap<String, Mapping> {
+    preset.environment_presets.clone()
 }
 
-fn load_named_catalog(filename: &str, catalog_key: &str) -> Result<HashMap<String, Mapping>> {
-    let path = peaky_home().join(filename);
-    if !path.is_file() {
-        return Ok(HashMap::new());
-    }
-    let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let root: serde_yaml::Value = serde_yaml::from_str(&text)?;
-    let map = match root {
-        serde_yaml::Value::Mapping(m) => m,
-        _ => return Ok(HashMap::new()),
-    };
-    let nested = map
+pub fn load_modem_catalog(preset_path: &Path) -> Result<HashMap<String, Mapping>> {
+    let raw = read_preset_document(preset_path)?;
+    Ok(extract_named_catalog(&raw, "modem_presets"))
+}
+
+pub fn load_environment_catalog(preset_path: &Path) -> Result<HashMap<String, Mapping>> {
+    let raw = read_preset_document(preset_path)?;
+    Ok(extract_named_catalog(&raw, "environment_presets"))
+}
+
+fn extract_named_catalog(raw: &Mapping, catalog_key: &str) -> HashMap<String, Mapping> {
+    let mut out = HashMap::new();
+    let Some(presets) = raw
         .get(&serde_yaml::Value::from(catalog_key))
         .and_then(|v| v.as_mapping())
-        .cloned();
-    let presets = nested.as_ref().unwrap_or(&map);
-    let mut out = HashMap::new();
+    else {
+        return out;
+    };
     for (k, v) in presets {
         let key = k.as_str().unwrap_or("").to_string();
         if key.is_empty() {
@@ -42,48 +44,40 @@ fn load_named_catalog(filename: &str, catalog_key: &str) -> Result<HashMap<Strin
             out.insert(key, entry.clone());
         }
     }
-    Ok(out)
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
-    fn load_named_catalog_reads_nested_presets_key() {
+    fn load_modem_catalog_reads_project_yaml() {
         let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("PEAKY_HOME", dir.path());
+        let path = dir.path().join("config.yaml");
         let yaml = r#"
 modem_presets:
   meshcore-us:
     frequency_mhz: 915.0
     spreading_factor: 10
+simulation:
+  radius_km: 50
+  viewshed_quality: 3
+sites:
+  a:
+    name: A
+    loc: [39.0, -119.0]
 "#;
-        std::fs::write(dir.path().join("modems.yaml"), yaml).unwrap();
-        let catalog = load_modem_catalog().unwrap();
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(yaml.as_bytes())
+            .unwrap();
+        let catalog = load_modem_catalog(&path).unwrap();
         assert!(catalog.contains_key("meshcore-us"));
-        let entry = &catalog["meshcore-us"];
-        let freq = entry
+        let freq = catalog["meshcore-us"]
             .get(&serde_yaml::Value::from("frequency_mhz"))
             .and_then(|v| v.as_f64());
         assert_eq!(freq, Some(915.0));
-    }
-}
-
-pub fn load_home_simulation() -> Result<Mapping> {
-    let path = peaky_home().join("config.yaml");
-    if !path.is_file() {
-        return Ok(Mapping::new());
-    }
-    let text = fs::read_to_string(&path)?;
-    let root: serde_yaml::Value = serde_yaml::from_str(&text)?;
-    match root {
-        serde_yaml::Value::Mapping(m) => Ok(m.get(&serde_yaml::Value::from("simulation"))
-            .and_then(|v| match v {
-                serde_yaml::Value::Mapping(inner) => Some(inner.clone()),
-                _ => None,
-            })
-            .unwrap_or_default()),
-        _ => Ok(Mapping::new()),
     }
 }

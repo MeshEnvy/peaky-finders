@@ -14,25 +14,23 @@ Read [MEMORY.md](../../MEMORY.md) for env vars.
 ```bash
 cargo build
 cargo build --release
-export PEAKY_HOME=/Volumes/Code/repos/meshenvy/ops/peaky_home   # or rely on default
-cargo run -p peaky -- serve "$PEAKY_HOME/projects/nevada" --host 127.0.0.1 --port 8080
+export PEAKY_HOME=/Volumes/Code/repos/meshenvy/ops/peaky_home   # optional slug fallback only
+cargo run -p peaky -- serve /Volumes/Code/repos/meshenvy/peaky-nevada --host 127.0.0.1 --port 8080
 cargo test
 ```
 
-Skadi mirror: `$SPLAT_CACHE` or `$PEAKY_HOME/splat_cache`. Use `--release` only for long RF runs.
+Skadi mirror: `<project>/.peaky/cache/skadi`. Optional `SPLAT_CACHE` override. Use `--release` only for long RF runs.
 
 ## Docker
 
 ```bash
 docker build -t peaky:latest .
 docker run --rm -p 8080:8080 \
-  -v "$PEAKY_HOME:/peaky_home" \
-  -v "$PEAKY_HOME/projects/nevada:/project" \
-  -v "${SPLAT_CACHE:-$HOME/.cache/splat}:/splat_cache" \
+  -v /path/to/peaky-nevada:/project \
   peaky:latest
 ```
 
-Image `PEAKY_HOME=/peaky_home`, `SPLAT_CACHE=/splat_cache`, `serve /project`. Extra args replace `serve` (e.g. `find path --help`).
+Image `peaky serve /project`. Skadi cache persists in the project mount. Extra args replace `serve` (e.g. `find path --help`).
 
 ## Ops (BLM — not in this repo)
 

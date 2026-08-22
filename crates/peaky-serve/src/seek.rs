@@ -1500,16 +1500,25 @@ mod tests {
             let slug = "seek-sample";
             let project_dir = home.join("projects").join(slug);
             std::fs::create_dir_all(project_dir.join("data")).expect("data dir");
-            for name in ["modems.yaml", "environments.yaml", "config.yaml"] {
-                let src = fixtures_home().join(name);
-                let dst = home.join(name);
-                if src.is_file() && !dst.exists() {
-                    std::fs::copy(&src, &dst).expect("copy home catalog");
-                }
-            }
-            let geojson = r#"{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Polygon","coordinates":[[[-120,39],[-119,39],[-119,41],[-120,41],[-120,39]]]},"properties":{"name":"public"}}]}"#;
-            std::fs::write(project_dir.join("data/eligible.geojson"), geojson).expect("geojson");
-            let config = r#"simulation:
+            let config = r#"modem_presets:
+  fixture-modem:
+    frequency_mhz: 915.0
+    bandwidth_khz: 125.0
+    spreading_factor: 10
+    coding_rate: 5
+    implementation_margin_db: 3.0
+    power_dbm: 22.0
+    sensitivity_dbm: -132.0
+environment_presets:
+  fixture-desert:
+    climate: desert
+    polarization: vertical
+    clutter_height_m: 1.0
+    fresnel_clearance_fraction: 0.25
+    coverage_pessimism_db: 0.0
+    situation_pct: 95.0
+    time_pct: 95.0
+simulation:
   radius_km: 50.0
   modem: fixture-modem
   environment: fixture-desert
@@ -1538,6 +1547,8 @@ land:
           role: include
 "#;
             std::fs::write(project_dir.join("config.yaml"), config).expect("config");
+            let geojson = r#"{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Polygon","coordinates":[[[-120,39],[-119,39],[-119,41],[-120,41],[-120,39]]]},"properties":{"name":"public"}}]}"#;
+            std::fs::write(project_dir.join("data/eligible.geojson"), geojson).expect("geojson");
             project_dir.join("config.yaml")
         }
 

@@ -16,18 +16,18 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | v4 | Frozen reference; do not delete until v5 soak |
 | Interface | `peaky serve <project>` — web UI for one project directory |
 | RF engine | `splatter/` crate (in-process `Session`, library only) |
-| Land | GeoJSON-only at runtime (no GDB/GDAL). GDB preset paths resolve via `data/*.geojson` fallbacks or `.peaky/cache/land/` exports. **WGS84 required.** |
-| Dev | Host: `cargo run -p peaky -- serve <project-dir>`. `--release` for long RF only. Docker: mount `PEAKY_HOME`, project at `/project`, and `SPLAT_CACHE`. DEM fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8) |
+| Land | GeoJSON at runtime. GDB sources: `peaky serve` / `peaky land refresh` download stale/missing files (`land.sources[].refresh.*`) and warm `.peaky/cache/land/` via ogr2ogr. **WGS84 required.** |
+| Dev | Host: `cargo run -p peaky -- serve <project-dir>` (e.g. `peaky-nevada`). `--release` for long RF only. Docker: mount project at `/project` only. Skadi + map tiles under `<project>/.peaky/cache/skadi/`. Optional `SPLAT_CACHE` override. DEM fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8) |
 | Auto-finder | `peaky find path` — onX KML route → min-site RF chain; cache under `.peaky/cache/finder/`; **`--watch`** live MapLibre + SSE on localhost:9847 |
 | Ops | Public-land site tags + FO export live in ops: `peaky_home/scripts/tag_public_land.py`, `export_blm_fo_packet.py`. **Fleet-tool direction (ops, 08-14, speculative):** nevada YAML is the canonical site/fleet list; later creds + telemetry history may live next to the preset. **Do not** put passwords or keypairs in git-tracked `config.yaml`. → `ops/initiatives/peaky-fleet-management.md` |
-| Reference preset | `$PEAKY_HOME/projects/nevada/config.yaml` (default: `ops/peaky_home`) |
+| Reference preset | `peaky-nevada/config.yaml` (standalone project repo) |
 
 ## Workspace layout
 
 | Path | Role |
 |------|------|
-| `Dockerfile` | `peaky:latest` — mount `PEAKY_HOME`, project at `/project`, `SPLAT_CACHE` |
-| `cmd/peaky/` | CLI binary (`serve`, `find path`) |
+| `Dockerfile` | `peaky:latest` — mount project at `/project` |
+| `cmd/peaky/` | CLI binary (`serve`, `land refresh|audit`, `find path`) |
 | `crates/peaky-finder/` | Auto-finder: route → min-site RF chain + config patch |
 | `crates/peaky-preset/` | Preset model, YAML I/O, paths, sites, home catalogs |
 | `crates/peaky-geo/` | GeoJSON land query, eligible land, KML import, PPM polygonize |
@@ -40,9 +40,9 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 
 ## Preset model
 
-Same vocabulary as v4: `sites:` (slug → `name`, `loc`, optional `tags`, `height_m`), top-level `links:`, `simulation`, `display`, `land`, `seek`. No `sites.*.type`. Tags are UI-only.
+Same vocabulary as v4: `sites:` (slug → `name`, `loc`, optional `tags`, `height_m`), top-level `links:`, `simulation`, `display`, `land`, `seek`, plus **`modem_presets`** and **`environment_presets`** (self-contained project; no `$PEAKY_HOME` inheritance). No `sites.*.type`. Tags are UI-only.
 
-Paths: `peaky serve` / `find path --project` take a project dir, `config.yaml`, or slug under `$PEAKY_HOME/projects/<slug>/`. Catalogs still from `PEAKY_HOME`. Cache: `<preset-dir>/.peaky/cache/viewsheds/`; finder cache: `<preset-dir>/.peaky/cache/finder/`. **PLSS:** not in Peaky — ops `tag_public_land.py` (CadNSDI → preset YAML); export runs it as prep.
+Paths: CLI takes a project dir (or `config.yaml`). Optional slug fallback: `$PEAKY_HOME/projects/<name>/`. Cache root: `<project>/.peaky/cache/` — `skadi/` (HGT + `.map_tiles/`), `viewsheds/`, `finder/`, `land/`. Optional `SPLAT_CACHE` overrides Skadi path. **PLSS:** not in Peaky — ops `tag_public_land.py` (CadNSDI → preset YAML); export runs it as prep.
 
 **YAML writes:** serve site edits patch the on-disk YAML tree (`insert_preset_site`, `patch_preset_site`, …) so unrelated sections keep their order. Full `save_preset` re-serializes the typed preset and should be reserved for whole-document updates.
 
@@ -55,6 +55,7 @@ Paths: `peaky serve` / `find path --project` take a project dir, `config.yaml`, 
 | Input | Effect |
 |-------|--------|
 | `--route` onX KML LineString | Ordered waypoints (lon,lat → internal lat,lon; 50 m dedupe; optional `--simplify-m`) |
+| `--project` | Project dir or `config.yaml` (slug under `PEAKY_HOME/projects/` still works) |
 | `--allow-tag` (default `installed`) | Existing preset sites eligible for reuse |
 | `--name-prefix` + `--tag` | New peak sites written to `config.yaml` |
 | `--dry-run` | Print diff; no YAML write |
@@ -97,7 +98,7 @@ preset → CovRequest JSON (rf_json) → Session::link_eval / link_mutual_viable
 
 | Use | Dataset | Notes |
 |-----|---------|-------|
-| RF, viewsheds, seek, site height | Skadi SRTM mirror (`$SPLAT_CACHE`, `.hgt.gz`) | Single analysis DEM; parallel fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8). Retries: `PEAKY_SKADI_FETCH_RETRIES` (5), `PEAKY_SKADI_FETCH_TIMEOUT_SECS` (180), `PEAKY_SKADI_FETCH_CONNECT_TIMEOUT_SECS` (30) |
+| RF, viewsheds, seek, site height | Skadi SRTM mirror (`<project>/.peaky/cache/skadi`, `.hgt.gz`) | Single analysis DEM; parallel fetch pool `PEAKY_DEM_FETCH_WORKERS` (default 8). Retries: `PEAKY_SKADI_FETCH_RETRIES` (5), `PEAKY_SKADI_FETCH_TIMEOUT_SECS` (180), `PEAKY_SKADI_FETCH_CONNECT_TIMEOUT_SECS` (30) |
 | Skadi basemap + 3D terrain mesh | Same Skadi mirror, rendered to hillshade/terrarium PNGs | Must match on-disk HGT before tile serves |
 | USGS Topo / satellite / street basemaps | External tile APIs (MapLibre) | **Visualization only** — separate rasters from analysis DEM |
 
@@ -109,18 +110,18 @@ preset → CovRequest JSON (rf_json) → Session::link_eval / link_mutual_viable
 
 | Area | State |
 |------|-------|
-| `/` project map, sites CRUD, KML import | Implemented (no landing / project listing) |
+| Project page at `/`, sites CRUD, KML import | Implemented (no project listing) |
 | Viewshed PNG on demand (`splatter::Session` + cache) | Implemented |
 | Home modem/environment catalogs | Implemented |
 | SSE `/events` | Implemented (hello + keepalive; publish on warm TBD) |
 | Links mesh, warm scheduler | Implemented (P2P mesh, warm queue, SSE) |
 | Goal seek (`/seek/candidates`, scan-progress, plan, convert-to-sites) | Implemented (P2P via `seek.rs` + `Session::linkable_binned_peaks`). Start `<select>` matches entity-panel visibility (tag filter **or** post-add bypass) and refreshes on site add/delete |
 | Land list + layer GeoJSON | Implemented |
-| Skadi map tiles (`/api/dem/hillshade`, `/api/dem/terrarium`) | Implemented — PNG cache `$SPLAT_CACHE/.map_tiles/v3/`; render only when all required HGT on disk (503 until ready); hillshade uses padded HGT ring; **AOI HGT prefetch on project page load** (background); map tile prefetch capped (`PEAKY_DEM_MAP_QUEUE_CAP`, default 128) |
+| Skadi map tiles (`/api/dem/hillshade`, `/api/dem/terrarium`) | Implemented — PNG cache `<project>/.peaky/cache/skadi/.map_tiles/v3/`; render only when all required HGT on disk (503 until ready); hillshade uses padded HGT ring; **AOI HGT prefetch on project page load** (background); map tile prefetch capped (`PEAKY_DEM_MAP_QUEUE_CAP`, default 128) |
 
 ## Ops (outside Peaky)
 
-BLM tagging/export are ops scripts under `ops/peaky_home/scripts/` — Peaky has no BLM-specific CLI. Nevada SMA/FO GeoJSON: `projects/nevada/data/blm-*.geojson`.
+BLM tagging/export are ops scripts under `ops/peaky_home/scripts/` — Peaky has no BLM-specific CLI. Land sources: `config.yaml` → `land.sources`; refresh via `peaky land refresh`.
 
 ## Active threads
 

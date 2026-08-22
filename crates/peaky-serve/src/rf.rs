@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use anyhow::{bail, Context, Result};
 use peaky_preset::{
-    effective_target_raster_dimension, load_environment_catalog, load_modem_catalog, Preset,
-    SiteEntry,
+    effective_target_raster_dimension, environment_catalog_from_preset, modem_catalog_from_preset,
+    Preset, SiteEntry,
 };
 use serde_yaml::Mapping;
 use splatter::CovRequest;
@@ -47,7 +47,7 @@ fn resolve_catalog_entry(
         if catalog.is_empty() {
             return Ok(Mapping::new());
         }
-        bail!("preset {label} is unset; set simulation.{label} in PEAKY_HOME/{label}s.yaml");
+        bail!("preset {label} is unset; set simulation.{label} and define {label}_presets in config.yaml");
     };
     match sel {
         serde_yaml::Value::String(name) => {
@@ -80,14 +80,14 @@ fn resolve_catalog_entry(
 }
 
 pub fn resolved_modem(preset: &Preset) -> Result<Mapping> {
-    let catalog = load_modem_catalog()?;
+    let catalog = modem_catalog_from_preset(preset);
     resolve_catalog_entry(&preset.simulation.modem, &catalog, "modem")
 }
 
 pub fn resolved_environment(preset: &Preset) -> Result<Mapping> {
     let mut env = default_environment();
     if let Some(sel) = &preset.simulation.environment {
-        let catalog = load_environment_catalog()?;
+        let catalog = environment_catalog_from_preset(preset);
         let resolved = resolve_catalog_entry(&Some(sel.clone()), &catalog, "environment")?;
         for (k, v) in resolved {
             env.insert(k, v);

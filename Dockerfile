@@ -3,11 +3,10 @@
 #   docker build -t peaky:latest .
 #
 #   docker run --rm -p 8080:8080 \
-#     -v /path/to/peaky_home:/peaky_home \
-#     -v /path/to/project:/project \
-#     -v "${SPLAT_CACHE:-$HOME/.cache/splat}:/splat_cache" \
+#     -v /path/to/peaky-nevada:/project \
 #     peaky:latest
 #
+# Skadi HGT + map tiles cache under /project/.peaky/cache/skadi/
 # Other commands: docker run --rm … peaky:latest find path --help
 
 FROM rust:bookworm AS builder
@@ -26,9 +25,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/target/release/peaky /usr/local/bin/peaky
-
-ENV PEAKY_HOME=/peaky_home \
-    SPLAT_CACHE=/splat_cache
 
 EXPOSE 8080 9847
 

@@ -46,15 +46,34 @@ pub fn peaky_projects_dir() -> PathBuf {
     peaky_home().join("projects")
 }
 
-/// Global Skadi tile mirror (`SPLAT_CACHE` env, else `<peaky_home>/splat_cache`).
+/// Skadi HGT mirror for a project: ``<project>/.peaky/cache/skadi`` (``.hgt.gz`` tiles).
+///
+/// When ``SPLAT_CACHE`` is set, it overrides the project path (shared mirror or migration).
+pub fn resolved_skadi_mirror_dir_for_project(project_dir: impl AsRef<Path>) -> PathBuf {
+    if let Some(global) = splat_cache_from_env() {
+        return global;
+    }
+    canonicalize_lossy(
+        &project_dir
+            .as_ref()
+            .join(".peaky/cache/skadi"),
+    )
+}
+
+/// Legacy global Skadi mirror when no project context (``SPLAT_CACHE`` or ``<peaky_home>/splat_cache``).
 pub fn resolved_skadi_mirror_dir() -> PathBuf {
-    if let Ok(raw) = env::var("SPLAT_CACHE") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            return expand_user(trimmed);
-        }
+    if let Some(global) = splat_cache_from_env() {
+        return global;
     }
     canonicalize_lossy(&peaky_home().join("splat_cache"))
+}
+
+fn splat_cache_from_env() -> Option<PathBuf> {
+    env::var("SPLAT_CACHE")
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(|s| expand_user(&s))
 }
 
 /// Resolve a project argument to that project's directory.

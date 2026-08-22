@@ -25,7 +25,7 @@ use crate::links::{load_project_site_links, load_single_site_links};
 use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
 use crate::state::AppState;
 use crate::land::{list_land_payload, read_layer_geojson_bytes};
-use crate::simulation::{home_simulation_payload, project_simulation_payload};
+use crate::simulation::project_simulation_payload;
 use crate::viewshed::{
     coords_viewshed_overlay_if_ready, ensure_viewshed_png, read_coords_viewshed_png_if_ready,
 };
@@ -785,8 +785,8 @@ async fn convert_seek_plan(State(state): State<AppState>,
     Ok(Json(payload))
 }
 
-async fn home_modems() -> Json<Value> {
-    let catalog = peaky_preset::load_modem_catalog().unwrap_or_default();
+async fn home_modems(State(state): State<AppState>) -> Json<Value> {
+    let catalog = peaky_preset::load_modem_catalog(&state.preset_path()).unwrap_or_default();
     let presets: HashMap<String, Value> = catalog
         .iter()
         .map(|(k, v)| {
@@ -799,8 +799,8 @@ async fn home_modems() -> Json<Value> {
     Json(json!({ "presets": presets }))
 }
 
-async fn home_environments() -> Json<Value> {
-    let catalog = peaky_preset::load_environment_catalog().unwrap_or_default();
+async fn home_environments(State(state): State<AppState>) -> Json<Value> {
+    let catalog = peaky_preset::load_environment_catalog(&state.preset_path()).unwrap_or_default();
     let presets: HashMap<String, Value> = catalog
         .iter()
         .map(|(k, v)| {
@@ -813,8 +813,10 @@ async fn home_environments() -> Json<Value> {
     Json(json!({ "presets": presets }))
 }
 
-async fn home_simulation() -> Json<Value> {
-    Json(home_simulation_payload())
+async fn home_simulation(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
+    project_simulation_payload(&state.preset_path())
+        .map(Json)
+        .map_err(|_| StatusCode::NOT_FOUND)
 }
 
 async fn dem_terrarium_tile(

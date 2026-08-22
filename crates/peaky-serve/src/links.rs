@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result};
-use peaky_preset::{
-    load_home_simulation, resolved_preset_cache_dir, Preset, SiteEntry,
-};
+use peaky_preset::{resolved_preset_cache_dir, Preset, SiteEntry};
 use serde_json::{json, Value};
 use splatter::{propagate::LinkStrength, Session};
 
@@ -49,14 +47,8 @@ pub fn links_input_fingerprint(preset: &Preset) -> Result<String> {
         serde_yaml::Value::String(s) => s.parse::<f64>().unwrap_or(50.0),
         _ => 50.0,
     };
-    let modem = fingerprint_sim_label(&effective_sim_yaml_value(
-        preset.simulation.modem.clone(),
-        "modem",
-    ));
-    let environment = fingerprint_sim_label(&effective_sim_yaml_value(
-        preset.simulation.environment.clone(),
-        "environment",
-    ));
+    let modem = fingerprint_sim_label(&preset.simulation.modem);
+    let environment = fingerprint_sim_label(&preset.simulation.environment);
     let tx_h = fingerprint_nested_height_m(&preset.simulation.transmitter, "transmitter");
     let rx_h = fingerprint_nested_height_m(&preset.simulation.receiver, "receiver");
 
@@ -105,17 +97,6 @@ pub fn links_input_fingerprint(preset: &Preset) -> Result<String> {
     ]))?)
 }
 
-fn effective_sim_yaml_value(
-    project: Option<serde_yaml::Value>,
-    field: &str,
-) -> Option<serde_yaml::Value> {
-    if project.is_some() {
-        return project;
-    }
-    let home = load_home_simulation().ok()?;
-    home.get(&serde_yaml::Value::from(field)).cloned()
-}
-
 fn fingerprint_sim_label(value: &Option<serde_yaml::Value>) -> String {
     match value {
         None => "None".to_string(),
@@ -126,15 +107,10 @@ fn fingerprint_sim_label(value: &Option<serde_yaml::Value>) -> String {
 
 fn fingerprint_nested_height_m(
     project: &HashMap<String, serde_yaml::Value>,
-    home_key: &str,
+    _home_key: &str,
 ) -> f64 {
-    if let Some(v) = project.get("height_m").and_then(|v| v.as_f64()) {
-        return v;
-    }
-    let home = load_home_simulation().unwrap_or_default();
-    home.get(&serde_yaml::Value::from(home_key))
-        .and_then(|v| v.as_mapping())
-        .and_then(|m| m.get(&serde_yaml::Value::from("height_m")))
+    project
+        .get("height_m")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0)
 }

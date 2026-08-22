@@ -13,24 +13,21 @@ Binary: `target/release/peaky`
 ## Serve
 
 ```bash
-export PEAKY_HOME=/path/to/peaky_home   # catalogs; default ../../ops/peaky_home when present
-cargo run -p peaky -- serve /path/to/peaky_home/projects/nevada --port 8080
+cargo run -p peaky -- serve /path/to/peaky-nevada --port 8080
 ```
 
-Open `http://127.0.0.1:8080/` — that process is bound to one project.
+Open `http://127.0.0.1:8080/`. Skadi tiles and RF cache live under `<project>/.peaky/cache/`.
 
 ## Docker
 
 ```bash
 docker build -t peaky:latest .
 docker run --rm -p 8080:8080 \
-  -v /path/to/peaky_home:/peaky_home \
-  -v /path/to/peaky_home/projects/nevada:/project \
-  -v "${SPLAT_CACHE:-$HOME/.cache/splat}:/splat_cache" \
+  -v /path/to/peaky-nevada:/project \
   peaky:latest
 ```
 
-Image defaults: `PEAKY_HOME=/peaky_home`, `SPLAT_CACHE=/splat_cache`, `peaky serve /project`. Override the command for `find path`.
+Image default: `peaky serve /project`. Override the command for `find path`.
 
 ## Ops (BLM tags / FO export)
 
