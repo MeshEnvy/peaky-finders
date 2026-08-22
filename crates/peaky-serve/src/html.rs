@@ -79,6 +79,7 @@ pub fn project_html(slug: &str, preset: &Preset, _preset_path: &Path) -> String 
         .land
         .sources
         .iter()
+        .filter(|(_, src)| src.is_enabled())
         .map(|(id, src)| {
             serde_json::json!({
                 "id": id,

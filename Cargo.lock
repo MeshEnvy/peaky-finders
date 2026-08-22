@@ -1612,10 +1612,12 @@ dependencies = [
  "geozero",
  "peaky-preset",
  "quick-xml",
+ "reqwest",
  "rstar 0.12.2",
  "serde",
  "serde_json",
  "splatter",
+ "tempfile",
  "thiserror 2.0.19",
  "zip",
 ]

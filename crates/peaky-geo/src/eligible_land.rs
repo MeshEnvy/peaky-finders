@@ -90,6 +90,9 @@ pub fn iter_land_layer_entries_by_role(
 ) -> Vec<(String, LandLayerEntry)> {
     let mut rows = Vec::new();
     for (source_id, source) in &preset.land.sources {
+        if !source.is_enabled() {
+            continue;
+        }
         for layer in &source.layers {
             if layer.role == Some(role) {
                 rows.push((source_id.clone(), layer.clone()));

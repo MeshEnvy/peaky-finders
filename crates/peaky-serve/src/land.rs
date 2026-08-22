@@ -153,6 +153,7 @@ pub fn list_land_payload(preset_path: &Path) -> Result<Value> {
         .land
         .sources
         .iter()
+        .filter(|(_, entry)| entry.is_enabled())
         .map(|(id, entry)| serialize_land_source(id, entry, &manifest, &aoi_digest))
         .collect();
     sources.sort_by(|a, b| {

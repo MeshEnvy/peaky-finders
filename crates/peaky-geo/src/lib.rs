@@ -3,10 +3,14 @@
 pub mod eligible_land;
 pub mod kml_import;
 pub mod land_aoi_clip;
+pub mod land_cache;
+pub mod land_fetch;
 pub mod land_filter;
 pub mod land_gdb;
 pub mod land_path;
 pub mod land_query;
+pub mod land_refresh;
+pub mod land_validate;
 pub mod polygonize;
 
 pub use eligible_land::{
@@ -39,6 +43,11 @@ pub use land_query::{
     load_land_layer_index, point_hits, query_land_layer_index, resolve_land_layer_entry,
     LandLayerSpatialIndex, LandPointHit,
 };
+pub use land_refresh::{
+    audit_land_refresh_for_preset, prepare_land_at_boot, LandRefreshFailure, LandRefreshReport,
+    LandRefreshRunSummary, LandRefreshStatusKind, LandSourceRefreshRow,
+};
+pub use land_validate::validate_land_source;
 pub use polygonize::{
     coverage_mask_from_splat_ppm_rgb, fraction_to_lat_lon, pixel_to_lat_lon,
     polygonize_ppm_coverage, polygonize_ppm_coverage_bbox, read_ppm_rgb, write_ppm_rgb,

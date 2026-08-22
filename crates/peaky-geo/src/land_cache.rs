@@ -51,6 +51,9 @@ pub fn ensure_land_caches_for_preset(preset_path: &Path, verbose: bool) -> Resul
     let mut manifest: HashMap<String, Value> = read_manifest(&cache_root);
 
     for (source_id, source) in &preset.land.sources {
+        if !source.is_enabled() {
+            continue;
+        }
         warm_one_source(
             project_dir,
             source_id,

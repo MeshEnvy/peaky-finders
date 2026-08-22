@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::land_cache::ensure_land_caches_for_preset;
 use crate::land_fetch::refresh_land_source_file;
+use crate::land_validate::validate_land_source;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -19,6 +20,7 @@ pub enum LandRefreshStatusKind {
     Missing,
     Unknown,
     FileNewer,
+    Invalid,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,6 +157,25 @@ fn audit_one(
     preset: &Preset,
     project_dir: &Path,
 ) -> LandSourceRefreshRow {
+    if !entry.is_enabled() {
+        return LandSourceRefreshRow {
+            source_id: source_id.to_string(),
+            path: entry.path.clone(),
+            status: LandRefreshStatusKind::Ok,
+            interval_days: interval_for(entry, preset),
+            last_updated: entry.refresh.as_ref().and_then(|r| r.last_updated.clone()),
+            next_due: None,
+            file_mtime: None,
+            source_url: entry.refresh.as_ref().and_then(|r| r.source_url.clone()),
+            download_url: entry.refresh.as_ref().and_then(|r| r.download_url.clone()),
+            download_kind: entry
+                .refresh
+                .as_ref()
+                .and_then(|r| r.download_kind)
+                .map(|k| format!("{k:?}").to_lowercase()),
+        };
+    }
+
     let refresh = entry.refresh.as_ref();
     let interval_days = interval_for(entry, preset);
     let last_updated = refresh.and_then(|r| r.last_updated.clone());
@@ -168,6 +189,8 @@ fn audit_one(
     let mut next_due = None;
     let status = if !source_path_exists(project_dir, &entry.path) {
         LandRefreshStatusKind::Missing
+    } else if validate_land_source(project_dir, entry).is_err() {
+        LandRefreshStatusKind::Invalid
     } else if let Some(ref last) = last_updated {
             if let Some((y, m, d)) = parse_ymd(last) {
             next_due = add_days(y, m, d, interval_days);
@@ -270,6 +293,9 @@ pub fn refresh_row_for_source(
 }
 
 fn refreshable(row: &LandSourceRefreshRow, entry: &LandSourceEntry, force: bool) -> bool {
+    if !entry.is_enabled() {
+        return false;
+    }
     let refresh = entry.refresh.as_ref();
     let kind = refresh.and_then(|r| r.download_kind);
     if matches!(kind, Some(LandDownloadKind::Manual)) {
@@ -286,7 +312,9 @@ fn refreshable(row: &LandSourceRefreshRow, entry: &LandSourceEntry, force: bool)
     }
     matches!(
         row.status,
-        LandRefreshStatusKind::Stale | LandRefreshStatusKind::Missing
+        LandRefreshStatusKind::Stale
+            | LandRefreshStatusKind::Missing
+            | LandRefreshStatusKind::Invalid
     )
 }
 
@@ -305,6 +333,10 @@ pub fn refresh_due_land_sources(
     let mut summary = LandRefreshRunSummary::default();
     for row in &report.rows {
         let Some(entry) = preset.land.sources.get(&row.source_id) else {
+            continue;
+        };
+        if !entry.is_enabled() {
+            summary.skipped.push(row.source_id.clone());
             continue;
         };
         if !refreshable(row, entry, force) {
@@ -334,9 +366,57 @@ pub fn refresh_due_land_sources(
     Ok(summary)
 }
 
+fn format_land_boot_wedge(failures: &[(String, String)]) -> String {
+    let mut lines = vec![
+        "Peaky cannot start: one or more enabled land sources are missing or invalid.".to_string(),
+        String::new(),
+    ];
+    for (source_id, err) in failures {
+        lines.push(format!("  [{source_id}] {err}"));
+    }
+    lines.push(String::new());
+    lines.push(
+        "Set `enabled: false` on the failing source(s) in land.yaml to start without them, \
+         then fix the file or restore a working `refresh.downloadUrl`."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+/// Refresh stale/missing/invalid enabled sources, validate all enabled sources, warm land cache.
+/// Fails boot when any enabled source is still invalid after refresh attempts.
+pub fn prepare_land_at_boot(preset_path: &Path, verbose: bool) -> Result<LandRefreshRunSummary> {
+    let preset = load_preset(preset_path).context("load preset")?;
+    let project_dir = preset_path
+        .parent()
+        .context("preset path must have parent")?;
+
+    let mut summary = refresh_due_land_sources(preset_path, false, verbose)?;
+
+    let mut failures: Vec<(String, String)> = Vec::new();
+    for (source_id, entry) in &preset.land.sources {
+        if !entry.is_enabled() {
+            continue;
+        }
+        if let Err(e) = validate_land_source(project_dir, entry) {
+            failures.push((source_id.clone(), e.to_string()));
+        }
+    }
+
+    if !failures.is_empty() {
+        anyhow::bail!("{}", format_land_boot_wedge(&failures));
+    }
+
+    if summary.cache.is_none() {
+        summary.cache = Some(ensure_land_caches_for_preset(preset_path, verbose)?);
+    }
+
+    Ok(summary)
+}
+
 pub fn prepare_land_for_serve(preset_path: &Path, refresh: bool, verbose: bool) -> Result<LandRefreshRunSummary> {
     if refresh {
-        refresh_due_land_sources(preset_path, false, verbose)
+        prepare_land_at_boot(preset_path, verbose)
     } else {
         Ok(LandRefreshRunSummary {
             cache: Some(ensure_land_caches_for_preset(preset_path, verbose)?),

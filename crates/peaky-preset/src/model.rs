@@ -290,13 +290,26 @@ pub struct LandSourceRefresh {
     pub interval_days: Option<u32>,
 }
 
+fn default_land_source_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LandSourceEntry {
     pub path: String,
     pub layers: Vec<LandLayerEntry>,
     pub label: Option<String>,
+    /// When false, source is skipped at boot and omitted from the map.
+    #[serde(default = "default_land_source_enabled")]
+    pub enabled: bool,
     #[serde(default)]
     pub refresh: Option<LandSourceRefresh>,
+}
+
+impl LandSourceEntry {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

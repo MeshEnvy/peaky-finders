@@ -27,6 +27,9 @@ enum Commands {
         port: u16,
         #[arg(long)]
         verbose: bool,
+        /// Skip land validation, refresh, and cache warm at startup
+        #[arg(long)]
+        no_land_refresh: bool,
     },
     /// Auto-find RF chain along a route
     Find {
@@ -81,8 +84,9 @@ async fn main() -> Result<()> {
             host,
             port,
             verbose,
+            no_land_refresh,
         } => {
-            run_server(&host, port, verbose, &project).await?;
+            run_server(&host, port, verbose, &project, !no_land_refresh).await?;
         }
         Commands::Find {
             command:

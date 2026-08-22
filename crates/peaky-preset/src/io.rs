@@ -249,6 +249,7 @@ pub fn import_land_source(
         path: rel_path,
         label: label.or_else(|| Some(source_id.clone())),
         layers,
+        enabled: true,
         refresh: None,
     };
     preset.land.sources.insert(source_id.clone(), entry.clone());

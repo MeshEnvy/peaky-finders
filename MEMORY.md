@@ -16,7 +16,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | v4 | Frozen reference; do not delete until v5 soak |
 | Interface | `peaky serve <project>` — web UI for one project directory |
 | RF engine | `splatter/` crate (in-process `Session`, library only) |
-| Land | GeoJSON at runtime. GDB sources: `peaky serve` / `peaky land refresh` download stale/missing files (`land.sources[].refresh.*`) and warm `.peaky/cache/land/` via ogr2ogr. **WGS84 required.** |
+| Land | GeoJSON at runtime. GDB sources: **`peaky serve` boot** validates enabled sources, auto-refreshes missing/stale/invalid when `refresh.downloadUrl` is set, then warms `.peaky/cache/land/` via ogr2ogr. Invalid enabled source **blocks boot** until `enabled: false` in `land.yaml`. Pass `--no-land-refresh` to skip. **WGS84 required.** |
 | Dev | Host: `cargo run -p peaky -- serve <project-dir>` (e.g. `peaky-nevada`). `--release` for long RF only. Docker: mount project at `/project` only. Skadi + map tiles under `<project>/.peaky/cache/skadi/`. Optional `SPLAT_CACHE` override. Parallelism: `simulation.max_workers.coverage` (default 2, serve warm queue; env `PEAKY_COVERAGE_WORKERS`), `simulation.max_workers.dem` (default 4, Skadi fetch pool; env `PEAKY_DEM_FETCH_WORKERS`) |
 | Auto-finder | `peaky find path` — onX KML route → min-site RF chain; cache under `.peaky/cache/finder/`; **`--watch`** live MapLibre + SSE on localhost:9847 |
 | Ops | Public-land site tags + FO export live in ops: `peaky_home/scripts/tag_public_land.py`, `export_blm_fo_packet.py`. **Fleet-tool direction (ops, 08-14, speculative):** nevada YAML is the canonical site/fleet list; later creds + telemetry history may live next to the preset. **Do not** put passwords or keypairs in git-tracked `config.yaml`. → `ops/initiatives/peaky-fleet-management.md` |
@@ -27,7 +27,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | Path | Role |
 |------|------|
 | `Dockerfile` | `peaky:latest` — mount project at `/project` |
-| `cmd/peaky/` | CLI binary (`serve`, `land refresh|audit`, `find path`) |
+| `cmd/peaky/` | CLI binary (`serve`, `find path`; `serve --no-land-refresh`) |
 | `crates/peaky-finder/` | Auto-finder: route → min-site RF chain + config patch |
 | `crates/peaky-preset/` | Preset model, YAML I/O, paths, sites, home catalogs |
 | `crates/peaky-geo/` | GeoJSON land query, eligible land, KML import, PPM polygonize |

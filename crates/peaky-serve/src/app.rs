@@ -3,8 +3,9 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::Router;
+use peaky_geo::prepare_land_at_boot;
 use peaky_preset::{
     load_preset, resolved_coverage_max_workers, resolved_dem_fetch_max_workers,
     resolved_skadi_mirror_dir_for_project,
@@ -27,7 +28,13 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-pub async fn run_server(host: &str, port: u16, verbose: bool, project: &std::path::Path) -> Result<()> {
+pub async fn run_server(
+    host: &str,
+    port: u16,
+    verbose: bool,
+    project: &std::path::Path,
+    land_refresh: bool,
+) -> Result<()> {
     let project_dir = peaky_preset::resolve_project_dir(&project.to_string_lossy());
     let is_new = peaky_preset::project_needs_init(&project_dir);
     let project_dir = peaky_preset::ensure_project_initialized(project)?;
@@ -41,6 +48,11 @@ pub async fn run_server(host: &str, port: u16, verbose: bool, project: &std::pat
         );
     }
     tracing::info!("project {} ({})", slug, project_dir.display());
+
+    if land_refresh {
+        tracing::info!("land: validating sources and refreshing stale data");
+        prepare_land_at_boot(&preset_path, verbose).context("land boot prepare")?;
+    }
 
     let preset = load_preset(&preset_path)?;
     let mirror = resolved_skadi_mirror_dir_for_project(&project_dir);
