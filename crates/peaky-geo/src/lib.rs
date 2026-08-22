@@ -18,7 +18,8 @@ pub use kml_import::{
     KmlRouteWaypoint,
 };
 pub use land_filter::{
-    json_value_as_compare_string, matches_land_attribute_filters, property_matches_filter,
+    filter_geojson_preview, json_value_as_compare_string, matches_land_attribute_filters,
+    property_matches_filter, transform_geojson_for_layer,
 };
 pub use land_path::{
     is_land_geojson_path, resolve_land_layer_geojson_path, resolve_land_source_path,

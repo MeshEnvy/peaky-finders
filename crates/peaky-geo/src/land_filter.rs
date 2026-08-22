@@ -65,6 +65,50 @@ pub fn matches_land_attribute_filters(
     true
 }
 
+pub fn filter_geojson_preview(
+    geojson: Value,
+    include: &[LandAttributeFilter],
+    exclude: &[LandAttributeFilter],
+) -> Value {
+    transform_geojson_for_layer(geojson, include, exclude, None, None)
+}
+
+pub fn transform_geojson_for_layer(
+    mut geojson: Value,
+    include: &[LandAttributeFilter],
+    exclude: &[LandAttributeFilter],
+    label_field: Option<&str>,
+    style_field: Option<&str>,
+) -> Value {
+    let Some(features) = geojson.get_mut("features").and_then(|v| v.as_array_mut()) else {
+        return geojson;
+    };
+    features.retain_mut(|feat| {
+        let Some(props) = feat
+            .as_object_mut()
+            .and_then(|obj| obj.get_mut("properties"))
+            .and_then(|p| p.as_object_mut())
+        else {
+            return include.is_empty();
+        };
+        if !matches_land_attribute_filters(props, include, exclude) {
+            return false;
+        }
+        if let Some(field) = label_field.filter(|name| !name.is_empty()) {
+            if let Some(label) = props.get(field).and_then(json_value_as_compare_string) {
+                props.insert("label".to_string(), Value::String(label));
+            }
+        }
+        if let Some(field) = style_field.filter(|name| !name.is_empty()) {
+            if let Some(key) = props.get(field).and_then(json_value_as_compare_string) {
+                props.insert("style_key".to_string(), Value::String(key));
+            }
+        }
+        true
+    });
+    geojson
+}
+
 pub fn json_safe_properties(props: &Map<String, Value>) -> Map<String, Value> {
     let mut out = Map::new();
     for (key, value) in props {
