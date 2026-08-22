@@ -3,7 +3,7 @@
 #   docker build -t peaky:latest .
 #
 #   docker run --rm -p 8080:8080 \
-#     -v /path/to/peaky-nevada:/project \
+#     -v /path/to/project:/project \
 #     peaky:latest
 #
 # Skadi HGT + map tiles cache under /project/.peaky/cache/skadi/

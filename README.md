@@ -1,50 +1,51 @@
-# Peaky Finders v5
+# Peaky Finders
 
-Pure Rust LoRa mesh site planner. Greenfield replacement for v4 (Python + Docker + PyO3 splatter).
+Peaky Finders is a next-generation mesh planning tool with a completely rewritten RF viewshed calculator. Building on prior art such as [SPLAT](https://www.qsl.net/kd2bd/splat.html), it uses modern CPU cores and is optimized for calculating LoRa mesh RF viewsheds.
 
-## Build
+Peaky Finders features an innovative goal-seeking tool that intelligently finds repeater routes using only land you have marked as eligible. Out here in Nevada, that means feeding Peaky BLM and USFS overlays to keep repeaters on public land and off private property. We used Peaky Finders to plan a mesh network around the entire state, complete with fault tolerance and redundancy.
 
-```bash
-cargo build --release
-```
+Everything lives in YAML. Peaky consumes GeoJSON and most shapefile sources natively. Contributions are welcome, especially if you have ideas for improving or tuning viewshed calculations. See [CONTRIBUTING.md](CONTRIBUTING.md) for build and development setup.
 
-Binary: `target/release/peaky`
+![3D terrain with RF viewshed overlay](docs/screenshots/3d-terrain-viewshed.jpg)
 
-## Serve
+![Land eligibility layers and goal seek](docs/screenshots/land-layers-goal-seek.jpg)
 
-```bash
-cargo run -p peaky -- serve /path/to/peaky-nevada --port 8080
-```
+![Goal seek repeater route planning](docs/screenshots/goal-seek-route.jpg)
 
-Open `http://127.0.0.1:8080/`. Skadi tiles and RF cache live under `<project>/.peaky/cache/`.
+## Install
 
-## Docker
+Download a release for your platform from [GitHub Releases](https://github.com/MeshEnvy/peaky-finders/releases):
 
-```bash
-docker build -t peaky:latest .
-docker run --rm -p 8080:8080 \
-  -v /path/to/peaky-nevada:/project \
-  peaky:latest
-```
+| Platform | Archive |
+|----------|---------|
+| Linux x86_64 | `peaky-*-x86_64-unknown-linux-gnu.tar.gz` |
+| macOS Apple Silicon | `peaky-*-aarch64-apple-darwin.tar.gz` |
+| macOS Intel | `peaky-*-x86_64-apple-darwin.tar.gz` |
 
-Image default: `peaky serve /project`. Override the command for `find path`.
+Extract the archive. It contains a single `peaky` binary. Put it on your `PATH`, or run it from the directory where you extracted it.
 
-## Ops (BLM tags / FO export)
-
-BLM inventory tagging and FO export live in **ops**, not this repo:
+## Run
 
 ```bash
-# from ops/
-python3 peaky_home/scripts/tag_public_land.py --dry-run
-python3 peaky_home/scripts/export_blm_fo_packet.py --fo blm-sierra-fo --dry-run
+peaky serve /path/to/project --port 8080
 ```
 
-## Test
+Open `http://127.0.0.1:8080/`.
 
-```bash
-cargo test
-```
+If `/path/to/project` is missing or has no `config.yaml` yet, Peaky creates the directory and writes a starter `config.yaml` with typical MeshCore modem and RF defaults. Add sites and land layers from the web UI.
 
-## Layout
+Skadi tiles and RF cache live under `<project>/.peaky/cache/`.
 
-See [MEMORY.md](MEMORY.md) for architecture and agent contract.
+### Project files
+
+| File | Contents |
+|------|----------|
+| `config.yaml` | RF presets, simulation, display, seek, links (required) |
+| `sites.yaml` | `sites:` map (optional split file) |
+| `land.yaml` | Eligible land layers (optional split file) |
+
+Peaky merges split files at load time. Small projects can keep everything in one `config.yaml`.
+
+### Land imports
+
+GeoJSON works out of the box. File Geodatabase (`.gdb`) imports need [GDAL](https://gdal.org/) installed (`ogr2ogr` on your `PATH`).
