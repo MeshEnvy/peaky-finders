@@ -50,6 +50,12 @@ Optional PR labels map to release sections (see [`.github/release.yml`](.github/
 
 On `/commit`, follow [`.cursor/skills/commit/SKILL.md`](.cursor/skills/commit/SKILL.md).
 
+## Opportunistic refactor
+
+**Mandatory.** Any edit that touches a file also extracts or dedups one safe incremental improvement in the same change set when the opportunity exists (pure helpers, shared constants, URL builders, duplicated logic). See [`.cursor/rules/opportunistic-refactor.mdc`](.cursor/rules/opportunistic-refactor.mdc).
+
+Map UI: keep `assets/static/project-map/init.js` as boot only; new pure code goes in sibling ESM modules listed in MEMORY.md.
+
 ## Build from source
 
 Requires Rust 1.74+ and a C toolchain.

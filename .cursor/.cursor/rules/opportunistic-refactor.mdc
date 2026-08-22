@@ -1,0 +1,56 @@
+---
+description: Mandatory opportunistic refactors when touching code — extract before leaving
+alwaysApply: true
+---
+
+# Opportunistic refactor (mandatory)
+
+When you **touch** code in this repo, you **must** leave the area cleaner than you found it. Refactoring is not optional follow-up work.
+
+## Trigger
+
+Any task that edits a file also owns **one incremental extraction or dedup** in that same change set when the opportunity exists.
+
+Opportunity exists when any of these apply:
+
+- Pure logic duplicated inline or already living in a sibling module
+- Constants duplicated instead of imported from a shared module
+- URL builders, geo/math, sim clamps, or data normalizers still embedded in a large boot file
+- A function has no closure over live UI/map state and can move out with explicit parameters
+
+## Safe split axes (in order)
+
+1. **Pure leaves** — `geo.js`, `api-urls.js`, `viewshed-sim.js`, `viewshed-raster.js`, `constants.js`
+2. **Map helpers** — pass `map`, `mapReady`, thresholds as args (`map-viewport.js`)
+3. **Static config** — basemap tiles, layer IDs (`basemap.js`, `constants.js`)
+4. **Data models** — sidebar normalization, cache helpers (`land-model.js`)
+5. **Stateful domains** — only when actively rewriting that feature; use explicit factories, never mechanical closure splits
+
+## Map UI (`assets/static/project-map/`)
+
+- **`init.js` is a boot orchestrator**, not a junk drawer. New pure code does not land there.
+- **Import shared modules**; do not copy const blocks or helper bodies back inline.
+- After adding a module, update **MEMORY.md** § Workspace layout in the same change set.
+- Rebuild: `cargo build -p peaky` (rust-embed).
+
+## Rust / other crates
+
+Same rule: extract pure helpers to the nearest crate module when you edit a file >~300 lines or duplicate logic you can name in one line.
+
+## Scope discipline
+
+- **One extraction per touch** is enough. Do not expand into unrelated domains.
+- **Do not** block a bugfix on a large rewrite. Ship the fix plus the smallest safe extraction.
+- **Do not** split stateful domains speculatively (see failed partial ESM split). Factories only when the feature is in scope.
+
+## Commits
+
+- Refactor bundled with the feature → one commit is fine when inseparable.
+- Refactor-only session → `refactor(<scope>): …` per commit-style rule.
+- Never leave "TODO: extract later" without filing the extraction in MEMORY or doing it now.
+
+## Self-check before done
+
+- Did I touch `init.js` or another monolith without moving at least one pure helper out?
+- Did I duplicate constants or URLs that belong in `constants.js` / `api-urls.js`?
+- Is MEMORY.md updated if module layout changed?

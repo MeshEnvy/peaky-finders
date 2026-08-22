@@ -7,6 +7,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 1. **Read first** — Load MEMORY.md before tasks touching presets, serve, RF, splatter, or CLI.
 2. **Update always** — Architecture/API/path/workflow changes → update MEMORY.md before marking done.
 3. **Greenfield** — v4 is read-only reference. Break freely in v5; no Python/Docker `./peaky` wrapper.
+4. **Opportunistic refactor** — Touching code → extract or dedup one safe incremental improvement in the same change set (`.cursor/rules/opportunistic-refactor.mdc`).
 
 ## Status
 
