@@ -98,3 +98,13 @@ export function viewshedRadiusBounds(simDefaults) {
     max: Number(simDefaults?.radius_km_max) || 100,
   }
 }
+
+/** @param {string} slug */
+export function viewshedSourceId(slug) {
+  return `viewshed-${slug}`
+}
+
+/** @param {string} slug */
+export function viewshedLayerId(slug) {
+  return `viewshed-${slug}-raster`
+}

@@ -1,4 +1,96 @@
 // Canonical map boot (ESM). Entry: main.js → initProjectMap().
+import {
+  TERRAIN_SOURCE,
+  TERRAIN_HILLSHADE,
+  BASEMAP_REFERENCE_SOURCE,
+  BASEMAP_REFERENCE_LAYER,
+  SITES_SOURCE,
+  SITES_CIRCLE,
+  SITES_LABELS,
+  SITES_SELECTED,
+  LINKS_SOURCE,
+  LINKS_LAYER,
+  LINKS_LABELS_LAYER,
+  DRAFT_LINKS_SOURCE,
+  DRAFT_LINKS_LAYER,
+  DRAFT_LINKS_LABELS_LAYER,
+  EDIT_HISTORY_LINKS_SOURCE,
+  EDIT_HISTORY_LINKS_LAYER,
+  EDIT_HISTORY_LINKS_LABELS_LAYER,
+  SEEK_CANDIDATES_SOURCE,
+  SEEK_CANDIDATES_LAYER,
+  SEEK_CANDIDATES_LABELS_LAYER,
+  SEEK_LINES_SOURCE,
+  SEEK_LINES_LAYER,
+  SEEK_LINES_LABELS_LAYER,
+  SEEK_PATH_SOURCE,
+  SEEK_PATH_LAYER,
+  SEEK_GOAL_LINE_SOURCE,
+  SEEK_GOAL_LINE_LAYER,
+  SEEK_WEDGE_SOURCE,
+  SEEK_WEDGE_FILL_LAYER,
+  SEEK_WEDGE_OUTLINE_LAYER,
+  SEEK_ANCILLARY_LINES_SOURCE,
+  SEEK_ANCILLARY_LINES_LAYER,
+  SEEK_ANCILLARY_LINES_LABELS_LAYER,
+  SEEK_ANCILLARY_LINKS_DEBOUNCE_MS,
+  SEEK_PLAN_SAVE_MS,
+  SEEK_PEAK_BIN_MIN_M,
+  SEEK_PEAK_BIN_MAX_M,
+  SEEK_PEAK_BINS_ACROSS_VIEWPORT,
+  SEEK_SCAN_PIN,
+  SEEK_PROGRESS_POLL_MS,
+  SEEK_GOAL_SAME_AS_START_M,
+  SEEK_HOP_VIEWSHED_PREFIX,
+  LAND_DEFAULT_FILL_COLOR,
+  LAND_DEFAULT_FILL_OPACITY,
+  LAND_DEFAULT_LINE_COLOR,
+  LAND_LINE_WIDTH,
+  LAND_PREVIEW_LINE_WIDTH,
+  VIEWSHED_OPACITY_DEFAULT,
+  DRAFT_VIEWSHED_SLUG,
+  VIEWSHED_PREVIEW_QUALITY,
+  VIEWSHED_QUALITY_MIN,
+  VIEWSHED_QUALITY_MAX,
+  COORD_PREFETCH_MS,
+  DRAFT_MARKER_COLOR,
+  PITCH_TERRAIN_ON,
+  PITCH_TERRAIN_OFF,
+  SITE_FIT_BUFFER_KM,
+  MAP_STATE_SAVE_MS,
+  MAP_GLYPHS_URL,
+  MAP_TEXT_FONT,
+  MAP_LABEL_FONT,
+  PIN_LOAD_MARKER_OFFSET,
+  mapStateKey,
+  seekStateKey,
+  seekRedoKey,
+  viewshedRadiusBounds,
+  viewshedSourceId,
+  viewshedLayerId,
+} from './constants.js'
+import {
+  compareHuman,
+  kmToDegreeDeltas,
+  lngLatBoundsFromPoints,
+  padMapBounds,
+  seekPeakBinSizeMForBounds,
+  haversineMeters,
+  buildSeekWedgeFeature,
+  buildSeekGoalLineFeature,
+  formatCoord,
+  parseCoordPairFromText,
+  coordsMatchPair,
+  coordSeparationM,
+  coordsUsableForMarker,
+  arrayBufferToBase64,
+  slugifyName,
+  uniqueSlugFromName,
+  normalizeTagInput,
+  slugifyLandFolderId,
+} from './geo.js'
+import * as apiUrls from './api-urls.js'
+
 export function initProjectMap() {
   const config = window.PEAKY_PROJECT || {};
   const projectSlug = config.slug;
@@ -13,118 +105,118 @@ export function initProjectMap() {
     typeof config.land?.aoiDigest === "string" ? config.land.aoiDigest : "none";
   let landSidebar = normalizeLandSidebarInput(config.land?.sidebar);
 
-  const TERRAIN_SOURCE = "terrain-dem";
-  const TERRAIN_HILLSHADE = "terrain-hillshade";
-  const BASEMAP_REFERENCE_SOURCE = "basemap-reference";
-  const BASEMAP_REFERENCE_LAYER = "basemap-reference";
-  const SITES_SOURCE = "sites";
-  const SITES_CIRCLE = "sites-circle";
-  const SITES_LABELS = "sites-labels";
-  const SITES_SELECTED = "sites-selected";
-  const LINKS_SOURCE = "site-links";
-  const LINKS_LAYER = "site-links-line";
-  const LINKS_LABELS_LAYER = "site-links-label";
-  const DRAFT_LINKS_SOURCE = "draft-site-links";
-  const DRAFT_LINKS_LAYER = "draft-site-links-line";
-  const DRAFT_LINKS_LABELS_LAYER = "draft-site-links-label";
-  const EDIT_HISTORY_LINKS_SOURCE = "edit-history-links";
-  const EDIT_HISTORY_LINKS_LAYER = "edit-history-links-line";
-  const EDIT_HISTORY_LINKS_LABELS_LAYER = "edit-history-links-label";
-  const SEEK_CANDIDATES_SOURCE = "seek-candidates";
-  const SEEK_CANDIDATES_LAYER = "seek-candidates-circle";
-  const SEEK_CANDIDATES_LABELS_LAYER = "seek-candidates-label";
-  const SEEK_LINES_SOURCE = "seek-candidate-lines";
-  const SEEK_LINES_LAYER = "seek-candidate-lines-line";
-  const SEEK_LINES_LABELS_LAYER = "seek-candidate-lines-label";
-  const SEEK_PATH_SOURCE = "seek-path";
-  const SEEK_PATH_LAYER = "seek-path-line";
-  const SEEK_GOAL_LINE_SOURCE = "seek-goal-line";
-  const SEEK_GOAL_LINE_LAYER = "seek-goal-line";
-  const SEEK_WEDGE_SOURCE = "seek-goal-wedge";
-  const SEEK_WEDGE_FILL_LAYER = "seek-goal-wedge-fill";
-  const SEEK_WEDGE_OUTLINE_LAYER = "seek-goal-wedge-outline";
-  const SEEK_WEDGE_NEAR_DEG = 10;
-  const SEEK_WEDGE_FAR_DEG = 50;
-  const SEEK_ANCILLARY_LINES_SOURCE = "seek-ancillary-lines";
-  const SEEK_ANCILLARY_LINES_LAYER = "seek-ancillary-lines-line";
-  const SEEK_ANCILLARY_LINES_LABELS_LAYER = "seek-ancillary-lines-label";
-  const SEEK_ANCILLARY_LINKS_DEBOUNCE_MS = 450;
-  const SEEK_STATE_KEY = `peaky.seek.v1.${projectSlug}`;
-  const SEEK_REDO_KEY = `peaky.seek.redo.v1.${projectSlug}`;
-  const SEEK_PLAN_SAVE_MS = 400;
-  const SEEK_PEAK_BIN_MIN_M = 500;
-  const SEEK_PEAK_BIN_MAX_M = 1500;
-  const SEEK_PEAK_BINS_ACROSS_VIEWPORT = 20;
-  const SEEK_SCAN_PIN = "__seek_scan__";
-  const SEEK_PROGRESS_POLL_MS = 400;
-  const SEEK_GOAL_SAME_AS_START_M = 50;
-  const SEEK_HOP_VIEWSHED_PREFIX = "_seek_hop_";
-  const LAND_DEFAULT_FILL_COLOR = "#4a6cf7";
-  const LAND_DEFAULT_FILL_OPACITY = 0.48;
-  const LAND_DEFAULT_LINE_COLOR = "#1e40af";
-  const LAND_LINE_WIDTH = 1.25;
-  const LAND_PREVIEW_LINE_WIDTH = 2.5;
-  const VIEWSHED_OPACITY_DEFAULT = 0.75;
-  const DRAFT_VIEWSHED_SLUG = "_draft";
-  const VIEWSHED_PREVIEW_QUALITY = 1;
-  const SKADI_DEM_SPACING_M = 30;
-  const VIEWSHED_QUALITY_MIN = 1;
-  const VIEWSHED_QUALITY_MAX = 5;
-  const VIEWSHED_RASTER_MIN = 128;
-  const VIEWSHED_RASTER_MAX = 4096;
-  const COORD_PREFETCH_MS = 350;
-  const DRAFT_MARKER_COLOR = "#fbbf24";
   const simDefaults = config.simulation || {};
-  const VIEWSHED_RADIUS_KM_MIN = Number(simDefaults.radius_km_min) || 1;
-  const VIEWSHED_RADIUS_KM_MAX = Number(simDefaults.radius_km_max) || 100;
-  const PITCH_TERRAIN_ON = 12;
-  const PITCH_TERRAIN_OFF = 6;
-  const SITE_FIT_BUFFER_KM = 30;
-  const MAP_STATE_KEY = `peaky.map.v1.${projectSlug}`;
-  const MAP_STATE_SAVE_MS = 400;
-  const MAP_GLYPHS_URL =
-    "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf";
-  const MAP_TEXT_FONT = ["Noto Sans Regular"];
-  const MAP_LABEL_FONT = ["Noto Sans Medium"];
+  const { min: VIEWSHED_RADIUS_KM_MIN, max: VIEWSHED_RADIUS_KM_MAX } =
+    viewshedRadiusBounds(simDefaults);
+  const MAP_STATE_KEY = mapStateKey(projectSlug);
+  const SEEK_STATE_KEY = seekStateKey(projectSlug);
+  const SEEK_REDO_KEY = seekRedoKey(projectSlug);
 
-  function demNativeRasterDimension(radiusKm) {
-    const px = Math.ceil((radiusKm * 1000) / SKADI_DEM_SPACING_M);
-    return Math.max(VIEWSHED_RASTER_MIN, Math.min(VIEWSHED_RASTER_MAX, px));
+  function linksApiUrl() {
+    return apiUrls.linksApiUrl(projectSlug);
   }
-
-  function rasterUpgradeLadder(minPx, targetPx) {
-    const min = Math.max(VIEWSHED_RASTER_MIN, Math.min(VIEWSHED_RASTER_MAX, minPx));
-    const target = Math.max(min, Math.min(VIEWSHED_RASTER_MAX, targetPx));
-    const ladder = [min];
-    let cur = min;
-    while (cur < target) {
-      const next = Math.min(cur * 2, target);
-      if (next <= cur) break;
-      ladder.push(next);
-      cur = next;
-    }
-    return ladder;
+  function siteLinksApiUrl(slug) {
+    return apiUrls.siteLinksApiUrl(projectSlug, slug);
   }
-
-  function computeViewshedRaster(quality, radiusKm) {
-    const q = Math.max(
-      VIEWSHED_QUALITY_MIN,
-      Math.min(VIEWSHED_QUALITY_MAX, Math.round(Number(quality) || VIEWSHED_QUALITY_MIN)),
+  function linksWarmApiUrl() {
+    return apiUrls.linksWarmApiUrl(projectSlug);
+  }
+  function warmPrioritiesApiUrl() {
+    return apiUrls.warmPrioritiesApiUrl(projectSlug);
+  }
+  function sitesApiUrl() {
+    return apiUrls.sitesApiUrl(projectSlug);
+  }
+  function sitesImportPreviewApiUrl() {
+    return apiUrls.sitesImportPreviewApiUrl(projectSlug);
+  }
+  function sitesImportApiUrl() {
+    return apiUrls.sitesImportApiUrl(projectSlug);
+  }
+  function sitesTagsBulkApiUrl() {
+    return apiUrls.sitesTagsBulkApiUrl(projectSlug);
+  }
+  function previewSlugForName(name) {
+    return uniqueSlugFromName(name, siteBySlug.keys());
+  }
+  function siteDeleteUrl(slug) {
+    return apiUrls.siteDeleteUrl(projectSlug, slug);
+  }
+  function landApiUrl() {
+    return apiUrls.landApiUrl(projectSlug);
+  }
+  function landSidebarApiUrl() {
+    return apiUrls.landSidebarApiUrl(projectSlug);
+  }
+  function landDataGdbsUrl() {
+    return apiUrls.landDataGdbsUrl(projectSlug);
+  }
+  function landImportPreviewApiUrl() {
+    return apiUrls.landImportPreviewApiUrl(projectSlug);
+  }
+  function landImportApiUrl() {
+    return apiUrls.landImportApiUrl(projectSlug);
+  }
+  function landSourceApiUrl(sourceId) {
+    return apiUrls.landSourceApiUrl(projectSlug, sourceId);
+  }
+  function landLayerGeoJsonUrl(sourceId, layer) {
+    return apiUrls.landLayerGeoJsonUrl(projectSlug, sourceId, layer);
+  }
+  function landPreviewGeoJsonUrl(path, layer) {
+    return apiUrls.landPreviewGeoJsonUrl(projectSlug, path, layer);
+  }
+  function landPreviewCacheKey(path, layer) {
+    return apiUrls.landPreviewCacheKey(path, layer);
+  }
+  function landLayerCacheKey(sourceId, layer, digest) {
+    return apiUrls.landLayerCacheKey(sourceId, layer, digest);
+  }
+  function landFieldsApiUrl(path, layer) {
+    return apiUrls.landFieldsApiUrl(projectSlug, path, layer);
+  }
+  function landValuesApiUrl(path, layer, field) {
+    return apiUrls.landValuesApiUrl(projectSlug, path, layer, field);
+  }
+  function landPreviewGeoJsonPostUrl() {
+    return apiUrls.landPreviewGeoJsonPostUrl(projectSlug);
+  }
+  function projectEventsUrl() {
+    return apiUrls.projectEventsUrl(projectSlug);
+  }
+  function viewshedWarmUrl(siteSlug) {
+    return apiUrls.viewshedWarmUrl(projectSlug, siteSlug, viewshedSimQueryParams());
+  }
+  function viewshedPrefetchWarmUrl(lat, lon, { preview = true } = {}) {
+    const params = preview
+      ? viewshedPreviewSimQueryParams()
+      : viewshedSimQueryParams();
+    params.set("lat", String(lat));
+    params.set("lon", String(lon));
+    return apiUrls.viewshedPrefetchWarmUrl(projectSlug, params);
+  }
+  function viewshedMetaUrl(siteSlug, { lat, lon } = {}) {
+    return apiUrls.viewshedMetaUrl(
+      projectSlug,
+      siteSlug,
+      viewshedSimQueryParams(),
+      lat,
+      lon,
     );
-    if (q === 1) return VIEWSHED_RASTER_MIN;
-    const full = demNativeRasterDimension(radiusKm);
-    if (q === 5 || full <= VIEWSHED_RASTER_MIN) return full;
-    const ladder = rasterUpgradeLadder(VIEWSHED_RASTER_MIN, full);
-    const idx = Math.round(((q - 1) / (VIEWSHED_QUALITY_MAX - 1)) * (ladder.length - 1));
-    return ladder[Math.min(idx, ladder.length - 1)];
+  }
+  function viewshedPrefetchMetaUrl(lat, lon) {
+    const params = viewshedPreviewSimQueryParams();
+    params.set("lat", String(lat));
+    params.set("lon", String(lon));
+    return apiUrls.viewshedPrefetchMetaUrl(projectSlug, params);
+  }
+  function viewshedIndexUrl() {
+    return apiUrls.viewshedIndexUrl(projectSlug, viewshedSimQueryParams());
+  }
+  function sitesPrefetchUrl(lat, lon, excludeSite) {
+    return apiUrls.sitesPrefetchUrl(projectSlug, lat, lon, excludeSite);
   }
 
-  function compareHuman(left, right) {
-    return String(left).localeCompare(String(right), undefined, {
-      numeric: true,
-      sensitivity: "base",
-    });
-  }
 
   function syncOpacitySlider() {
     const opacityEl = document.getElementById("viewshed-opacity");
@@ -418,13 +510,6 @@ export function initProjectMap() {
     };
   }
 
-  function kmToDegreeDeltas(latDeg, km) {
-    const m = km * 1000;
-    const latDelta = m / 111_320;
-    const lonDelta = m / (111_320 * Math.cos((latDeg * Math.PI) / 180));
-    return { latDelta, lonDelta };
-  }
-
   /** True when the map is pitched into 3D terrain view. */
   function isMapTiltedView(mapInstance = map) {
     return Boolean(
@@ -465,56 +550,6 @@ export function initProjectMap() {
     return mapInstance.getBounds();
   }
 
-  function lngLatBoundsFromPoints(points) {
-    let west = Infinity;
-    let east = -Infinity;
-    let south = Infinity;
-    let north = -Infinity;
-    for (const ll of points) {
-      if (!ll || !Number.isFinite(ll.lng) || !Number.isFinite(ll.lat)) continue;
-      if (Math.abs(ll.lat) > 90 || Math.abs(ll.lng) > 180) continue;
-      west = Math.min(west, ll.lng);
-      east = Math.max(east, ll.lng);
-      south = Math.min(south, ll.lat);
-      north = Math.max(north, ll.lat);
-    }
-    if (!Number.isFinite(west)) return null;
-    return {
-      getWest: () => west,
-      getEast: () => east,
-      getSouth: () => south,
-      getNorth: () => north,
-    };
-  }
-
-  function padMapBounds(bounds, minSpanM) {
-    if (!bounds || minSpanM <= 0) return bounds;
-    const centerLat = (bounds.getNorth() + bounds.getSouth()) / 2;
-    const latRad = (centerLat * Math.PI) / 180;
-    const minLatDelta = minSpanM / 111320;
-    const minLonDelta = minSpanM / (111320 * Math.max(1e-6, Math.cos(latRad)));
-    let west = bounds.getWest();
-    let east = bounds.getEast();
-    let south = bounds.getSouth();
-    let north = bounds.getNorth();
-    if (east - west < minLonDelta) {
-      const cx = (east + west) / 2;
-      west = cx - minLonDelta / 2;
-      east = cx + minLonDelta / 2;
-    }
-    if (north - south < minLatDelta) {
-      const cy = (north + south) / 2;
-      south = cy - minLatDelta / 2;
-      north = cy + minLatDelta / 2;
-    }
-    return {
-      getWest: () => west,
-      getEast: () => east,
-      getSouth: () => south,
-      getNorth: () => north,
-    };
-  }
-
   /** Geographic bounds of terrain visible on screen (pitch-aware). */
   function mapSeekScanBounds(mapInstance = map) {
     if (!mapInstance || !mapReady) return mapDataViewportBounds(mapInstance);
@@ -536,17 +571,6 @@ export function initProjectMap() {
     const bounds = lngLatBoundsFromPoints(points);
     if (bounds) return bounds;
     return mapInstance.getBounds();
-  }
-
-  function seekPeakBinSizeMForBounds(bounds) {
-    const centerLat = (bounds.getNorth() + bounds.getSouth()) / 2;
-    const lngSpan = Math.abs(bounds.getEast() - bounds.getWest());
-    const metersPerDegLng = 111320 * Math.cos((centerLat * Math.PI) / 180);
-    const viewportWidthM = lngSpan * metersPerDegLng;
-    const raw = viewportWidthM / SEEK_PEAK_BINS_ACROSS_VIEWPORT;
-    return Math.round(
-      Math.max(SEEK_PEAK_BIN_MIN_M, Math.min(SEEK_PEAK_BIN_MAX_M, raw)),
-    );
   }
 
   function seekScanBoundsForRequest() {
@@ -743,17 +767,6 @@ export function initProjectMap() {
       return Math.min(0.88, 0.06 + 0.82 * (p.raster / p.target));
     }
     return 0.06;
-  }
-
-  const PIN_LOAD_MARKER_OFFSET = [0, 10];
-
-  function coordsUsableForMarker(lon, lat) {
-    return (
-      Number.isFinite(lon) &&
-      Number.isFinite(lat) &&
-      Math.abs(lat) <= 90 &&
-      Math.abs(lon) <= 180
-    );
   }
 
   function setMarkerLngLatSafe(marker, lon, lat) {
@@ -1209,22 +1222,6 @@ export function initProjectMap() {
     if (map.getSource(TERRAIN_SOURCE)) map.removeSource(TERRAIN_SOURCE);
   }
 
-  function linksApiUrl() {
-    return `/api/p/${projectSlug}/links`;
-  }
-
-  function siteLinksApiUrl(slug) {
-    return `/api/p/${projectSlug}/sites/${encodeURIComponent(slug)}/links`;
-  }
-
-  function linksWarmApiUrl() {
-    return `/api/p/${projectSlug}/links/warm`;
-  }
-
-  function warmPrioritiesApiUrl() {
-    return `/api/p/${projectSlug}/warm/priorities`;
-  }
-
   const WARM_PRIORITY_INTERACTIVE = 0;
   const WARM_PRIORITY_VIEWPORT = 10;
   const WARM_VIEWPORT_SLUG_CAP = 48;
@@ -1297,22 +1294,6 @@ export function initProjectMap() {
     dialog.open = true;
   }
 
-  function sitesApiUrl() {
-    return `/api/p/${projectSlug}/sites`;
-  }
-
-  function sitesImportPreviewApiUrl() {
-    return `/api/p/${projectSlug}/sites/import/preview`;
-  }
-
-  function sitesImportApiUrl() {
-    return `/api/p/${projectSlug}/sites/import`;
-  }
-
-  function sitesTagsBulkApiUrl() {
-    return `/api/p/${projectSlug}/sites/tags/bulk`;
-  }
-
   function entityPanelSites() {
     return sites
       .filter(
@@ -1359,35 +1340,6 @@ export function initProjectMap() {
       });
       container.appendChild(chip);
     }
-  }
-
-  function arrayBufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-    }
-    return btoa(binary);
-  }
-
-  function slugifyName(name) {
-    let base = String(name || "")
-      .replace(/[^\w\s-]/g, "")
-      .trim()
-      .replace(/[\s_]+/g, "-")
-      .toLowerCase()
-      .replace(/^-+|-+$/g, "");
-    return base || "site";
-  }
-
-  function previewSlugForName(name) {
-    const base = slugifyName(name);
-    const taken = new Set([...siteBySlug.keys()]);
-    if (!taken.has(base)) return base;
-    let n = 2;
-    while (taken.has(`${base}-${n}`)) n += 1;
-    return `${base}-${n}`;
   }
 
   function showPanelView() {
@@ -1839,10 +1791,6 @@ export function initProjectMap() {
     if (map.getSource(sourceId)) map.removeSource(sourceId);
     viewshedLoading.delete(slug);
     updatePinOverlays();
-  }
-
-  function siteDeleteUrl(slug) {
-    return `/api/p/${projectSlug}/sites/${encodeURIComponent(slug)}`;
   }
 
   function purgeSiteLinksForSlug(slug) {
@@ -2842,48 +2790,6 @@ export function initProjectMap() {
     }
   }
 
-  function landApiUrl() {
-    return `/api/p/${projectSlug}/land`;
-  }
-
-  function landSidebarApiUrl() {
-    return `/api/p/${projectSlug}/land/sidebar`;
-  }
-
-  function landDataGdbsUrl() {
-    return `/api/p/${projectSlug}/land/data-gdbs`;
-  }
-
-  function landImportPreviewApiUrl() {
-    return `/api/p/${projectSlug}/land/import/preview`;
-  }
-
-  function landImportApiUrl() {
-    return `/api/p/${projectSlug}/land/import`;
-  }
-
-  function landSourceApiUrl(sourceId) {
-    return `/api/p/${projectSlug}/land/sources/${encodeURIComponent(sourceId)}`;
-  }
-
-  function landLayerGeoJsonUrl(sourceId, layer) {
-    return `/api/p/${projectSlug}/land/sources/${encodeURIComponent(sourceId)}/layers/${encodeURIComponent(layer)}/geojson`;
-  }
-
-  function landPreviewGeoJsonUrl(path, layer) {
-    const params = new URLSearchParams({ path, layer });
-    return `/api/p/${projectSlug}/land/preview/geojson?${params}`;
-  }
-
-  function landPreviewCacheKey(path, layer) {
-    return `preview|${path}|${layer}`;
-  }
-
-  function landLayerCacheKey(sourceId, layer, digest) {
-    const d = digest ? String(digest) : "";
-    return d ? `layer|${sourceId}|${layer}|${d}` : `layer|${sourceId}|${layer}`;
-  }
-
   function clearLandLayerGeoJsonCacheForLayer(sourceId, layerKey) {
     const prefix = `layer|${sourceId}|${layerKey}`;
     for (const key of [...landLayerGeoJsonCache.keys()]) {
@@ -2914,20 +2820,6 @@ export function initProjectMap() {
       });
     inflight.set(key, promise);
     return promise;
-  }
-
-  function landFieldsApiUrl(path, layer) {
-    const params = new URLSearchParams({ path, layer });
-    return `/api/p/${projectSlug}/land/import/preview/fields?${params}`;
-  }
-
-  function landValuesApiUrl(path, layer, field) {
-    const params = new URLSearchParams({ path, layer, field });
-    return `/api/p/${projectSlug}/land/import/preview/values?${params}`;
-  }
-
-  function landPreviewGeoJsonPostUrl() {
-    return `/api/p/${projectSlug}/land/preview/geojson`;
   }
 
   function defaultLandLayerConfig() {
@@ -3760,19 +3652,6 @@ export function initProjectMap() {
     }
     for (const sid of landSidebar.unfiledSources) ids.push(sid);
     return ids;
-  }
-
-  function slugifyLandFolderId(label, folders) {
-    const base =
-      String(label)
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "") || "folder";
-    const existing = new Set(folders.map((folder) => folder.id));
-    if (!existing.has(base)) return base;
-    let n = 2;
-    while (existing.has(`${base}-${n}`)) n += 1;
-    return `${base}-${n}`;
   }
 
   function removeSourceFromSidebar(sidebar, sourceId) {
@@ -6488,14 +6367,6 @@ export function initProjectMap() {
       map.removeSource(BASEMAP_REFERENCE_SOURCE);
   }
 
-  function viewshedSourceId(slug) {
-    return `viewshed-${slug}`;
-  }
-
-  function viewshedLayerId(slug) {
-    return `viewshed-${slug}-raster`;
-  }
-
   function applyViewshedOpacityToAllLayers() {
     if (!mapReady) return;
     for (const slug of viewshedOverlaySlugs()) {
@@ -6524,24 +6395,6 @@ export function initProjectMap() {
     params.set("radius_km", String(viewshedRadiusKm));
     params.set("quality", String(VIEWSHED_PREVIEW_QUALITY));
     return params;
-  }
-
-  function projectEventsUrl() {
-    return `/api/p/${projectSlug}/events`;
-  }
-
-  function viewshedWarmUrl(siteSlug) {
-    const params = viewshedSimQueryParams();
-    return `/api/p/${projectSlug}/viewsheds/${siteSlug}/warm?${params}`;
-  }
-
-  function viewshedPrefetchWarmUrl(lat, lon, { preview = true } = {}) {
-    const params = preview
-      ? viewshedPreviewSimQueryParams()
-      : viewshedSimQueryParams();
-    params.set("lat", String(lat));
-    params.set("lon", String(lon));
-    return `/api/p/${projectSlug}/viewsheds/prefetch/warm?${params}`;
   }
 
   let serveEventsSource = null;
@@ -6786,23 +6639,6 @@ export function initProjectMap() {
     viewshedLoadEpoch += 1;
   }
 
-  function viewshedMetaUrl(siteSlug, { lat, lon } = {}) {
-    const params = viewshedSimQueryParams();
-    if (lat != null && lon != null) {
-      params.set("lat", String(lat));
-      params.set("lon", String(lon));
-      return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
-    }
-    return `/api/p/${projectSlug}/viewsheds/${siteSlug}?${params}`;
-  }
-
-  function viewshedPrefetchMetaUrl(lat, lon) {
-    const params = viewshedPreviewSimQueryParams();
-    params.set("lat", String(lat));
-    params.set("lon", String(lon));
-    return `/api/p/${projectSlug}/viewsheds/prefetch?${params}`;
-  }
-
   function clearViewshedLoadingState(slug) {
     viewshedPendingEpoch.delete(slug);
     viewshedLoading.delete(slug);
@@ -6829,11 +6665,6 @@ export function initProjectMap() {
       /* cache probe optional */
     }
     return false;
-  }
-
-  function viewshedIndexUrl() {
-    const params = viewshedSimQueryParams();
-    return `/api/p/${projectSlug}/viewsheds/index?${params}`;
   }
 
   async function fetchOutboundLinksParallel(slugs) {
@@ -6934,15 +6765,6 @@ export function initProjectMap() {
       });
     }
     if (seekState?.running) syncSeekHopViewsheds();
-  }
-
-  function sitesPrefetchUrl(lat, lon, excludeSite) {
-    const params = new URLSearchParams({
-      lat: String(lat),
-      lon: String(lon),
-    });
-    if (excludeSite) params.set("exclude_site", excludeSite);
-    return `/api/p/${projectSlug}/sites/prefetch?${params}`;
   }
 
   function filterEditSitePrefetchPayload(payload) {
@@ -7350,10 +7172,6 @@ export function initProjectMap() {
     map.setFilter(SITES_SELECTED, filter);
   }
 
-  function formatCoord(n) {
-    return Number(n).toFixed(6);
-  }
-
   function setSectionVisible(sectionId, visible) {
     const el = document.getElementById(sectionId);
     if (el) el.hidden = !visible;
@@ -7368,14 +7186,6 @@ export function initProjectMap() {
       else if (row.b === slug) peers.push(row.a);
     }
     return peers.sort();
-  }
-
-  function normalizeTagInput(raw) {
-    return String(raw || "")
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "");
   }
 
   function setAddSiteError(message) {
@@ -7538,114 +7348,9 @@ export function initProjectMap() {
     }
   }
 
-  function haversineMeters(lat1, lon1, lat2, lon2) {
-    const earthRadiusM = 6371000;
-    const toRad = (deg) => (deg * Math.PI) / 180;
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-    return 2 * earthRadiusM * Math.asin(Math.sqrt(a));
-  }
-
-  function bearingDeg(lat1, lon1, lat2, lon2) {
-    const toRad = (deg) => (deg * Math.PI) / 180;
-    const toDeg = (rad) => (rad * 180) / Math.PI;
-    const phi1 = toRad(lat1);
-    const phi2 = toRad(lat2);
-    const dLon = toRad(lon2 - lon1);
-    const y = Math.sin(dLon) * Math.cos(phi2);
-    const x =
-      Math.cos(phi1) * Math.sin(phi2) -
-      Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLon);
-    return (toDeg(Math.atan2(y, x)) + 360) % 360;
-  }
-
   function seekHopRadiusM() {
     const km = Number(simDefaults.radius_km) || 50;
     return km * 1000;
-  }
-
-  function seekWedgeHalfAngleDeg(hopM, hopRadiusM) {
-    if (hopRadiusM <= 0) return SEEK_WEDGE_FAR_DEG;
-    const t = Math.min(1, Math.max(0, hopM / hopRadiusM));
-    return SEEK_WEDGE_NEAR_DEG + t * (SEEK_WEDGE_FAR_DEG - SEEK_WEDGE_NEAR_DEG);
-  }
-
-  function destinationPointLatLon(lat, lon, bearingDegVal, distanceM) {
-    const r = 6371000;
-    const brng = (bearingDegVal * Math.PI) / 180;
-    const lat1 = (lat * Math.PI) / 180;
-    const lon1 = (lon * Math.PI) / 180;
-    const ang = distanceM / r;
-    const lat2 = Math.asin(
-      Math.sin(lat1) * Math.cos(ang) +
-        Math.cos(lat1) * Math.sin(ang) * Math.cos(brng),
-    );
-    const lon2 =
-      lon1 +
-      Math.atan2(
-        Math.sin(brng) * Math.sin(ang) * Math.cos(lat1),
-        Math.cos(ang) - Math.sin(lat1) * Math.sin(lat2),
-      );
-    return [(lat2 * 180) / Math.PI, (lon2 * 180) / Math.PI];
-  }
-
-  function buildSeekWedgeFeature(from, goal, hopRadiusM) {
-    const goalBearing = bearingDeg(from.lat, from.lon, goal.lat, goal.lon);
-    const steps = 36;
-    const ring = [[from.lon, from.lat]];
-    for (let i = 0; i <= steps; i += 1) {
-      const t = i / steps;
-      const d = t * hopRadiusM;
-      const half = seekWedgeHalfAngleDeg(d, hopRadiusM);
-      const [lat, lon] = destinationPointLatLon(
-        from.lat,
-        from.lon,
-        goalBearing - half,
-        d,
-      );
-      ring.push([lon, lat]);
-    }
-    for (let i = steps; i >= 0; i -= 1) {
-      const t = i / steps;
-      const d = t * hopRadiusM;
-      const half = seekWedgeHalfAngleDeg(d, hopRadiusM);
-      const [lat, lon] = destinationPointLatLon(
-        from.lat,
-        from.lon,
-        goalBearing + half,
-        d,
-      );
-      ring.push([lon, lat]);
-    }
-    ring.push([from.lon, from.lat]);
-    return {
-      type: "Feature",
-      geometry: { type: "Polygon", coordinates: [ring] },
-      properties: { kind: "seek-wedge" },
-    };
-  }
-
-  function buildSeekGoalLineFeature(from, goal) {
-    const distanceKm =
-      haversineMeters(from.lat, from.lon, goal.lat, goal.lon) / 1000;
-    return {
-      type: "Feature",
-      geometry: {
-        type: "LineString",
-        coordinates: [
-          [from.lon, from.lat],
-          [goal.lon, goal.lat],
-        ],
-      },
-      properties: {
-        distance_km: Math.round(distanceKm * 10) / 10,
-        bearing_deg: Math.round(bearingDeg(from.lat, from.lon, goal.lat, goal.lon)),
-        kind: "goal",
-      },
-    };
   }
 
   function removeSeekGoalLineLayer() {
@@ -8631,17 +8336,6 @@ export function initProjectMap() {
     return { lat, lon };
   }
 
-  function parseCoordPairFromText(text) {
-    const trimmed = String(text || "").trim();
-    if (!trimmed) return null;
-    const parts = trimmed.split(/[,\s]+/).filter(Boolean);
-    if (parts.length < 2) return null;
-    const lat = Number.parseFloat(parts[0]);
-    const lon = Number.parseFloat(parts[1]);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-    return { lat, lon };
-  }
-
   function applyCoordPaste(text, targetField) {
     const pair = parseCoordPairFromText(text);
     if (!pair) return false;
@@ -8694,22 +8388,6 @@ export function initProjectMap() {
     }
     sitePanelEditViewshed.checked = isViewshedVisible(DRAFT_VIEWSHED_SLUG);
     if (hint) hint.textContent = draftViewshedLoading ? "Loading…" : "";
-  }
-
-  function coordsMatchPair(lat1, lon1, lat2, lon2) {
-    return Math.abs(lat1 - lat2) < 1e-5 && Math.abs(lon1 - lon2) < 1e-5;
-  }
-
-  function coordSeparationM(lat1, lon1, lat2, lon2) {
-    const r = 6371000;
-    const phi1 = (lat1 * Math.PI) / 180;
-    const phi2 = (lat2 * Math.PI) / 180;
-    const dphi = ((lat2 - lat1) * Math.PI) / 180;
-    const dlambda = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-      Math.sin(dphi / 2) ** 2 +
-      Math.cos(phi1) * Math.cos(phi2) * Math.sin(dlambda / 2) ** 2;
-    return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
   const EDIT_COORD_HISTORY_MIN_M = 25;
@@ -9684,7 +9362,7 @@ export function initProjectMap() {
     const seq = ++seekPlanSaveSeq;
     if (!seekState) {
       try {
-        const resp = await fetch(`/api/p/${projectSlug}/seek/plan`, {
+        const resp = await fetch(apiUrls.seekPlanUrl(projectSlug), {
           method: "DELETE",
         });
         if (seq !== seekPlanSaveSeq) return;
@@ -9707,7 +9385,7 @@ export function initProjectMap() {
     const plan = seekStateToYamlPlan(seekState);
     if (!plan) return;
     try {
-      const resp = await fetch(`/api/p/${projectSlug}/seek/plan`, {
+      const resp = await fetch(apiUrls.seekPlanUrl(projectSlug), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(plan),
@@ -9903,7 +9581,7 @@ export function initProjectMap() {
       if (epoch !== seekFetchEpoch) return { cancelled: true };
       let resp;
       try {
-        resp = await fetch(`/api/p/${projectSlug}/seek/scan-progress`, {
+        resp = await fetch(apiUrls.seekScanProgressUrl(projectSlug), {
           signal,
         });
       } catch (err) {
@@ -10211,7 +9889,7 @@ export function initProjectMap() {
     if (seekConvertSave) seekConvertSave.disabled = true;
     try {
       const resp = await fetch(
-        `/api/p/${projectSlug}/seek/plan/convert-to-sites`,
+        apiUrls.seekPlanConvertToSitesUrl(projectSlug),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -11269,7 +10947,7 @@ export function initProjectMap() {
     if (excludeSlugs) params.set("exclude_slugs", excludeSlugs);
     try {
       const resp = await fetch(
-        `/api/p/${projectSlug}/seek/candidates?${params}`,
+        apiUrls.seekCandidatesUrl(projectSlug, params),
         { signal },
       );
       const kickoff = await resp.json().catch(() => ({}));
