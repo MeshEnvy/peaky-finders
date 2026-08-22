@@ -243,10 +243,23 @@ pub fn install_filegdb_zip(
     Ok(())
 }
 
-fn write_feature_collection(dest: &Path, features: &[Feature], name: &str) -> Result<()> {
+fn write_feature_collection(
+    source_id: &str,
+    rel_path: &str,
+    dest: &Path,
+    features: &[Feature],
+    name: &str,
+) -> Result<()> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
+    tracing::info!(
+        source_id = %source_id,
+        path = %rel_path,
+        features = features.len(),
+        dest = %dest.display(),
+        "land refresh: writing geojson"
+    );
     let fc = FeatureCollection {
         bbox: None,
         features: features.to_vec(),
@@ -257,8 +270,17 @@ fn write_feature_collection(dest: &Path, features: &[Feature], name: &str) -> Re
         map.insert("name".to_string(), json!(name));
     }
     let mut file = fs::File::create(dest).with_context(|| format!("create {}", dest.display()))?;
-    serde_json::to_writer_pretty(&mut file, &value).context("write geojson")?;
+    serde_json::to_writer(&mut file, &value).context("write geojson")?;
     file.write_all(b"\n").ok();
+    let size = fs::metadata(dest)
+        .with_context(|| format!("stat {}", dest.display()))?
+        .len();
+    tracing::info!(
+        source_id = %source_id,
+        path = %rel_path,
+        size = %format_bytes(size),
+        "land refresh: write done"
+    );
     Ok(())
 }
 
@@ -374,7 +396,7 @@ pub fn download_featureserver_geojson(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("layer");
-    write_feature_collection(dest, &features, stem)
+    write_feature_collection(source_id, path, dest, &features, stem)
 }
 
 pub fn refresh_land_source_file(

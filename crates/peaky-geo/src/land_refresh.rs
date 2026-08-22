@@ -431,6 +431,7 @@ pub fn refresh_due_land_sources(
         for (source_id, result) in results {
             match result {
                 Ok(()) => {
+                    tracing::info!(source_id = %source_id, "land refresh: stamping lastUpdated");
                     patch_land_source_last_updated(&preset_path, &source_id, &today)
                         .with_context(|| format!("stamp lastUpdated for {source_id}"))?;
                     summary.refreshed.push(source_id);
@@ -443,7 +444,7 @@ pub fn refresh_due_land_sources(
         }
     }
 
-    tracing::info!("land: warming layer cache");
+    tracing::info!("land: warming layer cache (ogr2ogr exports)");
     summary.cache = Some(ensure_land_caches_for_preset(preset_path, verbose)?);
     Ok(summary)
 }
