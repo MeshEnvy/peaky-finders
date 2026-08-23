@@ -128,6 +128,7 @@ BLM tagging/export are ops scripts under `ops/peaky_home/scripts/` — Peaky has
 
 ## Active threads
 
+- **v0.6.0 (planned):** greenfield Tauri app — delete `peaky-serve`/Axum/rust-embed at cutover; `peaky-core` + `apps/peaky/` (invoke, events, `peaky://` tiles); CLI → `find`/`freeze` only; desktop first, mobile later. Plan: [`docs/plans/v0.6.0-tauri-greenfield.md`](docs/plans/v0.6.0-tauri-greenfield.md).
 - **Ops (not this week's v5 work):** fleet-management / secrets-near-preset — `ops/initiatives/peaky-fleet-management.md`. No schema for creds until a non-git store is picked.
 - Seek eligible-land WKB cache + geo boolean safety (v4 `union.wkb` parity)
 - Integration tests (digest parity vs fixtures)
