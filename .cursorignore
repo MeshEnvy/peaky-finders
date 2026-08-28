@@ -1,0 +1,7 @@
+# Rust build output (~15 GB when warm)
+/target/
+/dist/
+
+attic/
+**/*.rs.bk
+.DS_Store
