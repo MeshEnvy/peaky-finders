@@ -140,11 +140,15 @@ pub fn peak_passes_land_filter(
     peak: Peak,
     land_filter: Option<&MultiPolygon<f64>>,
     viewport_bbox: Option<(f64, f64, f64, f64)>,
+    land_index: Option<&LandFilterIndex>,
 ) -> bool {
     if let Some((west, south, east, north)) = viewport_bbox {
         if peak.lon < west || peak.lon > east || peak.lat < south || peak.lat > north {
             return false;
         }
+    }
+    if let Some(idx) = land_index {
+        return idx.contains(peak.lon, peak.lat);
     }
     if let Some(mp) = land_filter {
         if !point_in_eligible(mp, peak.lon, peak.lat) {
@@ -195,14 +199,13 @@ impl RTreeObject for IndexedPoly {
     }
 }
 
-/// R-tree over eligible-land polygons for fast point queries during DEM scans.
-pub struct LandFilterIndex {
+struct PolyIndex {
     tree: RTree<IndexedPoly>,
     polys: Vec<Polygon<f64>>,
 }
 
-impl LandFilterIndex {
-    pub fn from_multipolygon(mp: &MultiPolygon<f64>) -> Self {
+impl PolyIndex {
+    fn from_multipolygon(mp: &MultiPolygon<f64>) -> Self {
         let mut polys = Vec::with_capacity(mp.0.len());
         let mut indexed = Vec::with_capacity(mp.0.len());
         for poly in &mp.0 {
@@ -225,11 +228,7 @@ impl LandFilterIndex {
         }
     }
 
-    pub fn polygon_count(&self) -> usize {
-        self.polys.len()
-    }
-
-    pub fn contains(&self, lon: f64, lat: f64) -> bool {
+    fn contains(&self, lon: f64, lat: f64) -> bool {
         if self.polys.is_empty() {
             return false;
         }
@@ -245,8 +244,7 @@ impl LandFilterIndex {
         false
     }
 
-    /// Polygons whose bbox intersects `[min_lon,min_lat]–[max_lon,max_lat]` (inclusive).
-    pub fn intersecting_polys(
+    fn intersecting(
         &self,
         min_lon: f64,
         min_lat: f64,
@@ -261,6 +259,55 @@ impl LandFilterIndex {
             .locate_in_envelope_intersecting(&env)
             .map(|item| &self.polys[item.index])
             .collect()
+    }
+}
+
+/// R-tree over include parcels, minus exclude parcels (no dissolve required).
+pub struct LandFilterIndex {
+    include: PolyIndex,
+    exclude: PolyIndex,
+}
+
+impl LandFilterIndex {
+    pub fn from_multipolygon(mp: &MultiPolygon<f64>) -> Self {
+        Self::from_include_exclude(mp, &MultiPolygon(vec![]))
+    }
+
+    pub fn from_include_exclude(include: &MultiPolygon<f64>, exclude: &MultiPolygon<f64>) -> Self {
+        Self {
+            include: PolyIndex::from_multipolygon(include),
+            exclude: PolyIndex::from_multipolygon(exclude),
+        }
+    }
+
+    pub fn polygon_count(&self) -> usize {
+        self.include.polys.len()
+    }
+
+    pub fn contains(&self, lon: f64, lat: f64) -> bool {
+        self.include.contains(lon, lat) && !self.exclude.contains(lon, lat)
+    }
+
+    /// Include polygons whose bbox intersects `[min_lon,min_lat]–[max_lon,max_lat]`.
+    pub fn intersecting_polys(
+        &self,
+        min_lon: f64,
+        min_lat: f64,
+        max_lon: f64,
+        max_lat: f64,
+    ) -> Vec<&Polygon<f64>> {
+        self.include.intersecting(min_lon, min_lat, max_lon, max_lat)
+    }
+
+    /// Exclude polygons whose bbox intersects the tile (punched after include burn).
+    pub fn intersecting_exclude_polys(
+        &self,
+        min_lon: f64,
+        min_lat: f64,
+        max_lon: f64,
+        max_lat: f64,
+    ) -> Vec<&Polygon<f64>> {
+        self.exclude.intersecting(min_lon, min_lat, max_lon, max_lat)
     }
 }
 
@@ -763,7 +810,7 @@ pub fn binned_peaks_in_hop_disc(
         .map(|(ti, iy)| {
             let mut bins = HashMap::new();
             for peak in scan_hop_disc_row(&tile_ctxs[*ti], *iy) {
-                if !peak_passes_land_filter(peak, land_filter, scan_bbox) {
+                if !peak_passes_land_filter(peak, land_filter, scan_bbox, land_index) {
                     continue;
                 }
                 upsert_peak_bin(&mut bins, peak.lon, peak.lat, peak.elev_m, bin_size_m);

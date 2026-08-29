@@ -1,18 +1,20 @@
-//! Eligible land geometry: include layers union minus exclude layers (GeoJSON).
+//! Eligible land: include parcels minus exclude parcels (no statewide dissolve).
 
 use std::path::{Path, PathBuf};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use geo::{BooleanOps, Geometry, LineString, MultiPolygon, Polygon};
-use geozero::wkb::Ewkb;
-use geozero::{CoordDimensions, ToGeo, ToWkb};
+use rayon::prelude::*;
+use splatter::LandFilterIndex;
 use peaky_preset::{
     load_preset, resolved_preset_cache_dir, LandLayerEntry, LandLayerRole, Preset,
 };
 
 use crate::land_path::resolve_land_layer_geojson_path;
-use crate::land_query::read_land_layer_features;
+use crate::land_pipeline::{find_warmed_pipeline_geojson, land_cache_dir};
+use crate::land_query::read_land_layer_polygons_in_bbox;
+use crate::lon_lat_bbox::LonLatBBox;
 
 fn geometry_to_multi(geom: &Geometry<f64>) -> MultiPolygon<f64> {
     match geom {
@@ -161,37 +163,75 @@ fn unary_union_geometries(geoms: Vec<Geometry<f64>>) -> Geometry<f64> {
     acc.unwrap_or_else(empty_polygon)
 }
 
-fn union_role_layers(
+fn collect_role_polygons(
     preset_path: &Path,
     role: LandLayerRole,
-    aoi: Option<&Geometry<f64>>,
-) -> Result<Geometry<f64>> {
+    clip: Option<LonLatBBox>,
+) -> Result<MultiPolygon<f64>> {
     let preset = load_preset(preset_path)?;
     let project_dir = preset_path
         .parent()
         .context("preset path must have a parent directory")?;
-    let mut pieces = Vec::new();
-    for (source_id, layer) in iter_land_layer_entries_by_role(&preset, role) {
-        let source = &preset.land.sources[&source_id];
-        let data_path = resolve_land_layer_geojson_path(
-            project_dir,
-            &source_id,
-            &layer.name,
-            &source.path,
-        )?;
-        let rows = read_land_layer_features(&data_path, &layer)?;
-        for (mut geom, _) in rows {
-            if let Some(aoi_geom) = aoi {
-                if !is_empty_geom(aoi_geom) {
-                    geom = geom_intersection(geom, aoi_geom);
-                }
-            }
-            if !is_empty_geom(&geom) {
-                pieces.push(geom);
-            }
-        }
-    }
-    Ok(unary_union_geometries(pieces))
+    let cache_root = land_cache_dir(preset_path);
+    let jobs = iter_land_layer_entries_by_role(&preset, role);
+    let role_tag = match role {
+        LandLayerRole::Include => "include",
+        LandLayerRole::Exclude => "exclude",
+        LandLayerRole::Aoi => "aoi",
+    };
+    tracing::info!(
+        role = role_tag,
+        layers = jobs.len(),
+        clip = clip.map(|b| format!(
+            "{:.3},{:.3},{:.3},{:.3}",
+            b.west, b.south, b.east, b.north
+        )),
+        "eligible land: collect start"
+    );
+
+    let batches: Result<Vec<Vec<Polygon<f64>>>> = jobs
+        .par_iter()
+        .map(|(source_id, layer)| {
+            let t0 = Instant::now();
+            let source = preset
+                .land
+                .sources
+                .get(source_id)
+                .with_context(|| format!("unknown land source: {source_id}"))?;
+            let data_path = match find_warmed_pipeline_geojson(
+                &cache_root,
+                source_id,
+                &layer.layer_key(),
+            ) {
+                Some(path) => path,
+                None => resolve_land_layer_geojson_path(
+                    project_dir,
+                    source_id,
+                    &layer.name,
+                    &source.path,
+                )?,
+            };
+            let polys = read_land_layer_polygons_in_bbox(&data_path, layer, clip)?;
+            tracing::info!(
+                role = role_tag,
+                source_id = %source_id,
+                layer = %layer.layer_key(),
+                kept = polys.len(),
+                elapsed_secs = t0.elapsed().as_secs_f64(),
+                path = %data_path.display(),
+                "eligible land: layer clipped"
+            );
+            Ok(polys)
+        })
+        .collect();
+
+    let polys: Vec<Polygon<f64>> = batches?.into_iter().flatten().collect();
+    tracing::info!(
+        role = role_tag,
+        polygons = polys.len(),
+        "eligible land: collect done"
+    );
+    Ok(MultiPolygon(polys))
 }
 
 fn to_web_mercator(geom: &Geometry<f64>) -> Geometry<f64> {
@@ -260,38 +300,31 @@ pub fn build_eligible_geometry(
     }
 }
 
-pub fn build_eligible_land_union(preset_path: &Path) -> Result<Geometry<f64>> {
-    let preset = load_preset(preset_path)?;
-    if iter_land_layer_entries_by_role(&preset, LandLayerRole::Include).is_empty() {
-        return Err(EligibleLandError(
-            "Seek requires at least one land layer with role: include".into(),
-        )
-        .into());
+#[derive(Clone, Debug)]
+pub struct EligibleLandParts {
+    pub include: MultiPolygon<f64>,
+    pub exclude: MultiPolygon<f64>,
+    pub digest: String,
+}
+
+impl EligibleLandParts {
+    pub fn index(&self) -> LandFilterIndex {
+        LandFilterIndex::from_include_exclude(&self.include, &self.exclude)
     }
 
-    let aoi_geom = union_role_layers(preset_path, LandLayerRole::Aoi, None)?;
-    let aoi_ref = if is_empty_geom(&aoi_geom) {
-        None
-    } else {
-        Some(aoi_geom)
-    };
-    let include_union = union_role_layers(
-        preset_path,
-        LandLayerRole::Include,
-        aoi_ref.as_ref(),
-    )?;
-    let exclude_union = union_role_layers(
-        preset_path,
-        LandLayerRole::Exclude,
-        aoi_ref.as_ref(),
-    )?;
-    let eligible = build_eligible_geometry(&include_union, &exclude_union);
-    if is_empty_geom(&eligible) {
+    pub fn is_empty(&self) -> bool {
+        self.include.0.is_empty()
+    }
+}
+
+pub fn build_eligible_land_union(preset_path: &Path) -> Result<Geometry<f64>> {
+    let parts = load_or_build_eligible_land_parts(preset_path, None)?;
+    if parts.is_empty() {
         bail!(EligibleLandError(
             "Eligible land geometry is empty after include − exclude".into()
         ));
     }
-    Ok(eligible)
+    Ok(multi_to_geometry(parts.include))
 }
 
 fn resolved_eligible_cache_dir(preset_path: &Path) -> PathBuf {
@@ -305,86 +338,23 @@ pub fn eligible_land_dem_mask_dir(preset_path: &Path, digest: &str) -> PathBuf {
         .join("dem_masks")
 }
 
-fn geometry_to_multi_public(geom: &Geometry<f64>) -> MultiPolygon<f64> {
-    geometry_to_multi(geom)
-}
-
 /// Load eligible land and build the R-tree point filter (once per process).
 pub fn load_or_build_eligible_land_filter(
     preset_path: &Path,
-) -> Result<(String, splatter::LandFilterIndex, MultiPolygon<f64>)> {
-    let (geom, digest) = load_or_build_eligible_land_union(preset_path)?;
-    let mp = geometry_to_multi_public(&geom);
-    let filter = splatter::LandFilterIndex::from_multipolygon(&mp);
-    Ok((digest, filter, mp))
+    clip: Option<LonLatBBox>,
+) -> Result<(String, LandFilterIndex, MultiPolygon<f64>)> {
+    let parts = load_or_build_eligible_land_parts(preset_path, clip)?;
+    let filter = parts.index();
+    Ok((parts.digest, filter, parts.include))
 }
 
-fn eligible_memo_path(cache_root: &Path, digest: &str) -> PathBuf {
-    cache_root.join(digest).join("union.wkb")
-}
-
-fn geometry_from_wkb(bytes: &[u8]) -> Result<Geometry<f64>> {
-    Ok(Ewkb(bytes).to_geo().context("parse eligible land WKB")?)
-}
-
-fn geometry_to_wkb(geom: &Geometry<f64>) -> Result<Vec<u8>> {
-    geom.to_wkb(CoordDimensions::xy())
-        .context("encode eligible land WKB")
-}
-
-fn try_load_eligible_wkb(path: &Path) -> Option<Geometry<f64>> {
-    let bytes = std::fs::read(path).ok()?;
-    let geom = geometry_from_wkb(&bytes).ok()?;
-    if is_empty_geom(&geom) {
-        None
-    } else {
-        Some(geom)
-    }
-}
-
-fn find_fallback_eligible_wkb(preset_path: &Path) -> Option<(Geometry<f64>, String)> {
-    let cache_root = resolved_eligible_cache_dir(preset_path);
-    let entries = std::fs::read_dir(&cache_root).ok()?;
-    let mut best: Option<(PathBuf, String, std::time::SystemTime)> = None;
-    for entry in entries.flatten() {
-        let path = entry.path().join("union.wkb");
-        if !path.is_file() {
-            continue;
-        }
-        let digest = entry.file_name().to_string_lossy().into_owned();
-        let modified = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        match &best {
-            None => best = Some((path, digest, modified)),
-            Some((_, _, prev)) if modified > *prev => {
-                best = Some((path, digest, modified));
-            }
-            _ => {}
-        }
-    }
-    let (path, digest, _) = best?;
-    try_load_eligible_wkb(&path).map(|geom| (geom, digest))
-}
-
-fn write_eligible_wkb_cache(preset_path: &Path, digest: &str, geom: &Geometry<f64>) {
-    let memo_path = eligible_memo_path(&resolved_eligible_cache_dir(preset_path), digest);
-    if let Some(parent) = memo_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(bytes) = geometry_to_wkb(geom) {
-        let tmp = memo_path.with_extension("wkb.tmp");
-        if std::fs::write(&tmp, bytes).is_ok() {
-            let _ = std::fs::rename(&tmp, &memo_path);
-        }
-    }
-}
-
-/// Load cached eligible land (v4 `union.wkb`) or build include − exclude.
-pub fn load_or_build_eligible_land_union(
+/// Collect include/exclude parcels, clipped to `clip` when given.
+///
+/// Does **not** dissolve statewide SMA. Seek and finder must pass a hop/route bbox.
+pub fn load_or_build_eligible_land_parts(
     preset_path: &Path,
-) -> Result<(Geometry<f64>, String)> {
+    clip: Option<LonLatBBox>,
+) -> Result<EligibleLandParts> {
     let preset = load_preset(preset_path)?;
     if iter_land_layer_entries_by_role(&preset, LandLayerRole::Include).is_empty() {
         return Err(EligibleLandError(
@@ -394,31 +364,30 @@ pub fn load_or_build_eligible_land_union(
     }
 
     let digest = eligible_land_digest(preset_path)?;
-    let memo_path = eligible_memo_path(&resolved_eligible_cache_dir(preset_path), &digest);
-    if let Some(geom) = try_load_eligible_wkb(&memo_path) {
-        return Ok((geom, digest));
+    let include = collect_role_polygons(preset_path, LandLayerRole::Include, clip)?;
+    let exclude = collect_role_polygons(preset_path, LandLayerRole::Exclude, clip)?;
+    if include.0.is_empty() && clip.is_none() {
+        bail!(EligibleLandError(
+            "Eligible land geometry is empty after include − exclude".into()
+        ));
     }
+    Ok(EligibleLandParts {
+        include,
+        exclude,
+        digest,
+    })
+}
 
-    if let Some((geom, cached_digest)) = find_fallback_eligible_wkb(preset_path) {
-        return Ok((geom, cached_digest));
-    }
-
-    let built = catch_unwind(AssertUnwindSafe(|| build_eligible_land_union(preset_path)));
-    match built {
-        Ok(Ok(geom)) => {
-            write_eligible_wkb_cache(preset_path, &digest, &geom);
-            Ok((geom, digest))
-        }
-        Ok(Err(e)) => Err(e),
-        Err(_) => Err(EligibleLandError(
-            "Eligible land boolean ops failed (geometry engine panic)".into(),
-        )
-        .into()),
-    }
+/// Load cached eligible land (v4 `union.wkb`) or collect include parcels (no dissolve).
+pub fn load_or_build_eligible_land_union(
+    preset_path: &Path,
+) -> Result<(Geometry<f64>, String)> {
+    let parts = load_or_build_eligible_land_parts(preset_path, None)?;
+    Ok((multi_to_geometry(parts.include), parts.digest))
 }
 
 pub fn load_preset_aoi_union(preset_path: &Path) -> Result<Option<Geometry<f64>>> {
-    let geom = union_role_layers(preset_path, LandLayerRole::Aoi, None)?;
+    let geom = multi_to_geometry(collect_role_polygons(preset_path, LandLayerRole::Aoi, None)?);
     if is_empty_geom(&geom) {
         Ok(None)
     } else {
@@ -522,7 +491,6 @@ fn fnv1a_hash(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn build_eligible_geometry_under_100ms() {
@@ -554,14 +522,65 @@ mod tests {
     }
 
     #[test]
-    fn load_nevada_cached_eligible_wkb() {
-        let preset_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../ops/peaky_home/projects/nevada/config.yaml");
-        if !preset_path.is_file() {
-            return;
-        }
-        let (geom, digest) = load_or_build_eligible_land_union(&preset_path).expect("eligible land");
-        assert!(!is_empty_geom(&geom));
-        assert!(!digest.is_empty());
+    fn clipped_collect_skips_distant_parcels_and_exclude() {
+        use std::time::Duration;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project = tmp.path();
+        std::fs::create_dir_all(project.join("data")).expect("data");
+        let geojson = r#"{
+          "type":"FeatureCollection",
+          "features":[
+            {"type":"Feature","properties":{"kind":"near"},"geometry":{"type":"Polygon","coordinates":[[[-114.2,35.1],[-114.1,35.1],[-114.1,35.2],[-114.2,35.2],[-114.2,35.1]]]}},
+            {"type":"Feature","properties":{"kind":"far"},"geometry":{"type":"Polygon","coordinates":[[[-120.2,42.1],[-120.1,42.1],[-120.1,42.2],[-120.2,42.2],[-120.2,42.1]]]}}
+          ]
+        }"#;
+        std::fs::write(project.join("data/include.geojson"), geojson).expect("include");
+        let exclude = r#"{
+          "type":"FeatureCollection",
+          "features":[
+            {"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[-114.16,35.14],[-114.14,35.14],[-114.14,35.16],[-114.16,35.16],[-114.16,35.14]]]}}
+          ]
+        }"#;
+        std::fs::write(project.join("data/exclude.geojson"), exclude).expect("exclude");
+        std::fs::write(
+            project.join("config.yaml"),
+            r#"
+simulation:
+  radius_km: 50
+display:
+  colormap: plasma
+  transparency: 50
+  min_dbm: -130
+  max_dbm: -80
+sites: {}
+land:
+  sources:
+    pub:
+      path: data/include.geojson
+      enabled: true
+      layers:
+        - name: include
+          role: include
+    blocked:
+      path: data/exclude.geojson
+      enabled: true
+      layers:
+        - name: exclude
+          role: exclude
+"#,
+        )
+        .expect("yaml");
+
+        let clip = LonLatBBox::new(-114.3, 35.0, -114.0, 35.3);
+        let t0 = Instant::now();
+        let parts = load_or_build_eligible_land_parts(&project.join("config.yaml"), Some(clip))
+            .expect("parts");
+        assert!(t0.elapsed() < Duration::from_millis(200), "clip collect {:?}", t0.elapsed());
+        assert_eq!(parts.include.0.len(), 1);
+        assert_eq!(parts.exclude.0.len(), 1);
+        let idx = parts.index();
+        assert!(idx.contains(-114.18, 35.18));
+        assert!(!idx.contains(-114.15, 35.15));
+        assert!(!idx.contains(-120.15, 42.15));
     }
 }

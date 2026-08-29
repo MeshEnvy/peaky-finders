@@ -51,7 +51,7 @@ pub fn disc_binned_peaks_with_dem(
     )?;
     Ok(binned
         .into_par_iter()
-        .filter(|peak| peak_passes_land_filter(*peak, land_filter, scan_bbox))
+        .filter(|peak| peak_passes_land_filter(*peak, land_filter, scan_bbox, land_index))
         .filter(|peak| haversine_m(source_lat, source_lon, peak.lat, peak.lon) <= hop_radius_m)
         .collect())
 }

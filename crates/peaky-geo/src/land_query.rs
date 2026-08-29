@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
-use geo::{Area, Contains, Geometry, HasDimensions, Point};
+use geo::{Area, Contains, Geometry, HasDimensions, Point, Polygon};
 use geo::algorithm::bounding_rect::BoundingRect;
 use geojson::{Feature, GeoJson, Value as GeoJsonValue};
 use peaky_preset::{load_preset, LandLayerEntry, Preset};
@@ -11,6 +11,7 @@ use rstar::{RTree, RTreeObject, AABB};
 
 use crate::land_filter::{json_safe_properties, matches_land_attribute_filters};
 use crate::land_path::{is_land_geojson_path, resolve_land_layer_geojson_path};
+use crate::lon_lat_bbox::LonLatBBox;
 
 #[derive(Debug, Clone)]
 pub struct LandPointHit {
@@ -126,6 +127,48 @@ pub fn read_land_layer_features(
         ));
     }
     Ok(rows)
+}
+
+fn geometry_polygons(geom: Geometry<f64>) -> Vec<Polygon<f64>> {
+    match geom {
+        Geometry::Polygon(p) => {
+            if p.exterior().0.is_empty() {
+                Vec::new()
+            } else {
+                vec![p]
+            }
+        }
+        Geometry::MultiPolygon(mp) => mp
+            .0
+            .into_iter()
+            .filter(|p| !p.exterior().0.is_empty())
+            .collect(),
+        Geometry::GeometryCollection(gc) => gc.0.into_iter().flat_map(geometry_polygons).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Read layer polygons, keeping those whose envelope intersects `clip`.
+pub fn read_land_layer_polygons_in_bbox(
+    data_path: &Path,
+    entry: &LandLayerEntry,
+    clip: Option<LonLatBBox>,
+) -> Result<Vec<Polygon<f64>>> {
+    let rows = read_land_layer_features(data_path, entry)?;
+    let mut out = Vec::new();
+    for (geom, _) in rows {
+        for poly in geometry_polygons(geom) {
+            let Some(rect) = poly.bounding_rect() else {
+                continue;
+            };
+            let bbox = LonLatBBox::new(rect.min().x, rect.min().y, rect.max().x, rect.max().y);
+            if clip.is_some_and(|c| !c.intersects(bbox)) {
+                continue;
+            }
+            out.push(poly);
+        }
+    }
+    Ok(out)
 }
 
 pub fn load_land_layer_index(

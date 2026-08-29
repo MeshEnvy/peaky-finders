@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use anyhow::{bail, Result};
 use geo::{Geometry, MultiPolygon};
-use peaky_geo::{eligible_land_dem_mask_dir, load_or_build_eligible_land_filter};
+use peaky_geo::{eligible_land_dem_mask_dir, load_or_build_eligible_land_filter, LonLatBBox};
 use peaky_preset::{load_preset, Preset, SiteEntry};
 use peaky_serve::rf::{max_hop_range_m, rf_json_for_preset};
 use peaky_serve::viewshed::{
@@ -23,7 +23,7 @@ use splatter::propagate::haversine_m;
 use splatter::session::Session;
 
 use crate::cache::{digest_hex, digest_hex_stable, short_digest, FinderCache};
-use crate::candidates::{Candidate, CandidateRegistry};
+use crate::candidates::{corridor_bbox, Candidate, CandidateRegistry};
 use crate::coverage::{
     covers_candidate_one_way, covers_waypoint, covering_indices, rf_digest, site_tx_height,
 };
@@ -479,7 +479,6 @@ struct SearchCtx<'a> {
     bin_m: f64,
     land_index: LandFilterIndex,
     eligible_digest: String,
-    eligible_mp: MultiPolygon<f64>,
     /// Sites confirmed in prior route segments (for cumulative watch chain).
     chain_prefix: Vec<usize>,
     viewshed_warmed: Mutex<HashSet<usize>>,
@@ -492,16 +491,18 @@ impl<'a> SearchCtx<'a> {
         registry: &'a mut CandidateRegistry,
         cache: &'a FinderCache,
         ledger: &'a CacheLedger,
+        waypoints: &[Waypoint],
     ) -> Result<Self> {
         let preset = load_preset(preset_path)?;
         let rf_json = rf_json_for_preset(&preset)?;
         let rf_key = rf_digest(&preset)?;
         let hop_m = max_hop_range_m(&preset);
         let bin_m = preset.seek.peak_bin_size_m;
+        let clip = LonLatBBox::from_tuple(corridor_bbox(waypoints, hop_m)).padded(0.05);
         ledger.search_step("loading eligible land polygon + spatial index…");
         let t0 = Instant::now();
-        let (eligible_digest, land_index, eligible_mp) =
-            load_or_build_eligible_land_filter(preset_path)?;
+        let (eligible_digest, land_index, _eligible_mp) =
+            load_or_build_eligible_land_filter(preset_path, Some(clip))?;
         ledger.search_step(&format!(
             "eligible land ready: {} polygons in {:.1}s",
             land_index.polygon_count(),
@@ -524,7 +525,6 @@ impl<'a> SearchCtx<'a> {
             bin_m,
             land_index,
             eligible_digest,
-            eligible_mp,
             chain_prefix: Vec::new(),
             viewshed_warmed: Mutex::new(HashSet::new()),
         })
@@ -748,7 +748,7 @@ impl<'a> SearchCtx<'a> {
             pa_lat,
             pa_lon,
             max_m,
-            Some(&self.eligible_mp),
+            None,
             Some(scan_bbox),
             None,
             Some(ring),
@@ -1403,7 +1403,7 @@ pub fn search_route(
 ) -> Result<(Vec<usize>, usize)> {
     ledger.phase_start("search");
     ledger.search_step("initializing solver…");
-    let mut ctx = SearchCtx::new(preset_path, session, registry, cache, ledger)?;
+    let mut ctx = SearchCtx::new(preset_path, session, registry, cache, ledger, waypoints)?;
     let overview = gap_overview_cached(
         cache,
         waypoints,

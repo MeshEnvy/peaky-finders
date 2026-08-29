@@ -17,7 +17,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | v4 | Frozen reference; do not delete until v5 soak |
 | Interface | `peaky serve <project>` — web UI for one project directory |
 | RF engine | `splatter/` crate (in-process `Session`, library only) |
-| Land | GeoJSON at runtime. GDB sources: **`peaky serve` boot** validates enabled sources, auto-refreshes missing/stale/invalid when `refresh.downloadUrl` is set, then warms preview + pipeline caches under `.peaky/cache/land/`. Successful validation is fingerprinted in `validate.json` (size + mtime + required GDB layers) so unchanged sources skip re-parse on later boots. Invalid enabled source **blocks boot** until `enabled: false` in `land.yaml`. Pass `--fast-boot` to skip boot prep (`--no-land-refresh` alias). **WGS84 required.** Map paint stack (bottom→top): AOI, include, overlay, exclude. |
+| Land | GeoJSON at runtime. GDB sources: **`peaky serve` boot** validates enabled sources, auto-refreshes missing/stale/invalid when `refresh.downloadUrl` is set, then warms preview + pipeline caches under `.peaky/cache/land/`. Successful validation is fingerprinted in `validate.json` (size + mtime + required GDB layers) so unchanged sources skip re-parse on later boots. Invalid enabled source **blocks boot** until `enabled: false` in `land.yaml`. Pass `--fast-boot` to skip boot prep (`--no-land-refresh` alias). **WGS84 required.** Seek/finder eligible land **clips to hop/route bbox** and keeps include + exclude R-trees (no statewide boolean dissolve). Map paint stack (bottom→top): AOI, include, overlay, exclude. |
 | Dev | Host: `cargo run -p peaky -- serve <project-dir>` (e.g. `peaky-nevada`). `--release` for long RF only. Docker: mount project at `/project` only. Skadi + map tiles under `<project>/.peaky/cache/skadi/`. Optional `SPLAT_CACHE` override. Parallelism: `simulation.max_workers.coverage` (default 2, serve warm queue; env `PEAKY_COVERAGE_WORKERS`), `simulation.max_workers.dem` (default 4, Skadi fetch pool; env `PEAKY_DEM_FETCH_WORKERS`) |
 | Auto-finder | `peaky find path` — onX KML route → min-site RF chain; cache under `.peaky/cache/finder/`; **`--watch`** live MapLibre + SSE on localhost:9847 |
 | Ops | Public-land site tags + FO export live in ops: `peaky_home/scripts/tag_public_land.py`, `export_blm_fo_packet.py`. **Fleet-tool direction (ops, 08-14, speculative):** nevada YAML is the canonical site/fleet list; later creds + telemetry history may live next to the preset. **Do not** put passwords or keypairs in git-tracked `config.yaml`. → `ops/initiatives/peaky-fleet-management.md` |
@@ -33,7 +33,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | `crates/peaky-freeze/` | Official base export: bake land pipeline → `project.geojson` + distilled `config.yaml` |
 | `crates/peaky-finder/` | Auto-finder: route → min-site RF chain + config patch |
 | `crates/peaky-preset/` | Preset model, YAML I/O, paths, sites, home catalogs |
-| `crates/peaky-geo/` | GeoJSON land query, eligible land, KML import, PPM polygonize |
+| `crates/peaky-geo/` | GeoJSON land query, eligible land (bbox clip + include/exclude index), KML import, PPM polygonize |
 | `crates/peaky-serve/` | Axum app, API routes, HTML, embedded static |
 | `splatter/` | RF coverage engine (Skadi DEM, Fresnel/FSPL). Library only |
 | `assets/static/project-map/` | ESM map UI: `main.js` (entry), `init.js` (map boot), `constants.js`, `geo.js`, `api-urls.js`, `land-sidebar-view.js`, `land-source-editor.js`, `viewshed-sim.js`, `viewshed-raster.js` (shared with settings); `app.css`, favicons (rust-embed) |
@@ -132,7 +132,7 @@ BLM tagging/export are ops scripts under `ops/peaky_home/scripts/` — Peaky has
 
 - **v0.6.0 (planned):** greenfield Tauri app — delete `peaky-serve`/Axum/rust-embed at cutover; `peaky-core` + `apps/peaky/` (invoke, events, `peaky://` tiles); CLI → `find`/`freeze` only; desktop first, mobile later. Plan: [`docs/plans/v0.6.0-tauri-greenfield.md`](docs/plans/v0.6.0-tauri-greenfield.md).
 - **Ops (not this week's v5 work):** fleet-management / secrets-near-preset — `ops/initiatives/peaky-fleet-management.md`. No schema for creds until a non-git store is picked.
-- Seek eligible-land WKB cache + geo boolean safety (v4 `union.wkb` parity)
+- Eligible-land layer envelope cache so seek can skip non-overlapping SMA files without a parse
 - Integration tests (digest parity vs fixtures)
 - Finder `--watch` boot: progressive SSE replay, deferred hillshade, heavy-fetch queue (rebuild + hard refresh)
 - Watch map: `viewshed` SSE + `/viewshed/{digest}/splat.png`; chain hop triggers progressive splat warm (serve pipeline)

@@ -34,6 +34,45 @@ fn layer_cache_path(cache_root: &Path, source_id: &str, layer_key: &str) -> Path
     cache_root.join(source_id).join(format!("{stem}.geojson"))
 }
 
+fn pipeline_layer_stem(layer_key: &str) -> String {
+    let safe = slugify_files_segment(layer_key);
+    if safe.is_empty() {
+        "layer".to_string()
+    } else {
+        safe
+    }
+}
+
+/// Locate a boot-warmed pipeline GeoJSON without reading the raw statewide source.
+pub fn find_warmed_pipeline_geojson(
+    cache_root: &Path,
+    source_id: &str,
+    layer_key: &str,
+) -> Option<PathBuf> {
+    let dir = cache_root.join("pipeline").join(source_id);
+    let prefix = format!("{}.", pipeline_layer_stem(layer_key));
+    let mut hits: Vec<PathBuf> = Vec::new();
+    for entry in fs::read_dir(&dir).ok()?.flatten() {
+        let path = entry.path();
+        let name = path.file_name()?.to_string_lossy();
+        if name.starts_with(&prefix) && name.ends_with(".geojson") {
+            hits.push(path);
+        }
+    }
+    if hits.is_empty() {
+        return None;
+    }
+    if hits.len() == 1 {
+        return Some(hits.remove(0));
+    }
+    hits.into_iter().max_by_key(|path| {
+        path.metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    })
+}
+
 fn pipeline_cache_key(raw_digest: &str, pipeline_suffix: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

@@ -9,7 +9,9 @@ use std::time::Instant;
 
 use anyhow::Result;
 use geo::{BooleanOps, BoundingRect, Coord, Geometry, HasDimensions, Intersects, LineString, Point, Polygon, Rect};
-use peaky_geo::{eligible_land_dem_mask_dir, load_or_build_eligible_land_union, EligibleLandError};
+use peaky_geo::{
+    eligible_land_dem_mask_dir, load_or_build_eligible_land_parts, EligibleLandError, LonLatBBox,
+};
 use peaky_preset::{load_preset, Preset, SeekConfig};
 use serde_json::{json, Value};
 use splatter::peaks::LandFilterIndex;
@@ -659,10 +661,6 @@ fn resolve_seek_from_tx_height_m(preset: &Preset, from_lat: f64, from_lon: f64) 
     })
 }
 
-fn goal_on_eligible(eligible: &Geometry<f64>, goal_lat: f64, goal_lon: f64) -> bool {
-    point_on_eligible(eligible, goal_lat, goal_lon)
-}
-
 struct RfCandidate {
     lon: f64,
     lat: f64,
@@ -676,7 +674,7 @@ struct RfCandidate {
 
 fn collect_reachable_site_rows(
     preset: &Preset,
-    eligible: &Geometry<f64>,
+    land: &LandFilterIndex,
     from_lat: f64,
     from_lon: f64,
     goal_lat: f64,
@@ -700,7 +698,7 @@ fn collect_reachable_site_rows(
             if near_excluded(lat, lon, exclude) {
                 return None;
             }
-            if !goal_on_eligible(eligible, lat, lon) {
+            if !land.contains(lon, lat) {
                 return None;
             }
             if !peak_in_goal_wedge(
@@ -771,6 +769,21 @@ fn load_seek_candidates_body(
     let peak_bin_m = resolve_seek_peak_bin_size_m(&seek_cfg, req.peak_bin_size_m)
         .map_err(|e| SeekRunError::User(e.0, 422))?;
 
+    let hop_km = match &preset.simulation.radius_km {
+        serde_yaml::Value::Number(n) => n.as_f64().unwrap_or(50.0),
+        serde_yaml::Value::String(s) => s.parse().unwrap_or(50.0),
+        _ => 50.0,
+    };
+    let hop_m = hop_km * 1000.0;
+    let scan_bbox = seek_goal_wedge_scan_bbox(
+        req.from_lat,
+        req.from_lon,
+        req.goal_lat,
+        req.goal_lon,
+        hop_m,
+    );
+    let clip = LonLatBBox::from_tuple(scan_bbox).padded(0.05);
+
     ensure_active()?;
     progress.update(
         &req.slug,
@@ -780,19 +793,15 @@ fn load_seek_candidates_body(
         0,
         "Building eligible land…",
     );
-    let (eligible, eligible_digest) =
-        load_or_build_eligible_land_union(&req.preset_path).map_err(|e| {
-            match e.downcast_ref::<EligibleLandError>() {
-                Some(el) => SeekRunError::User(el.0.clone(), 422),
-                None => SeekRunError::User(e.to_string(), 422),
-            }
-        })?;
-
-    let hop_km = match &preset.simulation.radius_km {
-        serde_yaml::Value::Number(n) => n.as_f64().unwrap_or(50.0),
-        serde_yaml::Value::String(s) => s.parse().unwrap_or(50.0),
-        _ => 50.0,
-    };
+    let land_parts = load_or_build_eligible_land_parts(&req.preset_path, Some(clip)).map_err(|e| {
+        match e.downcast_ref::<EligibleLandError>() {
+            Some(el) => SeekRunError::User(el.0.clone(), 422),
+            None => SeekRunError::User(e.to_string(), 422),
+        }
+    })?;
+    let eligible_digest = land_parts.digest.clone();
+    let land_index = land_parts.index();
+    let mask_dir = eligible_land_dem_mask_dir(&req.preset_path, &eligible_digest);
 
     progress.update(
         &req.slug,
@@ -802,35 +811,13 @@ fn load_seek_candidates_body(
         0,
         "Trimming to hop range…",
     );
-    let eligible_mp = geometry_to_multi(&eligible);
-    let land_index = LandFilterIndex::from_multipolygon(&eligible_mp);
-    let mask_dir = eligible_land_dem_mask_dir(&req.preset_path, &eligible_digest);
-    let land_filter = if eligible_mp.is_empty() {
-        None
-    } else {
-        Some(eligible_mp)
-    };
-
-    let hop_m = hop_km * 1000.0;
-    let scan_bbox = seek_goal_wedge_scan_bbox(
-        req.from_lat,
-        req.from_lon,
-        req.goal_lat,
-        req.goal_lon,
-        hop_m,
-    );
     let scan_wedge = splatter::peaks::GoalWedgeFilter {
         goal_lat: req.goal_lat,
         goal_lon: req.goal_lon,
         far_angle_scale: 1.0,
     };
-    let hop_region = Geometry::Polygon(hop_disc_wgs84(req.from_lat, req.from_lon, hop_m));
-    let search_region = match &land_filter {
-        None => hop_region.clone(),
-        Some(mp) => geom_intersection(hop_region, &Geometry::MultiPolygon(mp.clone())),
-    };
 
-    let (filtered, n_peaks_scanned, n_peaks_in_wedge) = if search_region.is_empty() {
+    let (filtered, n_peaks_scanned, n_peaks_in_wedge) = if land_parts.is_empty() {
         (Vec::new(), 0, 0)
     } else {
         ensure_active()?;
@@ -867,7 +854,7 @@ fn load_seek_candidates_body(
                 req.from_lat,
                 req.from_lon,
                 hop_m,
-                land_filter.as_ref(),
+                None,
                 Some(scan_bbox),
                 Some(scan_wedge),
                 None,
@@ -914,7 +901,6 @@ fn load_seek_candidates_body(
         &format!("Found {} peak(s) in goal wedge", filtered.len()),
     );
 
-    let hop_m = hop_km * 1000.0;
     let tx_height = resolve_seek_from_tx_height_m(&preset, req.from_lat, req.from_lon);
     let rf_json = rf_json_for_preset(&preset).map_err(|e| SeekRunError::User(e.to_string(), 422))?;
     let cap = seek_cfg.max_candidates as usize;
@@ -981,7 +967,7 @@ fn load_seek_candidates_body(
 
     let site_rows = collect_reachable_site_rows(
         &preset,
-        &eligible,
+        &land_index,
         req.from_lat,
         req.from_lon,
         req.goal_lat,
@@ -1007,7 +993,7 @@ fn load_seek_candidates_body(
         req.goal_lat,
         req.goal_lon,
     );
-    let goal_on_eligible = goal_in_hop_range && goal_on_eligible(&eligible, req.goal_lat, req.goal_lon);
+    let goal_on_eligible = goal_in_hop_range && land_index.contains(req.goal_lon, req.goal_lat);
     let goal_near_prior_hop =
         goal_in_hop_range && near_excluded(req.goal_lat, req.goal_lon, &req.exclude);
     let goal_hop_eligible = goal_in_hop_range && goal_on_eligible && !goal_near_prior_hop;

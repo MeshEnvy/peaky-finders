@@ -1,6 +1,7 @@
 //! GeoJSON land layers, eligible geometry, KML import, and PPM polygonize.
 
 pub mod eligible_land;
+pub mod lon_lat_bbox;
 pub mod kml_import;
 pub mod land_aoi_clip;
 pub mod land_boot;
@@ -21,8 +22,10 @@ pub use eligible_land::{
     aoi_land_digest, build_eligible_geometry, build_eligible_land_union,
     eligible_land_dem_mask_dir, eligible_land_digest, intersect_land_geometry,
     iter_land_layer_entries_by_role, land_geometry_is_empty, load_or_build_eligible_land_filter,
-    load_or_build_eligible_land_union, load_preset_aoi_union, EligibleLandError,
+    load_or_build_eligible_land_parts, load_or_build_eligible_land_union, load_preset_aoi_union,
+    EligibleLandError, EligibleLandParts,
 };
+pub use lon_lat_bbox::LonLatBBox;
 pub use land_aoi_clip::{
     apply_aoi_clip_to_geojson, clip_geojson_to_aoi, layer_skips_aoi_clip,
 };
@@ -44,8 +47,8 @@ pub use land_path::{
     is_land_geojson_path, resolve_land_layer_geojson_path, resolve_land_source_path,
 };
 pub use land_query::{
-    load_land_layer_index, point_hits, query_land_layer_index, resolve_land_layer_entry,
-    LandLayerSpatialIndex, LandPointHit,
+    load_land_layer_index, point_hits, query_land_layer_index, read_land_layer_polygons_in_bbox,
+    resolve_land_layer_entry, LandLayerSpatialIndex, LandPointHit,
 };
 pub use land_preview::{
     apply_filters_to_aoi_base, ensure_aoi_clipped_preview_geojson, ensure_preview_field_values,
@@ -53,10 +56,11 @@ pub use land_preview::{
     LandPreviewWarmStats,
 };
 pub use land_pipeline::{
-    digest_for_bytes, effective_layer_digest, filter_digest_suffix, land_cache_dir,
-    layer_needs_aoi_clip, layer_needs_geojson_pipeline, layer_needs_geojson_transform,
-    manifest_layer_digest, pipeline_digest_suffix, process_land_geojson_value,
-    read_land_manifest, read_layer_geojson_bytes, warm_land_pipeline_caches_for_preset,
+    digest_for_bytes, effective_layer_digest, filter_digest_suffix, find_warmed_pipeline_geojson,
+    land_cache_dir, layer_needs_aoi_clip, layer_needs_geojson_pipeline,
+    layer_needs_geojson_transform, manifest_layer_digest, pipeline_digest_suffix,
+    process_land_geojson_value, read_land_manifest, read_layer_geojson_bytes,
+    warm_land_pipeline_caches_for_preset,
     LandPipelineWarmCache, LandPipelineWarmStats,
 };
 pub use land_refresh::{

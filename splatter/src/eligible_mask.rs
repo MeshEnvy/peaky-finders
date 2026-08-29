@@ -321,10 +321,19 @@ fn burn_land_cells(
         tile.sw_lon + 1.0 + pad,
         tile.sw_lat + 1.0 + pad,
     );
+    let exclude = land.intersecting_exclude_polys(
+        tile.sw_lon - pad,
+        tile.sw_lat - pad,
+        tile.sw_lon + 1.0 + pad,
+        tile.sw_lat + 1.0 + pad,
+    );
     let total = polys.len().max(1);
     loop_log(
         log,
-        &format!("{tile_stem} eligible burn begin n={n} polys={total}"),
+        &format!(
+            "{tile_stem} eligible burn begin n={n} polys={total} exclude={}",
+            exclude.len()
+        ),
     );
     for (pi, poly) in polys.iter().enumerate() {
         burn_polygon(&mut cells, &grid, poly);
@@ -339,6 +348,17 @@ fn burn_land_cells(
                 log,
                 &format!("{tile_stem} eligible burn poly {}/{}", pi + 1, total),
             );
+        }
+    }
+    if !exclude.is_empty() {
+        let mut punch = vec![false; n * n];
+        for poly in &exclude {
+            burn_polygon(&mut punch, &grid, poly);
+        }
+        for (cell, punched) in cells.iter_mut().zip(punch.iter()) {
+            if *punched {
+                *cell = false;
+            }
         }
     }
     loop_log(log, &format!("{tile_stem} eligible burn done"));
@@ -544,5 +564,33 @@ mod tests {
         let cy = n / 2;
         assert!(!cells[cy * n + cx], "hole center should be clear");
         assert!(cells[1 * n + 1], "outer ring corner should be filled");
+    }
+
+    #[test]
+    fn burn_punches_exclude_overlay() {
+        let include = MultiPolygon(vec![polygon![
+            (x: -120.0, y: 39.0),
+            (x: -119.0, y: 39.0),
+            (x: -119.0, y: 40.0),
+            (x: -120.0, y: 40.0),
+            (x: -120.0, y: 39.0),
+        ]]);
+        let exclude = MultiPolygon(vec![polygon![
+            (x: -119.7, y: 39.3),
+            (x: -119.3, y: 39.3),
+            (x: -119.3, y: 39.7),
+            (x: -119.7, y: 39.7),
+            (x: -119.7, y: 39.3),
+        ]]);
+        let land = LandFilterIndex::from_include_exclude(&include, &exclude);
+        let tile = flat_tile(39.0, -120.0, 101);
+        let (cells, _) = build_usable_grid(&tile, &land, "N39W120", false, None, None);
+        let n = tile.n;
+        let cx = n / 2;
+        let cy = n / 2;
+        assert!(!cells[cy * n + cx], "exclude overlay should punch a hole");
+        assert!(cells[1 * n + 1], "include outside exclude should stay filled");
+        assert!(!land.contains(-119.5, 39.5));
+        assert!(land.contains(-119.9, 39.1));
     }
 }
