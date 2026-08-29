@@ -17,6 +17,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 ### Fixed
 
 - **Land visibility** — source and folder eye toggles now show or hide every child layer on the map, including layers that were never loaded.
+- **Land stack** — exclude (blocked land) paints above include, even when include finishes loading later or sits first in the sidebar.
+- **Seek scan spinner** — the scan pin stays on the start site instead of sliding diagonally while RF is computing.
+- **Stale seek plan** — deleting a converted hop no longer bricks project load. A plan that names a missing site is dropped.
+- **Stuck warm pins** — viewshed pins no longer sit on `warm…` after a cache hit, a failed job, or a quality upgrade.
 
 ## [v0.5.0] - 2026-08-22
 
