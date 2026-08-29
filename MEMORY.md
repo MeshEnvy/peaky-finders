@@ -36,7 +36,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | `crates/peaky-geo/` | GeoJSON land query, eligible land, KML import, PPM polygonize |
 | `crates/peaky-serve/` | Axum app, API routes, HTML, embedded static |
 | `splatter/` | RF coverage engine (Skadi DEM, Fresnel/FSPL). Library only |
-| `assets/static/project-map/` | ESM map UI: `main.js` (entry), `init.js` (map boot), `constants.js`, `geo.js`, `api-urls.js`, `viewshed-sim.js`, `viewshed-raster.js` (shared with settings); `app.css`, favicons (rust-embed) |
+| `assets/static/project-map/` | ESM map UI: `main.js` (entry), `init.js` (map boot), `constants.js`, `geo.js`, `api-urls.js`, `land-sidebar-view.js`, `land-source-editor.js`, `viewshed-sim.js`, `viewshed-raster.js` (shared with settings); `app.css`, favicons (rust-embed) |
 | `assets/finder-watch/` | Embedded MapLibre page for `peaky find path --watch` |
 | `assets/templates/` | Server-rendered HTML fragments |
 | `tests/fixtures/` | Golden RF/GeoJSON fixtures from v4 |

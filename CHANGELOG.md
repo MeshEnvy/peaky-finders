@@ -10,6 +10,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Changed
+
+- **Land sidebar** — folders, sources, and layers read as a tree. Layer rows replace the low-contrast chips. Edit and delete sit quieter than the visibility control.
+
+### Fixed
+
+- **Land visibility** — source and folder eye toggles now show or hide every child layer on the map, including layers that were never loaded.
+
 ## [v0.5.0] - 2026-08-22
 
 First v5 release: Rust workspace, self-contained projects, land from GDB, release CI.
