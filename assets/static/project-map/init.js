@@ -5,6 +5,7 @@ import {
   landLayerDisplayName,
   landRuleSidebarText,
   landLayerRoleBadgeSpec,
+  landMapStackRank,
 } from './land-sidebar-view.js'
 import {
   TERRAIN_SOURCE,
@@ -782,20 +783,29 @@ export function initProjectMap() {
     }
   }
 
+  function createPinLoadMarkerElement(slug, kind) {
+    const el = document.createElement("div");
+    el.setAttribute("data-slug", slug);
+    if (kind === "spinner") {
+      // Spin on a child. MapLibre owns transform on the marker root.
+      el.className = "pin-load-spinner-wrap";
+      const spin = document.createElement("div");
+      spin.className = "pin-load-spinner";
+      el.appendChild(spin);
+      return el;
+    }
+    el.className = "pin-load-overlay";
+    el.innerHTML =
+      '<div class="pin-load-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">' +
+      '<div class="pin-load-progress__fill"></div></div>' +
+      '<div class="pin-load-progress__label"></div>';
+    return el;
+  }
+
   function ensurePinLoadMarker(slug, kind = "overlay") {
     let marker = pinLoadMarkers.get(slug);
     if (!marker) {
-      const el = document.createElement("div");
-      el.setAttribute("data-slug", slug);
-      if (kind === "spinner") {
-        el.className = "pin-load-spinner";
-      } else {
-        el.className = "pin-load-overlay";
-        el.innerHTML =
-          '<div class="pin-load-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">' +
-          '<div class="pin-load-progress__fill"></div></div>' +
-          '<div class="pin-load-progress__label"></div>';
-      }
+      const el = createPinLoadMarkerElement(slug, kind);
       // Never addTo(map) until setLngLat — MapLibre smart_wrap crashes on undefined lng.
       marker = new maplibregl.Marker({
         element: el,
@@ -1588,7 +1598,13 @@ export function initProjectMap() {
   function sitePinSpinning(slug) {
     if (isSiteMapHidden(slug)) return false;
     if (!isViewshedVisible(slug)) return false;
-    return !siteViewshedReady.has(slug) || !siteOutboundLinksReady.has(slug);
+    if (siteViewshedReady.has(slug) && siteOutboundLinksReady.has(slug)) {
+      return false;
+    }
+    if (siteViewshedReady.has(slug) && !siteOutboundLinksReady.has(slug)) {
+      return true;
+    }
+    return viewshedLoading.has(slug) || viewshedPendingEpoch.has(slug);
   }
 
   /** Parallel cache probe only — one warm-priority bump for the batch. */
@@ -3656,10 +3672,11 @@ export function initProjectMap() {
 
   function syncLandMapLayerOrder() {
     if (!mapReady) return;
-    const rows = landLayerRows();
+    const rows = [...landLayerRows()].sort(
+      (a, b) => landMapStackRank(a.spec?.role) - landMapStackRank(b.spec?.role),
+    );
     const anchor = viewshedLayerInsertBefore();
-    for (let i = rows.length - 1; i >= 0; i -= 1) {
-      const row = rows[i];
+    for (const row of rows) {
       const sourceMapId = landMapSourceId(row.sourceId, row.layerKey);
       for (const suffix of ["-fill", "-line", "-labels"]) {
         const id = `${sourceMapId}${suffix}`;
@@ -3980,7 +3997,7 @@ export function initProjectMap() {
         viewshedLayerInsertBefore(),
       );
       syncLandMapLabelLayer(sourceId, layerKey);
-      raiseSiteLayers();
+      syncLandMapLayerOrder();
     } catch (_) {
       /* network */
     }
@@ -5176,8 +5193,6 @@ export function initProjectMap() {
       }
       return;
     }
-    const epoch = viewshedPendingEpoch.get(data.slug);
-    if (epoch == null) return;
     if (data.status === "error") {
       viewshedPendingEpoch.delete(data.slug);
       viewshedLoading.delete(data.slug);
@@ -5335,6 +5350,7 @@ export function initProjectMap() {
       const readySlugs = [];
       const readyOverlays = [];
       const missing = [];
+      const upgrades = [];
       for (const site of sites) {
         if (isSiteMapHidden(site.slug) || !isViewshedVisible(site.slug))
           continue;
@@ -5347,9 +5363,7 @@ export function initProjectMap() {
             ...entry,
           });
           readySlugs.push(site.slug);
-          if (entry.at_target === false) {
-            missing.push(site);
-          }
+          if (entry.at_target === false) upgrades.push(site.slug);
         } else {
           missing.push(site);
         }
@@ -5358,6 +5372,9 @@ export function initProjectMap() {
       void fetchOutboundLinksParallel(readySlugs);
       for (const site of missing) {
         scheduleViewshedLoad(site);
+      }
+      if (upgrades.length) {
+        void bumpWarmPriorities(upgrades, WARM_PRIORITY_VIEWPORT);
       }
       if (missing.length) syncWarmPriorities();
     } catch (_) {

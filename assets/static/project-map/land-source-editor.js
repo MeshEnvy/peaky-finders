@@ -7,6 +7,7 @@ import {
   LAND_DEFAULT_LINE_COLOR,
   MAP_LABEL_FONT,
 } from './constants.js'
+import { landMapStackRank } from './land-sidebar-view.js'
 
 /** @typedef {'eligible'|'blocked'|'boundary'|'overlay'} LandRulePurpose */
 /** @typedef {'keep'|'remove'} LandFilterMode */
@@ -511,6 +512,30 @@ export function createLandSourceEditor({ elements, api, callbacks, utils }) {
     }
   }
 
+  function restackPreviewLayers() {
+    if (!previewMap || !state) return
+    const ranked = state.rules
+      .filter((rule) => rule.previewOn)
+      .slice()
+      .sort(
+        (a, b) =>
+          landMapStackRank(purposeToRole(a.purpose)) -
+          landMapStackRank(purposeToRole(b.purpose)),
+      )
+    for (const rule of ranked) {
+      const sourceName = previewSourceName(rule.uid)
+      const ids = [`${sourceName}-fill`, `${sourceName}-line`, previewLabelsLayerId(sourceName)]
+      for (const id of ids) {
+        if (!previewMap.getLayer(id)) continue
+        try {
+          previewMap.moveLayer(id)
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    }
+  }
+
   async function syncPreviewMap(options = {}) {
     const fitBounds = options.fitBounds === true
     if (!state) return
@@ -531,6 +556,7 @@ export function createLandSourceEditor({ elements, api, callbacks, utils }) {
     const featureBounds = await Promise.all(
       state.rules.filter((r) => r.previewOn).map(showPreviewRule),
     )
+    restackPreviewLayers()
     const merged = new maplibregl.LngLatBounds()
     let hasBounds = false
     for (const bounds of featureBounds) {

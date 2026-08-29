@@ -105,6 +105,17 @@ export function landRuleSidebarText(spec) {
   return 'Map overlay'
 }
 
+/** Bottom → top map paint rank. Exclude must sit above include. */
+export function landMapStackRank(role) {
+  const normalized = String(role || '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'aoi') return 0
+  if (normalized === 'include') return 1
+  if (normalized === 'exclude') return 3
+  return 2
+}
+
 export function landLayerRoleBadgeSpec(role) {
   const normalized = String(role || '')
     .trim()
