@@ -159,6 +159,79 @@ fn project_cache_key(preset_path: &Path) -> String {
         .to_string()
 }
 
+pub fn invalidate_project_site_links_cache(preset_path: &Path) {
+    let key = project_cache_key(preset_path);
+    if let Ok(mut cache) = LINKS_PAYLOAD_CACHE.lock() {
+        cache.remove(&key);
+    }
+    let _ = std::fs::remove_file(links_disk_cache_path(preset_path));
+}
+
+/// P2P links from each slug to in-range sites (same stack as the site mesh).
+pub fn compute_links_for_slugs(
+    session: Arc<Session>,
+    preset: &Preset,
+    slugs: &[String],
+) -> Result<Value> {
+    let mut records = Vec::new();
+    let mut features: Vec<Value> = Vec::new();
+    let mut seen_records: HashSet<LinkPair> = HashSet::new();
+    let mut seen_features: HashSet<LinkPair> = HashSet::new();
+    for slug in slugs {
+        if !preset.sites.contains_key(slug) {
+            continue;
+        }
+        let payload = compute_single_site_links_p2p(Arc::clone(&session), preset, slug)?;
+        if let Some(rows) = payload.get("links").and_then(|v| v.as_array()) {
+            for row in rows {
+                let a = row.get("a").and_then(|v| v.as_str()).unwrap_or("");
+                let b = row.get("b").and_then(|v| v.as_str()).unwrap_or("");
+                if a.is_empty() || b.is_empty() {
+                    continue;
+                }
+                if !seen_records.insert(canonical_site_pair(a, b)) {
+                    continue;
+                }
+                records.push(row.clone());
+            }
+        }
+        if let Some(rows) = payload
+            .pointer("/geojson/features")
+            .and_then(|v| v.as_array())
+        {
+            for feature in rows {
+                let props = feature.get("properties");
+                let a = props
+                    .and_then(|v| v.get("a"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let b = props
+                    .and_then(|v| v.get("b"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if a.is_empty() || b.is_empty() {
+                    continue;
+                }
+                if !seen_features.insert(canonical_site_pair(a, b)) {
+                    continue;
+                }
+                features.push(feature.clone());
+            }
+        }
+    }
+    records.sort_by(|a, b| {
+        let aa = a.get("a").and_then(|v| v.as_str()).unwrap_or("");
+        let bb = b.get("a").and_then(|v| v.as_str()).unwrap_or("");
+        aa.cmp(bb)
+    });
+    Ok(json!({
+        "status": "ready",
+        "links_model": LINKS_MODEL,
+        "links": records,
+        "geojson": { "type": "FeatureCollection", "features": features },
+    }))
+}
+
 pub fn store_project_site_links_cache(
     preset_path: &Path,
     preset: &Preset,
@@ -668,9 +741,117 @@ pub fn load_coords_site_links(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::seek_plan::convert_seek_plan_locs_to_sites;
+    use peaky_preset::load_preset;
+    use splatter::dem::{DemMosaic, DemTile};
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     #[test]
     fn canonical_pair_orders() {
         assert_eq!(canonical_site_pair("b", "a"), ("a".into(), "b".into()));
+    }
+
+    fn write_convert_fixture(dir: &std::path::Path) -> std::path::PathBuf {
+        let config = r#"modem_presets:
+  fixture-modem:
+    frequency_mhz: 915.0
+    bandwidth_khz: 125.0
+    spreading_factor: 10
+    coding_rate: 5
+    implementation_margin_db: 3.0
+    power_dbm: 22.0
+    sensitivity_dbm: -132.0
+environment_presets:
+  fixture-desert:
+    climate: desert
+    polarization: vertical
+    clutter_height_m: 1.0
+    fresnel_clearance_fraction: 0.25
+    coverage_pessimism_db: 0.0
+    situation_pct: 95.0
+    time_pct: 95.0
+simulation:
+  radius_km: 50.0
+  modem: fixture-modem
+  environment: fixture-desert
+  transmitter: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
+  receiver: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
+seek:
+  plan:
+    start: start
+    goal: [40.25, -119.25]
+    hops:
+      - loc: [40.32, -119.55]
+sites:
+  start:
+    name: Start
+    loc: [40.25, -119.6]
+    tags: [installed]
+links: []
+"#;
+        let path = dir.join("config.yaml");
+        std::fs::write(&path, config).expect("config");
+        path
+    }
+
+    fn flat_mosaic() -> DemMosaic {
+        let n = 121usize;
+        let mut tiles = HashMap::new();
+        for sw_lat in 39..=41 {
+            for sw_lon in -121..=-119 {
+                tiles.insert(
+                    (sw_lat, sw_lon),
+                    DemTile {
+                        sw_lat: sw_lat as f64,
+                        sw_lon: sw_lon as f64,
+                        n,
+                        elevations: vec![2100i16; n * n],
+                    },
+                );
+            }
+        }
+        DemMosaic::from_tiles(tiles)
+    }
+
+    #[test]
+    fn converted_seek_hop_is_site_mesh_link() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let path = write_convert_fixture(tmp.path());
+        let result =
+            convert_seek_plan_locs_to_sites(&path, "Relay", &["planned".into()]).expect("convert");
+        let slug = result["created_slugs"][0].as_str().expect("slug").to_string();
+        let preset = load_preset(&path).expect("preset");
+        let session = Arc::new(Session::new(tmp.path().join("mirror"), false, 2));
+        session.install_dem_mosaic(flat_mosaic());
+        let rf_json = crate::rf::rf_json_for_preset(&preset).expect("rf");
+        let start = &preset.sites["start"];
+        let hop = &preset.sites[&slug];
+        let seek_ok = session
+            .seek_repeater_link_batch(
+                start.loc[0],
+                start.loc[1],
+                crate::rf::resolved_site_tx_height_m(&preset, start),
+                &[(
+                    hop.loc[0],
+                    hop.loc[1],
+                    crate::rf::resolved_site_tx_height_m(&preset, hop),
+                )],
+                &rf_json,
+            )
+            .expect("seek batch")[0];
+        assert!(seek_ok, "seek P2P should accept the converted hop");
+        let mesh = compute_links_for_slugs(session, &preset, &[slug.clone()]).expect("mesh");
+        let linked = mesh["links"]
+            .as_array()
+            .expect("links")
+            .iter()
+            .any(|row| {
+                let a = row.get("a").and_then(|v| v.as_str());
+                let b = row.get("b").and_then(|v| v.as_str());
+                matches!((a, b), (Some("start"), Some(s)) | (Some(s), Some("start")) if s == slug)
+                    && row.get("linked").and_then(|v| v.as_bool()) != Some(false)
+            });
+        assert!(linked, "site mesh should keep the seek hop as a link: {mesh}");
     }
 }

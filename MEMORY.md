@@ -79,17 +79,19 @@ Paths: CLI takes a project dir (or `config.yaml`). Optional slug fallback: `$PEA
 **One physics path for all hop/link decisions.** Goal seek, site-pair confirmation, linkable binned peaks, and the site link mesh must all call the same splatter P2P stack:
 
 ```
-preset → CovRequest JSON (rf_json) → Session::link_eval / link_mutual_viable / link_mutual_batch
-         → propagate::evaluate_link / evaluate_mutual_link_viable
+preset → CovRequest JSON (rf_json)
+         → Session::seek_repeater_link_batch / site_mesh_pair_strengths
+         → propagate::evaluate_mutual_site_link_strength
 ```
 
 **Terrain sample step:** P2P / cover / seek links sample at **native DEM spacing** (~30 m Skadi). Viewshed rasters use `radius_m / raster_dimension` for display ray step; `raster_dimension` derives from `viewshed_quality` + radius (see Preset model).
 
 | Consumer | v4 (do not copy) | v5 |
 |----------|------------------|-----|
-| Goal seek (sites, goal, peaks) | splatter P2P | Same |
-| Linkable binned peaks | `Session::linkable_binned_peaks` | Same |
-| Site link mesh (`GET …/links`) | viewshed footprint cover | **P2P RF** via `Session::link_strength_batch` |
+| Goal seek (sites, goal, peaks) | splatter P2P | `seek_repeater_link_batch` |
+| Linkable binned peaks | `Session::linkable_binned_peaks` | Same (`evaluate_mutual_site_link_strength`) |
+| Site link mesh (`GET …/links`) | viewshed footprint cover | **P2P RF** via `site_mesh_pair_strengths` |
+| Convert plan → sites | — | Same P2P; seeds mesh for created slugs; keep path sites visible |
 
 **Viewsheds are not link truth.** Footprint polygons and PNG overlays are display/cache only. They must not gate whether two sites are linked. Optional: derive a visual "coverage overlap" hint from footprints, but `linked` / `rf_viable` / seek candidacy come from P2P only.
 
@@ -118,7 +120,7 @@ preset → CovRequest JSON (rf_json) → Session::link_eval / link_mutual_viable
 | Home modem/environment catalogs | Implemented |
 | SSE `/events` | Implemented (hello + keepalive; publish on warm TBD) |
 | Links mesh, warm scheduler | Implemented (P2P mesh, warm queue, SSE) |
-| Goal seek (`/seek/candidates`, scan-progress, plan, convert-to-sites) | Implemented (P2P via `seek.rs` + `Session::linkable_binned_peaks`). Start `<select>` matches entity-panel visibility (tag filter **or** post-add bypass) and refreshes on site add/delete |
+| Goal seek (`/seek/candidates`, scan-progress, plan, convert-to-sites) | Implemented (P2P via `seek.rs` + `seek_repeater_link_batch`). Convert seeds site-mesh pairs for new slugs and bypasses tag-filter on the whole path |
 | Land list + layer GeoJSON | Implemented |
 | Skadi map tiles (`/api/dem/hillshade`, `/api/dem/terrarium`) | Implemented — PNG cache `<project>/.peaky/cache/skadi/.map_tiles/v3/`; render only when all required HGT on disk (503 until ready); hillshade uses padded HGT ring; **AOI HGT prefetch on project page load** (background); map tile prefetch capped (`PEAKY_DEM_MAP_QUEUE_CAP`, default 128) |
 

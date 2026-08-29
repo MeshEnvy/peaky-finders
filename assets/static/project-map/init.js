@@ -616,7 +616,14 @@ export function initProjectMap() {
 
   sites = sites.map(normalizeSiteFromApi).filter(Boolean);
 
+  function bypassSiteTagFilter(slug) {
+    if (!slug) return;
+    siteHidden.delete(slug);
+    tagFilterBypassSlugs.add(slug);
+  }
+
   function ensureSiteVisibleAfterAdd(site) {
+    if (!site?.slug) return;
     siteHidden.delete(site.slug);
     if (!sitePassesTagFilter(site)) {
       tagFilterBypassSlugs.add(site.slug);
@@ -1523,7 +1530,6 @@ export function initProjectMap() {
 
   function filterSiteLinksGeoJson(geojson) {
     if (!geojson || !geojson.features) return geojson;
-    const chainPairs = seekSessionActive() ? seekChainSitePairKeys() : null;
     const features = geojson.features.filter((feature) => {
       const props = feature.properties || {};
       if (isSiteMapHidden(props.a) || isSiteMapHidden(props.b)) return false;
@@ -1531,10 +1537,6 @@ export function initProjectMap() {
         if (props.a === editSlug || props.b === editSlug) return false;
       }
       if (linkFeatureTouchesSnapshotCoords(feature)) return false;
-      if (chainPairs?.size) {
-        const key = canonicalSitePairKey(String(props.a), String(props.b));
-        if (chainPairs.has(key)) return false;
-      }
       return true;
     });
     return { type: geojson.type || "FeatureCollection", features };
@@ -4858,6 +4860,27 @@ export function initProjectMap() {
       markSiteOutboundLinksReady(slug);
     }
     if (selectedSlug) renderPanel(siteBySlug.get(selectedSlug));
+  }
+
+  function mergeConvertedSeekLinks(payload) {
+    const created = Array.isArray(payload?.created_slugs)
+      ? payload.created_slugs.filter(Boolean)
+      : [];
+    if (!created.length || !payload.geojson) return;
+    for (const slug of created) {
+      const links = (Array.isArray(payload.links) ? payload.links : []).filter(
+        (row) => row.a === slug || row.b === slug,
+      );
+      const features = (payload.geojson.features || []).filter((feature) => {
+        const props = feature.properties || {};
+        return props.a === slug || props.b === slug;
+      });
+      mergeSingleSiteLinks(slug, {
+        links,
+        geojson: { type: "FeatureCollection", features },
+        outbound_ready: true,
+      });
+    }
   }
 
   function applySiteLinksPayload(payload) {
@@ -8578,23 +8601,31 @@ export function initProjectMap() {
         }
       }
       saveSeekState({ immediatePlan: true });
-      const firstTag = tags[0];
-      if (firstTag) {
-        activeTagFilters.clear();
-        activeTagFilters.add(firstTag);
-        pruneActiveTagFilters();
-        renderEntityPanel();
+      const pathSlugs = Array.isArray(payload.path_slugs)
+        ? payload.path_slugs
+        : [...seekPathSiteSlugs()];
+      for (const slug of pathSlugs) {
+        bypassSiteTagFilter(slug);
       }
+      mergeConvertedSeekLinks(payload);
       syncSeekPanelUi();
       updateSeekPathOverlay();
+      applySiteLayerFilters();
+      refreshFilteredLinks();
       populateSeekStartSelect();
+      renderEntityPanel();
       const converted = payload.converted ?? 0;
       const tagged = payload.tagged ?? 0;
       let status = `Converted ${converted} hop(s) to sites`;
       if (tagged > 0) status += `; tagged ${tagged} existing site(s)`;
       setSeekStatus(status);
-      void loadSiteLinks();
-      if (imported[0]?.slug) selectSite(imported[0].slug);
+      const createdSlugs = Array.isArray(payload.created_slugs)
+        ? payload.created_slugs.filter(Boolean)
+        : imported
+            .map((site) => site.slug)
+            .filter(Boolean);
+      void fetchOutboundLinksParallel(createdSlugs);
+      if (createdSlugs[0]) selectSite(createdSlugs[0]);
     } catch (err) {
       setSeekConvertError(String(err));
     } finally {
@@ -8955,25 +8986,6 @@ export function initProjectMap() {
       if (hop.site_slug) slugs.add(hop.site_slug);
     }
     return slugs;
-  }
-
-  function seekHopSiteSlug(hop) {
-    if (!hop) return null;
-    if (hop.site_slug) return hop.site_slug;
-    return seekSiteSlugNear(hop.lat, hop.lon);
-  }
-
-  /** Site mesh pairs that duplicate the committed seek chain (both endpoints are consecutive hops). */
-  function seekChainSitePairKeys() {
-    const keys = new Set();
-    const hops = seekState?.hops;
-    if (!seekSessionActive() || !hops || hops.length < 2) return keys;
-    for (let i = 0; i < hops.length - 1; i += 1) {
-      const slugA = seekHopSiteSlug(hops[i]);
-      const slugB = seekHopSiteSlug(hops[i + 1]);
-      if (slugA && slugB) keys.add(canonicalSitePairKey(slugA, slugB));
-    }
-    return keys;
   }
 
   function seekSiteSlugNear(lat, lon, maxM = SEEK_GOAL_SAME_AS_START_M) {

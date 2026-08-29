@@ -16,6 +16,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Seek convert links** — converting a goal-seek hop now seeds the site mesh from the same P2P check and keeps the rest of the chain visible. The hop stays a real RF link instead of disappearing behind a tag filter or a stale mesh.
 - **Land visibility** — source and folder eye toggles now show or hide every child layer on the map, including layers that were never loaded.
 - **Land stack** — exclude (blocked land) paints above include, even when include finishes loading later or sits first in the sidebar.
 - **Seek scan spinner** — the scan pin stays on the start site instead of sliding diagonally while RF is computing.

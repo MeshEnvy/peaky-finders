@@ -22,7 +22,10 @@ use serde_json::{json, Value};
 
 use crate::events::sse_keepalive_interval;
 use crate::html::{project_error_html, project_html, site_api_row};
-use crate::links::{load_project_site_links, load_single_site_links};
+use crate::links::{
+    compute_links_for_slugs, invalidate_project_site_links_cache, load_project_site_links,
+    load_single_site_links,
+};
 use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
 use crate::state::AppState;
 use crate::land::{
@@ -988,7 +991,42 @@ async fn convert_seek_plan(State(state): State<AppState>,
             Json(json!({ "slug": state.slug.clone(), "error": msg })),
         ),
     })?;
+    invalidate_project_site_links_cache(&path);
+    let created_slugs: Vec<String> = result
+        .get("created_slugs")
+        .and_then(|v| v.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
     let mut payload = result;
+    if !created_slugs.is_empty() {
+        let session = state.session.clone();
+        let path_for_links = path.clone();
+        let created_for_links = created_slugs.clone();
+        if let Ok(Ok(links)) = tokio::task::spawn_blocking(move || {
+            let preset = load_preset(&path_for_links)?;
+            compute_links_for_slugs(session, &preset, &created_for_links)
+        })
+        .await
+        {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert(
+                    "links".to_string(),
+                    links.get("links").cloned().unwrap_or(json!([])),
+                );
+                obj.insert(
+                    "geojson".to_string(),
+                    links.get("geojson").cloned().unwrap_or_else(|| {
+                        json!({ "type": "FeatureCollection", "features": [] })
+                    }),
+                );
+            }
+        }
+    }
+    state.warm.start_links_warm(&state.slug, path);
     if let Some(obj) = payload.as_object_mut() {
         obj.insert("slug".to_string(), json!(state.slug));
         obj.insert("project".to_string(), json!(state.slug));

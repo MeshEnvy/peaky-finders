@@ -5,8 +5,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use peaky_preset::{
-    load_preset, load_preset_raw, normalize_site_tags, save_preset, site_row_from_entry, slugify,
-    unique_site_slug, write_preset_document, SeekPlan, SeekPlanHop, SiteEntry,
+    insert_preset_site, load_preset, load_preset_raw, normalize_site_tags, patch_preset_sites_tags,
+    site_row_from_entry, slugify, unique_site_slug, write_preset_document, SeekPlan, SeekPlanHop,
+    SiteEntry,
 };
 use serde_json::{json, Value};
 use serde_yaml::Mapping;
@@ -79,19 +80,26 @@ pub fn patch_seek_plan(preset_path: &Path, body: &Value) -> Result<Value, SeekPl
         }
     }
 
+    persist_seek_plan(preset_path, &plan)?;
+    Ok(seek_plan_to_api(&Some(plan)))
+}
+
+fn persist_seek_plan(preset_path: &Path, plan: &SeekPlan) -> Result<(), SeekPlanError> {
     let mut raw = load_preset_raw(preset_path).map_err(|e| SeekPlanError(e.to_string()))?;
-    let map = raw.as_mapping_mut().ok_or_else(|| SeekPlanError("preset root must be a mapping".into()))?;
+    let map = raw
+        .as_mapping_mut()
+        .ok_or_else(|| SeekPlanError("preset root must be a mapping".into()))?;
     let seek = map
         .entry(serde_yaml::Value::from("seek"))
         .or_insert_with(|| serde_yaml::Value::Mapping(Mapping::new()));
     if let serde_yaml::Value::Mapping(seek_map) = seek {
         seek_map.insert(
             serde_yaml::Value::from("plan"),
-            serde_yaml::to_value(&plan).map_err(|e| SeekPlanError(e.to_string()))?,
+            serde_yaml::to_value(plan).map_err(|e| SeekPlanError(e.to_string()))?,
         );
     }
     write_preset_document(preset_path, map).map_err(|e| SeekPlanError(e.to_string()))?;
-    Ok(seek_plan_to_api(&Some(plan)))
+    Ok(())
 }
 
 pub fn clear_seek_plan(preset_path: &Path) -> Result<(), SeekPlanError> {
@@ -264,10 +272,11 @@ pub fn convert_seek_plan_locs_to_sites(
         });
     }
 
-    let created_slugs: HashSet<String> = created_rows
+    let created_slug_list: Vec<String> = created_rows
         .iter()
         .filter_map(|row| row.get("slug").and_then(|v| v.as_str()).map(str::to_string))
         .collect();
+    let created_slugs: HashSet<String> = created_slug_list.iter().cloned().collect();
     let mut tagged_rows = Vec::new();
     let yaml_hops: Vec<Mapping> = new_hops.iter().map(plan_hop_to_yaml).collect();
     for slug in plan_path_site_slugs(&plan.start, &yaml_hops) {
@@ -285,18 +294,38 @@ pub fn convert_seek_plan_locs_to_sites(
         }
     }
 
-    preset.seek.plan = Some(SeekPlan {
+    let path_slugs = plan_path_site_slugs(&plan.start, &yaml_hops);
+    let tagged_slugs: Vec<String> = tagged_rows
+        .iter()
+        .filter_map(|row| row.get("slug").and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+    for slug in &created_slug_list {
+        let entry = preset
+            .sites
+            .get(slug)
+            .ok_or_else(|| SeekPlanError(format!("missing created site {slug}")))?;
+        insert_preset_site(preset_path, slug, entry).map_err(|e| SeekPlanError(e.to_string()))?;
+    }
+    if !tagged_slugs.is_empty() {
+        patch_preset_sites_tags(preset_path, &tagged_slugs, &tags_value, &[])
+            .map_err(|e| SeekPlanError(e.to_string()))?;
+    }
+
+    let new_plan = SeekPlan {
         start: plan.start,
         goal: plan.goal,
         complete: plan.complete,
         hops: new_hops,
-    });
-    save_preset(preset_path, &preset).map_err(|e| SeekPlanError(e.to_string()))?;
+    };
+    persist_seek_plan(preset_path, &new_plan)?;
+    preset.seek.plan = Some(new_plan);
 
     let converted = created_rows.len();
     let tagged = tagged_rows.len();
     Ok(json!({
         "sites": created_rows.into_iter().chain(tagged_rows).collect::<Vec<_>>(),
+        "created_slugs": created_slug_list,
+        "path_slugs": path_slugs,
         "plan": seek_plan_to_api(&preset.seek.plan),
         "converted": converted,
         "tagged": tagged,
@@ -334,5 +363,76 @@ mod tests {
         assert_eq!(parse_prefixed_site_name_number("Relay 12", "Relay"), Some(12));
         assert_eq!(parse_prefixed_site_name_number("relay 3", "Relay"), Some(3));
         assert!(parse_prefixed_site_name_number("Relay Peak", "Relay").is_none());
+    }
+
+    fn write_convert_fixture(dir: &std::path::Path) -> std::path::PathBuf {
+        let config = r#"modem_presets:
+  fixture-modem:
+    frequency_mhz: 915.0
+    bandwidth_khz: 125.0
+    spreading_factor: 10
+    coding_rate: 5
+    implementation_margin_db: 3.0
+    power_dbm: 22.0
+    sensitivity_dbm: -132.0
+environment_presets:
+  fixture-desert:
+    climate: desert
+    polarization: vertical
+    clutter_height_m: 1.0
+    fresnel_clearance_fraction: 0.25
+    coverage_pessimism_db: 0.0
+    situation_pct: 95.0
+    time_pct: 95.0
+simulation:
+  radius_km: 50.0
+  modem: fixture-modem
+  environment: fixture-desert
+  transmitter: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
+  receiver: {height_m: 2.0, gain_dbi: 3.0, loss_db: 2.0}
+seek:
+  peak_bin_size_m: 1500
+  max_candidates: 4
+  plan:
+    start: start
+    goal: [40.25, -119.25]
+    hops:
+      - loc: [40.05, -119.45]
+sites:
+  start:
+    name: Start
+    loc: [40.0, -119.5]
+    tags: [installed]
+links: []
+"#;
+        let path = dir.join("config.yaml");
+        std::fs::write(&path, config).expect("config");
+        path
+    }
+
+    #[test]
+    fn convert_loc_hop_becomes_site_and_keeps_path() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let path = write_convert_fixture(tmp.path());
+        let result =
+            convert_seek_plan_locs_to_sites(&path, "Relay", &["planned".into()]).expect("convert");
+        assert_eq!(result["converted"], 1);
+        let created = result["created_slugs"]
+            .as_array()
+            .expect("created_slugs");
+        assert_eq!(created.len(), 1);
+        let slug = created[0].as_str().expect("slug");
+        let path_slugs = result["path_slugs"].as_array().expect("path_slugs");
+        assert!(path_slugs.iter().any(|v| v.as_str() == Some("start")));
+        assert!(path_slugs.iter().any(|v| v.as_str() == Some(slug)));
+
+        let preset = load_preset(&path).expect("reload");
+        let site = preset.sites.get(slug).expect("created site");
+        assert_eq!(site.loc, [40.05, -119.45]);
+        assert!(site.tags.contains(&"planned".to_string()));
+        let plan = preset.seek.plan.expect("plan");
+        assert_eq!(plan.hops.len(), 1);
+        assert_eq!(plan.hops[0].site.as_deref(), Some(slug));
+        assert!(plan.hops[0].loc.is_none());
     }
 }
