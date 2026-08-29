@@ -153,8 +153,9 @@ pub fn viewshed_overlay_at_workdir(
     if !png.is_file() {
         return Ok(None);
     }
-    let bounds = load_bounds_from_manifest(&workdir.join("manifest.json"))
-        .context("viewshed manifest bbox")?;
+    let Some(bounds) = load_bounds_from_manifest(&workdir.join("manifest.json")) else {
+        return Ok(None);
+    };
     let coordinates = image_coordinates_from_bbox(&bounds)?;
     let at_target = raster_dimension >= raster_target;
     let mut overlay = serde_json::json!({

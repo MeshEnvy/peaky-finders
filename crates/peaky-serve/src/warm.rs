@@ -274,6 +274,10 @@ impl WarmHub {
         png.is_file()
     }
 
+    fn overlay_is_at_target(overlay: &Value) -> bool {
+        overlay.get("at_target").and_then(|v| v.as_bool()) == Some(true)
+    }
+
     fn publish_viewshed(&self, project_slug: &str, overlay: Value) {
         let mut data = overlay.as_object().cloned().unwrap_or_default();
         data.insert("project".into(), json!(project_slug));
@@ -340,6 +344,16 @@ impl WarmHub {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!("viewshed warm {slug}/{site_slug}: {e:#}");
+                hub.events.publish(
+                    &slug,
+                    "viewshed",
+                    json!({
+                        "project": slug,
+                        "slug": site_slug,
+                        "status": "error",
+                        "error": e.to_string(),
+                    }),
+                );
                 return;
             }
         };
@@ -377,8 +391,19 @@ impl WarmHub {
             Ok(k) => k,
             Err(_) => return false,
         };
-        if Self::site_coverage_exists(&warm.preset_path, &key) {
-            return false;
+        if let Ok(Some(overlay)) = site_viewshed_overlay_if_ready(
+            &warm.slug,
+            &warm.preset_path,
+            site_slug,
+            site,
+            preset,
+            None,
+        ) {
+            if Self::overlay_is_at_target(&overlay) {
+                return false;
+            }
+        } else if Self::site_coverage_exists(&warm.preset_path, &key) {
+            let _ = std::fs::remove_dir_all(resolved_viewshed_root(&warm.preset_path).join(&key));
         }
         let hub = self.clone();
         let warm2 = warm.clone();
@@ -492,20 +517,18 @@ impl WarmHub {
             };
             self.prefetch_dem_for_sites(&preset, std::slice::from_ref(site_slug), priority.min(PRIORITY_DEM_VIEWPORT));
             let key = Self::site_coverage_key(&preset_path, &preset, site)?;
-            if Self::site_coverage_exists(&preset_path, &key) {
-                if priority == PRIORITY_INTERACTIVE {
-                    if let Ok(Some(overlay)) = site_viewshed_overlay_if_ready(
-                        slug,
-                        &preset_path,
-                        site_slug,
-                        site,
-                        &preset,
-                        None,
-                    ) {
-                        self.publish_viewshed(slug, overlay);
-                    }
+            if let Ok(Some(overlay)) = site_viewshed_overlay_if_ready(
+                slug,
+                &preset_path,
+                site_slug,
+                site,
+                &preset,
+                None,
+            ) {
+                self.publish_viewshed(slug, overlay.clone());
+                if Self::overlay_is_at_target(&overlay) {
+                    continue;
                 }
-                continue;
             }
             if self.submit_site_warm(warm.clone(), &preset, site_slug, site, priority) {
                 queued += 1;
