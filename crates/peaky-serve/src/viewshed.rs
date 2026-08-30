@@ -40,6 +40,7 @@ pub fn preview_site_at(lat: f64, lon: f64) -> Result<SiteEntry, ViewshedError> {
         height_m: None,
         description: None,
         tags: Vec::new(),
+        node: None,
     })
 }
 

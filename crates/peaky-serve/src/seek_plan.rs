@@ -260,6 +260,7 @@ pub fn convert_seek_plan_locs_to_sites(
                 tags: tags_value.clone(),
                 height_m: hop.height_m,
                 description: None,
+                node: None,
             };
             preset.sites.insert(slug.clone(), entry.clone());
             created_rows.push(json!(site_row_from_entry(&slug, &entry)));
@@ -343,6 +344,7 @@ mod tests {
             tags: vec![],
             height_m: None,
             description: None,
+            node: None,
         }
     }
 

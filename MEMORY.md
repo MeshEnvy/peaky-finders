@@ -43,7 +43,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 
 ## Preset model
 
-Same vocabulary as v4: `sites:` (slug → `name`, `loc`, optional `tags`, `height_m`), top-level `links:`, `simulation`, `display`, `land`, `seek`, plus **`modem_presets`** and **`environment_presets`** (self-contained project; no `$PEAKY_HOME` inheritance). No `sites.*.type`. Tags are UI-only.
+Same vocabulary as v4: `sites:` (slug → `name`, `loc`, optional `tags`, `height_m`, optional `node` ME key), top-level `links:`, `simulation`, `display`, `land`, `seek`, plus **`modem_presets`** and **`environment_presets`** (self-contained project; no `$PEAKY_HOME` inheritance). No `sites.*.type`. Tags are UI-only. Fleet bind is `sites.*.node`; nodes.yaml is not read for RF.
 
 Paths: CLI takes a project dir (or `config.yaml`). Optional slug fallback: `$PEAKY_HOME/projects/<name>/`. Cache root: `<project>/.peaky/cache/` — `skadi/` (HGT + `.map_tiles/`), `viewsheds/`, `finder/`, `land/`. Optional `SPLAT_CACHE` overrides Skadi path. **PLSS:** not in Peaky — ops `tag_public_land.py` (CadNSDI → preset YAML); export runs it as prep.
 

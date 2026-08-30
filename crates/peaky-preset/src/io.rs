@@ -410,6 +410,7 @@ mod tests {
                 height_m: None,
                 description: None,
                 tags: vec![],
+                node: None,
             },
         )
         .unwrap();
@@ -438,6 +439,7 @@ mod tests {
                 height_m: None,
                 description: None,
                 tags: vec![],
+                node: None,
             },
         )
         .unwrap();
@@ -547,6 +549,7 @@ simulation:
                 height_m: None,
                 description: None,
                 tags: vec![],
+                node: None,
             },
         );
         sites.insert(
@@ -557,6 +560,7 @@ simulation:
                 height_m: None,
                 description: None,
                 tags: vec![],
+                node: None,
             },
         );
 

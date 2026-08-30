@@ -190,6 +190,7 @@ async fn add_site(State(state): State<AppState>,
         tags: body.tags,
         height_m: body.height_m,
         description: None,
+        node: None,
     };
     insert_preset_site(&path, &site_slug, &entry)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -393,6 +394,7 @@ async fn import_sites(State(state): State<AppState>,
                 tags: body.tags.clone(),
                 height_m: None,
                 description: None,
+                node: None,
             },
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

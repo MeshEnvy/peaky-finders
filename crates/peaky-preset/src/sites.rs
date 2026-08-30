@@ -115,6 +115,12 @@ pub fn site_row_from_entry(slug: &str, ent: &SiteEntry) -> serde_json::Map<Strin
             row.insert("description".into(), serde_json::Value::String(s.to_string()));
         }
     }
+    if let Some(node) = &ent.node {
+        let s = node.trim();
+        if !s.is_empty() {
+            row.insert("node".into(), serde_json::Value::String(s.to_string()));
+        }
+    }
     row
 }
 
@@ -164,7 +170,7 @@ pub fn site_row_from_yaml_ent(slug: &str, ent: &Mapping) -> Result<serde_json::M
         validate_site_height(Some(h))?;
         row.insert("height_m".into(), serde_json::json!(h));
     }
-    for key in ["description"] {
+    for key in ["description", "node"] {
         if let Some(val) = ent
             .get(serde_yaml::Value::String(key.into()))
             .and_then(|v| v.as_str())
