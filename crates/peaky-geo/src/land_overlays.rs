@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
+use geo::algorithm::winding_order::{Winding, WindingOrder};
 use geo::{BoundingRect, Centroid, Contains, Geometry, MultiPolygon, Point, Polygon};
 use geojson::Geometry as GeoJsonGeometry;
 use peaky_preset::LandLayerRole;
@@ -141,19 +142,24 @@ fn ring_vertices_inside(shell: &Polygon<f64>, ring: &geo::LineString<f64>) -> bo
     ring.0.iter().all(|coord| shell.contains(&Point::new(coord.x, coord.y)))
 }
 
-fn sanitize_polygon(poly: &Polygon<f64>) -> Option<Polygon<f64>> {
-    if poly.exterior().0.len() < 4 {
+fn oriented_ring(ring: &geo::LineString<f64>, order: WindingOrder) -> Option<geo::LineString<f64>> {
+    if ring.0.len() < 4 || ring.winding_order().is_none() {
         return None;
     }
-    let ext_bbox = poly_bbox(poly)?;
-    let shell = Polygon::new(poly.exterior().clone(), vec![]);
+    Some(ring.clone_to_winding_order(order))
+}
+
+fn sanitize_polygon(poly: &Polygon<f64>) -> Option<Polygon<f64>> {
+    let exterior = oriented_ring(poly.exterior(), WindingOrder::CounterClockwise)?;
+    let shell = Polygon::new(exterior.clone(), vec![]);
+    let ext_bbox = poly_bbox(&shell)?;
     let holes = poly
         .interiors()
         .iter()
         .filter(|ring| ring_bbox_inside(ext_bbox, ring) && ring_vertices_inside(&shell, ring))
-        .cloned()
+        .filter_map(|ring| oriented_ring(ring, WindingOrder::Clockwise))
         .collect();
-    Some(Polygon::new(poly.exterior().clone(), holes))
+    Some(Polygon::new(exterior, holes))
 }
 
 fn exclude_covers_include(include: &Polygon<f64>, exclude: &Polygon<f64>) -> bool {
@@ -235,7 +241,7 @@ pub fn build_eligible_overlay(
 fn overlay_cache_dir(preset_path: &Path, digest: &str) -> PathBuf {
     land_cache_dir(preset_path)
         .join("overlays")
-        .join("v7")
+        .join("v8")
         .join(digest)
 }
 
@@ -455,6 +461,39 @@ mod tests {
         let eligible = build_eligible_overlay(&include, &exclude, &aoi);
         assert!(overlay_contains_lon_lat(&eligible, -119.7, 39.3));
         assert!(!overlay_contains_lon_lat(&eligible, -119.50, 39.50));
+    }
+
+    fn ring_signed_area(ring: &[Value]) -> f64 {
+        let mut area = 0.0;
+        for i in 0..ring.len().saturating_sub(1) {
+            let a = ring[i].as_array().expect("coord");
+            let b = ring[i + 1].as_array().expect("coord");
+            let x1 = a[0].as_f64().expect("x");
+            let y1 = a[1].as_f64().expect("y");
+            let x2 = b[0].as_f64().expect("x");
+            let y2 = b[1].as_f64().expect("y");
+            area += x1 * y2 - x2 * y1;
+        }
+        area
+    }
+
+    #[test]
+    fn overlay_holes_use_opposite_winding() {
+        let aoi = square(-120.0, 39.0, -119.0, 40.0);
+        let include = square(-119.8, 39.2, -119.2, 39.8);
+        let exclude = square(-119.52, 39.48, -119.48, 39.52);
+        let eligible = build_eligible_overlay(&include, &exclude, &aoi);
+        let fc = geometry_to_feature_collection(&eligible, "pub");
+        let rings = fc["features"][0]["geometry"]["coordinates"]
+            .as_array()
+            .expect("rings");
+        assert!(rings.len() >= 2);
+        let ext = rings[0].as_array().expect("exterior");
+        let hole = rings[1].as_array().expect("hole");
+        assert!(
+            ring_signed_area(ext) * ring_signed_area(hole) < 0.0,
+            "hole must wind opposite the exterior"
+        );
     }
 
     #[test]

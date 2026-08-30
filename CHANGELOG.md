@@ -26,7 +26,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 - **Eligible overlay blank** — no longer dissolves statewide SMA. That boolean panicked and left the eye on with an empty map. Overlay is parcel rings with holes.
 - **Eligible overlay gaps** — a wilderness hole no longer deletes the whole include parcel around it. Eligible keeps all `role: include` layers and punches exclude as holes.
-- **Eligible overlay spikes** — each parcel is its own map feature. A bad hole can no longer tessellate into statewide triangles and tile-edge bars that flicker while panning.
+- **Eligible overlay spikes** — each parcel is its own map feature. Exclude rings are wound as GeoJSON holes so MapLibre does not tessellate triangles and tile-edge bars that flicker while panning.
 - **Eligible overlay vanished** — MapLibre gets one MultiPolygon again. Thirty thousand parcel features at `tolerance: 0` never painted.
 - **Eligible overlay stall** — eligible is served per include source, like the include layers. One statewide MultiPolygon made every tile tessellate all six SMA states.
 - **Seek convert links** — converting a goal-seek hop now seeds the site mesh from the same P2P check and keeps the rest of the chain visible. The hop stays a real RF link instead of disappearing behind a tag filter or a stale mesh.
