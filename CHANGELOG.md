@@ -18,6 +18,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 - **Seek convert links** — converting a goal-seek hop now seeds the site mesh from the same P2P check and keeps the rest of the chain visible. The hop stays a real RF link instead of disappearing behind a tag filter or a stale mesh.
 - **Goal seek hang** — eligible land no longer dissolves statewide SMA. Seek clips parcels to the hop wedge and subtracts exclude via an R-tree, so Kingman-scale scans leave "Building eligible land" in seconds.
+- **Land folders** — folder and source rows use the same eye and label controls. Every source lists its layers. Include layers no longer hardcode "Public land"; names come from the layer id or filters.
 - **Land visibility** — source and folder eye toggles now show or hide every child layer on the map, including layers that were never loaded.
 - **Land stack** — exclude (blocked land) paints above include, even when include finishes loading later or sits first in the sidebar.
 - **Seek scan spinner** — the scan pin stays on the start site instead of sliding diagonally while RF is computing.

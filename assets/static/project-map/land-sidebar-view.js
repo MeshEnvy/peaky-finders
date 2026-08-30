@@ -53,9 +53,16 @@ export function landSourceDisplayTitles(sources) {
   return titles
 }
 
+export function landLayerHasLabelField(spec) {
+  return Boolean(spec?.labelField)
+}
+
 export function landLayerShortLabel(spec) {
-  if (spec.role === 'include') return 'Public land'
-  if (spec.role === 'exclude') return friendlyLandLayerName(spec.name)
+  const id = String(spec.id || '').trim()
+  if (id) {
+    if (/^[a-z0-9]{1,8}$/i.test(id)) return id.toUpperCase()
+    return humanizeLandText(id)
+  }
   for (const filt of spec.include || []) {
     const values = (filt.values || []).filter(Boolean)
     if (values.length === 1) {
@@ -64,7 +71,6 @@ export function landLayerShortLabel(spec) {
     }
     if (values.length > 1) return values.join(', ')
   }
-  if (spec.id) return String(spec.id).toUpperCase()
   return friendlyLandLayerName(spec.name)
 }
 

@@ -3,6 +3,7 @@ import {
   landSourceDisplayTitles,
   landLayerShortLabel,
   landLayerDisplayName,
+  landLayerHasLabelField,
   landRuleSidebarText,
   landLayerRoleBadgeSpec,
   landMapStackRank,
@@ -2856,11 +2857,7 @@ export function initProjectMap() {
     return badge;
   }
 
-  function buildLandLayerControls(
-    sourceId,
-    layerKey,
-    { labelField = null } = {},
-  ) {
+  function buildLandLayerControls(sourceId, layerKey) {
     const controls = document.createDocumentFragment();
     const spinnerSlot = document.createElement("span");
     spinnerSlot.className = "entity-panel__land-spinner-slot";
@@ -2871,9 +2868,7 @@ export function initProjectMap() {
     spinnerSlot.appendChild(spinner);
     controls.appendChild(spinnerSlot);
     controls.appendChild(buildLandLayerEyeBtn(sourceId, layerKey));
-    if (labelField) {
-      controls.appendChild(buildLandLayerLabelBtn(sourceId, layerKey));
-    }
+    controls.appendChild(buildLandLayerLabelBtn(sourceId, layerKey));
     return controls;
   }
 
@@ -3210,8 +3205,35 @@ export function initProjectMap() {
   }
 
   function landLayerHasLabels(sourceId, layer) {
-    const spec = resolveLandLayerSpec(sourceId, layer);
-    return !!spec?.labelField;
+    return landLayerHasLabelField(resolveLandLayerSpec(sourceId, layer));
+  }
+
+  function labeledLayerRefsForSourceIds(sourceIds) {
+    const layers = [];
+    for (const sourceId of sourceIds) {
+      const source = landSourceRecord(sourceId);
+      if (!source || !Array.isArray(source.layers)) continue;
+      for (const rawLayer of source.layers) {
+        const spec = normalizeRegisteredLayer(rawLayer);
+        if (landLayerHasLabels(sourceId, spec.key)) {
+          layers.push({ sourceId, layerKey: spec.key });
+        }
+      }
+    }
+    return layers;
+  }
+
+  function areLabeledLayersVisible(layers) {
+    if (!layers.length) return false;
+    return layers.every(({ sourceId, layerKey }) =>
+      isLandLayerLabelsVisible(sourceId, layerKey),
+    );
+  }
+
+  function setLabeledLayersVisible(layers, visible) {
+    for (const { sourceId, layerKey } of layers) {
+      setLandLayerLabelsVisible(sourceId, layerKey, visible);
+    }
   }
 
   function isLandLayerLabelsVisible(sourceId, layer) {
@@ -3414,41 +3436,17 @@ export function initProjectMap() {
   function landFolderLabeledLayers(folderId) {
     const folder = landSidebar.folders.find((item) => item.id === folderId);
     if (!folder) return [];
-    const layers = [];
-    for (const sourceId of folder.sources) {
-      const source = landSourceRecord(sourceId);
-      if (!source || !Array.isArray(source.layers)) continue;
-      for (const rawLayer of source.layers) {
-        const spec = normalizeRegisteredLayer(rawLayer);
-        if (landLayerHasLabels(sourceId, spec.key)) {
-          layers.push({ sourceId, layerKey: spec.key });
-        }
-      }
-    }
-    return layers;
+    return labeledLayerRefsForSourceIds(folder.sources);
   }
 
   function isLandFolderLabelsVisible(folderId) {
-    const layers = landFolderLabeledLayers(folderId);
-    if (!layers.length) return false;
-    return layers.every(({ sourceId, layerKey }) =>
-      isLandLayerLabelsVisible(sourceId, layerKey),
-    );
+    return areLabeledLayersVisible(landFolderLabeledLayers(folderId));
   }
 
   function setLandFolderLabelsVisible(folderId, visible) {
-    const folder = landSidebar.folders.find((item) => item.id === folderId);
-    if (!folder) return;
-    for (const sourceId of folder.sources) {
-      const source = landSourceRecord(sourceId);
-      if (!source || !Array.isArray(source.layers)) continue;
-      for (const rawLayer of source.layers) {
-        const spec = normalizeRegisteredLayer(rawLayer);
-        if (landLayerHasLabels(sourceId, spec.key)) {
-          setLandLayerLabelsVisible(sourceId, spec.key, visible);
-        }
-      }
-    }
+    const layers = landFolderLabeledLayers(folderId);
+    if (!layers.length) return;
+    setLabeledLayersVisible(layers, visible);
     renderLandPanel();
   }
 
@@ -4071,11 +4069,15 @@ export function initProjectMap() {
 
     const main = document.createElement("div");
     main.className = "entity-panel__main entity-panel__main--land-compact";
+    const titleRow = document.createElement("div");
+    titleRow.className = "entity-panel__land-source-title-row";
+    appendLandLayerRoleBadge(titleRow, spec.role);
     const title = document.createElement("div");
     title.className = "entity-panel__name entity-panel__name--land-compact";
     title.textContent = landLayerShortLabel(spec);
     title.title = landLayerDisplayName(spec);
-    main.appendChild(title);
+    titleRow.appendChild(title);
+    main.appendChild(titleRow);
     const summary = document.createElement("div");
     summary.className = "entity-panel__land-layer-summary";
     summary.textContent = landRuleSidebarText(spec);
@@ -4086,11 +4088,7 @@ export function initProjectMap() {
     const controls = document.createElement("div");
     controls.className =
       "entity-panel__controls entity-panel__controls--land-compact";
-    controls.appendChild(
-      buildLandLayerControls(sourceId, spec.key, {
-        labelField: spec.labelField,
-      }),
-    );
+    controls.appendChild(buildLandLayerControls(sourceId, spec.key));
     row.appendChild(controls);
     row.addEventListener("click", (ev) => {
       if (ev.target.closest("button")) return;
@@ -4108,17 +4106,6 @@ export function initProjectMap() {
       );
     }
     return host;
-  }
-
-  function buildLandSourceSubtitle(spec) {
-    const line = document.createElement("div");
-    line.className = "entity-panel__land-source-subtitle";
-    line.appendChild(buildLandLayerSwatch(spec));
-    const text = document.createElement("span");
-    text.textContent = `${landLayerShortLabel(spec)} · ${landRuleSidebarText(spec)}`;
-    text.title = landLayerDisplayName(spec);
-    line.appendChild(text);
-    return line;
   }
 
   function toggleLandLayerVisible(sourceId, layerKey) {
@@ -4156,19 +4143,48 @@ export function initProjectMap() {
   }
 
   function buildLandLayerLabelBtn(sourceId, layerKey) {
+    const hasLabels = landLayerHasLabels(sourceId, layerKey);
     const layerVisible = isLandLayerEffectivelyVisible(sourceId, layerKey);
     const labelsVisible = isLandLayerLabelsVisible(sourceId, layerKey);
     return makeEntityPanelActionBtn({
       icon: "font",
-      label: labelsVisible ? "Hide labels" : "Show labels",
-      active: labelsVisible,
-      disabled: !layerVisible,
+      label: !hasLabels
+        ? "No label field"
+        : labelsVisible
+          ? "Hide labels"
+          : "Show labels",
+      active: hasLabels && labelsVisible,
+      disabled: !hasLabels || !layerVisible,
       extraClass: "entity-panel__land-label-toggle",
       onClick: () => {
+        if (!hasLabels) return;
         setLandLayerLabelsVisible(
           sourceId,
           layerKey,
           !isLandLayerLabelsVisible(sourceId, layerKey),
+        );
+        renderLandPanel();
+      },
+    });
+  }
+
+  function buildLandSourceLabelBtn(sourceId) {
+    const labeledLayers = labeledLayerRefsForSourceIds([sourceId]);
+    const labelsVisible = areLabeledLayersVisible(labeledLayers);
+    return makeEntityPanelActionBtn({
+      icon: "font",
+      label: !labeledLayers.length
+        ? "No label field"
+        : labelsVisible
+          ? "Hide all labels"
+          : "Show all labels",
+      active: labelsVisible,
+      disabled: !labeledLayers.length,
+      extraClass: "entity-panel__land-label-toggle",
+      onClick: () => {
+        setLabeledLayersVisible(
+          labeledLayers,
+          !areLabeledLayersVisible(labeledLayers),
         );
         renderLandPanel();
       },
@@ -4215,9 +4231,11 @@ export function initProjectMap() {
     const labelsVisible = isLandFolderLabelsVisible(folderId);
     return makeEntityPanelActionBtn({
       icon: "font",
-      label: labelsVisible
-        ? "Hide all labels in folder"
-        : "Show all labels in folder",
+      label: !labeledLayers.length
+        ? "No label field"
+        : labelsVisible
+          ? "Hide all labels in folder"
+          : "Show all labels in folder",
       active: labelsVisible,
       disabled: !labeledLayers.length,
       extraClass: "entity-panel__land-label-toggle",
@@ -4315,9 +4333,6 @@ export function initProjectMap() {
     const displayTitles = landSourceDisplayTitles(landSources);
     const sourceTitle = displayTitles.get(sourceId) || source.label || sourceId;
     const layers = Array.isArray(source.layers) ? source.layers : [];
-    const singleLayer = layers.length === 1;
-    const singleSpec = singleLayer ? normalizeRegisteredLayer(layers[0]) : null;
-    const multiLayer = layers.length > 1;
 
     const el = document.createElement("div");
     el.className = "entity-panel__land-source-group";
@@ -4328,8 +4343,6 @@ export function initProjectMap() {
     header.dataset.landDragKind = "source";
     header.dataset.landDragId = sourceId;
     if (folderId) header.dataset.landFolderId = folderId;
-    if (singleSpec)
-      header.dataset.landKey = landLayerKey(sourceId, singleSpec.key);
     if (!isLandSourceEffectivelyVisible(sourceId)) {
       header.classList.add("entity-panel__row--hidden");
     }
@@ -4346,33 +4359,24 @@ export function initProjectMap() {
     titleCol.className = "entity-panel__land-source-title-col";
     const titleRow = document.createElement("div");
     titleRow.className = "entity-panel__land-source-title-row";
-    if (singleSpec) appendLandLayerRoleBadge(titleRow, singleSpec.role);
     const title = document.createElement("div");
     title.className = "entity-panel__land-source-title";
     title.textContent = sourceTitle;
     title.title = sourceTitle;
     titleRow.appendChild(title);
     titleCol.appendChild(titleRow);
-    if (singleSpec) titleCol.appendChild(buildLandSourceSubtitle(singleSpec));
     header.appendChild(titleCol);
 
     const controls = document.createElement("div");
     controls.className = "entity-panel__land-source-actions";
-    if (multiLayer) {
-      controls.appendChild(buildLandSourceEyeBtn(sourceId));
-    } else if (singleSpec) {
-      controls.appendChild(
-        buildLandLayerControls(sourceId, singleSpec.key, {
-          labelField: singleSpec.labelField,
-        }),
-      );
-    }
+    controls.appendChild(buildLandSourceEyeBtn(sourceId));
+    controls.appendChild(buildLandSourceLabelBtn(sourceId));
     for (const btn of buildLandSourceActionBtns(sourceId))
       controls.appendChild(btn);
     header.appendChild(controls);
     el.appendChild(header);
 
-    if (multiLayer) {
+    if (layers.length) {
       el.appendChild(buildLandSourceLayersList(sourceId, layers));
     }
     return el;
