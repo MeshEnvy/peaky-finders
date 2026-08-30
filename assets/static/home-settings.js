@@ -53,14 +53,16 @@ import {
   function updateGearSummary() {
     const btn = document.getElementById("home-settings-open");
     const sim =
-      state.simulation || (onProjectMap() ? window.PEAKY_PROJECT && window.PEAKY_PROJECT.simulation : null);
+      state.simulation ||
+      (window.PEAKY_STORE && window.PEAKY_STORE.simulation) ||
+      (onProjectMap() ? window.PEAKY_PROJECT && window.PEAKY_PROJECT.simulation : null);
     if (!btn) return;
     if (!onProjectMap() || !sim) {
       btn.title = "Settings";
       return;
     }
-    const radiusKm = Number(sim.radius_km) || 50;
-    const quality = Number(sim.viewshed_quality) || 3;
+    const radiusKm = Number(sim.radius_km ?? sim.radiusKm) || 50;
+    const quality = Number(sim.viewshed_quality ?? sim.quality) || 3;
     const px = computeViewshedRaster(quality, radiusKm);
     const text = `${Math.round(radiusKm)} km · Q${quality} (${px} px)`;
     btn.title = `Settings — ${text}`;

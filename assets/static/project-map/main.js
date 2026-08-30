@@ -1,7 +1,5 @@
 // @ts-check
 
-import { initProjectMap } from './init.js'
+import { bootProjectMap } from './boot.js'
 
-/** @type {{ reloadViewshedsForSimChange: () => void, setViewshedSimulation: (radiusKm: number, quality: number) => boolean }} */
-const api = initProjectMap()
-window.PEAKY_MAP = api
+bootProjectMap()

@@ -14,6 +14,13 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.8.0/dist/styles/native.css" crossorigin="anonymous">
   <link rel="stylesheet" href="/static/app.css">
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" crossorigin="">
+  <script type="importmap">
+  {
+    "imports": {
+      "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js"
+    }
+  }
+  </script>
 </head>
 <body class="wide">
 <header class="project-toolbar">
@@ -34,15 +41,17 @@
     </div>
     <div class="entity-panel__body">
       <div id="entity-panel-sites-pane" class="entity-panel__pane" role="tabpanel">
+        <div class="entity-panel__sites-scope">
+          <label class="entity-panel__viewport-filter" title="Show only tags and sites in the current map view">
+            <input type="checkbox" id="entity-panel-filter-visible">
+            <span>In view</span>
+          </label>
+        </div>
         <div id="entity-panel-tag-filters" class="entity-panel__tag-filters" role="toolbar" aria-label="Site tags"></div>
         <div class="entity-panel__list-header">
-          <span class="wa-caption pf-muted entity-panel__list-count" id="entity-panel-sites-count"></span>
           <div class="entity-panel__list-toolbar">
+            <span class="wa-caption pf-muted entity-panel__list-count" id="entity-panel-sites-count"></span>
             <wa-button id="entity-panel-bulk-tag" appearance="outlined" size="s" type="button" title="Add or remove tags on sites listed in the sidebar" disabled>Bulk tag</wa-button>
-            <label class="entity-panel__viewport-filter" title="Show only sites in the current map view">
-              <input type="checkbox" id="entity-panel-filter-visible">
-              <span>In view</span>
-            </label>
           </div>
         </div>
         <div id="entity-panel-sites-list" class="entity-panel__list"></div>
@@ -238,7 +247,6 @@
               <input id="site-panel-edit-lon" type="text" class="pf-mono" inputmode="decimal" autocomplete="off">
             </div>
           </div>
-          <ul class="edit-coord-history" id="site-panel-edit-coord-history" hidden></ul>
         </div>
         <div class="site-panel__section">
           <label class="site-panel__label" for="site-panel-edit-height">Antenna height (m)</label>

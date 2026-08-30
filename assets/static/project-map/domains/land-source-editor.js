@@ -1,13 +1,13 @@
 // @ts-check
 
-import { compareHuman } from './geo.js'
+import { compareHuman } from '../geo.js'
 import {
   LAND_DEFAULT_FILL_COLOR,
   LAND_DEFAULT_FILL_OPACITY,
   LAND_DEFAULT_LINE_COLOR,
   MAP_LABEL_FONT,
-} from './constants.js'
-import { landMapStackRank } from './land-sidebar-view.js'
+} from '../constants.js'
+import { landMapStackRank } from '../stores/land-sidebar-view.js'
 
 /** @typedef {'eligible'|'blocked'|'boundary'|'overlay'} LandRulePurpose */
 /** @typedef {'keep'|'remove'} LandFilterMode */

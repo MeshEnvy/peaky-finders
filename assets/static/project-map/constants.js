@@ -14,9 +14,6 @@ export const LINKS_LABELS_LAYER = 'site-links-label'
 export const DRAFT_LINKS_SOURCE = 'draft-site-links'
 export const DRAFT_LINKS_LAYER = 'draft-site-links-line'
 export const DRAFT_LINKS_LABELS_LAYER = 'draft-site-links-label'
-export const EDIT_HISTORY_LINKS_SOURCE = 'edit-history-links'
-export const EDIT_HISTORY_LINKS_LAYER = 'edit-history-links-line'
-export const EDIT_HISTORY_LINKS_LABELS_LAYER = 'edit-history-links-label'
 export const SEEK_CANDIDATES_SOURCE = 'seek-candidates'
 export const SEEK_CANDIDATES_LAYER = 'seek-candidates-circle'
 export const SEEK_CANDIDATES_LABELS_LAYER = 'seek-candidates-label'
@@ -33,6 +30,27 @@ export const SEEK_WEDGE_OUTLINE_LAYER = 'seek-goal-wedge-outline'
 export const SEEK_ANCILLARY_LINES_SOURCE = 'seek-ancillary-lines'
 export const SEEK_ANCILLARY_LINES_LAYER = 'seek-ancillary-lines-line'
 export const SEEK_ANCILLARY_LINES_LABELS_LAYER = 'seek-ancillary-lines-label'
+
+/** Top-of-stack paint order after a basemap or overlay change. */
+export const SITE_STACK_RAISE_IDS = [
+  DRAFT_LINKS_LAYER,
+  DRAFT_LINKS_LABELS_LAYER,
+  LINKS_LAYER,
+  LINKS_LABELS_LAYER,
+  SEEK_WEDGE_FILL_LAYER,
+  SEEK_WEDGE_OUTLINE_LAYER,
+  SEEK_ANCILLARY_LINES_LAYER,
+  SEEK_ANCILLARY_LINES_LABELS_LAYER,
+  SEEK_LINES_LAYER,
+  SEEK_LINES_LABELS_LAYER,
+  SEEK_PATH_LAYER,
+  SEEK_GOAL_LINE_LAYER,
+  SEEK_CANDIDATES_LAYER,
+  SEEK_CANDIDATES_LABELS_LAYER,
+  SITES_CIRCLE,
+  SITES_LABELS,
+  SITES_SELECTED,
+]
 
 export const SEEK_WEDGE_NEAR_DEG = 10
 export const SEEK_WEDGE_FAR_DEG = 50
@@ -53,6 +71,7 @@ export const LAND_LINE_WIDTH = 1.25
 export const LAND_PREVIEW_LINE_WIDTH = 2.5
 
 export const VIEWSHED_OPACITY_DEFAULT = 0.75
+export const VIEWSHED_OVERLAY_BATCH = 4
 export const DRAFT_VIEWSHED_SLUG = '_draft'
 export const VIEWSHED_PREVIEW_QUALITY = 1
 export const SKADI_DEM_SPACING_M = 30

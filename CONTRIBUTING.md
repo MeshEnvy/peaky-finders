@@ -43,7 +43,7 @@ On `/commit`, follow [`.cursor/skills/commit/SKILL.md`](.cursor/skills/commit/SK
 
 **Mandatory.** Any edit that touches a file also extracts or dedups one safe incremental improvement in the same change set when the opportunity exists (pure helpers, shared constants, URL builders, duplicated logic). See [`.cursor/rules/opportunistic-refactor.mdc`](.cursor/rules/opportunistic-refactor.mdc).
 
-Map UI: keep `assets/static/project-map/init.js` as boot only; new pure code goes in sibling ESM modules listed in MEMORY.md.
+Map UI: `boot.js` orchestrates Vue stores + domain factories. New code goes in `stores/`, `map/`, `api/`, or `domains/*.js` — not in `domains/app.js`.
 
 ## Build from source
 
@@ -96,7 +96,7 @@ Default image command: `peaky serve /project`. Override for `find path`, etc.
 
 ### Frontend assets
 
-Map UI lives under `assets/static/project-map/`. Production entry: `/static/project-map/main.js` (ESM). Edit `init.js` for map behavior; `home-settings.js` and `viewshed-raster.js` for the settings modal. Assets are **compile-time embedded** via `rust-embed` — run `cargo build -p peaky` (or restart `cargo run`) after JS/CSS changes.
+Map UI lives under `assets/static/project-map/`. Entry: `/static/project-map/main.js` → `boot.js` (Vue store + domain factories + `panels/`). Domain logic belongs in `stores/`, `map/`, `api/`, and `domains/*.js` — `domains/app.js` is wiring only. **Debug** builds serve static files from disk (no rebuild); **release** embeds via `rust-embed`.
 
 ## Releases
 

@@ -20,7 +20,7 @@ Opportunity exists when any of these apply:
 
 ## Safe split axes (in order)
 
-1. **Pure leaves** — `geo.js`, `api-urls.js`, `viewshed-sim.js`, `viewshed-raster.js`, `constants.js`
+1. **Pure leaves** — `geo.js`, `api/urls.js`, `stores/simulation.js`, `viewshed-raster.js`, `constants.js`
 2. **Map helpers** — pass `map`, `mapReady`, thresholds as args (`map-viewport.js`)
 3. **Static config** — basemap tiles, layer IDs (`basemap.js`, `constants.js`)
 4. **Data models** — sidebar normalization, cache helpers (`land-model.js`)
@@ -28,10 +28,11 @@ Opportunity exists when any of these apply:
 
 ## Map UI (`assets/static/project-map/`)
 
-- **`init.js` is a boot orchestrator**, not a junk drawer. New pure code does not land there.
+- **`boot.js` orchestrates** Vue stores + domain app. **`domains/app.js`** is wiring only. New code goes in `stores/`, `map/`, `api/`, or `domains/*.js`.
+- **Vue panels** (`panels/`) own sidebar list rendering — no manual `innerHTML` sync fan-out for sites.
 - **Import shared modules**; do not copy const blocks or helper bodies back inline.
 - After adding a module, update **MEMORY.md** § Workspace layout in the same change set.
-- Rebuild: `cargo build -p peaky` (rust-embed).
+- **Debug**: JS/CSS edits hot-serve from disk; **release**: `cargo build -p peaky` (rust-embed).
 
 ## Rust / other crates
 
@@ -51,6 +52,6 @@ Same rule: extract pure helpers to the nearest crate module when you edit a file
 
 ## Self-check before done
 
-- Did I touch `init.js` or another monolith without moving at least one pure helper out?
-- Did I duplicate constants or URLs that belong in `constants.js` / `api-urls.js`?
+- Did I touch `domains/app.js` without moving at least one pure helper out?
+- Did I duplicate constants or URLs that belong in `constants.js` / `api/urls.js`?
 - Is MEMORY.md updated if module layout changed?

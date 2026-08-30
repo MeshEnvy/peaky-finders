@@ -13,6 +13,21 @@ export function compareHuman(left, right) {
   })
 }
 
+export function copyCoordPair(lat, lon) {
+  return navigator.clipboard.writeText(`${formatCoord(lat)}, ${formatCoord(lon)}`).catch(() => {})
+}
+
+export function formatAntennaHeightM(heightM) {
+  if (heightM == null || !Number.isFinite(Number(heightM))) return null
+  return `${Number(heightM).toLocaleString(undefined, { maximumFractionDigits: 1 })} m`
+}
+
+export function formatSiteHeight(site, defaultTxHeightM) {
+  const explicit = formatAntennaHeightM(site.height_m)
+  if (explicit) return explicit
+  return `default (${defaultTxHeightM} m)`
+}
+
 export function kmToDegreeDeltas(latDeg, km) {
   const m = km * 1000
   const latDelta = m / 111_320

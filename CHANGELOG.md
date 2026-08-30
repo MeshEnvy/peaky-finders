@@ -16,7 +16,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **Sites sidebar** — full-width list rows instead of shrink-wrapped buttons. Tag chips scroll in a capped stack so the site list keeps height. Hover uses light text on a brighter wash. **In view** sits above the chips and limits both tags and sites to the current map.
 - **Land sidebar** — folders, sources, and layers read as a tree. Layer rows replace the low-contrast chips. Edit and delete sit quieter than the visibility control.
+- **Map UI** — Vue 3 reactive migration complete: `boot.js` + domain modules (`sites`, `land`, `seek`, `viewshed`, `links`) + Vue panels (sites, land, seek, site sheet). Store is source of truth; MapLibre stays in `map/` adapters. Debug `peaky serve` serves JS from disk. Deleted monolithic `init.js` and legacy innerHTML panel paths (~7k lines removed from `domains/app.js`).
 
 ### Removed
 
