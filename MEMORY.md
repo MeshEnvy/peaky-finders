@@ -17,7 +17,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | v4 | Frozen reference; do not delete until v5 soak |
 | Interface | `peaky serve <project>` — web UI for one project directory |
 | RF engine | `splatter/` crate (in-process `Session`, library only) |
-| Land | GeoJSON at runtime. GDB sources: **`peaky serve` boot** validates enabled sources, auto-refreshes missing/stale/invalid when `refresh.downloadUrl` is set, then warms preview + pipeline caches under `.peaky/cache/land/`. Successful validation is fingerprinted in `validate.json` (size + mtime + required GDB layers) so unchanged sources skip re-parse on later boots. Invalid enabled source **blocks boot** until `enabled: false` in `land.yaml`. Pass `--fast-boot` to skip boot prep (`--no-land-refresh` alias). **WGS84 required.** Seek/finder eligible land **clips to hop/route bbox** and keeps include + exclude R-trees (no statewide boolean dissolve). Map paint stack (bottom→top): AOI, include, overlay, exclude. |
+| Land | GeoJSON at runtime. GDB sources: **`peaky serve` boot** validates enabled sources, auto-refreshes missing/stale/invalid when `refresh.downloadUrl` is set, then warms preview + pipeline caches under `.peaky/cache/land/`. Successful validation is fingerprinted in `validate.json` (size + mtime + required GDB layers) so unchanged sources skip re-parse on later boots. Invalid enabled source **blocks boot** until `enabled: false` in `land.yaml`. Pass `--fast-boot` to skip boot prep (`--no-land-refresh` alias). **WGS84 required.** Seek/finder eligible land **clips to hop/route bbox** and keeps include + exclude R-trees (no statewide boolean dissolve). Built-in map overlay **eligible** `(include − exclude) ∩ AOI` is cached by land digest (`GET …/land/overlays/eligible/geojson`) and rebuilds only when include/exclude/AOI change. Parcel-wise (exclude rings as holes only when fully inside the parcel, clip to AOI). No statewide SMA boolean. Overlay is one GeoJSON per include source, one Polygon feature per parcel (holes only when the ring sits inside the parcel). Map paint stack (bottom→top): AOI, include, overlay, exclude, eligible. |
 | Dev | Host: `cargo run -p peaky -- serve <project-dir>` (e.g. `peaky-nevada`). `--release` for long RF only. Docker: mount project at `/project` only. Skadi + map tiles under `<project>/.peaky/cache/skadi/`. Optional `SPLAT_CACHE` override. Parallelism: `simulation.max_workers.coverage` (default 2, serve warm queue; env `PEAKY_COVERAGE_WORKERS`), `simulation.max_workers.dem` (default 4, Skadi fetch pool; env `PEAKY_DEM_FETCH_WORKERS`) |
 | Auto-finder | `peaky find path` — onX KML route → min-site RF chain; cache under `.peaky/cache/finder/`; **`--watch`** live MapLibre + SSE on localhost:9847 |
 | Ops | Public-land site tags + FO export live in ops: `peaky_home/scripts/tag_public_land.py`, `export_blm_fo_packet.py`. **Fleet-tool direction (ops, 08-14, speculative):** nevada YAML is the canonical site/fleet list; later creds + telemetry history may live next to the preset. **Do not** put passwords or keypairs in git-tracked `config.yaml`. → `ops/initiatives/peaky-fleet-management.md` |
@@ -36,7 +36,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | `crates/peaky-geo/` | GeoJSON land query, eligible land (bbox clip + include/exclude index), KML import, PPM polygonize |
 | `crates/peaky-serve/` | Axum app, API routes, HTML, embedded static |
 | `splatter/` | RF coverage engine (Skadi DEM, Fresnel/FSPL). Library only |
-| `assets/static/project-map/` | ESM map UI: `main.js` (entry), `init.js` (map boot), `constants.js`, `geo.js`, `api-urls.js`, `land-sidebar-view.js`, `land-source-editor.js`, `viewshed-sim.js`, `viewshed-raster.js` (shared with settings); `app.css`, favicons (rust-embed) |
+| `assets/static/project-map/` | ESM map UI: `main.js` (entry), `init.js` (map boot), `constants.js`, `geo.js`, `api-urls.js`, `land-sidebar-view.js`, `land-source-editor.js`, `land-overlays.js`, `viewshed-sim.js`, `viewshed-raster.js` (shared with settings); `app.css`, favicons (rust-embed) |
 | `assets/finder-watch/` | Embedded MapLibre page for `peaky find path --watch` |
 | `assets/templates/` | Server-rendered HTML fragments |
 | `tests/fixtures/` | Golden RF/GeoJSON fixtures from v4 |
@@ -121,7 +121,7 @@ preset → CovRequest JSON (rf_json)
 | SSE `/events` | Implemented (hello + keepalive; publish on warm TBD) |
 | Links mesh, warm scheduler | Implemented (P2P mesh, warm queue, SSE) |
 | Goal seek (`/seek/candidates`, scan-progress, plan, convert-to-sites) | Implemented (P2P via `seek.rs` + `seek_repeater_link_batch`). Convert seeds site-mesh pairs for new slugs and bypasses tag-filter on the whole path |
-| Land list + layer GeoJSON | Implemented |
+| Land list + layer GeoJSON | Implemented (plus built-in eligible overlay GeoJSON, digest-cached) |
 | Skadi map tiles (`/api/dem/hillshade`, `/api/dem/terrarium`) | Implemented — PNG cache `<project>/.peaky/cache/skadi/.map_tiles/v3/`; render only when all required HGT on disk (503 until ready); hillshade uses padded HGT ring; **AOI HGT prefetch on project page load** (background); map tile prefetch capped (`PEAKY_DEM_MAP_QUEUE_CAP`, default 128) |
 
 ## Ops (outside Peaky)

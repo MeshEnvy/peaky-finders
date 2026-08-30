@@ -10,12 +10,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Added
+
+- **Eligible land overlay** — built-in land-panel toggle for seek land. Include minus exclude, clipped to the AOI. Rebuilt only when those land layers change.
+
 ### Changed
 
 - **Land sidebar** — folders, sources, and layers read as a tree. Layer rows replace the low-contrast chips. Edit and delete sit quieter than the visibility control.
 
+### Removed
+
+- **Ineligible overlay** — dropped. Eligible is include minus exclude, clipped to the AOI.
+
 ### Fixed
 
+- **Eligible overlay blank** — no longer dissolves statewide SMA. That boolean panicked and left the eye on with an empty map. Overlay is parcel rings with holes.
+- **Eligible overlay gaps** — a wilderness hole no longer deletes the whole include parcel around it. Eligible keeps all `role: include` layers and punches exclude as holes.
+- **Eligible overlay spikes** — each parcel is its own map feature. A bad hole can no longer tessellate into statewide triangles and tile-edge bars that flicker while panning.
+- **Eligible overlay vanished** — MapLibre gets one MultiPolygon again. Thirty thousand parcel features at `tolerance: 0` never painted.
+- **Eligible overlay stall** — eligible is served per include source, like the include layers. One statewide MultiPolygon made every tile tessellate all six SMA states.
 - **Seek convert links** — converting a goal-seek hop now seeds the site mesh from the same P2P check and keeps the rest of the chain visible. The hop stays a real RF link instead of disappearing behind a tag filter or a stale mesh.
 - **Goal seek hang** — eligible land no longer dissolves statewide SMA. Seek clips parcels to the hop wedge and subtracts exclude via an R-tree, so Kingman-scale scans leave "Building eligible land" in seconds.
 - **Land folders** — folder and source rows use the same eye and label controls. Every source lists its layers. Include layers no longer hardcode "Public land"; names come from the layer id or filters.

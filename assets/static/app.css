@@ -1746,10 +1746,11 @@ wa-dropdown-item.is-active::part(base) {
   padding: 0 0.15rem 0.15rem;
 }
 
-.entity-panel__land-unfiled {
-  margin-top: 0.35rem;
+.entity-panel__land-overlays {
+  margin: 0.15rem 0 0.45rem;
 }
 
+.entity-panel__land-overlays-header,
 .entity-panel__land-unfiled-header {
   padding: 0.45rem 0.4rem 0.25rem;
   font-size: 0.7rem;
@@ -1757,6 +1758,14 @@ wa-dropdown-item.is-active::part(base) {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #94a3b8;
+}
+
+.entity-panel__land-overlay-row {
+  margin: 0 0.15rem;
+}
+
+.entity-panel__land-unfiled {
+  margin-top: 0.35rem;
 }
 
 .entity-panel__land-source-title {

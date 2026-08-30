@@ -119,6 +119,7 @@ export function landMapStackRank(role) {
   if (normalized === 'aoi') return 0
   if (normalized === 'include') return 1
   if (normalized === 'exclude') return 3
+  if (normalized === 'eligible') return 4
   return 2
 }
 
@@ -145,6 +146,13 @@ export function landLayerRoleBadgeSpec(role) {
       label: 'Exclude',
       className: 'entity-panel__land-role-badge entity-panel__land-role-badge--exclude',
       title: 'Subtracted from include layers for goal seek',
+    }
+  }
+  if (normalized === 'eligible') {
+    return {
+      label: 'Eligible',
+      className: 'entity-panel__land-role-badge entity-panel__land-role-badge--include',
+      title: 'Include − exclude, clipped to the project AOI',
     }
   }
   return null

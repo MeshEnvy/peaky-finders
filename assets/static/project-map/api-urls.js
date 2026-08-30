@@ -75,6 +75,14 @@ export function landLayerGeoJsonUrl(projectSlug, sourceId, layer) {
   return `/api/p/${projectSlug}/land/sources/${encodeURIComponent(sourceId)}/layers/${encodeURIComponent(layer)}/geojson`
 }
 
+export function landOverlayGeoJsonUrl(projectSlug, kind) {
+  return `/api/p/${projectSlug}/land/overlays/${encodeURIComponent(kind)}/geojson`
+}
+
+export function landOverlayPartGeoJsonUrl(projectSlug, kind, sourceId) {
+  return `/api/p/${projectSlug}/land/overlays/${encodeURIComponent(kind)}/sources/${encodeURIComponent(sourceId)}/geojson`
+}
+
 export function landPreviewGeoJsonUrl(projectSlug, path, layer) {
   const params = new URLSearchParams({ path, layer })
   return `/api/p/${projectSlug}/land/preview/geojson?${params}`

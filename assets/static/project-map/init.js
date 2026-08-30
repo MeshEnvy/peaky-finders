@@ -9,6 +9,11 @@ import {
   landMapStackRank,
 } from './land-sidebar-view.js'
 import {
+  LAND_OVERLAY_SOURCE_ID,
+  LAND_OVERLAYS,
+  landOverlayLayerKey,
+} from './land-overlays.js'
+import {
   TERRAIN_SOURCE,
   TERRAIN_HILLSHADE,
   BASEMAP_REFERENCE_SOURCE,
@@ -117,6 +122,10 @@ export function initProjectMap() {
     : [];
   let landAoiDigest =
     typeof config.land?.aoiDigest === "string" ? config.land.aoiDigest : "none";
+  let landOverlayDigest =
+    typeof config.land?.overlayDigest === "string"
+      ? config.land.overlayDigest
+      : "none";
   let landSidebar = normalizeLandSidebarInput(config.land?.sidebar);
 
   const simDefaults = config.simulation || {};
@@ -176,6 +185,12 @@ export function initProjectMap() {
   }
   function landLayerGeoJsonUrl(sourceId, layer) {
     return apiUrls.landLayerGeoJsonUrl(projectSlug, sourceId, layer);
+  }
+  function landOverlayGeoJsonUrl(kind) {
+    return apiUrls.landOverlayGeoJsonUrl(projectSlug, kind);
+  }
+  function landOverlayPartGeoJsonUrl(kind, sourceId) {
+    return apiUrls.landOverlayPartGeoJsonUrl(projectSlug, kind, sourceId);
   }
   function landPreviewGeoJsonUrl(path, layer) {
     return apiUrls.landPreviewGeoJsonUrl(projectSlug, path, layer);
@@ -1161,6 +1176,9 @@ export function initProjectMap() {
   const landPreviewGeoJsonInflight = new Map();
   const landLayerGeoJsonCache = new Map();
   const landLayerGeoJsonInflight = new Map();
+  const landOverlayGeoJsonCache = new Map();
+  const landOverlayGeoJsonInflight = new Map();
+  const landOverlayLoadedDigest = new Map();
 
   function ensureTerrainSource() {
     if (map.getSource(TERRAIN_SOURCE)) {
@@ -3672,7 +3690,16 @@ export function initProjectMap() {
 
   function syncLandMapLayerOrder() {
     if (!mapReady) return;
-    const rows = [...landLayerRows()].sort(
+    const rows = [
+      ...landLayerRows(),
+      ...LAND_OVERLAYS.flatMap((spec) =>
+        landOverlayPartIds().map((partId) => ({
+          sourceId: LAND_OVERLAY_SOURCE_ID,
+          layerKey: `${spec.id}-${partId}`,
+          spec,
+        })),
+      ),
+    ].sort(
       (a, b) => landMapStackRank(a.spec?.role) - landMapStackRank(b.spec?.role),
     );
     const anchor = viewshedLayerInsertBefore();
@@ -4038,14 +4065,266 @@ export function initProjectMap() {
   }
 
   async function refreshLandMapLayers() {
-    await Promise.all(
-      landLayerRows()
+    await Promise.all([
+      ...landLayerRows()
         .filter((row) =>
           isLandLayerEffectivelyVisible(row.sourceId, row.layerKey),
         )
         .map((row) => ensureLandMapLayer(row.sourceId, row.layerKey)),
-    );
+      refreshVisibleLandOverlays({ force: false }),
+    ]);
     syncLandMapLayerOrder();
+  }
+
+  function isLandOverlayVisible(overlayId) {
+    return landVisible.get(landOverlayLayerKey(overlayId)) === true;
+  }
+
+  function setLandOverlayVisible(overlayId, visible) {
+    landVisible.set(landOverlayLayerKey(overlayId), !!visible);
+    scheduleSaveMapState();
+    syncLandOverlayVisibility(overlayId);
+  }
+
+  function landOverlayPartIds() {
+    const ids = [];
+    for (const src of landSources) {
+      const layers = Array.isArray(src.layers) ? src.layers : [];
+      if (layers.some((layer) => layer.role === "include") && src.id) {
+        ids.push(String(src.id));
+      }
+    }
+    ids.sort();
+    return ids;
+  }
+
+  function landOverlayMapIds(overlayId, partId) {
+    const layerKey = partId ? `${overlayId}-${partId}` : overlayId;
+    const sourceMapId = landMapSourceId(LAND_OVERLAY_SOURCE_ID, layerKey);
+    return {
+      sourceMapId,
+      fillId: `${sourceMapId}-fill`,
+      lineId: `${sourceMapId}-line`,
+    };
+  }
+
+  function landOverlayPartMapIds(overlayId) {
+    const parts = landOverlayPartIds();
+    if (!parts.length) return [landOverlayMapIds(overlayId)];
+    return parts.map((partId) => landOverlayMapIds(overlayId, partId));
+  }
+
+  function syncLandOverlayVisibility(overlayId) {
+    if (!mapReady) return;
+    const vis = isLandOverlayVisible(overlayId) ? "visible" : "none";
+    for (const { fillId, lineId } of landOverlayPartMapIds(overlayId)) {
+      if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
+      if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
+    }
+  }
+
+  function removeLandOverlayLayer(overlayId) {
+    if (!mapReady) return;
+    for (const { sourceMapId, fillId, lineId } of landOverlayPartMapIds(overlayId)) {
+      if (map.getLayer(lineId)) map.removeLayer(lineId);
+      if (map.getLayer(fillId)) map.removeLayer(fillId);
+      if (map.getSource(sourceMapId)) map.removeSource(sourceMapId);
+    }
+    const leftover = landOverlayMapIds(overlayId);
+    if (map.getLayer(leftover.lineId)) map.removeLayer(leftover.lineId);
+    if (map.getLayer(leftover.fillId)) map.removeLayer(leftover.fillId);
+    if (map.getSource(leftover.sourceMapId)) map.removeSource(leftover.sourceMapId);
+  }
+
+  function clearLandOverlayGeoJsonCache() {
+    landOverlayGeoJsonCache.clear();
+    landOverlayGeoJsonInflight.clear();
+    landOverlayLoadedDigest.clear();
+  }
+
+  function overlayNeedsFetch(overlayId) {
+    if (!mapReady) return true;
+    if (landOverlayLoadedDigest.get(overlayId) !== landOverlayDigest) return true;
+    return landOverlayPartMapIds(overlayId).some(({ sourceMapId }) => !map.getSource(sourceMapId));
+  }
+
+  async function fetchLandOverlayPartGeoJson(overlayId, partId) {
+    const cacheKey = `${overlayId}|${partId}|${landOverlayDigest}`;
+    return fetchCachedGeoJson(
+      landOverlayGeoJsonCache,
+      landOverlayGeoJsonInflight,
+      cacheKey,
+      async () => {
+        const resp = await fetch(landOverlayPartGeoJsonUrl(overlayId, partId));
+        if (!resp.ok) throw new Error(`Overlay failed (${resp.status})`);
+        const data = await resp.json();
+        const respDigest = resp.headers.get("X-Peaky-Digest");
+        if (respDigest) landOverlayDigest = respDigest;
+        return data;
+      },
+    );
+  }
+
+  function addLandOverlayPartLayer(overlayId, partId, geojson) {
+    const spec = LAND_OVERLAYS.find((row) => row.id === overlayId);
+    if (!spec) return;
+    const { sourceMapId, fillId, lineId } = landOverlayMapIds(overlayId, partId);
+    const lineColor = landLineColorFromFill(spec.color);
+    if (map.getSource(sourceMapId)) {
+      map.getSource(sourceMapId).setData(geojson);
+      return;
+    }
+    map.addSource(sourceMapId, { type: "geojson", data: geojson });
+    map.addLayer(
+      {
+        id: fillId,
+        type: "fill",
+        source: sourceMapId,
+        paint: {
+          "fill-color": spec.color,
+          "fill-opacity": spec.opacity,
+          "fill-outline-color": lineColor,
+        },
+        layout: { visibility: "visible" },
+      },
+      viewshedLayerInsertBefore(),
+    );
+    map.addLayer(
+      {
+        id: lineId,
+        type: "line",
+        source: sourceMapId,
+        paint: {
+          "line-color": lineColor,
+          "line-width": LAND_LINE_WIDTH,
+        },
+        layout: { visibility: "visible" },
+      },
+      viewshedLayerInsertBefore(),
+    );
+  }
+
+  async function ensureLandOverlayLayer(overlayId, { force = false } = {}) {
+    if (!mapReady || !isLandOverlayVisible(overlayId)) return;
+    const spec = LAND_OVERLAYS.find((row) => row.id === overlayId);
+    if (!spec) return;
+    if (!force && !overlayNeedsFetch(overlayId)) {
+      syncLandOverlayVisibility(overlayId);
+      return;
+    }
+    const parts = landOverlayPartIds();
+    setLandSidebarRowLoading(LAND_OVERLAY_SOURCE_ID, overlayId, true);
+    try {
+      if (!parts.length) {
+        const resp = await fetch(landOverlayGeoJsonUrl(overlayId));
+        if (!resp.ok) throw new Error(`Overlay failed (${resp.status})`);
+        addLandOverlayPartLayer(overlayId, "", await resp.json());
+      } else {
+        await Promise.all(
+          parts.map(async (partId) => {
+            const geojson = await fetchLandOverlayPartGeoJson(overlayId, partId);
+            addLandOverlayPartLayer(overlayId, partId, geojson);
+            syncLandOverlayVisibility(overlayId);
+          }),
+        );
+      }
+      landOverlayLoadedDigest.set(overlayId, landOverlayDigest);
+      syncLandOverlayVisibility(overlayId);
+      syncLandMapLayerOrder();
+    } catch (err) {
+      console.error(`land overlay ${overlayId} failed`, err);
+    } finally {
+      setLandSidebarRowLoading(LAND_OVERLAY_SOURCE_ID, overlayId, false);
+    }
+  }
+
+  async function refreshVisibleLandOverlays({ force = false } = {}) {
+    await Promise.all(
+      LAND_OVERLAYS.filter((row) => isLandOverlayVisible(row.id)).map((row) =>
+        ensureLandOverlayLayer(row.id, { force }),
+      ),
+    );
+  }
+
+  function toggleLandOverlayVisible(overlayId) {
+    const next = !isLandOverlayVisible(overlayId);
+    setLandOverlayVisible(overlayId, next);
+    if (next) void ensureLandOverlayLayer(overlayId);
+    renderLandPanel();
+  }
+
+  function buildLandOverlayRow(spec) {
+    const visible = isLandOverlayVisible(spec.id);
+    const row = document.createElement("div");
+    row.className =
+      "entity-panel__row entity-panel__row--land entity-panel__land-layer entity-panel__land-overlay-row";
+    row.dataset.landKey = landOverlayLayerKey(spec.id);
+    if (!visible) row.classList.add("entity-panel__row--hidden");
+
+    const swatch = document.createElement("span");
+    swatch.className = "entity-panel__land-layer-swatch";
+    swatch.style.backgroundColor = spec.color;
+    swatch.style.opacity = String(Math.max(0.45, spec.opacity));
+    row.appendChild(swatch);
+
+    const main = document.createElement("div");
+    main.className = "entity-panel__main entity-panel__main--land-compact";
+    const titleRow = document.createElement("div");
+    titleRow.className = "entity-panel__land-source-title-row";
+    appendLandLayerRoleBadge(titleRow, spec.role);
+    const title = document.createElement("div");
+    title.className = "entity-panel__name entity-panel__name--land-compact";
+    title.textContent = spec.label;
+    title.title = spec.title;
+    titleRow.appendChild(title);
+    main.appendChild(titleRow);
+    const summary = document.createElement("div");
+    summary.className = "entity-panel__land-layer-summary";
+    summary.textContent = spec.summary;
+    summary.title = spec.title;
+    main.appendChild(summary);
+    row.appendChild(main);
+
+    const controls = document.createElement("div");
+    controls.className =
+      "entity-panel__controls entity-panel__controls--land-compact";
+    const spinnerSlot = document.createElement("span");
+    spinnerSlot.className = "entity-panel__land-spinner-slot";
+    spinnerSlot.setAttribute("aria-hidden", "true");
+    const spinner = document.createElement("span");
+    spinner.className = "entity-panel__land-row-spinner pin-load-spinner";
+    spinner.hidden = true;
+    spinnerSlot.appendChild(spinner);
+    controls.appendChild(spinnerSlot);
+    controls.appendChild(
+      makeEntityPanelActionBtn({
+        icon: visible ? "eye" : "eye-slash",
+        label: visible ? "Hide overlay on map" : "Show overlay on map",
+        active: visible,
+        onClick: () => {
+          toggleLandOverlayVisible(spec.id);
+        },
+      }),
+    );
+    row.appendChild(controls);
+    row.addEventListener("click", (ev) => {
+      if (ev.target.closest("button")) return;
+      toggleLandOverlayVisible(spec.id);
+    });
+    return row;
+  }
+
+  function buildLandOverlaysSection() {
+    const el = document.createElement("div");
+    el.className = "entity-panel__land-overlays";
+    const header = document.createElement("div");
+    header.className = "entity-panel__land-overlays-header";
+    header.textContent = "Overlays";
+    el.appendChild(header);
+    for (const spec of LAND_OVERLAYS) {
+      el.appendChild(buildLandOverlayRow(spec));
+    }
+    return el;
   }
 
   function buildLandLayerSwatch(spec) {
@@ -4418,6 +4697,7 @@ export function initProjectMap() {
       }
     }
     entityPanelLandList.innerHTML = "";
+    entityPanelLandList.appendChild(buildLandOverlaysSection());
     if (!sourceCount) {
       const empty = document.createElement("div");
       empty.className = "entity-panel__empty";
@@ -4464,13 +4744,24 @@ export function initProjectMap() {
       syncLandSidebarWithSources();
       const nextAoiDigest =
         typeof payload.aoiDigest === "string" ? payload.aoiDigest : "none";
+      const nextOverlayDigest =
+        typeof payload.overlayDigest === "string"
+          ? payload.overlayDigest
+          : "none";
       const aoiChanged = nextAoiDigest !== prevAoiDigest;
+      const overlayChanged = nextOverlayDigest !== landOverlayDigest;
       landAoiDigest = nextAoiDigest;
+      landOverlayDigest = nextOverlayDigest;
       renderLandPanel();
       if (!refreshMap) return;
+      if (aoiChanged || overlayChanged) {
+        clearLandOverlayGeoJsonCache();
+        for (const spec of LAND_OVERLAYS) removeLandOverlayLayer(spec.id);
+      }
       if (aoiChanged) {
         clearAllLandLayerGeoJsonCache();
         await reloadClippedLandLayers();
+        await refreshVisibleLandOverlays({ force: true });
       } else {
         await refreshLandMapLayers();
       }

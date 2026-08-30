@@ -107,6 +107,7 @@ pub fn project_html(slug: &str, preset: &Preset, _preset_path: &Path) -> String 
             "sources": land_sources,
             "dataGdbPaths": [],
             "aoiDigest": "none",
+            "overlayDigest": "none",
             "sidebar": preset.land.sidebar,
         },
     });

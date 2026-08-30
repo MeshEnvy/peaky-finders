@@ -1,7 +1,8 @@
 //! WGS-84 bounding box used to clip land reads for seek and finder.
 
+use anyhow::{bail, Result};
 use geo::algorithm::bounding_rect::BoundingRect;
-use geo::Geometry;
+use geo::{Geometry, LineString, Polygon};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LonLatBBox {
@@ -53,6 +54,83 @@ impl LonLatBBox {
         self.east = self.east.max(other.east);
         self.north = self.north.max(other.north);
     }
+
+    /// Parse `west,south,east,north`.
+    pub fn parse_csv(raw: &str) -> Result<Self> {
+        let parts: Vec<&str> = raw.split(',').map(str::trim).collect();
+        if parts.len() != 4 {
+            bail!("bbox must be west,south,east,north");
+        }
+        let west: f64 = parts[0]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("bbox must be west,south,east,north"))?;
+        let south: f64 = parts[1]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("bbox must be west,south,east,north"))?;
+        let east: f64 = parts[2]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("bbox must be west,south,east,north"))?;
+        let north: f64 = parts[3]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("bbox must be west,south,east,north"))?;
+        if west >= east || south >= north {
+            bail!("bbox west<east and south<north required");
+        }
+        Ok(Self::new(west, south, east, north))
+    }
+
+    /// Expand each edge to a 0.001° grid so nearby viewports share a cache key.
+    pub fn quantize_outward(self, decimals: u32) -> Self {
+        let scale = 10_f64.powi(decimals as i32);
+        Self {
+            west: (self.west * scale).floor() / scale,
+            south: (self.south * scale).floor() / scale,
+            east: (self.east * scale).ceil() / scale,
+            north: (self.north * scale).ceil() / scale,
+        }
+    }
+
+    pub fn as_polygon(self) -> Geometry<f64> {
+        Geometry::Polygon(Polygon::new(
+            LineString::from(vec![
+                geo::Coord {
+                    x: self.west,
+                    y: self.south,
+                },
+                geo::Coord {
+                    x: self.east,
+                    y: self.south,
+                },
+                geo::Coord {
+                    x: self.east,
+                    y: self.north,
+                },
+                geo::Coord {
+                    x: self.west,
+                    y: self.north,
+                },
+                geo::Coord {
+                    x: self.west,
+                    y: self.south,
+                },
+            ]),
+            vec![],
+        ))
+    }
+
+    pub fn cache_key(self) -> String {
+        format!(
+            "{:.3}_{:.3}_{:.3}_{:.3}",
+            self.west, self.south, self.east, self.north
+        )
+    }
+
+    pub fn contains_bbox(self, other: Self) -> bool {
+        self.west <= other.west
+            && self.south <= other.south
+            && self.east >= other.east
+            && self.north >= other.north
+    }
 }
 
 #[cfg(test)]
@@ -74,5 +152,15 @@ mod tests {
         let or = LonLatBBox::new(-124.0, 42.0, -116.0, 46.0);
         assert!(!az.intersects(or));
         assert!(az.intersects(az.padded(0.01)));
+    }
+
+    #[test]
+    fn parse_csv_and_quantize_outward() {
+        let b = LonLatBBox::parse_csv("-115.1234,35.01,-114.0001,36.999").expect("csv");
+        assert!((b.west + 115.1234).abs() < 1e-9);
+        let q = b.quantize_outward(3);
+        assert!(q.contains_bbox(b));
+        assert!(q.west <= b.west);
+        assert!(q.east >= b.east);
     }
 }

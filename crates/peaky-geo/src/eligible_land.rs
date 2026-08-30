@@ -57,8 +57,93 @@ pub fn intersect_land_geometry(a: Geometry<f64>, b: &Geometry<f64>) -> Geometry<
     geom_intersection(a, b)
 }
 
+/// Include − exclude in Web Mercator, then back to lon/lat.
+pub fn difference_land_geometry(a: &Geometry<f64>, b: &Geometry<f64>) -> Geometry<f64> {
+    let a_ll = polygonal_area_only(a.clone());
+    if is_empty_geom(&a_ll) {
+        return empty_polygon();
+    }
+    let b_ll = polygonal_area_only(b.clone());
+    if is_empty_geom(&b_ll) {
+        return a_ll;
+    }
+    let diff = geom_difference(&to_web_mercator(&a_ll), &to_web_mercator(&b_ll));
+    if is_empty_geom(&diff) {
+        return empty_polygon();
+    }
+    let clean = polygonal_area_only(from_web_mercator(&diff));
+    if is_empty_geom(&clean) {
+        empty_polygon()
+    } else {
+        clean
+    }
+}
+
+pub fn union_land_geometry(a: Geometry<f64>, b: &Geometry<f64>) -> Geometry<f64> {
+    let a_ll = polygonal_area_only(a);
+    let b_ll = polygonal_area_only(b.clone());
+    if is_empty_geom(&a_ll) {
+        return b_ll;
+    }
+    if is_empty_geom(&b_ll) {
+        return a_ll;
+    }
+    let united = geom_union(to_web_mercator(&a_ll), &to_web_mercator(&b_ll));
+    if is_empty_geom(&united) {
+        return empty_polygon();
+    }
+    let clean = polygonal_area_only(from_web_mercator(&united));
+    if is_empty_geom(&clean) {
+        empty_polygon()
+    } else {
+        clean
+    }
+}
+
 pub fn land_geometry_is_empty(geom: &Geometry<f64>) -> bool {
     is_empty_geom(geom)
+}
+
+pub fn empty_land_geometry() -> Geometry<f64> {
+    empty_polygon()
+}
+
+pub fn collect_role_geometry(
+    preset_path: &Path,
+    role: LandLayerRole,
+    clip: Option<LonLatBBox>,
+) -> Result<Geometry<f64>> {
+    Ok(multi_to_geometry(collect_role_polygons(
+        preset_path,
+        role,
+        clip,
+        None,
+    )?))
+}
+
+pub fn collect_role_geometry_for_source(
+    preset_path: &Path,
+    role: LandLayerRole,
+    clip: Option<LonLatBBox>,
+    source_id: &str,
+) -> Result<Geometry<f64>> {
+    Ok(multi_to_geometry(collect_role_polygons(
+        preset_path,
+        role,
+        clip,
+        Some(source_id),
+    )?))
+}
+
+pub fn include_role_source_ids(preset_path: &Path) -> Result<Vec<String>> {
+    let preset = load_preset(preset_path)?;
+    let mut ids: Vec<String> = iter_land_layer_entries_by_role(&preset, LandLayerRole::Include)
+        .into_iter()
+        .map(|(source_id, _)| source_id)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 fn geom_intersection(a: Geometry<f64>, b: &Geometry<f64>) -> Geometry<f64> {
@@ -167,18 +252,18 @@ fn collect_role_polygons(
     preset_path: &Path,
     role: LandLayerRole,
     clip: Option<LonLatBBox>,
+    only_source: Option<&str>,
 ) -> Result<MultiPolygon<f64>> {
     let preset = load_preset(preset_path)?;
     let project_dir = preset_path
         .parent()
         .context("preset path must have a parent directory")?;
     let cache_root = land_cache_dir(preset_path);
-    let jobs = iter_land_layer_entries_by_role(&preset, role);
-    let role_tag = match role {
-        LandLayerRole::Include => "include",
-        LandLayerRole::Exclude => "exclude",
-        LandLayerRole::Aoi => "aoi",
-    };
+    let mut jobs = iter_land_layer_entries_by_role(&preset, role);
+    if let Some(source_id) = only_source {
+        jobs.retain(|(id, _)| id == source_id);
+    }
+    let role_tag = land_role_tag(role);
     tracing::info!(
         role = role_tag,
         layers = jobs.len(),
@@ -266,38 +351,10 @@ pub fn build_eligible_geometry(
     include_union: &Geometry<f64>,
     exclude_union: &Geometry<f64>,
 ) -> Geometry<f64> {
-    let empty = empty_polygon();
     if is_empty_geom(include_union) {
-        return empty;
+        return empty_polygon();
     }
-
-    let inc_ll = polygonal_area_only(include_union.clone());
-    if is_empty_geom(&inc_ll) {
-        return empty;
-    }
-
-    if is_empty_geom(exclude_union) {
-        return inc_ll;
-    }
-
-    let exc_ll = polygonal_area_only(exclude_union.clone());
-    if is_empty_geom(&exc_ll) {
-        return inc_ll;
-    }
-
-    let ig = to_web_mercator(&inc_ll);
-    let eg = to_web_mercator(&exc_ll);
-    let diff = geom_difference(&ig, &eg);
-    if is_empty_geom(&diff) {
-        return empty;
-    }
-    let back = from_web_mercator(&diff);
-    let clean = polygonal_area_only(back);
-    if is_empty_geom(&clean) {
-        empty
-    } else {
-        clean
-    }
+    difference_land_geometry(include_union, exclude_union)
 }
 
 #[derive(Clone, Debug)]
@@ -364,8 +421,8 @@ pub fn load_or_build_eligible_land_parts(
     }
 
     let digest = eligible_land_digest(preset_path)?;
-    let include = collect_role_polygons(preset_path, LandLayerRole::Include, clip)?;
-    let exclude = collect_role_polygons(preset_path, LandLayerRole::Exclude, clip)?;
+    let include = collect_role_polygons(preset_path, LandLayerRole::Include, clip, None)?;
+    let exclude = collect_role_polygons(preset_path, LandLayerRole::Exclude, clip, None)?;
     if include.0.is_empty() && clip.is_none() {
         bail!(EligibleLandError(
             "Eligible land geometry is empty after include − exclude".into()
@@ -387,7 +444,12 @@ pub fn load_or_build_eligible_land_union(
 }
 
 pub fn load_preset_aoi_union(preset_path: &Path) -> Result<Option<Geometry<f64>>> {
-    let geom = multi_to_geometry(collect_role_polygons(preset_path, LandLayerRole::Aoi, None)?);
+    let geom = multi_to_geometry(collect_role_polygons(
+        preset_path,
+        LandLayerRole::Aoi,
+        None,
+        None,
+    )?);
     if is_empty_geom(&geom) {
         Ok(None)
     } else {
@@ -421,11 +483,7 @@ pub fn eligible_land_digest(preset_path: &Path) -> Result<String> {
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let role_tag = match role {
-                LandLayerRole::Include => "include",
-                LandLayerRole::Exclude => "exclude",
-                LandLayerRole::Aoi => "aoi",
-            };
+            let role_tag = land_role_tag(role);
             parts.push(format!(
                 "{role_tag}|{source_id}|{}|{modified}|{}",
                 layer.layer_key(),
@@ -438,6 +496,30 @@ pub fn eligible_land_digest(preset_path: &Path) -> Result<String> {
     }
     parts.sort();
     Ok(format!("{:016x}", fnv1a_hash(parts.join("\n").as_bytes())))
+}
+
+pub fn overlay_land_digest(preset_path: &Path) -> Result<String> {
+    let mut parts = Vec::new();
+    for role in [
+        LandLayerRole::Aoi,
+        LandLayerRole::Include,
+        LandLayerRole::Exclude,
+    ] {
+        parts.push(format!(
+            "{}:{}",
+            land_role_tag(role),
+            land_role_layer_digest(preset_path, role)?
+        ));
+    }
+    Ok(format!("{:016x}", fnv1a_hash(parts.join("\n").as_bytes())))
+}
+
+fn land_role_tag(role: LandLayerRole) -> &'static str {
+    match role {
+        LandLayerRole::Include => "include",
+        LandLayerRole::Exclude => "exclude",
+        LandLayerRole::Aoi => "aoi",
+    }
 }
 
 fn land_role_layer_digest(preset_path: &Path, role: LandLayerRole) -> Result<String> {
@@ -461,11 +543,7 @@ fn land_role_layer_digest(preset_path: &Path, role: LandLayerRole) -> Result<Str
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let role_tag = match role {
-            LandLayerRole::Include => "include",
-            LandLayerRole::Exclude => "exclude",
-            LandLayerRole::Aoi => "aoi",
-        };
+        let role_tag = land_role_tag(role);
         parts.push(format!(
             "{role_tag}|{source_id}|{}|{modified}|{}",
             layer.layer_key(),

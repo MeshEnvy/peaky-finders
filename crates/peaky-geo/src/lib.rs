@@ -4,6 +4,7 @@ pub mod eligible_land;
 pub mod lon_lat_bbox;
 pub mod kml_import;
 pub mod land_aoi_clip;
+pub mod land_overlays;
 pub mod land_boot;
 pub mod land_cache;
 pub mod land_fetch;
@@ -19,11 +20,17 @@ pub mod land_validate_cache;
 pub mod polygonize;
 
 pub use eligible_land::{
-    aoi_land_digest, build_eligible_geometry, build_eligible_land_union,
-    eligible_land_dem_mask_dir, eligible_land_digest, intersect_land_geometry,
-    iter_land_layer_entries_by_role, land_geometry_is_empty, load_or_build_eligible_land_filter,
-    load_or_build_eligible_land_parts, load_or_build_eligible_land_union, load_preset_aoi_union,
-    EligibleLandError, EligibleLandParts,
+    aoi_land_digest, build_eligible_geometry, build_eligible_land_union, collect_role_geometry,
+    collect_role_geometry_for_source, difference_land_geometry, eligible_land_dem_mask_dir,
+    eligible_land_digest, empty_land_geometry, include_role_source_ids,
+    intersect_land_geometry, iter_land_layer_entries_by_role, land_geometry_is_empty,
+    load_or_build_eligible_land_filter, load_or_build_eligible_land_parts,
+    load_or_build_eligible_land_union, load_preset_aoi_union, overlay_land_digest,
+    union_land_geometry, EligibleLandError, EligibleLandParts,
+};
+pub use land_overlays::{
+    build_eligible_overlay, overlay_contains_lon_lat, read_or_build_overlay_geojson,
+    read_or_build_overlay_part_geojson, LandOverlayKind,
 };
 pub use lon_lat_bbox::LonLatBBox;
 pub use land_aoi_clip::{

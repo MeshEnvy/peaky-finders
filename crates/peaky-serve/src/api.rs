@@ -32,8 +32,9 @@ use crate::land::{
     land_data_gdbs_payload, land_delete_source, land_import_preview_payload, land_import_source,
     land_patch_sidebar, land_patch_source, land_preview_fields_payload,
     land_preview_geojson_filtered_payload, land_preview_geojson_payload, land_preview_values_payload,
-    list_land_payload, read_layer_geojson_bytes, LandImportBody, LandPatchSourceBody,
-    LandPreviewGeoJsonBody,
+    list_land_payload, read_layer_geojson_bytes, read_overlay_geojson_bytes,
+    read_overlay_part_geojson_bytes, LandImportBody,
+    LandPatchSourceBody, LandPreviewGeoJsonBody,
 };
 use crate::simulation::project_simulation_payload;
 use crate::viewshed::{
@@ -91,6 +92,14 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/warm/status", get(warm_status))
         .route("/api/p/{slug}/events", get(project_events))
         .route("/api/p/{slug}/land", get(land_list))
+        .route(
+            "/api/p/{slug}/land/overlays/{kind}/geojson",
+            get(land_overlay_geojson),
+        )
+        .route(
+            "/api/p/{slug}/land/overlays/{kind}/sources/{source_id}/geojson",
+            get(land_overlay_part_geojson),
+        )
         .route("/api/p/{slug}/land/data-gdbs", get(land_data_gdbs))
         .route("/api/p/{slug}/land/import/preview", post(land_import_preview))
         .route(
@@ -854,6 +863,77 @@ async fn land_import_preview_values(
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Json(json!({ "error": e.to_string() })),
+            )
+        })
+}
+
+async fn land_overlay_part_geojson(
+    State(state): State<AppState>,
+    Path((_slug, kind, source_id)): Path<(String, String, String)>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let path = state.preset_path();
+    let kind_owned = kind.clone();
+    let source_owned = source_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        read_overlay_part_geojson_bytes(&path, &kind_owned, &source_owned)
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "overlay task failed" })),
+        )
+    })?;
+    let (bytes, digest) = result.map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/geo+json")
+        .header("X-Peaky-Digest", digest)
+        .body(Body::from(bytes))
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "overlay response failed" })),
+            )
+        })
+}
+
+async fn land_overlay_geojson(
+    State(state): State<AppState>,
+    Path((_slug, kind)): Path<(String, String)>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let path = state.preset_path();
+    let kind_owned = kind.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        read_overlay_geojson_bytes(&path, &kind_owned)
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "overlay task failed" })),
+        )
+    })?;
+    let (bytes, digest) = result.map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/geo+json")
+        .header("X-Peaky-Digest", digest)
+        .body(Body::from(bytes))
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "response build failed" })),
             )
         })
 }

@@ -7,9 +7,11 @@ use anyhow::{Context, Result};
 use peaky_geo::{
     aoi_land_digest, apply_filters_to_aoi_base, effective_layer_digest,
     ensure_aoi_clipped_preview_geojson, ensure_preview_field_values, ensure_preview_fields,
-    land_cache_dir, list_land_data_gdbs, list_preview_layers, preview_layers_json,
-    read_land_manifest, read_layer_geojson_bytes as read_layer_geojson_bytes_inner,
-    resolve_land_data_path,
+    land_cache_dir, list_land_data_gdbs, list_preview_layers, overlay_land_digest,
+    preview_layers_json, read_land_manifest,
+    include_role_source_ids, read_layer_geojson_bytes as read_layer_geojson_bytes_inner,
+    read_or_build_overlay_geojson, read_or_build_overlay_part_geojson, resolve_land_data_path,
+    LandOverlayKind,
 };
 use peaky_preset::{
     delete_land_source, import_land_source, load_preset, patch_land_sidebar, patch_land_source,
@@ -128,11 +130,34 @@ pub fn list_land_payload(preset_path: &Path) -> Result<Value> {
             .unwrap_or("")
             .cmp(b.get("id").and_then(|v| v.as_str()).unwrap_or(""))
     });
+    let overlay_digest = overlay_land_digest(preset_path).unwrap_or_else(|_| "none".to_string());
+    let overlay_parts = include_role_source_ids(preset_path).unwrap_or_default();
     Ok(json!({
         "sources": sources,
         "sidebar": preset.land.sidebar,
         "aoiDigest": aoi_digest,
+        "overlayDigest": overlay_digest,
+        "overlays": [
+            { "id": "eligible", "label": "Eligible", "parts": overlay_parts },
+        ],
     }))
+}
+
+pub fn read_overlay_geojson_bytes(
+    preset_path: &Path,
+    kind: &str,
+) -> Result<(Vec<u8>, String)> {
+    let kind = LandOverlayKind::parse(kind)?;
+    read_or_build_overlay_geojson(preset_path, kind)
+}
+
+pub fn read_overlay_part_geojson_bytes(
+    preset_path: &Path,
+    kind: &str,
+    source_id: &str,
+) -> Result<(Vec<u8>, String)> {
+    let kind = LandOverlayKind::parse(kind)?;
+    read_or_build_overlay_part_geojson(preset_path, kind, source_id)
 }
 
 pub fn read_layer_geojson_bytes(
