@@ -57,9 +57,15 @@ export function mountSeekPanel(store, appApi) {
         () => Boolean(store.seek.state?.running) || store.seek.scanning
       )
 
-      const showRecalc = computed(() => {
+      const canRecalc = computed(() => {
+        if (store.seek.scanning) return false
         const s = store.seek.state
-        return Boolean(s?.running && !s?.complete)
+        if (s?.complete) return false
+        const start = store.seek.startSlug || s?.startSlug
+        const hasGoal =
+          (s?.goalLat != null && s?.goalLon != null) ||
+          (store.seek.pendingGoalLat != null && store.seek.pendingGoalLon != null)
+        return Boolean(start && hasGoal)
       })
 
       const canConvert = computed(() => {
@@ -90,7 +96,7 @@ export function mountSeekPanel(store, appApi) {
         canUndo,
         canRedo,
         startLocked,
-        showRecalc,
+        canRecalc,
         canConvert,
         onStartChange,
         closePanel,
@@ -100,7 +106,10 @@ export function mountSeekPanel(store, appApi) {
         reset: () => appApi.resetSeekRun?.(),
         convert: () => appApi.openConvertModal?.(),
         recalculate: () => {
-          if (!showRecalc.value || store.seek.scanning) return
+          if (!canRecalc.value) return
+          if (!store.seek.state?.running) {
+            appApi.startSeekRun?.(store.seek.startSlug)
+          }
           void appApi.refreshSeekCandidates?.()
         },
       }
@@ -140,7 +149,7 @@ export function mountSeekPanel(store, appApi) {
                 aria-label="Set goal on map"
                 :aria-pressed="store.seek.goalPlacementMode ? 'true' : 'false'"
                 :class="{ active: store.seek.goalPlacementMode }"
-                :disabled="!store.ui.seekPanelOpen || store.seek.scanning"
+                :disabled="!store.ui.seekPanelOpen || store.seek.scanning || undefined"
                 @click="toggleGoalPlacement"
               >
                 <wa-icon name="crosshairs" label="Set goal"></wa-icon>
@@ -150,10 +159,10 @@ export function mountSeekPanel(store, appApi) {
           </div>
           <div class="seek-panel__actions">
             <div class="seek-panel__history-actions">
-              <wa-button appearance="plain" size="s" type="button" title="Undo hop" aria-label="Undo hop" :disabled="!canUndo" @click="undo">
+              <wa-button appearance="plain" size="s" type="button" title="Undo hop" aria-label="Undo hop" :disabled="!canUndo || undefined" @click="undo">
                 <wa-icon name="arrow-rotate-left" label="Undo hop"></wa-icon>
               </wa-button>
-              <wa-button appearance="plain" size="s" type="button" title="Redo hop" aria-label="Redo hop" :disabled="!canRedo" @click="redo">
+              <wa-button appearance="plain" size="s" type="button" title="Redo hop" aria-label="Redo hop" :disabled="!canRedo || undefined" @click="redo">
                 <wa-icon name="arrow-rotate-right" label="Redo hop"></wa-icon>
               </wa-button>
             </div>
@@ -163,22 +172,20 @@ export function mountSeekPanel(store, appApi) {
               size="s"
               type="button"
               title="Create preset sites from coordinate hops in the saved path"
-              :disabled="!canConvert || store.seek.scanning"
+              :disabled="!canConvert || store.seek.scanning || undefined"
               @click="convert"
             >
               Convert to sites
             </wa-button>
-            <wa-button
-              v-show="showRecalc"
-              appearance="outlined"
-              size="s"
+            <button
+              class="seek-panel__recalc"
               type="button"
               title="Recalculate peak candidates for the current hop and map view"
-              :disabled="store.seek.scanning"
+              :disabled="!canRecalc"
               @click="recalculate"
             >
               Recalculate
-            </wa-button>
+            </button>
           </div>
           <p id="seek-status" class="seek-panel__status pf-muted wa-caption" :hidden="store.seek.scanning">
             {{ store.seek.statusText }}

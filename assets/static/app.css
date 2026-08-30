@@ -2633,6 +2633,28 @@ button.entity-panel__row--selected:focus-visible,
   font-size: 0.95rem;
 }
 
+.seek-panel__recalc {
+  appearance: none;
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  padding: 0.28rem 0.6rem;
+  border-radius: 0.35rem;
+  border: 1px solid rgb(255 255 255 / 0.32);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.seek-panel__recalc:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.08);
+}
+
+.seek-panel__recalc:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .seek-panel__status {
   margin: 0;
   min-height: 1.25rem;

@@ -143,6 +143,19 @@ export function removeSeekWedgeLayers(map) {
   if (map.getSource(SEEK_WEDGE_SOURCE)) map.removeSource(SEEK_WEDGE_SOURCE)
 }
 
+/** Paint the goal wedge above every other map layer. @param {maplibregl.Map} map */
+export function raiseSeekWedgeLayers(map) {
+  if (!map) return
+  for (const id of [SEEK_WEDGE_FILL_LAYER, SEEK_WEDGE_OUTLINE_LAYER]) {
+    if (!map.getLayer(id)) continue
+    try {
+      map.moveLayer(id)
+    } catch (_) {
+      /* layer may be mid-remove */
+    }
+  }
+}
+
 /**
  * @param {maplibregl.Map} map
  * @param {{ lat: number, lon: number }} from
@@ -156,36 +169,32 @@ export function syncSeekWedge(map, from, goal, hopRadiusM) {
   }
   if (map.getSource(SEEK_WEDGE_SOURCE)) {
     map.getSource(SEEK_WEDGE_SOURCE).setData(data)
+    raiseSeekWedgeLayers(map)
     return
   }
   map.addSource(SEEK_WEDGE_SOURCE, { type: 'geojson', data })
-  map.addLayer(
-    {
-      id: SEEK_WEDGE_FILL_LAYER,
-      type: 'fill',
-      source: SEEK_WEDGE_SOURCE,
-      paint: {
-        'fill-color': '#22c55e',
-        'fill-opacity': 0.1,
-      },
+  map.addLayer({
+    id: SEEK_WEDGE_FILL_LAYER,
+    type: 'fill',
+    source: SEEK_WEDGE_SOURCE,
+    paint: {
+      'fill-color': '#22c55e',
+      'fill-opacity': 0.1,
     },
-    SITES_CIRCLE,
-  )
-  map.addLayer(
-    {
-      id: SEEK_WEDGE_OUTLINE_LAYER,
-      type: 'line',
-      source: SEEK_WEDGE_SOURCE,
-      paint: {
-        'line-color': '#22c55e',
-        'line-width': 1.5,
-        'line-opacity': 0.45,
-        'line-dasharray': [2, 2],
-      },
-      layout: { 'line-cap': 'round', 'line-join': 'round' },
+  })
+  map.addLayer({
+    id: SEEK_WEDGE_OUTLINE_LAYER,
+    type: 'line',
+    source: SEEK_WEDGE_SOURCE,
+    paint: {
+      'line-color': '#22c55e',
+      'line-width': 1.5,
+      'line-opacity': 0.45,
+      'line-dasharray': [2, 2],
     },
-    SITES_CIRCLE,
-  )
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+  })
+  raiseSeekWedgeLayers(map)
 }
 
 /**
@@ -222,6 +231,7 @@ export function syncSeekGoalLine(map, from, goal, hopRadiusM, raiseSiteLayers) {
   }
   syncSeekWedge(map, from, goal, hopRadiusM)
   if (raiseSiteLayers) raiseSiteLayers()
+  raiseSeekWedgeLayers(map)
 }
 
 /**
@@ -403,4 +413,5 @@ export function applySeekLayers(map, payload, opts) {
   if (opts.onPathUpdate) opts.onPathUpdate()
   if (opts.onGoalLine) opts.onGoalLine()
   if (opts.raiseSiteLayers) opts.raiseSiteLayers()
+  raiseSeekWedgeLayers(map)
 }

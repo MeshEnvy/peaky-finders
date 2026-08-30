@@ -26,6 +26,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Goal seek Recalculate** — the hop scan button stayed disabled after start and goal were set. A false `disabled` binding on `wa-button` is treated as disabled, so Recalculate is a native button that arms whenever a start and goal exist. Clicking it no longer overflows the stack (local `setSeekScanning` had been calling itself).
+- **Goal seek wedge** — the green hop wedge now paints above viewsheds, land, links, and site markers.
 - **Eligible overlay** — real per-parcel boolean difference (i_overlay engine) instead of punching raw exclude rings as holes. Overlapping wilderness/ACEC/WSA rings made invalid polygons, which is what MapLibre rendered as statewide bars and sliver triangles. Full six-state build now takes ~10 s with the cutouts intact.
 - **Seek convert links** — converting a goal-seek hop now seeds the site mesh from the same P2P check and keeps the rest of the chain visible. The hop stays a real RF link instead of disappearing behind a tag filter or a stale mesh.
 - **Goal seek hang** — eligible land no longer dissolves statewide SMA. Seek clips parcels to the hop wedge and subtracts exclude via an R-tree, so Kingman-scale scans leave "Building eligible land" in seconds.

@@ -32,7 +32,7 @@ import {
 } from '../map/seek-layers.js'
 import {
   setSeekState,
-  setSeekScanning,
+  setSeekScanning as setSeekScanningStore,
   setSeekPanelOpen,
   setSeekGoalPlacementMode as setSeekGoalPlacementModeStore,
   setSeekPendingGoal,
@@ -200,8 +200,7 @@ export function createSeekDomain(ctx) {
   }
 
   function setSeekScanning(active) {
-    store.seek.scanning = active
-    setSeekScanning(store, active)
+    setSeekScanningStore(store, active)
     if (active) {
       setSeekStatus('')
       seekScanStartedAt = Date.now()
