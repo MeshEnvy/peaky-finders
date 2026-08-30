@@ -239,7 +239,10 @@ export function runApp(ctx = {}) {
     applySiteLayerFilters: () => siteLayers.applySiteLayerFilters(),
     applyViewshedVisibilityForSite: (slug) =>
       viewshedDomain?.applyViewshedVisibilityForSite(slug),
-    refreshFilteredLinks: () => linksDomain?.refreshFilteredLinks(),
+    refreshFilteredLinks: () => {
+      linksDomain?.refreshFilteredLinks()
+      editPreviewDomain?.refreshFilteredDraftLinks()
+    },
     updatePinOverlays: () => viewshedDomain?.updatePinOverlays(),
     getSeek: () => seekDomain,
     ensureViewshedsForNewlyVisibleSites: () =>
@@ -293,6 +296,7 @@ export function runApp(ctx = {}) {
         isViewshedVisible: (slug) => viewshedDomain.isViewshedVisible(slug),
         placeDraftMarker: (lat, lon) => placementDomain?.placeDraftMarker(lat, lon),
         seekSiteSlugNear: (lat, lon) => seekDomain?.seekSiteSlugNear?.(lat, lon) ?? null,
+        isSiteMapHidden: (slug) => siteLayers.isSiteMapHidden(slug),
       })
     }
     if (!placementDomain) {

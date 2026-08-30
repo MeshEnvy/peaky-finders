@@ -26,6 +26,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Draft P2P lines** — placing or moving a site no longer draws preview links to tag-filtered or hidden peers. Draft lines use the same map visibility as the site mesh.
 - **Goal seek ranking** — candidates that RF-complete the hop to the goal sort first. Extra links into the existing local mesh beat a lonely completer. Weaker-leg margin is next. Elevation is not a score.
 - **Goal seek landing** — when the goal is already in hop range but start-to-goal RF fails, seek grids every cell that is still in hop range of both ends (no angle clip), then refines around completers. Approach hops (goal out of range) still use local-max peaks and distance.
 - **Goal seek Recalculate** — the hop scan button stayed disabled after start and goal were set. A false `disabled` binding on `wa-button` is treated as disabled, so Recalculate is a native button that arms whenever a start and goal exist. Clicking it no longer overflows the stack (local `setSeekScanning` had been calling itself).

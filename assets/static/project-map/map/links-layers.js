@@ -177,6 +177,15 @@ export function setLinksLayerVisibility(map, visible) {
   }
 }
 
+/**
+ * @param {import('geojson').FeatureCollection|null|undefined} geojson
+ * @param {(feature: import('geojson').Feature) => boolean} [featureVisible]
+ */
+export function visibleLinkFeatures(geojson, featureVisible) {
+  const visible = featureVisible || (() => true)
+  return (geojson?.features || []).filter(visible)
+}
+
 /** @param {maplibregl.Map} map */
 export function removeDraftLinksLayer(map) {
   if (map.getLayer(DRAFT_LINKS_LABELS_LAYER)) map.removeLayer(DRAFT_LINKS_LABELS_LAYER)
@@ -187,14 +196,16 @@ export function removeDraftLinksLayer(map) {
 /**
  * @param {maplibregl.Map} map
  * @param {import('geojson').FeatureCollection|null|undefined} geojson
+ * @param {(feature: import('geojson').Feature) => boolean} [featureVisible]
  * @param {() => void} [onRaiseLayers]
  */
-export function applyDraftLinksLayer(map, geojson, onRaiseLayers) {
-  if (!geojson || !geojson.features || !geojson.features.length) {
+export function applyDraftLinksLayer(map, geojson, featureVisible, onRaiseLayers) {
+  const features = visibleLinkFeatures(geojson, featureVisible)
+  if (!features.length) {
     removeDraftLinksLayer(map)
     return
   }
-  const labeled = linksGeoJsonWithLabels(geojson)
+  const labeled = linksGeoJsonWithLabels({ type: 'FeatureCollection', features })
   if (map.getSource(DRAFT_LINKS_SOURCE)) {
     map.getSource(DRAFT_LINKS_SOURCE).setData(labeled)
     if (map.getLayer(DRAFT_LINKS_LAYER)) {
@@ -250,8 +261,7 @@ export function removeSeekAncillaryLinksLayer(map) {
  * @param {() => void} [onRaiseLayers]
  */
 export function applySeekAncillaryLinksLayer(map, geojson, featureVisible, onRaiseLayers) {
-  const visible = featureVisible || (() => true)
-  const features = (geojson?.features || []).filter(visible)
+  const features = visibleLinkFeatures(geojson, featureVisible)
   if (!features.length) {
     removeSeekAncillaryLinksLayer(map)
     return

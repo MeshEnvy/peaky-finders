@@ -31,6 +31,7 @@ export function createEditPreviewDomain(ctx) {
     isViewshedVisible,
     placeDraftMarker,
     seekSiteSlugNear,
+    isSiteMapHidden,
   } = ctx
 
   let draftPlacementLat = null
@@ -41,21 +42,41 @@ export function createEditPreviewDomain(ctx) {
   let editPrefetchTimer = null
   let editPrefetchGen = 0
   let editHiddenViewshedSlug = null
+  /** @type {import('geojson').FeatureCollection|null} */
+  let draftLinksGeojson = null
 
   function vs() {
     return getViewshed?.()
   }
 
+  function draftPeerVisible(feature) {
+    const slug = (feature?.properties || {}).slug
+    if (!slug) return false
+    return !isSiteMapHidden?.(slug)
+  }
+
   function removeDraftLinksLayer() {
+    draftLinksGeojson = null
     clearDraftLinksOnMap(getMap())
   }
 
   function addDraftLinksLayer(geojson) {
-    if (!getMapReady?.()) {
-      removeDraftLinksLayer()
+    draftLinksGeojson = geojson || null
+    refreshFilteredDraftLinks()
+  }
+
+  function refreshFilteredDraftLinks() {
+    if (!draftLinksGeojson) {
+      clearDraftLinksOnMap(getMap())
       return
     }
-    applyDraftLinksLayer(getMap(), geojson, () => raiseSiteLayers?.())
+    if (!getMapReady?.()) {
+      clearDraftLinksOnMap(getMap())
+      return
+    }
+    applyDraftLinksLayer(getMap(), draftLinksGeojson, draftPeerVisible, () =>
+      raiseSiteLayers?.(),
+    )
   }
 
   function readEditCoords() {
@@ -403,6 +424,7 @@ export function createEditPreviewDomain(ctx) {
     endEditSession,
     cleanupEditSave,
     onEditCoordsChanged,
+    refreshFilteredDraftLinks,
     warmDraftViewshedForSeek,
     isDraftViewshedLoading: () => draftViewshedLoading,
   }
