@@ -4168,8 +4168,7 @@ export function initProjectMap() {
   function addLandOverlayPartLayer(overlayId, partId, geojson) {
     const spec = LAND_OVERLAYS.find((row) => row.id === overlayId);
     if (!spec) return;
-    const { sourceMapId, fillId, lineId } = landOverlayMapIds(overlayId, partId);
-    const lineColor = landLineColorFromFill(spec.color);
+    const { sourceMapId, fillId } = landOverlayMapIds(overlayId, partId);
     if (map.getSource(sourceMapId)) {
       map.getSource(sourceMapId).setData(geojson);
       return;
@@ -4183,20 +4182,6 @@ export function initProjectMap() {
         paint: {
           "fill-color": spec.color,
           "fill-opacity": spec.opacity,
-          "fill-outline-color": lineColor,
-        },
-        layout: { visibility: "visible" },
-      },
-      viewshedLayerInsertBefore(),
-    );
-    map.addLayer(
-      {
-        id: lineId,
-        type: "line",
-        source: sourceMapId,
-        paint: {
-          "line-color": lineColor,
-          "line-width": LAND_LINE_WIDTH,
         },
         layout: { visibility: "visible" },
       },

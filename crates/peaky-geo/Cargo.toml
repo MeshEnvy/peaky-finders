@@ -21,3 +21,4 @@ tempfile.workspace = true
 thiserror.workspace = true
 quick-xml.workspace = true
 zip.workspace = true
+i_overlay = "8.1.0"

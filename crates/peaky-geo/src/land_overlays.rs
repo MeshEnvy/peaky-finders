@@ -1,16 +1,18 @@
 //! Built-in map overlay: eligible `(include − exclude) ∩ AOI`.
-//! Cached by land digest only. Parcel rings with exclude holes; no SMA dissolve.
+//! Cached by land digest only. Per-parcel i_overlay booleans; no SMA dissolve.
 
 use std::fs;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use geo::algorithm::winding_order::{Winding, WindingOrder};
-use geo::{BoundingRect, Centroid, Contains, Geometry, MultiPolygon, Point, Polygon};
+use geo::{BoundingRect, Centroid, Contains, Geometry, LineString, MultiPolygon, Point, Polygon};
 use geojson::Geometry as GeoJsonGeometry;
+use i_overlay::core::fill_rule::FillRule;
+use i_overlay::core::overlay_rule::OverlayRule;
+use i_overlay::float::single::SingleFloatOverlay;
 use peaky_preset::LandLayerRole;
 use rayon::prelude::*;
 use serde_json::{json, Value};
@@ -18,7 +20,7 @@ use splatter::LandFilterIndex;
 
 use crate::eligible_land::{
     collect_role_geometry, collect_role_geometry_for_source, empty_land_geometry,
-    include_role_source_ids, intersect_land_geometry, overlay_land_digest,
+    include_role_source_ids, overlay_land_digest,
 };
 use crate::land_pipeline::land_cache_dir;
 use crate::lon_lat_bbox::LonLatBBox;
@@ -75,8 +77,82 @@ fn geometry_from_polys(polys: Vec<Polygon<f64>>) -> Geometry<f64> {
     }
 }
 
-fn try_intersect(a: &Geometry<f64>, b: &Geometry<f64>) -> Option<Geometry<f64>> {
-    catch_unwind(AssertUnwindSafe(|| intersect_land_geometry(a.clone(), b))).ok()
+type OverlayShape = Vec<Vec<[f64; 2]>>;
+
+/// Normalized winding (exterior CCW, holes CW) so non-zero fill counts
+/// overlapping parcels as +2, not +1−1=0 when source data winding is mixed.
+fn ring_to_contour(ring: &LineString<f64>, order: WindingOrder) -> Vec<[f64; 2]> {
+    let Some(oriented) = oriented_ring(ring, order) else {
+        return Vec::new();
+    };
+    let mut pts: Vec<[f64; 2]> = oriented.0.iter().map(|c| [c.x, c.y]).collect();
+    if pts.len() > 1 && pts.first() == pts.last() {
+        pts.pop();
+    }
+    pts
+}
+
+fn polygon_to_shape(poly: &Polygon<f64>) -> Option<OverlayShape> {
+    let exterior = ring_to_contour(poly.exterior(), WindingOrder::CounterClockwise);
+    if exterior.len() < 3 {
+        return None;
+    }
+    let mut shape = Vec::with_capacity(1 + poly.interiors().len());
+    shape.push(exterior);
+    for hole in poly.interiors() {
+        let contour = ring_to_contour(hole, WindingOrder::Clockwise);
+        if contour.len() >= 3 {
+            shape.push(contour);
+        }
+    }
+    Some(shape)
+}
+
+fn contour_to_ring(contour: Vec<[f64; 2]>) -> Option<LineString<f64>> {
+    if contour.len() < 3 {
+        return None;
+    }
+    let mut coords: Vec<geo::Coord<f64>> = contour
+        .into_iter()
+        .map(|p| geo::Coord { x: p[0], y: p[1] })
+        .collect();
+    let first = coords[0];
+    coords.push(first);
+    Some(LineString::new(coords))
+}
+
+fn shapes_to_polygons(shapes: Vec<OverlayShape>) -> Vec<Polygon<f64>> {
+    shapes
+        .into_iter()
+        .filter_map(|shape| {
+            let mut contours = shape.into_iter();
+            let exterior = contour_to_ring(contours.next()?)?;
+            let holes = contours.filter_map(contour_to_ring).collect();
+            Some(Polygon::new(exterior, holes))
+        })
+        .collect()
+}
+
+/// Robust boolean via i_overlay (the engine behind modern `geo` BooleanOps).
+/// Non-zero fill unions overlapping clip polygons instead of cancelling them
+/// out, and it does not panic on dirty agency data like geo 0.28's sweep.
+fn overlay_polys(
+    subject: &[Polygon<f64>],
+    clip: &[Polygon<f64>],
+    rule: OverlayRule,
+) -> Vec<Polygon<f64>> {
+    let subj: Vec<OverlayShape> = subject.iter().filter_map(polygon_to_shape).collect();
+    let clip: Vec<OverlayShape> = clip.iter().filter_map(polygon_to_shape).collect();
+    if subj.is_empty() {
+        return Vec::new();
+    }
+    if clip.is_empty() {
+        return match rule {
+            OverlayRule::Difference => subject.to_vec(),
+            _ => Vec::new(),
+        };
+    }
+    shapes_to_polygons(subj.overlay(&clip, rule, FillRule::NonZero))
 }
 
 fn poly_bbox(poly: &Polygon<f64>) -> Option<LonLatBBox> {
@@ -116,30 +192,13 @@ fn clip_include_to_aoi(poly: &Polygon<f64>, aoi: &[Polygon<f64>]) -> Vec<Polygon
                 }
             }
         }
-        match try_intersect(
-            &Geometry::Polygon(poly.clone()),
-            &Geometry::Polygon(piece.clone()),
-        ) {
-            Some(geom) => out.extend(flatten_polygons(&geom)),
-            None => {}
-        }
+        out.extend(overlay_polys(
+            std::slice::from_ref(poly),
+            std::slice::from_ref(piece),
+            OverlayRule::Intersect,
+        ));
     }
     out
-}
-
-fn ring_bbox_inside(outer: LonLatBBox, ring: &geo::LineString<f64>) -> bool {
-    if ring.0.len() < 4 {
-        return false;
-    }
-    let hole = Polygon::new(ring.clone(), vec![]);
-    let Some(inner) = poly_bbox(&hole) else {
-        return false;
-    };
-    outer.contains_bbox(inner)
-}
-
-fn ring_vertices_inside(shell: &Polygon<f64>, ring: &geo::LineString<f64>) -> bool {
-    ring.0.iter().all(|coord| shell.contains(&Point::new(coord.x, coord.y)))
 }
 
 fn oriented_ring(ring: &geo::LineString<f64>, order: WindingOrder) -> Option<geo::LineString<f64>> {
@@ -149,74 +208,36 @@ fn oriented_ring(ring: &geo::LineString<f64>, order: WindingOrder) -> Option<geo
     Some(ring.clone_to_winding_order(order))
 }
 
+/// RFC 7946 winding: exterior CCW, holes CW. Geometry is assumed
+/// topologically valid (boolean-op output or source parcels).
 fn sanitize_polygon(poly: &Polygon<f64>) -> Option<Polygon<f64>> {
     let exterior = oriented_ring(poly.exterior(), WindingOrder::CounterClockwise)?;
-    let shell = Polygon::new(exterior.clone(), vec![]);
-    let ext_bbox = poly_bbox(&shell)?;
     let holes = poly
         .interiors()
         .iter()
-        .filter(|ring| ring_bbox_inside(ext_bbox, ring) && ring_vertices_inside(&shell, ring))
         .filter_map(|ring| oriented_ring(ring, WindingOrder::Clockwise))
         .collect();
     Some(Polygon::new(exterior, holes))
 }
 
-fn exclude_covers_include(include: &Polygon<f64>, exclude: &Polygon<f64>) -> bool {
-    let Some(inc_bbox) = poly_bbox(include) else {
-        return false;
-    };
-    let Some(ex_bbox) = poly_bbox(exclude) else {
-        return false;
-    };
-    if !ex_bbox.contains_bbox(inc_bbox) {
-        return false;
-    }
-    let Some(c) = poly_centroid(include) else {
-        return false;
-    };
-    exclude.contains(&c)
-}
-
-fn punch_excludes_as_holes(
-    poly: &Polygon<f64>,
-    exclude: &LandFilterIndex,
-) -> Option<Polygon<f64>> {
+/// Boolean-subtract intersecting exclude parcels from one include parcel.
+/// Produces valid geometry (holes never overlap each other or poke outside
+/// the parcel), which is what map tessellators require. Raw exclude rings
+/// punched as holes overlap wherever wilderness/ACEC/WSA layers stack, and
+/// that invalidity is what made earcut emit statewide sliver triangles.
+fn subtract_excludes(poly: &Polygon<f64>, exclude: &LandFilterIndex) -> Vec<Polygon<f64>> {
     let Some(rect) = poly.bounding_rect() else {
-        return None;
+        return Vec::new();
     };
-    let hits = exclude.intersecting_exclude_polys(
-        rect.min().x,
-        rect.min().y,
-        rect.max().x,
-        rect.max().y,
-    );
+    let hits: Vec<Polygon<f64>> = exclude
+        .intersecting_exclude_polys(rect.min().x, rect.min().y, rect.max().x, rect.max().y)
+        .into_iter()
+        .cloned()
+        .collect();
     if hits.is_empty() {
-        return sanitize_polygon(poly);
+        return vec![poly.clone()];
     }
-    let poly = sanitize_polygon(poly)?;
-    let Some(inc_bbox) = poly_bbox(&poly) else {
-        return None;
-    };
-    if hits.iter().any(|ex| exclude_covers_include(&poly, ex)) {
-        return None;
-    }
-    let mut holes = poly.interiors().to_vec();
-    for ex in hits {
-        let Some(ex_bbox) = poly_bbox(ex) else {
-            continue;
-        };
-        if !inc_bbox.contains_bbox(ex_bbox) {
-            continue;
-        }
-        let Some(c) = poly_centroid(ex) else {
-            continue;
-        };
-        if poly.contains(&c) {
-            holes.push(ex.exterior().clone());
-        }
-    }
-    sanitize_polygon(&Polygon::new(poly.exterior().clone(), holes))
+    overlay_polys(std::slice::from_ref(poly), &hits, OverlayRule::Difference)
 }
 
 /// Include minus exclude, clipped to the AOI. Parcel-wise; no SMA dissolve.
@@ -233,7 +254,7 @@ pub fn build_eligible_overlay(
         .0
         .par_iter()
         .flat_map(|poly| clip_include_to_aoi(poly, &aoi_polys))
-        .filter_map(|poly| punch_excludes_as_holes(&poly, &exclude_idx))
+        .flat_map(|poly| subtract_excludes(&poly, &exclude_idx))
         .collect();
     geometry_from_polys(parts)
 }
@@ -241,7 +262,7 @@ pub fn build_eligible_overlay(
 fn overlay_cache_dir(preset_path: &Path, digest: &str) -> PathBuf {
     land_cache_dir(preset_path)
         .join("overlays")
-        .join("v8")
+        .join("v12")
         .join(digest)
 }
 
@@ -463,37 +484,43 @@ mod tests {
         assert!(!overlay_contains_lon_lat(&eligible, -119.50, 39.50));
     }
 
-    fn ring_signed_area(ring: &[Value]) -> f64 {
-        let mut area = 0.0;
-        for i in 0..ring.len().saturating_sub(1) {
-            let a = ring[i].as_array().expect("coord");
-            let b = ring[i + 1].as_array().expect("coord");
-            let x1 = a[0].as_f64().expect("x");
-            let y1 = a[1].as_f64().expect("y");
-            let x2 = b[0].as_f64().expect("x");
-            let y2 = b[1].as_f64().expect("y");
-            area += x1 * y2 - x2 * y1;
-        }
-        area
-    }
-
     #[test]
-    fn overlay_holes_use_opposite_winding() {
+    fn overlay_geojson_keeps_exclude_cutouts() {
         let aoi = square(-120.0, 39.0, -119.0, 40.0);
         let include = square(-119.8, 39.2, -119.2, 39.8);
         let exclude = square(-119.52, 39.48, -119.48, 39.52);
         let eligible = build_eligible_overlay(&include, &exclude, &aoi);
+        assert!(!overlay_contains_lon_lat(&eligible, -119.50, 39.50));
         let fc = geometry_to_feature_collection(&eligible, "pub");
-        let rings = fc["features"][0]["geometry"]["coordinates"]
+        let features = fc["features"].as_array().expect("features");
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0]["geometry"]["type"], "Polygon");
+        let rings = features[0]["geometry"]["coordinates"]
             .as_array()
             .expect("rings");
-        assert!(rings.len() >= 2);
-        let ext = rings[0].as_array().expect("exterior");
-        let hole = rings[1].as_array().expect("hole");
-        assert!(
-            ring_signed_area(ext) * ring_signed_area(hole) < 0.0,
-            "hole must wind opposite the exterior"
-        );
+        assert_eq!(rings.len(), 2, "exterior plus exclude hole");
+    }
+
+    #[test]
+    fn overlapping_excludes_stay_valid() {
+        // Wilderness + ACEC style: two exclude parcels overlapping each other
+        // inside one include parcel. The difference must not emit overlapping
+        // hole rings (that invalidity is what broke map tessellation).
+        let aoi = square(-120.0, 39.0, -119.0, 40.0);
+        let include = square(-119.8, 39.2, -119.2, 39.8);
+        let ex_a = flatten_polygons(&square(-119.6, 39.4, -119.45, 39.55));
+        let ex_b = flatten_polygons(&square(-119.55, 39.45, -119.4, 39.6));
+        let exclude = Geometry::MultiPolygon(MultiPolygon(
+            ex_a.into_iter().chain(ex_b).collect(),
+        ));
+        let eligible = build_eligible_overlay(&include, &exclude, &aoi);
+        assert!(!overlay_contains_lon_lat(&eligible, -119.5, 39.5));
+        assert!(overlay_contains_lon_lat(&eligible, -119.7, 39.3));
+        let fc = geometry_to_feature_collection(&eligible, "pub");
+        for feat in fc["features"].as_array().expect("features") {
+            let rings = feat["geometry"]["coordinates"].as_array().expect("rings");
+            assert!(rings.len() <= 2, "merged overlapping excludes into one hole");
+        }
     }
 
     #[test]
