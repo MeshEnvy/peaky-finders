@@ -32,6 +32,12 @@ peaky serve /path/to/project --port 8080
 
 Open `http://127.0.0.1:8080/`.
 
+From source (debug is fine for UI; `--release` for long RF):
+
+```bash
+cargo run -p peaky -- serve /path/to/project --host 127.0.0.1 --port 8080
+```
+
 If `/path/to/project` is missing or has no `config.yaml` yet, Peaky creates the directory and writes a starter `config.yaml` with typical MeshCore modem and RF defaults. Add sites and land layers from the web UI.
 
 Skadi tiles and RF cache live under `<project>/.peaky/cache/`.

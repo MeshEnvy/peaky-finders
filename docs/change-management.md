@@ -28,6 +28,8 @@ Keep a Changelog sections: `### Added`, `### Changed`, `### Fixed`, `### Removed
 
 CI publishes the `## [vX.Y.Z]` body to GitHub Releases. It does **not** auto-generate from commits.
 
+EnvyOS distro publish copies the pinned tag section into the distro GitHub Release notes (`./envyos changelog check` requires that heading).
+
 Skill: [`.cursor/skills/peaky-release/SKILL.md`](../.cursor/skills/peaky-release/SKILL.md). Day-to-day entries: [`.cursor/skills/peaky-changelog/SKILL.md`](../.cursor/skills/peaky-changelog/SKILL.md).
 
 ## Enforcement

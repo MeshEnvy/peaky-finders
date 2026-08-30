@@ -87,3 +87,8 @@ Last **Python/Docker** line before the v5 Rust cutover (git tag `v4-final`). Ser
 
 - **Land sources** — accept GeoJSON paths on configured sources.
 - **Serve edits** — faster site tag and save paths.
+
+[Unreleased]: https://github.com/MeshEnvy/peaky-finders/compare/v0.5.0...HEAD
+[v0.5.0]: https://github.com/MeshEnvy/peaky-finders/releases/tag/v0.5.0
+[v4]: https://github.com/MeshEnvy/peaky-finders/releases/tag/v4-final
+
