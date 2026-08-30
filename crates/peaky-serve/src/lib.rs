@@ -9,6 +9,7 @@ mod land;
 mod links;
 pub mod rf;
 mod seek;
+mod seek_rank;
 mod seek_plan;
 mod seek_progress;
 mod simulation;

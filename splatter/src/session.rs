@@ -55,6 +55,11 @@ impl Session {
         self.dem.read().unwrap().tile_count()
     }
 
+    /// Bilinear AMSL meters from the loaded mosaic (0 if the tile is missing or void).
+    pub fn sample_elev_m(&self, lat: f64, lon: f64) -> f64 {
+        self.dem.read().unwrap().sample_m(lat, lon)
+    }
+
     pub fn preload_tiles(&self, tile_names: &[String]) -> Result<()> {
         self.dem.write().unwrap().ensure_tiles(
             &self.mirror_root,
@@ -247,6 +252,50 @@ impl Session {
         )
     }
 
+    /// Highest eligible cell per bin (ridges, not only local maxima). No RF filter.
+    pub fn disc_binned_high_points(
+        &self,
+        source_lat: f64,
+        source_lon: f64,
+        hop_radius_m: f64,
+        land_filter: Option<&MultiPolygon<f64>>,
+        scan_bbox: Option<(f64, f64, f64, f64)>,
+        wedge: Option<crate::peaks::GoalWedgeFilter>,
+        ring_sector: Option<crate::peaks::RingSectorFilter>,
+        bin_size_m: f64,
+        land_index: Option<&crate::peaks::LandFilterIndex>,
+        mask_cache_dir: Option<&Path>,
+        on_progress: Option<&(dyn Fn(crate::peaks::HopDiscScanProgress) + Send + Sync)>,
+    ) -> Result<Vec<crate::peaks::Peak>> {
+        let dem = self.dem.read().unwrap();
+        let binned = crate::peaks::binned_high_points_in_hop_disc(
+            &dem,
+            source_lat,
+            source_lon,
+            hop_radius_m,
+            bin_size_m,
+            scan_bbox,
+            wedge,
+            ring_sector,
+            land_filter,
+            land_index,
+            mask_cache_dir,
+            on_progress,
+        )?;
+        Ok(binned
+            .into_iter()
+            .filter(|peak| {
+                crate::peaks::peak_passes_land_filter(
+                    *peak,
+                    land_filter,
+                    scan_bbox,
+                    land_index,
+                ) && crate::propagate::haversine_m(source_lat, source_lon, peak.lat, peak.lon)
+                    <= hop_radius_m
+            })
+            .collect())
+    }
+
     /// Binned local maxima with mutual RF viability. Call [`Self::ensure_tiles_for_hop_disc`] first.
     /// Pass ``limit = 0`` to return all viable peaks (goal seek sorts toward the target).
     pub fn linkable_binned_peaks(
@@ -366,22 +415,22 @@ impl Session {
         Ok(evaluate_mutual_links_parallel(&dem, pairs, &ctx))
     }
 
-    /// Goal-seek / peak links: same per-endpoint antenna model as site mesh (Weak counts as linked).
-    pub fn seek_repeater_link_batch(
+    /// Goal-seek / peak links: weaker-leg dB over threshold. `None` if neither direction decodes.
+    pub fn seek_repeater_link_margins(
         &self,
         from_lat: f64,
         from_lon: f64,
         from_tx_h: f64,
         endpoints: &[(f64, f64, f64)],
         rf_json: &str,
-    ) -> Result<Vec<bool>> {
+    ) -> Result<Vec<Option<f64>>> {
         let base = link_context_from_json(rf_json)?;
         let from_h = from_tx_h.max(1.0);
         let dem = self.dem.read().unwrap();
         Ok(endpoints
             .par_iter()
             .map(|(lat, lon, tx_h)| {
-                crate::propagate::evaluate_mutual_site_link_strength(
+                crate::propagate::evaluate_mutual_site_link_margin(
                     &dem,
                     from_lat,
                     from_lon,
@@ -391,8 +440,23 @@ impl Session {
                     tx_h.max(1.0),
                     &base,
                 )
-                .is_some()
             })
+            .collect())
+    }
+
+    /// Goal-seek / peak links: same per-endpoint antenna model as site mesh (Weak counts as linked).
+    pub fn seek_repeater_link_batch(
+        &self,
+        from_lat: f64,
+        from_lon: f64,
+        from_tx_h: f64,
+        endpoints: &[(f64, f64, f64)],
+        rf_json: &str,
+    ) -> Result<Vec<bool>> {
+        Ok(self
+            .seek_repeater_link_margins(from_lat, from_lon, from_tx_h, endpoints, rf_json)?
+            .into_iter()
+            .map(|m| m.is_some())
             .collect())
     }
 

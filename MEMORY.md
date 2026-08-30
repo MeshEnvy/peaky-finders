@@ -120,7 +120,7 @@ preset → CovRequest JSON (rf_json)
 | Home modem/environment catalogs | Implemented |
 | SSE `/events` | Implemented (hello + keepalive; publish on warm TBD) |
 | Links mesh, warm scheduler | Implemented (P2P mesh, warm queue, SSE) |
-| Goal seek (`/seek/candidates`, scan-progress, plan, convert-to-sites) | Implemented (P2P via `seek.rs` + `seek_repeater_link_batch`). Convert seeds site-mesh pairs for new slugs and bypasses tag-filter on the whole path |
+| Goal seek (`/seek/candidates`, scan-progress, plan, convert-to-sites) | Implemented (P2P via `seek.rs` + `seek_repeater_link_margins`). Two generators, one ranker: **approach** (goal out of hop range) = local-max peaks + forward reach; **landing** (goal in hop range, start has no RF) = elevation-blind grid over start-disc ∩ goal-disc (RF lens, not an angle), coarse then refine around completers, spatial diversify. Rank: completes goal → extra P2P into start-hop-disc sites → weaker-leg margin → forward reach. Elevation is not a score. Convert seeds site-mesh pairs for new slugs and bypasses tag-filter on the whole path |
 | Land list + layer GeoJSON | Implemented (plus built-in eligible overlay GeoJSON, digest-cached) |
 | Skadi map tiles (`/api/dem/hillshade`, `/api/dem/terrarium`) | Implemented — PNG cache `<project>/.peaky/cache/skadi/.map_tiles/v3/`; render only when all required HGT on disk (503 until ready); hillshade uses padded HGT ring; **AOI HGT prefetch on project page load** (background); map tile prefetch capped (`PEAKY_DEM_MAP_QUEUE_CAP`, default 128) |
 

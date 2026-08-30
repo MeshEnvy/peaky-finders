@@ -19,11 +19,22 @@ use splatter::Session;
 
 use crate::rf::{pair_within_hop_range, preset_to_request, default_repeater_tx_height_m, resolved_site_tx_height_m, rf_json_for_preset};
 use crate::seek_progress::SeekProgressHub;
+use crate::seek_rank::{
+    angle_diff_deg, bearing_deg, cmp_seek_peak_rank, forward_reach_m, haversine_m, peak_is_past_goal,
+    SeekRankScore,
+};
 
 const SEEK_EXCLUDE_PROXIMITY_M: f64 = 100.0;
 const SEEK_GOAL_DEDUP_M: f64 = 1500.0;
 const SEEK_SITE_PEAK_DEDUP_M: f64 = 500.0;
 const SEEK_PEAK_BIN_MIN_M: f64 = 500.0;
+/// Landing grid: start hop disc ∩ goal hop disc. Step is coarse; completers get a fine pass.
+const SEEK_LANDING_COARSE_M: f64 = 1500.0;
+const SEEK_LANDING_FINE_M: f64 = 400.0;
+const SEEK_LANDING_REFINE_RADIUS_M: f64 = 1200.0;
+const SEEK_CORRIDOR_END_PAD_M: f64 = 2000.0;
+const SEEK_CANDIDATE_SEP_M: f64 = 800.0;
+const SEEK_MESH_NEIGHBOR_CAP: usize = 32;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -340,27 +351,6 @@ pub fn resolve_seek_peak_bin_size_m(seek_cfg: &SeekConfig, requested: Option<f64
     Ok(SEEK_PEAK_BIN_MIN_M.max(ceiling.min(req)))
 }
 
-fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
-    splatter::propagate::haversine_m(lat1, lon1, lat2, lon2)
-}
-
-fn bearing_deg(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
-    let phi1 = lat1.to_radians();
-    let phi2 = lat2.to_radians();
-    let dlambda = (lon2 - lon1).to_radians();
-    let y = dlambda.sin() * phi2.cos();
-    let x = phi1.cos() * phi2.sin() - phi1.sin() * phi2.cos() * dlambda.cos();
-    (y.atan2(x).to_degrees() + 360.0) % 360.0
-}
-
-fn angle_diff_deg(a: f64, b: f64) -> f64 {
-    let mut d = (a - b).abs() % 360.0;
-    if d > 180.0 {
-        d = 360.0 - d;
-    }
-    d
-}
-
 /// Half-width of the goal-direction search wedge at ``hop_m`` (degrees). Narrow at the source, widens with distance.
 fn seek_wedge_half_angle_deg(hop_m: f64, hop_radius_m: f64) -> f64 {
     const NEAR_DEG: f64 = 10.0;
@@ -409,76 +399,236 @@ fn filter_peaks_in_goal_wedge(
     goal_lon: f64,
     hop_radius_m: f64,
 ) -> Vec<(f64, f64, f64)> {
-    for scale in [1.0, 1.5, 2.25, 4.0] {
-        let filtered: Vec<_> = peaks
-            .iter()
-            .filter(|(lon, lat, _)| {
-                peak_in_goal_wedge(
-                    from_lat,
-                    from_lon,
-                    goal_lat,
-                    goal_lon,
-                    *lat,
-                    *lon,
-                    hop_radius_m,
-                    scale,
-                )
-            })
-            .copied()
-            .collect();
-        if !filtered.is_empty() {
-            return filtered;
-        }
-    }
     peaks
+        .into_iter()
+        .filter(|(lon, lat, _)| {
+            peak_in_goal_wedge(
+                from_lat,
+                from_lon,
+                goal_lat,
+                goal_lon,
+                *lat,
+                *lon,
+                hop_radius_m,
+                1.0,
+            )
+        })
+        .collect()
 }
 
-/// Hop distance projected onto the source→goal bearing (m). Backward/side hops score lower.
-fn forward_reach_m(
-    from_lat: f64,
-    from_lon: f64,
-    goal_lat: f64,
-    goal_lon: f64,
-    peak_lat: f64,
-    peak_lon: f64,
-) -> f64 {
-    let hop_m = haversine_m(from_lat, from_lon, peak_lat, peak_lon);
-    if hop_m <= 0.0 {
+/// Max cross-track distance that stays inside both hop discs.
+fn landing_half_width_m(along_m: f64, goal_dist_m: f64, hop_m: f64) -> f64 {
+    let remain = goal_dist_m - along_m;
+    if along_m < 0.0 || remain < 0.0 {
         return 0.0;
     }
-    let goal_bearing = bearing_deg(from_lat, from_lon, goal_lat, goal_lon);
-    let peak_bearing = bearing_deg(from_lat, from_lon, peak_lat, peak_lon);
-    let delta = angle_diff_deg(peak_bearing, goal_bearing).to_radians();
-    hop_m * delta.cos().max(0.0)
+    let from_ok = hop_m * hop_m - along_m * along_m;
+    let goal_ok = hop_m * hop_m - remain * remain;
+    if from_ok <= 0.0 || goal_ok <= 0.0 {
+        return 0.0;
+    }
+    from_ok.sqrt().min(goal_ok.sqrt())
 }
 
-/// Prefer farthest qualifying hops in the goal wedge, then elevation, then goal proximity.
-fn seek_peak_rank_key(
+/// Elevation-blind grid over start-disc ∩ goal-disc, short of the destination.
+fn goal_corridor_sample_locs(
     from_lat: f64,
     from_lon: f64,
     goal_lat: f64,
     goal_lon: f64,
-    peak_lon: f64,
-    peak_lat: f64,
-    elev_m: f64,
-) -> (f64, f64, f64) {
-    let hop_m = haversine_m(from_lat, from_lon, peak_lat, peak_lon);
-    let goal_dist = haversine_m(peak_lat, peak_lon, goal_lat, goal_lon);
-    (hop_m, elev_m, -goal_dist)
+    hop_m: f64,
+    step_m: f64,
+) -> Vec<(f64, f64)> {
+    let goal_dist = haversine_m(from_lat, from_lon, goal_lat, goal_lon);
+    if goal_dist < SEEK_CORRIDOR_END_PAD_M * 2.0 + step_m {
+        return Vec::new();
+    }
+    let bearing = bearing_deg(from_lat, from_lon, goal_lat, goal_lon);
+    let perp = (bearing + 90.0) % 360.0;
+    let along_end = goal_dist - SEEK_CORRIDOR_END_PAD_M;
+    let mut out = Vec::new();
+    let mut along = SEEK_CORRIDOR_END_PAD_M;
+    while along <= along_end + 1.0 {
+        let (clat, clon) = destination_point(from_lat, from_lon, bearing, along);
+        let half_w = landing_half_width_m(along, goal_dist, hop_m).max(step_m);
+        let mut lateral = -half_w;
+        while lateral <= half_w + 1.0 {
+            let (lat, lon) = if lateral.abs() < 1.0 {
+                (clat, clon)
+            } else {
+                let dir = if lateral >= 0.0 {
+                    perp
+                } else {
+                    (perp + 180.0) % 360.0
+                };
+                destination_point(clat, clon, dir, lateral.abs())
+            };
+            out.push((lat, lon));
+            lateral += step_m;
+        }
+        along += step_m;
+    }
+    out
 }
 
-fn cmp_seek_peak_rank(
+fn landing_refine_locs(seeds: &[(f64, f64)], radius_m: f64, step_m: f64) -> Vec<(f64, f64)> {
+    let mut out = Vec::new();
+    for &(lat0, lon0) in seeds {
+        let mut north = -radius_m;
+        while north <= radius_m + 1.0 {
+            let mut east = -radius_m;
+            while east <= radius_m + 1.0 {
+                if north * north + east * east <= radius_m * radius_m + 1.0 {
+                    let (lat, lon) = destination_point(lat0, lon0, 0.0, north);
+                    let (lat, lon) = destination_point(lat, lon, 90.0, east);
+                    out.push((lat, lon));
+                }
+                east += step_m;
+            }
+            north += step_m;
+        }
+    }
+    out
+}
+
+fn sample_landing_points(
+    session: &Session,
+    land_index: &LandFilterIndex,
+    locs: &[(f64, f64)],
+    exclude: &[SeekPoint],
+) -> Vec<(f64, f64, f64)> {
+    let mut samples = Vec::new();
+    for &(lat, lon) in locs {
+        if near_excluded(lat, lon, exclude) || !land_index.contains(lon, lat) {
+            continue;
+        }
+        let elev = session.sample_elev_m(lat, lon);
+        if elev <= 1.0 {
+            continue;
+        }
+        samples.push((lon, lat, elev));
+    }
+    samples
+}
+
+fn sample_goal_corridor(
+    session: &Session,
+    land_index: &LandFilterIndex,
     from_lat: f64,
     from_lon: f64,
     goal_lat: f64,
     goal_lon: f64,
-    a: (f64, f64, f64),
-    b: (f64, f64, f64),
-) -> std::cmp::Ordering {
-    let ka = seek_peak_rank_key(from_lat, from_lon, goal_lat, goal_lon, a.0, a.1, a.2);
-    let kb = seek_peak_rank_key(from_lat, from_lon, goal_lat, goal_lon, b.0, b.1, b.2);
-    // Farthest hop / highest elevation should sort first.
-    kb.partial_cmp(&ka).unwrap_or(std::cmp::Ordering::Equal)
+    hop_m: f64,
+    exclude: &[SeekPoint],
+) -> Vec<(f64, f64, f64)> {
+    let locs = goal_corridor_sample_locs(
+        from_lat,
+        from_lon,
+        goal_lat,
+        goal_lon,
+        hop_m,
+        SEEK_LANDING_COARSE_M,
+    );
+    sample_landing_points(session, land_index, &locs, exclude)
+}
+
+/// Preset sites already inside the start hop disc (local mesh). Not wedge-clipped.
+fn local_mesh_neighbors(
+    preset: &Preset,
+    from_lat: f64,
+    from_lon: f64,
+    goal_lat: f64,
+    goal_lon: f64,
+    exclude: &[SeekPoint],
+    exclude_slugs: &HashSet<String>,
+) -> Vec<(f64, f64, f64)> {
+    let mut rows: Vec<(f64, f64, f64)> = preset
+        .sites
+        .iter()
+        .filter_map(|(slug, site)| {
+            if exclude_slugs.contains(slug) {
+                return None;
+            }
+            let lat = site.loc[0];
+            let lon = site.loc[1];
+            if haversine_m(from_lat, from_lon, lat, lon) <= 50.0 {
+                return None;
+            }
+            if haversine_m(goal_lat, goal_lon, lat, lon) <= SEEK_GOAL_DEDUP_M {
+                return None;
+            }
+            if !pair_within_hop_range(preset, from_lat, from_lon, lat, lon) {
+                return None;
+            }
+            if near_excluded(lat, lon, exclude) {
+                return None;
+            }
+            let h = resolved_site_tx_height_m(preset, site);
+            Some((lat, lon, h))
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        haversine_m(from_lat, from_lon, a.0, a.1)
+            .partial_cmp(&haversine_m(from_lat, from_lon, b.0, b.1))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    rows.truncate(SEEK_MESH_NEIGHBOR_CAP);
+    rows
+}
+
+fn count_candidate_mesh_links(
+    session: &Session,
+    mesh: &[(f64, f64, f64)],
+    candidates: &[(f64, f64, f64)],
+    hop_m: f64,
+    rf_json: &str,
+    ensure_active: &mut impl FnMut() -> Result<(), SeekRunError>,
+) -> Result<Vec<u32>, SeekRunError> {
+    let mut counts = vec![0u32; candidates.len()];
+    if mesh.is_empty() || candidates.is_empty() {
+        return Ok(counts);
+    }
+    let points: Vec<(f64, f64)> = mesh
+        .iter()
+        .map(|(lat, lon, _)| (*lat, *lon))
+        .chain(candidates.iter().map(|(lat, lon, _)| (*lat, *lon)))
+        .collect();
+    session
+        .ensure_tiles_for_points(&points, hop_m)
+        .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
+    for &(site_lat, site_lon, site_h) in mesh {
+        ensure_active()?;
+        let flags = session
+            .seek_repeater_link_batch(site_lat, site_lon, site_h, candidates, rf_json)
+            .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
+        for (i, ok) in flags.into_iter().enumerate() {
+            if ok {
+                counts[i] += 1;
+            }
+        }
+    }
+    Ok(counts)
+}
+
+fn take_spatially_diverse(
+    ranked: Vec<((f64, f64, f64), bool)>,
+    min_sep_m: f64,
+    cap: usize,
+) -> Vec<((f64, f64, f64), bool)> {
+    let mut taken = Vec::new();
+    for item in ranked {
+        if taken.len() >= cap {
+            break;
+        }
+        let (lon, lat, _) = item.0;
+        let too_close = taken.iter().any(|((olon, olat, _), _)| {
+            haversine_m(lat, lon, *olat, *olon) <= min_sep_m
+        });
+        if !too_close {
+            taken.push(item);
+        }
+    }
+    taken
 }
 
 fn destination_point(lat: f64, lon: f64, bearing_deg: f64, distance_m: f64) -> (f64, f64) {
@@ -508,7 +658,7 @@ fn hop_disc_wgs84(lat: f64, lon: f64, radius_m: f64) -> Polygon<f64> {
     Polygon::new(LineString::from(coords), vec![])
 }
 
-/// Forward goal-direction wedge (widest scale used by [`filter_peaks_in_goal_wedge`]).
+/// Forward goal-direction wedge (scale 1.0, same as [`filter_peaks_in_goal_wedge`]).
 fn goal_wedge_polygon(
     from_lat: f64,
     from_lon: f64,
@@ -542,6 +692,39 @@ fn goal_wedge_polygon(
     Polygon::new(LineString::from(coords), vec![])
 }
 
+fn bbox_intersection(
+    a: (f64, f64, f64, f64),
+    b: (f64, f64, f64, f64),
+) -> (f64, f64, f64, f64) {
+    (
+        a.0.max(b.0),
+        a.1.max(b.1),
+        a.2.min(b.2),
+        a.3.min(b.3),
+    )
+}
+
+fn hop_disc_bbox(lat: f64, lon: f64, hop_m: f64) -> (f64, f64, f64, f64) {
+    hop_disc_wgs84(lat, lon, hop_m)
+        .bounding_rect()
+        .map(|r| (r.min().x, r.min().y, r.max().x, r.max().y))
+        .unwrap_or((lon, lat, lon, lat))
+}
+
+/// Land/DEM clip for landing: start hop disc ∩ goal hop disc.
+fn landing_rf_lens_bbox(
+    from_lat: f64,
+    from_lon: f64,
+    goal_lat: f64,
+    goal_lon: f64,
+    hop_m: f64,
+) -> (f64, f64, f64, f64) {
+    bbox_intersection(
+        hop_disc_bbox(from_lat, from_lon, hop_m),
+        hop_disc_bbox(goal_lat, goal_lon, hop_m),
+    )
+}
+
 /// Bounding box for peak DEM scan: goal wedge at hop range (scale 1.0, not map viewport).
 fn seek_goal_wedge_scan_bbox(
     from_lat: f64,
@@ -558,6 +741,23 @@ fn seek_goal_wedge_scan_bbox(
     hop.bounding_rect()
         .map(|r| (r.min().x, r.min().y, r.max().x, r.max().y))
         .unwrap_or((from_lon, from_lat, from_lon, from_lat))
+}
+
+/// When the goal is already inside hop range, only scan short of the destination.
+fn seek_peak_scan_radius_m(
+    hop_m: f64,
+    from_lat: f64,
+    from_lon: f64,
+    goal_lat: f64,
+    goal_lon: f64,
+    goal_in_hop_range: bool,
+) -> f64 {
+    if !goal_in_hop_range {
+        return hop_m;
+    }
+    haversine_m(from_lat, from_lon, goal_lat, goal_lon)
+        .min(hop_m)
+        .max(1.0)
 }
 
 fn geometry_to_multi(geom: &Geometry<f64>) -> geo::MultiPolygon<f64> {
@@ -670,6 +870,7 @@ struct RfCandidate {
     is_site: bool,
     site_slug: Option<String>,
     site_name: Option<String>,
+    completes_goal: bool,
 }
 
 fn collect_reachable_site_rows(
@@ -683,7 +884,7 @@ fn collect_reachable_site_rows(
     exclude: &[SeekPoint],
     exclude_slugs: &HashSet<String>,
 ) -> Vec<(String, String, f64, f64, f64)> {
-    let mut rows: Vec<(String, String, f64, f64, f64)> = preset
+    let rows: Vec<(String, String, f64, f64, f64)> = preset
         .sites
         .iter()
         .filter_map(|(slug, site)| {
@@ -701,7 +902,11 @@ fn collect_reachable_site_rows(
             if !land.contains(lon, lat) {
                 return None;
             }
-            if !peak_in_goal_wedge(
+            if pair_within_hop_range(preset, from_lat, from_lon, goal_lat, goal_lon) {
+                if !pair_within_hop_range(preset, goal_lat, goal_lon, lat, lon) {
+                    return None;
+                }
+            } else if !peak_in_goal_wedge(
                 from_lat,
                 from_lon,
                 goal_lat,
@@ -717,36 +922,70 @@ fn collect_reachable_site_rows(
             Some((slug.clone(), site.name.clone(), lon, lat, elev))
         })
         .collect();
-    rows.sort_by(|a, b| {
+    rows
+}
+
+fn rank_seek_candidates(
+    items: Vec<(f64, f64, f64)>,
+    scores: Vec<SeekRankScore>,
+    from_lat: f64,
+    from_lon: f64,
+    goal_lat: f64,
+    goal_lon: f64,
+) -> Vec<((f64, f64, f64), bool)> {
+    let mut zipped: Vec<_> = items.into_iter().zip(scores).collect();
+    zipped.sort_by(|a, b| {
         cmp_seek_peak_rank(
             from_lat,
             from_lon,
             goal_lat,
             goal_lon,
-            (a.2, a.3, a.4),
-            (b.2, b.3, b.4),
+            a.0,
+            b.0,
+            a.1,
+            b.1,
         )
     });
-    rows.into_iter()
-        .map(|(slug, name, lon, lat, elev)| (slug, name, lon, lat, elev))
+    zipped
+        .into_iter()
+        .map(|(peak, score)| (peak, score.completes))
         .collect()
 }
 
-fn dedupe_peaks_near_sites(
-    peaks: Vec<(f64, f64, f64)>,
-    site_rows: &[(String, String, f64, f64, f64)],
-) -> Vec<(f64, f64, f64)> {
-    if site_rows.is_empty() {
-        return peaks;
+fn batch_goal_margins(
+    session: &Session,
+    goal_lat: f64,
+    goal_lon: f64,
+    goal_tx_h: f64,
+    hop_m: f64,
+    endpoints: &[(f64, f64, f64)],
+    rf_json: &str,
+) -> Result<Vec<Option<f64>>, SeekRunError> {
+    let mut margins = vec![None; endpoints.len()];
+    let mut batch_idx = Vec::new();
+    let mut batch_eps = Vec::new();
+    for (i, &(lat, lon, h)) in endpoints.iter().enumerate() {
+        if haversine_m(lat, lon, goal_lat, goal_lon) <= hop_m {
+            batch_idx.push(i);
+            batch_eps.push((lat, lon, h));
+        }
     }
-    peaks
-        .into_iter()
-        .filter(|(lon, lat, _)| {
-            !site_rows.iter().any(|(_, _, site_lon, site_lat, _)| {
-                haversine_m(*lat, *lon, *site_lat, *site_lon) <= SEEK_SITE_PEAK_DEDUP_M
-            })
-        })
-        .collect()
+    if batch_eps.is_empty() {
+        return Ok(margins);
+    }
+    let points: Vec<(f64, f64)> = std::iter::once((goal_lat, goal_lon))
+        .chain(batch_eps.iter().map(|(lat, lon, _)| (*lat, *lon)))
+        .collect();
+    session
+        .ensure_tiles_for_points(&points, hop_m)
+        .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
+    let rf = session
+        .seek_repeater_link_margins(goal_lat, goal_lon, goal_tx_h, &batch_eps, rf_json)
+        .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
+    for (j, i) in batch_idx.iter().enumerate() {
+        margins[*i] = rf.get(j).copied().flatten();
+    }
+    Ok(margins)
 }
 
 fn load_seek_candidates_body(
@@ -757,7 +996,7 @@ fn load_seek_candidates_body(
     scan_gen: u64,
 ) -> Result<Value, SeekRunError> {
     let scan_t0 = Instant::now();
-    let ensure_active = || {
+    let mut ensure_active = || {
         if !progress.active(&req.slug, scan_gen) {
             return Err(SeekRunError::Cancelled);
         }
@@ -775,13 +1014,38 @@ fn load_seek_candidates_body(
         _ => 50.0,
     };
     let hop_m = hop_km * 1000.0;
-    let scan_bbox = seek_goal_wedge_scan_bbox(
+    let goal_in_hop_range = pair_within_hop_range(
+        &preset,
         req.from_lat,
         req.from_lon,
         req.goal_lat,
         req.goal_lon,
-        hop_m,
     );
+    let scan_radius_m = seek_peak_scan_radius_m(
+        hop_m,
+        req.from_lat,
+        req.from_lon,
+        req.goal_lat,
+        req.goal_lon,
+        goal_in_hop_range,
+    );
+    let scan_bbox = if goal_in_hop_range {
+        landing_rf_lens_bbox(
+            req.from_lat,
+            req.from_lon,
+            req.goal_lat,
+            req.goal_lon,
+            hop_m,
+        )
+    } else {
+        seek_goal_wedge_scan_bbox(
+            req.from_lat,
+            req.from_lon,
+            req.goal_lat,
+            req.goal_lon,
+            scan_radius_m,
+        )
+    };
     let clip = LonLatBBox::from_tuple(scan_bbox).padded(0.05);
 
     ensure_active()?;
@@ -802,6 +1066,33 @@ fn load_seek_candidates_body(
     let eligible_digest = land_parts.digest.clone();
     let land_index = land_parts.index();
     let mask_dir = eligible_land_dem_mask_dir(&req.preset_path, &eligible_digest);
+
+    let goal_tx_h = default_repeater_tx_height_m(&preset);
+    let tx_height = resolve_seek_from_tx_height_m(&preset, req.from_lat, req.from_lon);
+    let rf_json = rf_json_for_preset(&preset).map_err(|e| SeekRunError::User(e.to_string(), 422))?;
+    let mut goal_rf_from = false;
+    if goal_in_hop_range {
+        ensure_active()?;
+        session
+            .ensure_tiles_for_points(
+                &[(req.from_lat, req.from_lon), (req.goal_lat, req.goal_lon)],
+                hop_m,
+            )
+            .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
+        goal_rf_from = session
+            .seek_repeater_link_batch(
+                req.from_lat,
+                req.from_lon,
+                tx_height,
+                &[(req.goal_lat, req.goal_lon, goal_tx_h)],
+                &rf_json,
+            )
+            .map_err(|e| SeekRunError::User(e.to_string(), 503))?
+            .first()
+            .copied()
+            .unwrap_or(false);
+    }
+    let use_ridge_bins = goal_in_hop_range && !goal_rf_from;
 
     progress.update(
         &req.slug,
@@ -847,49 +1138,58 @@ fn load_seek_candidates_body(
             "peak_scan",
             0,
             0,
-            "Scanning ridge bins in goal wedge…",
+            if use_ridge_bins {
+                "Sampling the RF-reachable lens…"
+            } else {
+                "Scanning ridge bins in goal wedge…"
+            },
         );
-        let binned = session
-            .disc_binned_peaks(
-                req.from_lat,
-                req.from_lon,
-                hop_m,
-                None,
-                Some(scan_bbox),
-                Some(scan_wedge),
-                None,
-                peak_bin_m,
-                Some(&land_index),
-                Some(&mask_dir),
-                None,
-            )
-            .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
-        let n = binned.len();
-        let mut peaks: Vec<(f64, f64, f64)> = binned
-            .into_iter()
-            .filter(|p| !near_excluded(p.lat, p.lon, &req.exclude))
-            .map(|p| (p.lon, p.lat, p.elev_m))
-            .collect();
-        peaks = filter_peaks_in_goal_wedge(
-            peaks,
-            req.from_lat,
-            req.from_lon,
-            req.goal_lat,
-            req.goal_lon,
-            hop_m,
-        );
-        let n_wedge = peaks.len();
-        peaks.sort_by(|a, b| {
-            cmp_seek_peak_rank(
+        if use_ridge_bins {
+            let peaks = sample_goal_corridor(
+                session,
+                &land_index,
                 req.from_lat,
                 req.from_lon,
                 req.goal_lat,
                 req.goal_lon,
-                *a,
-                *b,
-            )
-        });
-        (peaks, n, n_wedge)
+                hop_m,
+                &req.exclude,
+            );
+            let n = peaks.len();
+            (peaks, n, n)
+        } else {
+            let binned = session
+                .disc_binned_peaks(
+                    req.from_lat,
+                    req.from_lon,
+                    scan_radius_m,
+                    None,
+                    Some(scan_bbox),
+                    Some(scan_wedge),
+                    None,
+                    peak_bin_m,
+                    Some(&land_index),
+                    Some(&mask_dir),
+                    None,
+                )
+                .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
+            let n = binned.len();
+            let peaks: Vec<(f64, f64, f64)> = binned
+                .into_iter()
+                .filter(|p| !near_excluded(p.lat, p.lon, &req.exclude))
+                .map(|p| (p.lon, p.lat, p.elev_m))
+                .collect();
+            let peaks = filter_peaks_in_goal_wedge(
+                peaks,
+                req.from_lat,
+                req.from_lon,
+                req.goal_lat,
+                req.goal_lon,
+                scan_radius_m,
+            );
+            let n_wedge = peaks.len();
+            (peaks, n, n_wedge)
+        }
     };
 
     progress.update(
@@ -898,74 +1198,29 @@ fn load_seek_candidates_body(
         "peak_links",
         filtered.len() as i32,
         n_peaks_scanned.max(1) as i32,
-        &format!("Found {} peak(s) in goal wedge", filtered.len()),
+        &format!(
+            "Found {} candidate(s) {}",
+            filtered.len(),
+            if use_ridge_bins {
+                "on the start–goal corridor"
+            } else {
+                "in goal wedge"
+            }
+        ),
     );
 
-    let tx_height = resolve_seek_from_tx_height_m(&preset, req.from_lat, req.from_lon);
-    let rf_json = rf_json_for_preset(&preset).map_err(|e| SeekRunError::User(e.to_string(), 422))?;
     let cap = seek_cfg.max_candidates as usize;
     let mut capped: Vec<(f64, f64, f64)> = Vec::new();
-    let mut peak_rf_viable_flags: Vec<bool> = Vec::new();
+    let mut peak_completes_flags: Vec<bool> = Vec::new();
     let mut n_peak_rf_viable_in_wedge = 0usize;
 
-    if !filtered.is_empty() {
-        ensure_active()?;
-        progress.update(
-            &req.slug,
-            scan_gen,
-            "rf",
-            0,
-            filtered.len().max(1) as i32,
-            &format!("Checking RF on {} wedge peak(s)…", filtered.len()),
-        );
-        let points: Vec<(f64, f64)> = std::iter::once((req.from_lat, req.from_lon))
-            .chain(filtered.iter().map(|(lon, lat, _)| (*lat, *lon)))
-            .collect();
-        session
-            .ensure_tiles_for_points(&points, hop_km * 1000.0)
-            .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
-        let pairs: Vec<(f64, f64, f64)> = filtered
-            .iter()
-            .map(|(lon, lat, _)| (*lat, *lon, default_repeater_tx_height_m(&preset)))
-            .collect();
-        const RF_CHUNK: usize = 512;
-        let mut peak_rf: Vec<bool> = Vec::with_capacity(filtered.len());
-        for chunk in pairs.chunks(RF_CHUNK) {
-            ensure_active()?;
-            peak_rf.extend(
-                session
-                    .seek_repeater_link_batch(
-                        req.from_lat,
-                        req.from_lon,
-                        tx_height,
-                        chunk,
-                        &rf_json,
-                    )
-                    .map_err(|e| SeekRunError::User(e.to_string(), 503))?,
-            );
-        }
-        n_peak_rf_viable_in_wedge = peak_rf.iter().filter(|v| **v).count();
-        let mut viable: Vec<(f64, f64, f64)> = filtered
-            .iter()
-            .copied()
-            .zip(peak_rf.iter().copied())
-            .filter_map(|(peak, ok)| ok.then_some(peak))
-            .collect();
-        viable.sort_by(|a, b| {
-            cmp_seek_peak_rank(
-                req.from_lat,
-                req.from_lon,
-                req.goal_lat,
-                req.goal_lon,
-                *a,
-                *b,
-            )
-        });
-        capped = viable.into_iter().take(cap).collect();
-        peak_rf_viable_flags = vec![true; capped.len()];
-    }
+    let goal_on_eligible = goal_in_hop_range && land_index.contains(req.goal_lon, req.goal_lat);
+    let goal_near_prior_hop =
+        goal_in_hop_range && near_excluded(req.goal_lat, req.goal_lon, &req.exclude);
+    let goal_hop_eligible = goal_in_hop_range && goal_on_eligible && !goal_near_prior_hop;
+    let goal_finish_eligible = goal_in_hop_range;
 
-    let site_rows = collect_reachable_site_rows(
+    let mut site_rows = collect_reachable_site_rows(
         &preset,
         &land_index,
         req.from_lat,
@@ -976,28 +1231,331 @@ fn load_seek_candidates_body(
         &req.exclude,
         &req.exclude_slugs,
     );
-
-    capped = dedupe_peaks_near_sites(capped, &site_rows);
-    if peak_rf_viable_flags.len() > capped.len() {
-        peak_rf_viable_flags.truncate(capped.len());
-    } else if peak_rf_viable_flags.len() < capped.len() {
-        peak_rf_viable_flags.extend(std::iter::repeat(false).take(
-            capped.len() - peak_rf_viable_flags.len(),
-        ));
+    if goal_in_hop_range {
+        site_rows.retain(|(_, _, lon, lat, _)| {
+            !peak_is_past_goal(
+                req.from_lat,
+                req.from_lon,
+                req.goal_lat,
+                req.goal_lon,
+                *lat,
+                *lon,
+            )
+        });
     }
 
-    let goal_in_hop_range = pair_within_hop_range(
-        &preset,
-        req.from_lat,
-        req.from_lon,
-        req.goal_lat,
-        req.goal_lon,
-    );
-    let goal_on_eligible = goal_in_hop_range && land_index.contains(req.goal_lon, req.goal_lat);
-    let goal_near_prior_hop =
-        goal_in_hop_range && near_excluded(req.goal_lat, req.goal_lon, &req.exclude);
-    let goal_hop_eligible = goal_in_hop_range && goal_on_eligible && !goal_near_prior_hop;
-    let goal_finish_eligible = goal_in_hop_range;
+    if !filtered.is_empty() {
+        ensure_active()?;
+        progress.update(
+            &req.slug,
+            scan_gen,
+            "rf",
+            0,
+            filtered.len().max(1) as i32,
+            &format!("Checking RF on {} candidate(s)…", filtered.len()),
+        );
+        let points: Vec<(f64, f64)> = std::iter::once((req.from_lat, req.from_lon))
+            .chain(filtered.iter().map(|(lon, lat, _)| (*lat, *lon)))
+            .collect();
+        session
+            .ensure_tiles_for_points(&points, hop_km * 1000.0)
+            .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
+        let pairs: Vec<(f64, f64, f64)> = filtered
+            .iter()
+            .map(|(lon, lat, _)| (*lat, *lon, goal_tx_h))
+            .collect();
+        const RF_CHUNK: usize = 512;
+        let mut from_margins: Vec<Option<f64>> = Vec::with_capacity(filtered.len());
+        for chunk in pairs.chunks(RF_CHUNK) {
+            ensure_active()?;
+            from_margins.extend(
+                session
+                    .seek_repeater_link_margins(
+                        req.from_lat,
+                        req.from_lon,
+                        tx_height,
+                        chunk,
+                        &rf_json,
+                    )
+                    .map_err(|e| SeekRunError::User(e.to_string(), 503))?,
+            );
+        }
+        n_peak_rf_viable_in_wedge = from_margins.iter().filter(|v| v.is_some()).count();
+        let mut viable: Vec<(f64, f64, f64)> = Vec::new();
+        let mut viable_from_margin: Vec<f64> = Vec::new();
+        for (peak, margin) in filtered.iter().copied().zip(from_margins) {
+            let Some(from_db) = margin else {
+                continue;
+            };
+            if goal_in_hop_range
+                && peak_is_past_goal(
+                    req.from_lat,
+                    req.from_lon,
+                    req.goal_lat,
+                    req.goal_lon,
+                    peak.1,
+                    peak.0,
+                )
+            {
+                continue;
+            }
+            viable.push(peak);
+            viable_from_margin.push(from_db);
+        }
+        let mut peak_eps: Vec<(f64, f64, f64)> = viable
+            .iter()
+            .map(|(lon, lat, _)| (*lat, *lon, goal_tx_h))
+            .collect();
+        ensure_active()?;
+        progress.update(
+            &req.slug,
+            scan_gen,
+            "rf_goal",
+            0,
+            viable.len().max(1) as i32,
+            "Checking which candidates reach the goal…",
+        );
+        let mut goal_margins = batch_goal_margins(
+            session,
+            req.goal_lat,
+            req.goal_lon,
+            goal_tx_h,
+            hop_m,
+            &peak_eps,
+            &rf_json,
+        )?;
+        if use_ridge_bins {
+            let seeds: Vec<(f64, f64)> = viable
+                .iter()
+                .zip(goal_margins.iter())
+                .filter(|(_, m)| m.is_some())
+                .map(|(peak, _)| (peak.1, peak.0))
+                .collect();
+            if !seeds.is_empty() {
+                progress.update(
+                    &req.slug,
+                    scan_gen,
+                    "rf_refine",
+                    0,
+                    seeds.len().max(1) as i32,
+                    "Refining around completing hops…",
+                );
+                let fine_locs = landing_refine_locs(
+                    &seeds,
+                    SEEK_LANDING_REFINE_RADIUS_M,
+                    SEEK_LANDING_FINE_M,
+                );
+                let mut fine = sample_landing_points(
+                    session,
+                    &land_index,
+                    &fine_locs,
+                    &req.exclude,
+                );
+                fine.retain(|p| {
+                    !viable.iter().any(|v| haversine_m(p.1, p.0, v.1, v.0) < 80.0)
+                });
+                if !fine.is_empty() {
+                    let fine_eps: Vec<(f64, f64, f64)> = fine
+                        .iter()
+                        .map(|(lon, lat, _)| (*lat, *lon, goal_tx_h))
+                        .collect();
+                    session
+                        .ensure_tiles_for_points(
+                            &fine_eps
+                                .iter()
+                                .map(|(lat, lon, _)| (*lat, *lon))
+                                .collect::<Vec<_>>(),
+                            hop_m,
+                        )
+                        .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
+                    let fine_from = session
+                        .seek_repeater_link_margins(
+                            req.from_lat,
+                            req.from_lon,
+                            tx_height,
+                            &fine_eps,
+                            &rf_json,
+                        )
+                        .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
+                    let fine_goal = batch_goal_margins(
+                        session,
+                        req.goal_lat,
+                        req.goal_lon,
+                        goal_tx_h,
+                        hop_m,
+                        &fine_eps,
+                        &rf_json,
+                    )?;
+                    for (i, peak) in fine.into_iter().enumerate() {
+                        let Some(from_db) = fine_from.get(i).copied().flatten() else {
+                            continue;
+                        };
+                        if peak_is_past_goal(
+                            req.from_lat,
+                            req.from_lon,
+                            req.goal_lat,
+                            req.goal_lon,
+                            peak.1,
+                            peak.0,
+                        ) {
+                            continue;
+                        }
+                        viable.push(peak);
+                        viable_from_margin.push(from_db);
+                        goal_margins.push(fine_goal.get(i).copied().flatten());
+                    }
+                }
+            }
+        }
+        peak_eps = viable
+            .iter()
+            .map(|(lon, lat, _)| (*lat, *lon, goal_tx_h))
+            .collect();
+        let mesh = local_mesh_neighbors(
+            &preset,
+            req.from_lat,
+            req.from_lon,
+            req.goal_lat,
+            req.goal_lon,
+            &req.exclude,
+            &req.exclude_slugs,
+        );
+        progress.update(
+            &req.slug,
+            scan_gen,
+            "rf_mesh",
+            0,
+            viable.len().max(1) as i32,
+            "Scoring extra links into the local mesh…",
+        );
+        let mesh_links = count_candidate_mesh_links(
+            session,
+            &mesh,
+            &peak_eps,
+            hop_m,
+            &rf_json,
+            &mut ensure_active,
+        )?;
+        let scores: Vec<SeekRankScore> = viable
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let goal_m = goal_margins.get(i).copied().flatten();
+                let from_m = viable_from_margin[i];
+                SeekRankScore {
+                    completes: goal_m.is_some(),
+                    mesh_links: mesh_links.get(i).copied().unwrap_or(0),
+                    margin_db: match goal_m {
+                        Some(g) => from_m.min(g),
+                        None => from_m,
+                    },
+                }
+            })
+            .collect();
+        let mut ranked = rank_seek_candidates(
+            viable,
+            scores,
+            req.from_lat,
+            req.from_lon,
+            req.goal_lat,
+            req.goal_lon,
+        );
+        if goal_in_hop_range && ranked.iter().any(|(_, completes)| *completes) {
+            ranked.retain(|(_, completes)| *completes);
+        }
+        let taken = take_spatially_diverse(ranked, SEEK_CANDIDATE_SEP_M, cap);
+        capped = taken.iter().map(|(peak, _)| *peak).collect();
+        peak_completes_flags = taken.iter().map(|(_, completes)| *completes).collect();
+    }
+
+    let site_eps: Vec<(f64, f64, f64)> = site_rows
+        .iter()
+        .map(|(slug, _, lon, lat, _)| {
+            let tx_h = preset
+                .sites
+                .get(slug)
+                .map(|site| resolved_site_tx_height_m(&preset, site))
+                .unwrap_or(goal_tx_h);
+            (*lat, *lon, tx_h)
+        })
+        .collect();
+    let site_goal_margins = if site_eps.is_empty() {
+        Vec::new()
+    } else {
+        ensure_active()?;
+        batch_goal_margins(
+            session,
+            req.goal_lat,
+            req.goal_lon,
+            goal_tx_h,
+            hop_m,
+            &site_eps,
+            &rf_json,
+        )?
+    };
+    let mut site_completes: Vec<bool> = site_goal_margins.iter().map(|m| m.is_some()).collect();
+    if !site_rows.is_empty() {
+        let mut order: Vec<usize> = (0..site_rows.len()).collect();
+        order.sort_by(|&i, &j| {
+            let a = &site_rows[i];
+            let b = &site_rows[j];
+            cmp_seek_peak_rank(
+                req.from_lat,
+                req.from_lon,
+                req.goal_lat,
+                req.goal_lon,
+                (a.2, a.3, a.4),
+                (b.2, b.3, b.4),
+                SeekRankScore {
+                    completes: site_completes.get(i).copied().unwrap_or(false),
+                    mesh_links: 0,
+                    margin_db: site_goal_margins.get(i).copied().flatten().unwrap_or(0.0),
+                },
+                SeekRankScore {
+                    completes: site_completes.get(j).copied().unwrap_or(false),
+                    mesh_links: 0,
+                    margin_db: site_goal_margins.get(j).copied().flatten().unwrap_or(0.0),
+                },
+            )
+        });
+        site_rows = order.iter().map(|&i| site_rows[i].clone()).collect();
+        site_completes = order
+            .iter()
+            .map(|&i| site_completes.get(i).copied().unwrap_or(false))
+            .collect();
+        if goal_in_hop_range && site_completes.iter().any(|c| *c) {
+            let keep: Vec<bool> = site_completes.clone();
+            let mut next_rows = Vec::new();
+            let mut next_flags = Vec::new();
+            for (i, row) in site_rows.into_iter().enumerate() {
+                if keep.get(i).copied().unwrap_or(false) {
+                    next_rows.push(row);
+                    next_flags.push(true);
+                }
+            }
+            site_rows = next_rows;
+            site_completes = next_flags;
+        }
+    }
+
+    let mut peak_pairs: Vec<((f64, f64, f64), bool)> = capped
+        .into_iter()
+        .zip(peak_completes_flags)
+        .collect();
+    peak_pairs.retain(|((lon, lat, _), _)| {
+        !site_rows.iter().any(|(_, _, site_lon, site_lat, _)| {
+            haversine_m(*lat, *lon, *site_lat, *site_lon) <= SEEK_SITE_PEAK_DEDUP_M
+        })
+    });
+    if goal_finish_eligible {
+        peak_pairs.retain(|((lon, lat, _), _)| {
+            haversine_m(req.goal_lat, req.goal_lon, *lat, *lon) > SEEK_GOAL_DEDUP_M
+        });
+        peak_pairs.truncate(cap);
+    }
+    capped = peak_pairs.iter().map(|(peak, _)| *peak).collect();
+    peak_completes_flags = peak_pairs.iter().map(|(_, completes)| *completes).collect();
+    let peak_rf_viable_flags = vec![true; capped.len()];
 
     let goal_elev = req.goal_elev_m.unwrap_or(0.0);
     let goal_row = if goal_finish_eligible {
@@ -1005,19 +1563,6 @@ fn load_seek_candidates_body(
     } else {
         None
     };
-
-    if goal_row.is_some() {
-        capped = dedupe_peaks_near_sites(
-            capped
-                .into_iter()
-                .filter(|(lon, lat, _)| {
-                    haversine_m(req.goal_lat, req.goal_lon, *lat, *lon) > SEEK_GOAL_DEDUP_M
-                })
-                .take(cap)
-                .collect(),
-            &site_rows,
-        );
-    }
 
     let mut rf_candidates: Vec<RfCandidate> = Vec::new();
     if let Some((lon, lat, elev_m)) = goal_row {
@@ -1030,9 +1575,10 @@ fn load_seek_candidates_body(
             is_site: false,
             site_slug: None,
             site_name: None,
+            completes_goal: goal_rf_from,
         });
     }
-    for (slug, name, lon, lat, elev_m) in &site_rows {
+    for (idx, (slug, name, lon, lat, elev_m)) in site_rows.iter().enumerate() {
         rf_candidates.push(RfCandidate {
             lon: *lon,
             lat: *lat,
@@ -1042,6 +1588,7 @@ fn load_seek_candidates_body(
             is_site: true,
             site_slug: Some(slug.clone()),
             site_name: Some(name.clone()),
+            completes_goal: site_completes.get(idx).copied().unwrap_or(false),
         });
     }
     let peak_count = capped.len();
@@ -1055,6 +1602,7 @@ fn load_seek_candidates_body(
             is_site: false,
             site_slug: None,
             site_name: None,
+            completes_goal: peak_completes_flags.get(idx).copied().unwrap_or(false),
         });
     }
 
@@ -1132,6 +1680,7 @@ fn load_seek_candidates_body(
             "forward_reach_km": (forward_km * 10.0).round() / 10.0,
             "bearing_delta_deg": bearing_delta.round(),
             "rf_viable": viable,
+            "completes_goal": row.completes_goal,
             "goal_distance_km": (haversine_m(row.lat, row.lon, req.goal_lat, req.goal_lon) / 1000.0 * 10.0).round() / 10.0,
         });
         if row.is_goal {
@@ -1160,6 +1709,7 @@ fn load_seek_candidates_body(
             "distance_km": (dist_km * 10.0).round() / 10.0,
             "bearing_deg": bearing.round(),
             "rf_viable": viable,
+            "completes_goal": row.completes_goal,
             "elev_m": (row.elev_m * 10.0).round() / 10.0,
         });
         if row.is_goal {
@@ -1275,6 +1825,25 @@ mod tests {
     }
 
     #[test]
+    fn scan_radius_caps_to_goal_when_in_hop_range() {
+        let hop_m = 72_000.0;
+        let from_lat = 39.75567;
+        let from_lon = -119.46126;
+        let goal_lat = 39.776974;
+        let goal_lon = -119.053759;
+        let scan = seek_peak_scan_radius_m(
+            hop_m, from_lat, from_lon, goal_lat, goal_lon, true,
+        );
+        let d_goal = haversine_m(from_lat, from_lon, goal_lat, goal_lon);
+        assert!(scan < hop_m);
+        assert!((scan - d_goal).abs() < 1.0);
+        assert_eq!(
+            seek_peak_scan_radius_m(hop_m, from_lat, from_lon, goal_lat, goal_lon, false),
+            hop_m
+        );
+    }
+
+    #[test]
     fn wedge_excludes_sideways_peak_near_source() {
         let from_lat = 38.0;
         let from_lon = -117.0;
@@ -1304,58 +1873,96 @@ mod tests {
     }
 
     #[test]
+    fn empty_wedge_does_not_return_off_axis_peaks() {
+        let from_lat = 39.75567;
+        let from_lon = -119.46126;
+        let goal_lat = 39.778464;
+        let goal_lon = -119.049911;
+        let hop_m = 35_300.0;
+        let russell = (-119.3289, 39.90951, 1708.0);
+        let out = filter_peaks_in_goal_wedge(
+            vec![russell],
+            from_lat,
+            from_lon,
+            goal_lat,
+            goal_lon,
+            hop_m,
+        );
+        assert!(out.is_empty(), "off-axis leftover must not survive empty wedge");
+    }
+
+    #[test]
+    fn landing_half_width_is_rf_lens_not_an_angle() {
+        let hop_m = 72_000.0;
+        let goal_dist = 35_250.0;
+        let along = 24_160.0;
+        let half = landing_half_width_m(along, goal_dist, hop_m);
+        assert!(
+            half > 60_000.0,
+            "24 km out, both 72 km discs still allow ~68 km cross-track, got {half}"
+        );
+        assert!(
+            landing_half_width_m(along, goal_dist, hop_m) > 3_200.0,
+            "user hub at 3.1 km off-axis must stay inside the RF lens"
+        );
+    }
+
+    #[test]
+    fn landing_grid_hits_virginia_nightengale_sites() {
+        let from_lat = 39.75567;
+        let from_lon = -119.46126;
+        let goal_lat = 39.778464;
+        let goal_lon = -119.049911;
+        let hop_m = 72_000.0;
+        let ridge_lat = 39.770778;
+        let ridge_lon = -119.174345;
+        let hub_lat = 39.799379;
+        let hub_lon = -119.184290;
+        let russell_lat = 39.90951;
+        let russell_lon = -119.3289;
+        let locs = goal_corridor_sample_locs(
+            from_lat,
+            from_lon,
+            goal_lat,
+            goal_lon,
+            hop_m,
+            SEEK_LANDING_COARSE_M,
+        );
+        let near = SEEK_LANDING_COARSE_M;
+        assert!(
+            locs.iter()
+                .any(|(lat, lon)| haversine_m(*lat, *lon, ridge_lat, ridge_lon) <= near),
+            "landing grid must sample the on-path ridge"
+        );
+        assert!(
+            locs.iter()
+                .any(|(lat, lon)| haversine_m(*lat, *lon, hub_lat, hub_lon) <= near),
+            "landing grid must sample the 3 km off-axis hub"
+        );
+        assert!(
+            locs.iter()
+                .any(|(lat, lon)| haversine_m(*lat, *lon, russell_lat, russell_lon) <= near),
+            "Russell is inside both hop discs, so the lens must sample it"
+        );
+    }
+
+    #[test]
+    fn spatial_diverse_keeps_spread_completers() {
+        let a = ((-119.17, 39.77, 1600.0), true);
+        let near_a = ((-119.172, 39.771, 1610.0), true);
+        let b = ((-119.10, 39.78, 1500.0), true);
+        let taken = take_spatially_diverse(vec![a, near_a, b], 800.0, 8);
+        assert_eq!(taken.len(), 2);
+        assert!((taken[0].0.0 - a.0.0).abs() < 1e-6);
+        assert!((taken[1].0.0 - b.0.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn wedge_widens_toward_hop_range() {
         let hop_m = 72_000.0;
         let near = seek_wedge_half_angle_deg(5_000.0, hop_m);
         let far = seek_wedge_half_angle_deg(70_000.0, hop_m);
         assert!(far > near);
-    }
-
-    #[test]
-    fn farthest_rank_prefers_distant_peak_on_goal_bearing() {
-        let from_lat = 38.0;
-        let from_lon = -117.0;
-        let goal_lat = 40.0;
-        let goal_lon = -117.0;
-        let near = (from_lon, from_lat + 0.1, 2500.0);
-        let far = (from_lon, from_lat + 0.5, 2500.0);
-        assert!(
-            cmp_seek_peak_rank(from_lat, from_lon, goal_lat, goal_lon, far, near)
-                == std::cmp::Ordering::Less
-        );
-    }
-
-    #[test]
-    fn farthest_rank_prefers_higher_elev_at_same_bearing() {
-        let from_lat = 38.0;
-        let from_lon = -117.0;
-        let goal_lat = 40.0;
-        let goal_lon = -117.0;
-        let high = (from_lon, from_lat + 0.3, 2800.0);
-        let low = (from_lon, from_lat + 0.3, 2100.0);
-        assert!(
-            cmp_seek_peak_rank(from_lat, from_lon, goal_lat, goal_lon, high, low)
-                == std::cmp::Ordering::Less
-        );
-    }
-
-    #[test]
-    fn farthest_rank_take_cap_gets_farthest_not_nearest() {
-        let from_lat = 38.0;
-        let from_lon = -117.0;
-        let goal_lat = 40.0;
-        let goal_lon = -117.0;
-        let mut peaks = vec![
-            (from_lon, from_lat + 0.01, 2000.0),
-            (from_lon, from_lat + 0.5, 2200.0),
-            (from_lon + 0.4, from_lat, 2500.0),
-        ];
-        peaks.sort_by(|a, b| {
-            cmp_seek_peak_rank(from_lat, from_lon, goal_lat, goal_lon, *a, *b)
-        });
-        let best = peaks.first().unwrap();
-        let hop_m = haversine_m(from_lat, from_lon, best.1, best.0);
-        assert!(hop_m > 30_000.0, "best peak should be farthest in wedge, got {hop_m}m");
     }
 
     #[test]
@@ -1631,6 +2238,24 @@ land:
                 result["meta"]["goal_finish_eligible"].as_bool().unwrap_or(false),
                 "goal should be within hop range"
             );
+            if result["meta"]["goal_in_hop_range"].as_bool().unwrap_or(false) {
+                let from_lat = result["from"]["lat"].as_f64().unwrap();
+                let from_lon = result["from"]["lon"].as_f64().unwrap();
+                let goal_lat = result["goal"]["lat"].as_f64().unwrap();
+                let goal_lon = result["goal"]["lon"].as_f64().unwrap();
+                for feature in result["candidates"]["features"].as_array().unwrap() {
+                    let props = &feature["properties"];
+                    if props["is_goal"].as_bool().unwrap_or(false) {
+                        continue;
+                    }
+                    let lat = props["lat"].as_f64().unwrap();
+                    let lon = props["lon"].as_f64().unwrap();
+                    assert!(
+                        !peak_is_past_goal(from_lat, from_lon, goal_lat, goal_lon, lat, lon),
+                        "in-range goal should not return overshooting candidate {props}"
+                    );
+                }
+            }
         }
 
         #[tokio::test]

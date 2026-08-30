@@ -658,6 +658,28 @@ fn scan_hop_disc_row(ctx: &HopDiscTileCtx, iy: usize) -> Vec<Peak> {
     row_peaks
 }
 
+/// Every in-disc cell, for highest-per-bin ridge search (no prominence filter).
+fn scan_hop_disc_row_highpoints(ctx: &HopDiscTileCtx, iy: usize) -> Vec<Peak> {
+    let n = ctx.tile.n;
+    let mut row_peaks = Vec::new();
+    for ix in ctx.ix0..=ctx.ix1 {
+        if !cell_in_hop_disc(ctx, iy, ix) {
+            continue;
+        }
+        let z = ctx.tile.elevations[iy * n + ix];
+        if z == VOID_SRTM || z < -12000 {
+            continue;
+        }
+        let (lat, lon) = cell_center_wgs84(ctx.tile, iy, ix);
+        row_peaks.push(Peak {
+            lon,
+            lat,
+            elev_m: z as f64,
+        });
+    }
+    row_peaks
+}
+
 /// Accumulate the highest DEM cell per Web Mercator bin (captures ridge crests, not just 3×3 maxima).
 fn upsert_peak_bin(
     bins: &mut HashMap<(i64, i64), Peak>,
@@ -736,6 +758,70 @@ pub fn binned_peaks_in_hop_disc(
     mask_cache_dir: Option<&Path>,
     on_progress: Option<&(dyn Fn(HopDiscScanProgress) + Send + Sync)>,
 ) -> Result<Vec<Peak>> {
+    binned_in_hop_disc(
+        dem,
+        center_lat,
+        center_lon,
+        radius_m,
+        bin_size_m,
+        scan_bbox,
+        wedge,
+        ring_sector,
+        land_filter,
+        land_index,
+        mask_cache_dir,
+        on_progress,
+        true,
+    )
+}
+
+/// Highest eligible DEM cell per bin. Includes ridges that are not 3×3 local maxima.
+pub fn binned_high_points_in_hop_disc(
+    dem: &DemMosaic,
+    center_lat: f64,
+    center_lon: f64,
+    radius_m: f64,
+    bin_size_m: f64,
+    scan_bbox: Option<(f64, f64, f64, f64)>,
+    wedge: Option<GoalWedgeFilter>,
+    ring_sector: Option<RingSectorFilter>,
+    land_filter: Option<&MultiPolygon<f64>>,
+    land_index: Option<&LandFilterIndex>,
+    mask_cache_dir: Option<&Path>,
+    on_progress: Option<&(dyn Fn(HopDiscScanProgress) + Send + Sync)>,
+) -> Result<Vec<Peak>> {
+    binned_in_hop_disc(
+        dem,
+        center_lat,
+        center_lon,
+        radius_m,
+        bin_size_m,
+        scan_bbox,
+        wedge,
+        ring_sector,
+        land_filter,
+        land_index,
+        mask_cache_dir,
+        on_progress,
+        false,
+    )
+}
+
+fn binned_in_hop_disc(
+    dem: &DemMosaic,
+    center_lat: f64,
+    center_lon: f64,
+    radius_m: f64,
+    bin_size_m: f64,
+    scan_bbox: Option<(f64, f64, f64, f64)>,
+    wedge: Option<GoalWedgeFilter>,
+    ring_sector: Option<RingSectorFilter>,
+    land_filter: Option<&MultiPolygon<f64>>,
+    land_index: Option<&LandFilterIndex>,
+    mask_cache_dir: Option<&Path>,
+    on_progress: Option<&(dyn Fn(HopDiscScanProgress) + Send + Sync)>,
+    local_max_only: bool,
+) -> Result<Vec<Peak>> {
     let hop = hop_disc_multipolygon(center_lat, center_lon, radius_m);
     let Some((minx, miny, maxx, maxy)) = eligible_bounds(&hop) else {
         return Ok(Vec::new());
@@ -809,7 +895,12 @@ pub fn binned_peaks_in_hop_disc(
         .par_iter()
         .map(|(ti, iy)| {
             let mut bins = HashMap::new();
-            for peak in scan_hop_disc_row(&tile_ctxs[*ti], *iy) {
+            let row_peaks = if local_max_only {
+                scan_hop_disc_row(&tile_ctxs[*ti], *iy)
+            } else {
+                scan_hop_disc_row_highpoints(&tile_ctxs[*ti], *iy)
+            };
+            for peak in row_peaks {
                 if !peak_passes_land_filter(peak, land_filter, scan_bbox, land_index) {
                     continue;
                 }

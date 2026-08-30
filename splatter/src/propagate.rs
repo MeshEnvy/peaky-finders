@@ -312,6 +312,43 @@ pub fn evaluate_mutual_links_parallel(
         .collect()
 }
 
+/// Weaker-leg dB over threshold. `None` if neither direction decodes.
+/// A one-way (Weak) link scores `-inf` on the failed leg, so two-way beats one-way.
+pub fn evaluate_mutual_site_link_margin(
+    dem: &DemMosaic,
+    lat_a: f64,
+    lon_a: f64,
+    tx_h_a: f64,
+    lat_b: f64,
+    lon_b: f64,
+    tx_h_b: f64,
+    base: &LinkContext,
+) -> Option<f64> {
+    let mut ab = base.clone();
+    ab.tx_height = tx_h_a.max(1.0);
+    ab.rx_height = tx_h_b.max(1.0);
+    let mut ba = base.clone();
+    ba.tx_height = tx_h_b.max(1.0);
+    ba.rx_height = tx_h_a.max(1.0);
+    let forward = evaluate_link(dem, lat_a, lon_a, lat_b, lon_b, &ab);
+    let reverse = evaluate_link(dem, lat_b, lon_b, lat_a, lon_a, &ba);
+    if !forward.viable && !reverse.viable {
+        return None;
+    }
+    let t = base.threshold_dbm;
+    let fm = if forward.viable {
+        forward.pr_dbm - t
+    } else {
+        f64::NEG_INFINITY
+    };
+    let rm = if reverse.viable {
+        reverse.pr_dbm - t
+    } else {
+        f64::NEG_INFINITY
+    };
+    Some(fm.min(rm))
+}
+
 pub fn evaluate_mutual_site_link_strength(
     dem: &DemMosaic,
     lat_a: f64,
@@ -322,19 +359,16 @@ pub fn evaluate_mutual_site_link_strength(
     tx_h_b: f64,
     base: &LinkContext,
 ) -> Option<LinkStrength> {
-    let mut ab = base.clone();
-    ab.tx_height = tx_h_a.max(1.0);
-    ab.rx_height = tx_h_b.max(1.0);
-    let mut ba = base.clone();
-    ba.tx_height = tx_h_b.max(1.0);
-    ba.rx_height = tx_h_a.max(1.0);
-    let forward = evaluate_link_viable(dem, lat_a, lon_a, lat_b, lon_b, &ab);
-    let reverse = evaluate_link_viable(dem, lat_b, lon_b, lat_a, lon_a, &ba);
-    match (forward, reverse) {
-        (true, true) => Some(LinkStrength::Strong),
-        (true, false) | (false, true) => Some(LinkStrength::Weak),
-        _ => None,
-    }
+    evaluate_mutual_site_link_margin(
+        dem, lat_a, lon_a, tx_h_a, lat_b, lon_b, tx_h_b, base,
+    )
+    .map(|margin| {
+        if margin.is_finite() {
+            LinkStrength::Strong
+        } else {
+            LinkStrength::Weak
+        }
+    })
 }
 
 pub fn evaluate_mutual_site_link_strengths_parallel(

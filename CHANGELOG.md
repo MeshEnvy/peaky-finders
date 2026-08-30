@@ -26,6 +26,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Goal seek ranking** — candidates that RF-complete the hop to the goal sort first. Extra links into the existing local mesh beat a lonely completer. Weaker-leg margin is next. Elevation is not a score.
+- **Goal seek landing** — when the goal is already in hop range but start-to-goal RF fails, seek grids every cell that is still in hop range of both ends (no angle clip), then refines around completers. Approach hops (goal out of range) still use local-max peaks and distance.
 - **Goal seek Recalculate** — the hop scan button stayed disabled after start and goal were set. A false `disabled` binding on `wa-button` is treated as disabled, so Recalculate is a native button that arms whenever a start and goal exist. Clicking it no longer overflows the stack (local `setSeekScanning` had been calling itself).
 - **Goal seek wedge** — the green hop wedge now paints above viewsheds, land, links, and site markers.
 - **Eligible overlay** — real per-parcel boolean difference (i_overlay engine) instead of punching raw exclude rings as holes. Overlapping wilderness/ACEC/WSA rings made invalid polygons, which is what MapLibre rendered as statewide bars and sliver triangles. Full six-state build now takes ~10 s with the cutouts intact.
