@@ -50,23 +50,72 @@ export function sitePassesTagFilter(site, store) {
 }
 
 /**
+ * Toggle `tag` in a tag list. Returns a new array.
+ * @param {string[]|null|undefined} tags
+ * @param {string} tag
+ */
+export function toggleTag(tags, tag) {
+  const value = String(tag || '').trim()
+  const list = [...(tags || [])]
+  if (!value) return list
+  const ix = list.indexOf(value)
+  if (ix >= 0) list.splice(ix, 1)
+  else list.push(value)
+  return list
+}
+
+/**
+ * Project tags plus any selected values not yet on a site (new chips).
+ * @param {string[]} projectTags
+ * @param {string[]} selected
+ */
+export function tagChipChoices(projectTags, selected = []) {
+  return [...new Set([...(projectTags || []), ...(selected || [])])].sort((a, b) =>
+    a.localeCompare(b),
+  )
+}
+
+/**
+ * Upsert sites into the store list. New sites that miss the active tag filter
+ * stay visible (bypass). Updates drop bypass so filters apply immediately.
+ * @param {object} store
+ * @param {unknown[]} sites
+ * @param {{ revealIfFiltered?: boolean }} [opts]
+ */
+export function registerSites(store, sites, { revealIfFiltered } = {}) {
+  const rows = []
+  for (const site of sites || []) {
+    const row = normalizeSiteFromApi(site)
+    if (!row) continue
+    rows.push(row)
+  }
+  if (!rows.length || !store?.sites) return rows
+  const list = store.sites.list
+  const existing = new Set(list.map((site) => site.slug))
+  for (const row of rows) {
+    const ix = list.findIndex((site) => site.slug === row.slug)
+    if (ix >= 0) list[ix] = row
+    else list.push(row)
+    store.sites.hidden?.delete?.(row.slug)
+    const reveal = revealIfFiltered ?? !existing.has(row.slug)
+    if (reveal && !sitePassesTagFilter(row, store)) {
+      store.sites.tagFilterBypass?.add?.(row.slug)
+    } else {
+      store.sites.tagFilterBypass?.delete?.(row.slug)
+    }
+  }
+  store.sites.revision = (store.sites.revision || 0) + 1
+  return rows
+}
+
+/**
  * Upsert a site into the store list. Returns normalized row or null.
- * Also clears hidden and may add tag-filter bypass for newly unmatched sites.
  * @param {object} store
  * @param {unknown} site
+ * @param {{ revealIfFiltered?: boolean }} [opts]
  */
-export function registerSite(store, site) {
-  const row = normalizeSiteFromApi(site)
-  if (!row || !store?.sites) return null
-  const list = store.sites.list
-  const ix = list.findIndex((s) => s.slug === row.slug)
-  if (ix >= 0) list[ix] = row
-  else list.push(row)
-  store.sites.hidden?.delete?.(row.slug)
-  if (!sitePassesTagFilter(row, store)) {
-    store.sites.tagFilterBypass?.add?.(row.slug)
-  }
-  return row
+export function registerSite(store, site, opts) {
+  return registerSites(store, [site], opts)[0] || null
 }
 
 /**
@@ -81,6 +130,7 @@ export function unregisterSite(store, slug) {
   store.sites.hidden?.delete?.(slug)
   store.sites.tagFilterBypass?.delete?.(slug)
   if (store.ui?.selectedSlug === slug) store.ui.selectedSlug = null
+  store.sites.revision = (store.sites.revision || 0) + 1
 }
 
 /** @param {{ sites?: { list?: object[] } }} store */
@@ -112,6 +162,7 @@ export function viewportSites(store, { map, mapReady } = {}) {
  * @param {{ map?: object, mapReady?: boolean }} [opts]
  */
 export function sidebarTags(store, opts = {}) {
+  void store.sites?.revision
   const found = new Set()
   for (const site of viewportSites(store, opts)) {
     for (const tag of siteTags(site)) found.add(tag)
@@ -133,6 +184,7 @@ export function tagFilteredSites(store) {
  * @param {{ map?: object, mapReady?: boolean }} [opts]
  */
 export function sidebarSites(store, opts = {}) {
+  void store.sites?.revision
   const list = viewportSites(store, opts).filter((site) => {
     if (store.sites.hidden.has(site.slug) && !store.sites.tagFilterBypass.has(site.slug)) {
       return false

@@ -399,6 +399,7 @@ export function runApp(ctx = {}) {
         applyEntityVisibility: () => entityChrome.applyEntityVisibility(),
         scheduleSaveMapState: () => mapChrome.scheduleSaveMapState(),
         selectSite: (...args) => placementDomain.selectSite(...args),
+        deselectSite: (...args) => placementDomain.deselectSite(...args),
         setAddPlacementMode: (...args) => placementDomain.setAddPlacementMode(...args),
         setEntityPanelOpen: (open) => entityChrome.setEntityPanelOpen(open),
       })

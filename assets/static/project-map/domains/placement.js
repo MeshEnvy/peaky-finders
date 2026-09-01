@@ -2,7 +2,7 @@
 
 import { formatCoord } from '../geo.js'
 import { DRAFT_MARKER_COLOR, DRAFT_VIEWSHED_SLUG } from '../constants.js'
-import { normalizeSiteFromApi } from '../stores/sites.js'
+import { normalizeSiteFromApi, sitePassesTagFilter } from '../stores/sites.js'
 
 /**
  * Create/edit draft marker, site sheet modes, select/deselect, save.
@@ -271,7 +271,7 @@ export function createPlacementDomain(ctx) {
     return `${formatCoord(lat)}, ${formatCoord(lon)}`
   }
 
-  async function saveEditFromSheet({ name, lat, lon, height_m }) {
+  async function saveEditFromSheet({ name, lat, lon, height_m, tags }) {
     if (!isEditMode() || !store.ui.editSlug) throw new Error('Not in edit mode.')
     if (!name) throw new Error('Name is required.')
     const latNum = Number.parseFloat(lat)
@@ -279,7 +279,7 @@ export function createPlacementDomain(ctx) {
     if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
       throw new Error('Valid latitude and longitude are required.')
     }
-    const body = { name, lat: latNum, lon: lonNum }
+    const body = { name, lat: latNum, lon: lonNum, tags: [...(tags || [])] }
     if (height_m) {
       const heightM = Number(height_m)
       if (!Number.isFinite(heightM) || heightM < 1) {
@@ -301,23 +301,17 @@ export function createPlacementDomain(ctx) {
     onCleanupEditSave?.()
     if (promoted && site) {
       registerSite(site)
-      assignSelectedSlug(site.slug)
-      viewshedVisible?.set?.(site.slug, true)
-      scheduleViewshedLoad?.(site)
-      showPanelView()
-      onFinishEditSave?.()
-      void loadSiteLinks?.()
-      return
-    }
-    if (site) {
+    } else if (site) {
       applySiteRowUpdate(site)
-      assignSelectedSlug(site.slug)
-      viewshedVisible?.set?.(site.slug, true)
-      scheduleViewshedLoad?.(site)
-      showPanelView()
-      onFinishEditSave?.()
-      void loadSiteLinks?.()
     }
+    if (!site) return
+    assignSelectedSlug(site.slug)
+    viewshedVisible?.set?.(site.slug, true)
+    scheduleViewshedLoad?.(site)
+    showPanelView()
+    onFinishEditSave?.()
+    void loadSiteLinks?.()
+    if (!sitePassesTagFilter(site, store)) deselectSite()
   }
 
   async function saveCreateFromSheet({ name, tags }) {

@@ -36,6 +36,7 @@ export function createRootStore(config, savedMapState) {
       list: [],
       hidden: new Set(),
       tagFilterBypass: new Set(),
+      revision: 0,
     },
     ui: {
       mapReady: false,

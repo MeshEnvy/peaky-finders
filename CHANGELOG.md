@@ -27,6 +27,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Site tag edits** — the site edit sheet can add and remove tags. Bulk-removing a tag hides sites that no longer match the sidebar filter, instead of leaving them on the map.
 - **Draft P2P lines** — placing or moving a site no longer draws preview links to tag-filtered or hidden peers. Draft lines use the same map visibility as the site mesh.
 - **Goal seek ranking** — candidates that RF-complete the hop to the goal sort first. Extra links into the existing local mesh beat a lonely completer. Weaker-leg margin is next. Elevation is not a score.
 - **Goal seek landing** — when the goal is already in hop range but start-to-goal RF fails, seek grids every cell that is still in hop range of both ends (no angle clip), then refines around completers. Approach hops (goal out of range) still use local-max peaks and distance.

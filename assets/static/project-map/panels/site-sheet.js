@@ -1,7 +1,8 @@
 // @ts-check
 
 import { createApp, computed, ref, watch } from 'vue'
-import { formatCoord } from '../geo.js'
+import { formatCoord, normalizeTagInput } from '../geo.js'
+import { allProjectTags, tagChipChoices, toggleTag } from '../stores/sites.js'
 
 /**
  * Vue site detail sheet for #site-panel (view / edit / create).
@@ -25,9 +26,22 @@ export function mountSiteSheet(store, appApi) {
       const editLat = ref('')
       const editLon = ref('')
       const editHeight = ref('')
+      const editTags = ref([])
+      const editTagInput = ref('')
       const createName = ref('')
-      const createTags = ref('')
+      const createTags = ref([])
+      const createTagInput = ref('')
       const errorText = ref('')
+
+      const projectTags = computed(() => allProjectTags(store))
+      const editTagChoices = computed(() => tagChipChoices(projectTags.value, editTags.value))
+      const createTagChoices = computed(() => tagChipChoices(projectTags.value, createTags.value))
+      const editTagSuggestions = computed(() =>
+        projectTags.value.filter((tag) => !editTags.value.includes(tag)),
+      )
+      const createTagSuggestions = computed(() =>
+        projectTags.value.filter((tag) => !createTags.value.includes(tag)),
+      )
 
       const selectedSite = computed(() => {
         const slug = store.ui.selectedSlug
@@ -59,6 +73,8 @@ export function mountSiteSheet(store, appApi) {
             site.height_m != null && Number.isFinite(Number(site.height_m))
               ? String(site.height_m)
               : ''
+          editTags.value = [...(site.tags || [])]
+          editTagInput.value = ''
           errorText.value = ''
         },
         { immediate: true }
@@ -105,7 +121,8 @@ export function mountSiteSheet(store, appApi) {
         (active) => {
           if (!active) return
           createName.value = ''
-          createTags.value = ''
+          createTags.value = []
+          createTagInput.value = ''
           errorText.value = ''
         }
       )
@@ -134,11 +151,15 @@ export function mountSiteSheet(store, appApi) {
       async function saveEdit() {
         errorText.value = ''
         try {
+          const pending = normalizeTagInput(editTagInput.value)
+          const tags = [...editTags.value]
+          if (pending && !tags.includes(pending)) tags.push(pending)
           await appApi.saveEdit?.({
             name: editName.value.trim(),
             lat: editLat.value.trim(),
             lon: editLon.value.trim(),
             height_m: editHeight.value.trim(),
+            tags,
           })
         } catch (err) {
           errorText.value = err instanceof Error ? err.message : 'Save failed.'
@@ -148,12 +169,12 @@ export function mountSiteSheet(store, appApi) {
       async function saveCreate() {
         errorText.value = ''
         try {
+          const pending = normalizeTagInput(createTagInput.value)
+          const tags = [...createTags.value]
+          if (pending && !tags.includes(pending)) tags.push(pending)
           await appApi.saveCreate?.({
             name: createName.value.trim(),
-            tags: createTags.value
-              .split(',')
-              .map((t) => t.trim())
-              .filter(Boolean),
+            tags,
           })
         } catch (err) {
           errorText.value = err instanceof Error ? err.message : 'Save failed.'
@@ -170,6 +191,28 @@ export function mountSiteSheet(store, appApi) {
         const site = selectedSite.value
         if (!site) return
         void appApi.copyCoordPair?.(site.lat, site.lon)
+      }
+
+      function toggleEditTag(tag) {
+        editTags.value = toggleTag(editTags.value, tag)
+      }
+
+      function addEditTagFromInput() {
+        const tag = normalizeTagInput(editTagInput.value)
+        editTagInput.value = ''
+        if (!tag || editTags.value.includes(tag)) return
+        editTags.value = [...editTags.value, tag]
+      }
+
+      function toggleCreateTag(tag) {
+        createTags.value = toggleTag(createTags.value, tag)
+      }
+
+      function addCreateTagFromInput() {
+        const tag = normalizeTagInput(createTagInput.value)
+        createTagInput.value = ''
+        if (!tag || createTags.value.includes(tag)) return
+        createTags.value = [...createTags.value, tag]
       }
 
       const viewshedActive = computed(() =>
@@ -193,8 +236,15 @@ export function mountSiteSheet(store, appApi) {
         editLat,
         editLon,
         editHeight,
+        editTags,
+        editTagInput,
+        editTagChoices,
+        editTagSuggestions,
         createName,
         createTags,
+        createTagInput,
+        createTagChoices,
+        createTagSuggestions,
         errorText,
         viewshedActive,
         createCoordsLabel,
@@ -208,6 +258,10 @@ export function mountSiteSheet(store, appApi) {
         saveCreate,
         toggleViewshed,
         copyCoords,
+        toggleEditTag,
+        addEditTagFromInput,
+        toggleCreateTag,
+        addCreateTagFromInput,
         formatCoord,
       }
     },
@@ -286,6 +340,25 @@ export function mountSiteSheet(store, appApi) {
             <label class="site-panel__label" for="site-sheet-edit-height">Antenna height (m)</label>
             <input id="site-sheet-edit-height" v-model="editHeight" type="number" step="0.1" min="1" class="pf-mono">
           </div>
+          <div class="site-panel__section">
+            <span class="site-panel__label">Tags</span>
+            <div class="site-tags add-site-tags" role="group">
+              <button v-for="tag in editTagChoices" :key="tag" type="button"
+                class="site-tag site-tag--toggle"
+                :class="{ 'is-selected': editTags.includes(tag) }"
+                :aria-pressed="editTags.includes(tag) ? 'true' : 'false'"
+                :title="editTags.includes(tag) ? 'Remove tag ' + tag : 'Add tag ' + tag"
+                @click="toggleEditTag(tag)">{{ tag }}</button>
+            </div>
+            <form class="site-tag-add-form" @submit.prevent="addEditTagFromInput">
+              <input id="site-sheet-edit-tag-input" v-model="editTagInput" type="text"
+                list="site-sheet-edit-tag-suggestions" placeholder="add tag"
+                autocomplete="off" maxlength="32" aria-label="Add tag">
+              <datalist id="site-sheet-edit-tag-suggestions">
+                <option v-for="tag in editTagSuggestions" :key="tag" :value="tag"></option>
+              </datalist>
+            </form>
+          </div>
           <wa-callout v-if="errorText" variant="danger">{{ errorText }}</wa-callout>
           <div class="site-panel__create-actions">
             <button type="button" class="site-panel__save-btn" @click="saveEdit">Save</button>
@@ -303,8 +376,23 @@ export function mountSiteSheet(store, appApi) {
             <input id="site-sheet-create-name" v-model="createName" type="text" required>
           </div>
           <div class="site-panel__section">
-            <label class="site-panel__label" for="site-sheet-create-tags">Tags (comma-separated)</label>
-            <input id="site-sheet-create-tags" v-model="createTags" type="text" placeholder="tag1, tag2">
+            <span class="site-panel__label">Tags</span>
+            <div class="site-tags add-site-tags" role="group">
+              <button v-for="tag in createTagChoices" :key="tag" type="button"
+                class="site-tag site-tag--toggle"
+                :class="{ 'is-selected': createTags.includes(tag) }"
+                :aria-pressed="createTags.includes(tag) ? 'true' : 'false'"
+                :title="createTags.includes(tag) ? 'Remove tag ' + tag : 'Add tag ' + tag"
+                @click="toggleCreateTag(tag)">{{ tag }}</button>
+            </div>
+            <form class="site-tag-add-form" @submit.prevent="addCreateTagFromInput">
+              <input id="site-sheet-create-tag-input" v-model="createTagInput" type="text"
+                list="site-sheet-create-tag-suggestions" placeholder="add tag"
+                autocomplete="off" maxlength="32" aria-label="Add tag">
+              <datalist id="site-sheet-create-tag-suggestions">
+                <option v-for="tag in createTagSuggestions" :key="tag" :value="tag"></option>
+              </datalist>
+            </form>
           </div>
           <div class="site-panel__section">
             <span class="site-panel__label">Coordinates</span>

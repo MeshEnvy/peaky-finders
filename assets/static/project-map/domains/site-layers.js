@@ -217,7 +217,7 @@ export function createSiteLayersDomain(ctx) {
     else list.push(row)
     siteBySlug.set(row.slug, row)
     ensureSiteVisibleAfterAdd(row)
-    if (store) registerSiteInStore(store, row)
+    if (store) registerSiteInStore(store, row, { revealIfFiltered: true })
     addSiteLayers()
     applyEntityVisibility?.()
     renderEntityPanel?.()

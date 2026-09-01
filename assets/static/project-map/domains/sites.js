@@ -2,7 +2,7 @@
 
 import { apiFetch, apiJson } from '../api/client.js'
 import * as apiUrls from '../api/urls.js'
-import { normalizeSiteFromApi, registerSite, unregisterSite } from '../stores/sites.js'
+import { normalizeSiteFromApi, registerSite, registerSites, unregisterSite } from '../stores/sites.js'
 
 /**
  * Site CRUD against the project API; mutates store via register/unregister.
@@ -58,14 +58,7 @@ export function createSitesDomain({ store, projectSlug }) {
       await apiJson(apiUrls.sitesImportApiUrl(projectSlug), 'POST', body)
     )
     const imported = Array.isArray(payload.sites) ? payload.sites : []
-    const sites = []
-    for (const row of imported) {
-      const site = normalizeSiteFromApi(row)
-      if (site) {
-        registerSite(store, site)
-        sites.push(site)
-      }
-    }
+    const sites = registerSites(store, imported)
     return { sites, payload, ok: true }
   }
 
@@ -75,14 +68,7 @@ export function createSitesDomain({ store, projectSlug }) {
       await apiJson(apiUrls.sitesTagsBulkApiUrl(projectSlug), 'POST', body)
     )
     const updated = Array.isArray(payload.sites) ? payload.sites : []
-    const sites = []
-    for (const row of updated) {
-      const site = normalizeSiteFromApi(row)
-      if (site) {
-        registerSite(store, site)
-        sites.push(site)
-      }
-    }
+    const sites = registerSites(store, updated)
     return { sites, payload, ok: true }
   }
 

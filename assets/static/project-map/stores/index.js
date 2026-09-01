@@ -1,9 +1,12 @@
 export { createRootStore, initSitesFromConfig, initLandFromConfig, normalizeSiteFromApi } from './root.js'
 export {
   registerSite,
+  registerSites,
   unregisterSite,
   sitePassesTagFilter,
   siteTags,
+  toggleTag,
+  tagChipChoices,
   allProjectTags,
   sidebarTags,
   viewportSites,

@@ -490,6 +490,12 @@ body.wide #map {
   color: #8ba4ff;
 }
 
+.site-sheet .site-tag-add-form {
+  display: flex;
+  width: 100%;
+  margin-top: 0.35rem;
+}
+
 .site-tag-add-form {
   display: inline-flex;
   align-items: center;

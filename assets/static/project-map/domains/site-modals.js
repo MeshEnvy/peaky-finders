@@ -7,6 +7,8 @@ import {
   bulkTagInitialCounts,
   computeBulkTagOps,
   sidebarSites,
+  sitePassesTagFilter,
+  toggleTag,
 } from '../stores/sites.js'
 import {
   applyImportPreviewData,
@@ -34,6 +36,7 @@ export function createSiteModalsDomain(ctx) {
     renderEntityPanel,
     scheduleSaveMapState,
     selectSite,
+    deselectSite,
     setAddPlacementMode,
     setEntityPanelOpen,
   } = ctx
@@ -136,6 +139,11 @@ export function createSiteModalsDomain(ctx) {
       for (const site of updated) {
         applySiteRowUpdate?.(site, { refreshGeoJson: false })
       }
+      const selected = store.ui.selectedSlug
+      if (selected) {
+        const row = updated.find((site) => site.slug === selected)
+        if (row && !sitePassesTagFilter(row, store)) deselectSite?.()
+      }
       applyEntityVisibility?.()
       renderEntityPanel?.()
       scheduleSaveMapState?.()
@@ -179,8 +187,7 @@ export function createSiteModalsDomain(ctx) {
   }
 
   function toggleAddSiteTag(tag) {
-    const tags = store.modals.addSite.tags || []
-    store.modals.addSite.tags = tags.includes(tag) ? tags.filter((t) => t !== tag) : [...tags, tag]
+    store.modals.addSite.tags = toggleTag(store.modals.addSite.tags, tag)
   }
 
   function addAddSiteTagFromInput() {
@@ -328,10 +335,7 @@ export function createSiteModalsDomain(ctx) {
   }
 
   function toggleImportTag(tag) {
-    const tags = store.modals.importSites.tags || []
-    store.modals.importSites.tags = tags.includes(tag)
-      ? tags.filter((t) => t !== tag)
-      : [...tags, tag]
+    store.modals.importSites.tags = toggleTag(store.modals.importSites.tags, tag)
   }
 
   function addImportTagFromInput() {
