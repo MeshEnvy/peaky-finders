@@ -15,6 +15,7 @@ use tokio::sync::Semaphore;
 use tower_http::trace::TraceLayer;
 
 use crate::api;
+use crate::alternates::AlternatesHub;
 use crate::seek::SeekHub;
 use crate::state::AppState;
 use crate::static_files;
@@ -78,7 +79,8 @@ pub async fn run_server(
         session: session.clone(),
         events: events.clone(),
         warm: WarmHub::new(session.clone(), events, verbose, coverage_workers),
-        seek: SeekHub::new(session, verbose),
+        seek: SeekHub::new(Arc::clone(&session), verbose),
+        alternates: AlternatesHub::new(session, verbose),
         verbose,
         dem_tile_render: Arc::new(Semaphore::new(crate::state::DEM_TILE_RENDER_PERMITS)),
         project_dir: project_dir.clone(),

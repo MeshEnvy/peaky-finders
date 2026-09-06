@@ -169,6 +169,14 @@ export function createRootStore(config, savedMapState) {
         saving: false,
       },
     },
+    alternates: {
+      active: false,
+      siteSlug: null,
+      scanning: false,
+      statusText: '',
+      selectedCandidateId: null,
+      payload: null,
+    },
     config: {
       ...config,
       seek: config.seek || {},

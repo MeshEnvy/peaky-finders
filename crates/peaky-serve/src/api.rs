@@ -40,6 +40,7 @@ use crate::simulation::project_simulation_payload;
 use crate::viewshed::{
     coords_viewshed_overlay_if_ready, ensure_viewshed_png, read_coords_viewshed_png_if_ready,
 };
+use crate::alternates::parse_alternates_request;
 use crate::seek::parse_seek_request;
 use crate::seek_plan::{
     clear_seek_plan, convert_seek_plan_locs_to_sites, load_seek_plan_payload, patch_seek_plan,
@@ -132,6 +133,8 @@ pub fn router() -> Router<AppState> {
             "/api/p/{slug}/seek/plan/convert-to-sites",
             post(convert_seek_plan),
         )
+        .route("/api/p/{slug}/alternates", get(alternates_scan))
+        .route("/api/p/{slug}/alternates/scan-progress", get(alternates_progress))
         .route("/api/home/modems", get(home_modems))
         .route("/api/home/environments", get(home_environments))
         .route("/api/home/simulation", get(home_simulation))
@@ -1001,6 +1004,71 @@ async fn seek_candidates(
 
 async fn seek_progress(State(state): State<AppState>, Path(_slug): Path<String>) -> Json<Value> {
     Json(state.seek.poll(&state.slug))
+}
+
+async fn alternates_scan(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    if !state.preset_path().is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "slug": state.slug.clone(), "error": "not found" })),
+        ));
+    }
+    let request =
+        parse_alternates_request(state.preset_path(), &q).map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
+            )
+        })?;
+    let gen = state.alternates.enqueue(request).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
+        )
+    })?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "project": state.slug.clone(),
+            "status": "pending",
+            "gen": gen,
+        })),
+    ))
+}
+
+async fn alternates_progress(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Json<Value> {
+    let site = q.get("site").map(String::as_str).unwrap_or("");
+    let anchor_slugs = q
+        .get("anchors")
+        .map(|raw| {
+            raw.split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect::<Vec<_>>()
+        })
+        .filter(|slugs| !slugs.is_empty());
+    let key = if site.is_empty() {
+        String::new()
+    } else {
+        crate::alternates::alternates_progress_key(site, anchor_slugs.as_deref())
+    };
+    if key.is_empty() {
+        return Json(json!({
+            "project": state.slug,
+            "status": "idle",
+            "progress": Value::Null,
+        }));
+    }
+    Json(state.alternates.poll(&key, &state.slug))
 }
 
 async fn get_seek_plan(State(state): State<AppState>,

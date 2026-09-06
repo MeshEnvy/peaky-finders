@@ -154,3 +154,15 @@ export function seekPlanConvertToSitesUrl(projectSlug) {
 export function seekCandidatesUrl(projectSlug, params) {
   return `/api/p/${projectSlug}/seek/candidates?${params}`
 }
+
+export function alternatesScanUrl(projectSlug, siteSlug, anchorSlugs = []) {
+  const params = new URLSearchParams({ site: siteSlug })
+  if (anchorSlugs?.length) params.set('anchors', anchorSlugs.join(','))
+  return `/api/p/${projectSlug}/alternates?${params}`
+}
+
+export function alternatesScanProgressUrl(projectSlug, siteSlug, anchorSlugs = []) {
+  const params = new URLSearchParams({ site: siteSlug })
+  if (anchorSlugs?.length) params.set('anchors', anchorSlugs.join(','))
+  return `/api/p/${projectSlug}/alternates/scan-progress?${params}`
+}

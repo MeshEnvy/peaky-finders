@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **Find alternates** — on a site with RF links, search other eligible placements that still mutual-P2P to the same neighbors. Dots on the map; add a chosen spot as a new site (original pin stays).
 - **Eligible land overlay** — built-in land-panel toggle for seek land. Include minus exclude, clipped to the AOI. Rebuilt only when those land layers change.
 
 ### Changed

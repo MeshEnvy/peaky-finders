@@ -78,6 +78,7 @@ export function createSeekDomain(ctx) {
     registerSiteFromApi,
     mergeConvertedSeekLinks,
     bypassSiteTagFilter,
+    clearAlternates,
   } = ctx
 
   const SEEK_STATE_KEY = seekStateKey(projectSlug)
@@ -1061,6 +1062,7 @@ export function createSeekDomain(ctx) {
   }
 
   function startSeekRun(startSlugArg) {
+    clearAlternates?.()
     const startSlug = startSlugArg || store.seek.startSlug || ''
     const goal = seekGoalCoords()
     if (!startSlug || !goal) {

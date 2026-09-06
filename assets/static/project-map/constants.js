@@ -30,6 +30,12 @@ export const SEEK_WEDGE_OUTLINE_LAYER = 'seek-goal-wedge-outline'
 export const SEEK_ANCILLARY_LINES_SOURCE = 'seek-ancillary-lines'
 export const SEEK_ANCILLARY_LINES_LAYER = 'seek-ancillary-lines-line'
 export const SEEK_ANCILLARY_LINES_LABELS_LAYER = 'seek-ancillary-lines-label'
+export const ALTERNATES_CANDIDATES_SOURCE = 'alternates-candidates'
+export const ALTERNATES_CANDIDATES_LAYER = 'alternates-candidates-circle'
+export const ALTERNATES_CANDIDATES_LABELS_LAYER = 'alternates-candidates-label'
+export const ALTERNATES_LINES_SOURCE = 'alternates-candidate-lines'
+export const ALTERNATES_LINES_LAYER = 'alternates-candidate-lines-line'
+export const ALTERNATES_LINES_LABELS_LAYER = 'alternates-candidate-lines-label'
 
 /** Top-of-stack paint order after a basemap or overlay change. */
 export const SITE_STACK_RAISE_IDS = [
@@ -37,6 +43,10 @@ export const SITE_STACK_RAISE_IDS = [
   DRAFT_LINKS_LABELS_LAYER,
   LINKS_LAYER,
   LINKS_LABELS_LAYER,
+  ALTERNATES_LINES_LAYER,
+  ALTERNATES_LINES_LABELS_LAYER,
+  ALTERNATES_CANDIDATES_LAYER,
+  ALTERNATES_CANDIDATES_LABELS_LAYER,
   SEEK_ANCILLARY_LINES_LAYER,
   SEEK_ANCILLARY_LINES_LABELS_LAYER,
   SEEK_LINES_LAYER,

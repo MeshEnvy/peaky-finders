@@ -1,5 +1,6 @@
 //! Peaky HTTP server — axum app, static assets, RF viewshed orchestration.
 
+mod alternates;
 mod api;
 mod app;
 mod embed;

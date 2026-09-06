@@ -1,6 +1,6 @@
 // @ts-check
 
-import { SEEK_CANDIDATES_LAYER, SITES_CIRCLE, SITES_LABELS } from '../constants.js'
+import { ALTERNATES_CANDIDATES_LAYER, SEEK_CANDIDATES_LAYER, SITES_CIRCLE, SITES_LABELS } from '../constants.js'
 
 const LONG_PRESS_MS = 500
 const LONG_PRESS_MOVE_PX = 12
@@ -16,6 +16,7 @@ export function createMapInteractionsDomain(ctx) {
     getMap,
     getMapReady,
     getSeek,
+    getAlternates,
     getSiteBySlug,
     syncMapCursor,
     setEditDraftCoords,
@@ -33,6 +34,23 @@ export function createMapInteractionsDomain(ctx) {
 
   function seek() {
     return getSeek?.()
+  }
+
+  function alternates() {
+    return getAlternates?.()
+  }
+
+  function trySelectAlternateAtPoint(point) {
+    const map = getMap()
+    if (!store?.alternates?.active || !map.getLayer(ALTERNATES_CANDIDATES_LAYER)) {
+      return false
+    }
+    const altFeats = map.queryRenderedFeatures(point, {
+      layers: [ALTERNATES_CANDIDATES_LAYER],
+    })
+    if (!altFeats.length) return false
+    alternates()?.selectAlternateCandidate?.(altFeats[0])
+    return true
   }
 
   function clearLongPressTimer() {
@@ -94,6 +112,15 @@ export function createMapInteractionsDomain(ctx) {
         return
       }
       const seekDomain = seek()
+      if (store?.alternates?.active && map.getLayer(ALTERNATES_CANDIDATES_LAYER)) {
+        const altFeats = map.queryRenderedFeatures(ev.point, {
+          layers: [ALTERNATES_CANDIDATES_LAYER],
+        })
+        if (altFeats.length) {
+          map.getCanvas().style.cursor = 'pointer'
+          return
+        }
+      }
       if (seekDomain?.seekSessionActive()) {
         if (map.getLayer(SEEK_CANDIDATES_LAYER)) {
           const seekFeats = map.queryRenderedFeatures(ev.point, {
@@ -180,6 +207,7 @@ export function createMapInteractionsDomain(ctx) {
           }
         }
       }
+      if (trySelectAlternateAtPoint(ev.point)) return
       const feats = map.queryRenderedFeatures(ev.point, {
         layers: SITE_LAYER_IDS,
       })
@@ -196,6 +224,7 @@ export function createMapInteractionsDomain(ctx) {
         openCreatePanel(ev.lngLat.lat, ev.lngLat.lng)
         return
       }
+      if (store?.alternates?.active) return
       deselectSite()
     })
     wireMapLongPress()

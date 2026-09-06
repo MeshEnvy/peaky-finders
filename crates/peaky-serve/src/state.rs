@@ -19,6 +19,7 @@ pub struct AppState {
     pub events: ServeEventHub,
     pub warm: WarmHub,
     pub seek: SeekHub,
+    pub alternates: crate::alternates::AlternatesHub,
     pub verbose: bool,
     pub dem_tile_render: Arc<Semaphore>,
     /// Directory that contains `config.yaml`.

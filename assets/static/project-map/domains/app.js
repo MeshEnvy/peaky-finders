@@ -11,6 +11,7 @@ import { createViewshedDomain } from './viewshed.js'
 import { createLinksDomain } from './links.js'
 import { createLandDomain } from './land.js'
 import { createSeekDomain } from './seek.js'
+import { createAlternatesDomain } from './alternates.js'
 import { createSiteModalsDomain } from './site-modals.js'
 import { createPlacementDomain } from './placement.js'
 import { createEditPreviewDomain } from './edit-preview.js'
@@ -18,6 +19,7 @@ import { createMapInteractionsDomain } from './map-interactions.js'
 import { createSiteLayersDomain } from './site-layers.js'
 import { createEntityChromeDomain } from './entity-chrome.js'
 import { bootProjectMap, createMapChromeDomain } from './map-chrome.js'
+import { sidebarSites } from '../stores/sites.js'
 
 /** @param {{ store?: object, onStoreSync?: () => void }} [ctx] */
 export function runApp(ctx = {}) {
@@ -39,6 +41,8 @@ export function runApp(ctx = {}) {
   let landDomain = null
   /** @type {ReturnType<typeof createSeekDomain>|null} */
   let seekDomain = null
+  /** @type {ReturnType<typeof createAlternatesDomain>|null} */
+  let alternatesDomain = null
   /** @type {ReturnType<typeof createSiteModalsDomain>|null} */
   let siteModalsDomain = null
   /** @type {ReturnType<typeof createPlacementDomain>|null} */
@@ -132,6 +136,10 @@ export function runApp(ctx = {}) {
     syncEditMapShell: () => placementDomain?.syncEditMapShell(),
   })
 
+  function visibleSiteSlugs() {
+    return sidebarSites(store, { map, mapReady: store.ui.mapReady }).map((site) => site.slug)
+  }
+
   function initMapDomains() {
     linksDomain = createLinksDomain({
       store,
@@ -139,6 +147,7 @@ export function runApp(ctx = {}) {
       projectSlug,
       getMapReady: () => store.ui.mapReady,
       getSites: () => sites,
+      getVisibleSiteSlugs: visibleSiteSlugs,
       isSiteMapHidden: (slug) => siteLayers.isSiteMapHidden(slug),
       isViewshedVisible: (slug) => viewshedDomain.isViewshedVisible(slug),
       siteVisibleInMap: (site) => siteLayers.siteVisibleInMap(site),
@@ -263,6 +272,10 @@ export function runApp(ctx = {}) {
         seekDomain.toggleSeekPanel(false)
         return
       }
+      if (store?.alternates?.active) {
+        alternatesDomain?.clearAlternates()
+        return
+      }
       if (store.ui.editMode) {
         placementDomain.cancelEdit()
         return
@@ -380,6 +393,7 @@ export function runApp(ctx = {}) {
         registerSiteFromApi: (site) => siteLayers.registerSite(site),
         mergeConvertedSeekLinks: (payload) => linksDomain?.mergeConvertedSeekLinks(payload),
         bypassSiteTagFilter: (slug) => siteLayers.bypassSiteTagFilter(slug),
+        clearAlternates: () => alternatesDomain?.clearAlternates(),
         getViewshed: () => viewshedDomain,
         ensureSiteLinksForSlug: (slug) => linksDomain?.ensureSiteLinksForSlug(slug),
         linkedPeersForSite: (slug) => linksDomain?.linkedPeersForSite(slug) || [],
@@ -387,6 +401,21 @@ export function runApp(ctx = {}) {
       })
       seekDomain.initFromBoot()
       seekDomain.install()
+    }
+    if (!alternatesDomain) {
+      alternatesDomain = createAlternatesDomain({
+        store,
+        projectSlug,
+        getMap: () => map,
+        getMapReady: () => store.ui.mapReady,
+        resetSeekRun: () => seekDomain?.resetSeekRun(),
+        sitesDomain,
+        applySavedSiteToMap: (...args) => placementDomain?.applySavedSiteToMap(...args),
+        loadSingleSiteLinks: (slug) => linksDomain?.loadSingleSiteLinks(slug),
+        raiseSiteLayers: () => mapChrome.raiseSiteLayers(),
+        getAlternatesAnchorSlugs: (slug) => linksDomain?.visibleLinkedPeersForSite(slug) || [],
+      })
+      if (store.ui.mapReady) alternatesDomain.installMapHandlers(map)
     }
     if (!siteModalsDomain) {
       siteModalsDomain = createSiteModalsDomain({
@@ -411,6 +440,7 @@ export function runApp(ctx = {}) {
         getMap: () => map,
         getMapReady: () => store.ui.mapReady,
         getSeek: () => seekDomain,
+        getAlternates: () => alternatesDomain,
         getSiteBySlug: (slug) => siteBySlug.get(slug),
         syncMapCursor,
         setEditDraftCoords: (...args) => placementDomain.setEditDraftCoords(...args),
@@ -518,7 +548,7 @@ export function runApp(ctx = {}) {
     copyCoordPair,
     getCreateCoordsLabel: () => placementDomain.getCreateCoordsLabel(),
     formatSiteHeight: (site) => formatSiteHeight(site, defaultTxHeightM),
-    getSelectedSiteLinks: () => linksDomain.selectedSiteLinks(),
+    getSelectedSiteLinks: () => linksDomain.selectedSiteLinks({ visibleOnly: true }),
     toggleTagFilter: (tag) => entityChrome.toggleTagFilter(tag),
     onTagFilterChange: () => entityChrome.onTagFilterChange(),
     applyEntityVisibility: () => entityChrome.applyEntityVisibility(),
@@ -600,5 +630,11 @@ export function runApp(ctx = {}) {
       ensureDomains()
       return seekDomain.openSeekConvertModal(...args)
     },
+    ...bind(() => alternatesDomain, [
+      'findAlternatesForSite',
+      'clearAlternates',
+      'addSelectedAlternateAsSite',
+      'alternatesActive',
+    ]),
   }
 }

@@ -238,6 +238,57 @@ export function mountSiteSheet(store, appApi) {
 
       const peerLinks = computed(() => appApi.getSelectedSiteLinks?.() || [])
 
+      const canFindAlternates = computed(() => peerLinks.value.length > 0)
+
+      const alternatesForThisSite = computed(
+        () =>
+          store.alternates.active &&
+          store.alternates.siteSlug === store.ui.selectedSlug,
+      )
+
+      const alternatesBusy = computed(
+        () => alternatesForThisSite.value && store.alternates.scanning,
+      )
+
+      const alternatesStatus = computed(() =>
+        alternatesForThisSite.value ? store.alternates.statusText : '',
+      )
+
+      const canAddAlternateSite = computed(
+        () =>
+          alternatesForThisSite.value &&
+          !!store.alternates.selectedCandidateId &&
+          !(store.alternates.payload?.candidates?.features || []).find(
+            (f) =>
+              f?.properties?.candidate_id === store.alternates.selectedCandidateId &&
+              f?.properties?.is_site,
+          ),
+      )
+
+      async function toggleAlternates() {
+        errorText.value = ''
+        if (alternatesForThisSite.value) {
+          appApi.clearAlternates?.()
+          return
+        }
+        const slug = store.ui.selectedSlug
+        if (!slug) return
+        try {
+          await appApi.findAlternatesForSite?.(slug)
+        } catch (err) {
+          errorText.value = err instanceof Error ? err.message : 'Alternates failed.'
+        }
+      }
+
+      async function addAlternateAsSite() {
+        errorText.value = ''
+        try {
+          await appApi.addSelectedAlternateAsSite?.()
+        } catch (err) {
+          errorText.value = err instanceof Error ? err.message : 'Add site failed.'
+        }
+      }
+
       return {
         store,
         appApi,
@@ -262,6 +313,13 @@ export function mountSiteSheet(store, appApi) {
         createCoordsLabel,
         heightLabel,
         peerLinks,
+        canFindAlternates,
+        alternatesForThisSite,
+        alternatesBusy,
+        alternatesStatus,
+        canAddAlternateSite,
+        toggleAlternates,
+        addAlternateAsSite,
         closePanel,
         openEdit,
         deleteSelected,
@@ -319,16 +377,32 @@ export function mountSiteSheet(store, appApi) {
             </div>
           </div>
           <wa-callout v-if="errorText" variant="danger">{{ errorText }}</wa-callout>
+          <p v-if="alternatesStatus" class="site-panel__value pf-muted">{{ alternatesStatus }}</p>
           <div class="site-panel__footer">
-            <button type="button"
-              class="site-panel__action site-panel__viewshed-toggle"
-              :class="{ 'site-panel__action--active': viewshedActive }"
-              @click="toggleViewshed">Viewshed</button>
-            <button type="button" class="site-panel__edit-btn" @click="openEdit">Edit</button>
-            <button type="button" class="site-panel__delete-btn"
-              :disabled="!canDelete"
-              :title="canDelete ? 'Delete this site' : 'Cannot delete the last site'"
-              @click="deleteSelected">Delete</button>
+            <div class="site-panel__footer-row">
+              <button type="button"
+                class="site-panel__footer-btn"
+                :class="{ 'site-panel__footer-btn--active': viewshedActive }"
+                @click="toggleViewshed">Viewshed</button>
+              <button type="button"
+                class="site-panel__footer-btn"
+                :class="{ 'site-panel__footer-btn--active': alternatesForThisSite && !alternatesBusy }"
+                :disabled="!canFindAlternates || alternatesBusy"
+                :title="canFindAlternates ? (alternatesForThisSite ? 'Clear alternate dots' : 'Find alternate placements') : 'Needs at least one visible RF link'"
+                @click="toggleAlternates">
+                {{ alternatesBusy ? 'Finding…' : alternatesForThisSite ? 'Clear' : 'Alternates' }}
+              </button>
+              <button v-if="canAddAlternateSite" type="button"
+                class="site-panel__footer-btn site-panel__footer-btn--brand"
+                @click="addAlternateAsSite">Add as site</button>
+            </div>
+            <div class="site-panel__footer-row site-panel__footer-row--manage">
+              <button type="button" class="site-panel__footer-btn" @click="openEdit">Edit</button>
+              <button type="button" class="site-panel__delete-btn"
+                :disabled="!canDelete"
+                :title="canDelete ? 'Delete this site' : 'Cannot delete the last site'"
+                @click="deleteSelected">Delete</button>
+            </div>
           </div>
         </div>
 

@@ -2264,6 +2264,7 @@ land:
             use axum::http::{Request, StatusCode};
             use tower::ServiceExt;
 
+            use crate::alternates::AlternatesHub;
             use crate::app::router;
             use crate::events::ServeEventHub;
             use crate::state::AppState;
@@ -2282,11 +2283,13 @@ land:
             session.install_dem_mosaic(seek_test_dem(3601));
             let events = ServeEventHub::default();
             let seek = SeekHub::new(Arc::clone(&session), false);
+            let alternates = AlternatesHub::new(Arc::clone(&session), false);
             let state = AppState {
                 session: Arc::clone(&session),
                 events: events.clone(),
                 warm: WarmHub::new(session, events, false, 2),
                 seek,
+                alternates,
                 verbose: false,
                 dem_tile_render: Arc::new(Semaphore::new(crate::state::DEM_TILE_RENDER_PERMITS)),
                 project_dir: preset_path.parent().unwrap().to_path_buf(),
