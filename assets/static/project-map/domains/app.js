@@ -308,6 +308,7 @@ export function runApp(ctx = {}) {
         getSiteBySlug: (slug) => siteBySlug.get(slug),
         registerSite: (site) => siteLayers.registerSite(site),
         applySiteRowUpdate: (...args) => siteLayers.applySiteRowUpdate(...args),
+        unregisterSite: (slug) => siteLayers.unregisterSite(slug),
         applySiteLayerFilters: () => siteLayers.applySiteLayerFilters(),
         refreshFilteredLinks: () => linksDomain?.refreshFilteredLinks(),
         updateSelectedLayer: () => siteLayers.updateSelectedLayer(),
@@ -505,6 +506,7 @@ export function runApp(ctx = {}) {
     onEditCoordsChanged: () => editPreviewDomain.onEditCoordsChanged(),
     saveEdit: (payload) => placementDomain.saveEditFromSheet(payload),
     saveCreate: (payload) => placementDomain.saveCreateFromSheet(payload),
+    deleteSelectedSite: () => placementDomain.deleteSelectedSite(),
     syncMapViewport: () => entityChrome.syncMapViewport(),
     toggleViewshedForSelected() {
       const slug = store.ui.selectedSlug

@@ -18,6 +18,7 @@ export function createPlacementDomain(ctx) {
     getSiteBySlug,
     registerSite,
     applySiteRowUpdate,
+    unregisterSite,
     applySiteLayerFilters,
     refreshFilteredLinks,
     updateSelectedLayer,
@@ -314,6 +315,33 @@ export function createPlacementDomain(ctx) {
     if (!sitePassesTagFilter(site, store)) deselectSite()
   }
 
+  async function deleteSelectedSite() {
+    const slug = selectedSlug() || getEditSlug()
+    const entity = store.sites.list.find((site) => site.slug === slug) || getSiteBySlug?.(slug)
+    if (!entity || !slug) throw new Error('No site selected.')
+    if (store.sites.list.length <= 1) throw new Error('Cannot delete the last site.')
+    if (!window.confirm(`Delete site "${entity.name}"?`)) return { cancelled: true }
+    if (!sitesDomain) throw new Error('Sites API unavailable.')
+    await sitesDomain.deleteSite(slug)
+    if (isEditMode()) {
+      store.ui.editMode = false
+      store.ui.editSlug = null
+      setEditDraftCoords(null, null)
+      removeDraftMarker()
+      removeDraftViewshed?.()
+      removeDraftLinksLayer?.()
+      onCleanupEditSave?.()
+      syncEditMapShell()
+    }
+    unregisterSite?.(slug)
+    assignSelectedSlug(null)
+    const panel = sitePanelEl()
+    if (panel) panel.hidden = true
+    syncMapViewport?.()
+    updateSelectedLayer?.()
+    return { ok: true }
+  }
+
   async function saveCreateFromSheet({ name, tags }) {
     if (!isCreateMode()) throw new Error('Not in create mode.')
     if (!name) throw new Error('Name is required.')
@@ -361,5 +389,6 @@ export function createPlacementDomain(ctx) {
     getCreateCoordsLabel,
     saveEditFromSheet,
     saveCreateFromSheet,
+    deleteSelectedSite,
   }
 }

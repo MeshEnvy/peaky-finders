@@ -27,6 +27,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Delete site** — the Vue site sheet has Delete again. Confirm, then drop the site from YAML, map, and sidebar. The last site stays.
 - **Site tag edits** — the site edit sheet can add and remove tags. Bulk-removing a tag hides sites that no longer match the sidebar filter, instead of leaving them on the map.
 - **Draft P2P lines** — placing or moving a site no longer draws preview links to tag-filtered or hidden peers. Draft lines use the same map visibility as the site mesh.
 - **Goal seek ranking** — candidates that RF-complete the hop to the goal sort first. Extra links into the existing local mesh beat a lonely completer. Weaker-leg margin is next. Elevation is not a score.

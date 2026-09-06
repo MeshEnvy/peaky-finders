@@ -140,6 +140,15 @@ export function mountSiteSheet(store, appApi) {
         appApi.openEditPanel?.()
       }
 
+      async function deleteSelected() {
+        errorText.value = ''
+        try {
+          await appApi.deleteSelectedSite?.()
+        } catch (err) {
+          errorText.value = err instanceof Error ? err.message : 'Delete failed.'
+        }
+      }
+
       function cancelEdit() {
         appApi.cancelEdit?.()
       }
@@ -219,6 +228,8 @@ export function mountSiteSheet(store, appApi) {
         store.ui.selectedSlug ? !!appApi.isViewshedVisible?.(store.ui.selectedSlug) : false
       )
 
+      const canDelete = computed(() => store.sites.list.length > 1)
+
       const heightLabel = computed(() => {
         const site = selectedSite.value
         if (!site) return ''
@@ -247,11 +258,13 @@ export function mountSiteSheet(store, appApi) {
         createTagSuggestions,
         errorText,
         viewshedActive,
+        canDelete,
         createCoordsLabel,
         heightLabel,
         peerLinks,
         closePanel,
         openEdit,
+        deleteSelected,
         cancelEdit,
         cancelCreate,
         saveEdit,
@@ -305,12 +318,17 @@ export function mountSiteSheet(store, appApi) {
               </button>
             </div>
           </div>
+          <wa-callout v-if="errorText" variant="danger">{{ errorText }}</wa-callout>
           <div class="site-panel__footer">
             <button type="button"
               class="site-panel__action site-panel__viewshed-toggle"
               :class="{ 'site-panel__action--active': viewshedActive }"
               @click="toggleViewshed">Viewshed</button>
             <button type="button" class="site-panel__edit-btn" @click="openEdit">Edit</button>
+            <button type="button" class="site-panel__delete-btn"
+              :disabled="!canDelete"
+              :title="canDelete ? 'Delete this site' : 'Cannot delete the last site'"
+              @click="deleteSelected">Delete</button>
           </div>
         </div>
 
@@ -363,6 +381,10 @@ export function mountSiteSheet(store, appApi) {
           <div class="site-panel__create-actions">
             <button type="button" class="site-panel__save-btn" @click="saveEdit">Save</button>
             <button type="button" class="site-panel__cancel-btn" @click="cancelEdit">Cancel</button>
+            <button type="button" class="site-panel__delete-btn"
+              :disabled="!canDelete"
+              :title="canDelete ? 'Delete this site' : 'Cannot delete the last site'"
+              @click="deleteSelected">Delete</button>
           </div>
         </div>
 

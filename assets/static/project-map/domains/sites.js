@@ -2,10 +2,11 @@
 
 import { apiFetch, apiJson } from '../api/client.js'
 import * as apiUrls from '../api/urls.js'
-import { normalizeSiteFromApi, registerSite, registerSites, unregisterSite } from '../stores/sites.js'
+import { normalizeSiteFromApi, registerSite, registerSites } from '../stores/sites.js'
 
 /**
- * Site CRUD against the project API; mutates store via register/unregister.
+ * Site CRUD against the project API. Create/update register into the store;
+ * delete is HTTP only so map-layer unregister owns local teardown.
  * @param {{ store: object, projectSlug: string }} ctx
  */
 export function createSitesDomain({ store, projectSlug }) {
@@ -34,8 +35,7 @@ export function createSitesDomain({ store, projectSlug }) {
 
   /** @param {string} slug */
   async function deleteSite(slug) {
-    await apiFetch(apiUrls.siteDeleteUrl(projectSlug, slug), { method: 'DELETE' })
-    unregisterSite(store, slug)
+    await apiFetch(apiUrls.siteApiUrl(projectSlug, slug), { method: 'DELETE' })
     return { ok: true }
   }
 

@@ -239,6 +239,7 @@ export function createSiteLayersDomain(ctx) {
     purgeSiteLinksForSlug?.(slug)
     if (store.ui.selectedSlug === slug) deselectSite?.()
     if (store) unregisterSiteInStore(store, slug)
+    pruneActiveTagFilters()
     addSiteLayers()
     renderEntityPanel?.()
     refreshSeekStartSelectIfOpen?.()

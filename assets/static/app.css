@@ -642,6 +642,27 @@ body.wide #map {
   margin-top: var(--wa-space-m);
 }
 
+.site-panel__delete-btn {
+  margin-left: auto;
+  color: var(--wa-color-danger-on-quiet);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--wa-border-radius-s);
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+}
+
+.site-panel__delete-btn:hover,
+.site-panel__delete-btn:focus-visible {
+  border-color: var(--wa-color-danger-border-normal);
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.site-panel__delete-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .site-panel__viewshed-hint {
   margin-left: var(--wa-space-2xs);
 }

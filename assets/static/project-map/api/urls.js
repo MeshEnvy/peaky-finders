@@ -36,8 +36,6 @@ export function siteApiUrl(projectSlug, slug) {
   return `/api/p/${projectSlug}/sites/${encodeURIComponent(slug)}`
 }
 
-export const siteDeleteUrl = siteApiUrl
-
 export function sitesPrefetchUrl(projectSlug, lat, lon, excludeSite) {
   const params = new URLSearchParams({
     lat: String(lat),
