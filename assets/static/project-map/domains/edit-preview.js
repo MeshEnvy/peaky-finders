@@ -109,37 +109,47 @@ export function createEditPreviewDomain(ctx) {
     return !coordsMatchEditSnapshot(coords.lat, coords.lon)
   }
 
-  function linkFeatureTouchesSnapshotCoords(feature) {
-    if (!store.ui.editMode || !editSnapshot || !editCoordsMovedFromSnapshot()) {
-      return false
-    }
-    const geom = feature.geometry
+  function lineTouchesLonLat(feature, lon, lat) {
+    const geom = feature?.geometry
     if (!geom || geom.type !== 'LineString' || !Array.isArray(geom.coordinates)) {
       return false
     }
-    const snapLon = Number(editSnapshot.lon)
-    const snapLat = Number(editSnapshot.lat)
+    const snapLon = Number(lon)
+    const snapLat = Number(lat)
     for (const pt of geom.coordinates) {
       if (!Array.isArray(pt) || pt.length < 2) continue
-      const lon = Number(pt[0])
-      const lat = Number(pt[1])
-      if (Math.abs(lon - snapLon) < 1e-5 && Math.abs(lat - snapLat) < 1e-5) return true
+      const ptLon = Number(pt[0])
+      const ptLat = Number(pt[1])
+      if (Math.abs(ptLon - snapLon) < 1e-5 && Math.abs(ptLat - snapLat) < 1e-5) return true
     }
     return false
   }
 
+  function linkFeatureTouchesSnapshotCoords(feature) {
+    if (!store.ui.editMode || !editSnapshot || !editCoordsMovedFromSnapshot()) {
+      return false
+    }
+    return lineTouchesLonLat(feature, editSnapshot.lon, editSnapshot.lat)
+  }
+
+  function editingSiteSlug() {
+    return store.ui.editMode && store.ui.editSlug ? store.ui.editSlug : null
+  }
+
   function filterEditSitePrefetchPayload(payload) {
-    if (!payload || !store.ui.editSlug) return payload
+    const editSlug = editingSiteSlug()
+    if (!payload || !editSlug) return payload
     const links = Array.isArray(payload.links)
-      ? payload.links.filter((row) => row.slug !== store.ui.editSlug)
+      ? payload.links.filter((row) => row.slug !== editSlug)
       : payload.links
     let linksGeojson = payload.links_geojson
     if (linksGeojson && Array.isArray(linksGeojson.features)) {
       linksGeojson = {
         ...linksGeojson,
-        features: linksGeojson.features.filter(
-          (feature) => (feature.properties || {}).slug !== store.ui.editSlug
-        ),
+        features: linksGeojson.features.filter((feature) => {
+          if ((feature.properties || {}).slug === editSlug) return false
+          return !editSnapshot || !lineTouchesLonLat(feature, editSnapshot.lon, editSnapshot.lat)
+        }),
       }
     }
     return { ...payload, links, links_geojson: linksGeojson }
@@ -168,6 +178,9 @@ export function createEditPreviewDomain(ctx) {
 
   function onDraftViewshedReady() {
     draftViewshedLoading = false
+    // Edit prefetch already requested links with exclude_site. The create
+    // placement fetch does not, and would draw a line back to the old pin.
+    if (store.ui.editMode) return
     if (draftPlacementLat != null && draftPlacementLon != null) {
       void loadPlacementPrefetchAt(draftPlacementLat, draftPlacementLon)
     }
@@ -244,11 +257,14 @@ export function createEditPreviewDomain(ctx) {
     const gen = ++placementPrefetchGen
     removeDraftLinksLayer?.()
     try {
-      const resp = await fetch(apiUrls.sitesPrefetchUrl(projectSlug, lat, lon))
+      const resp = await fetch(
+        apiUrls.sitesPrefetchUrl(projectSlug, lat, lon, editingSiteSlug()),
+      )
       if (gen !== placementPrefetchGen) return
       if (!resp.ok) return
-      const payload = await resp.json()
+      let payload = await resp.json()
       if (gen !== placementPrefetchGen) return
+      payload = filterEditSitePrefetchPayload(payload)
       if (payload?.links_geojson) addDraftLinksLayer?.(payload.links_geojson)
       else removeDraftLinksLayer?.()
     } catch (_) {
