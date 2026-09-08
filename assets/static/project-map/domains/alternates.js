@@ -1,10 +1,12 @@
 // @ts-check
 
 import * as apiUrls from '../api/urls.js'
-import { ALTERNATES_CANDIDATES_LAYER } from '../constants.js'
+import { ALTERNATE_VIEWSHED_SLUG, ALTERNATES_CANDIDATES_LAYER, viewshedLayerId } from '../constants.js'
 import { applyAlternatesLayers, removeAlternatesLayers } from '../map/alternates-layers.js'
 
 const PROGRESS_POLL_MS = 250
+const PROGRESS_IDLE_GRACE_MS = 3000
+const PROGRESS_TIMEOUT_MS = 120_000
 
 function sleepMs(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -23,6 +25,8 @@ function sleepMs(ms) {
  *   raiseSiteLayers?: () => void,
  *   linkedPeersForSite?: (slug: string) => string[],
  *   getAlternatesAnchorSlugs?: (slug: string) => string[],
+ *   getViewshed?: () => object,
+ *   applyViewshedVisibilityForSite?: (slug: string) => void,
  * }} ctx
  */
 export function createAlternatesDomain(ctx) {
@@ -37,11 +41,112 @@ export function createAlternatesDomain(ctx) {
     loadSingleSiteLinks,
     raiseSiteLayers,
     getAlternatesAnchorSlugs,
+    getViewshed,
+    applyViewshedVisibilityForSite,
   } = ctx
 
   let fetchEpoch = 0
   /** @type {AbortController|null} */
   let fetchAbort = null
+  let alternateViewshedGen = 0
+  /** @type {Set<string>} */
+  const hiddenPreviewSiteSlugs = new Set()
+
+  function vs() {
+    return getViewshed?.()
+  }
+
+  function cancelAlternateViewshedLoad() {
+    alternateViewshedGen += 1
+    store.viewshed.pendingEpoch.delete(ALTERNATE_VIEWSHED_SLUG)
+    store.viewshed.loading.delete(ALTERNATE_VIEWSHED_SLUG)
+    vs()?.clearViewshedLoadingState?.(ALTERNATE_VIEWSHED_SLUG)
+  }
+
+  function dismissAlternateViewshedOverlay() {
+    cancelAlternateViewshedLoad()
+    vs()?.removeViewshedLayer?.(ALTERNATE_VIEWSHED_SLUG)
+    store.viewshed.visible.delete(ALTERNATE_VIEWSHED_SLUG)
+  }
+
+  function hideSiteViewshedLayer(slug) {
+    const map = getMap()
+    if (!slug || !map) return
+    const layerId = viewshedLayerId(slug)
+    if (!map.getLayer(layerId)) return
+    map.setLayoutProperty(layerId, 'visibility', 'none')
+    hiddenPreviewSiteSlugs.add(slug)
+  }
+
+  function restoreHiddenPreviewSiteViewsheds() {
+    for (const slug of hiddenPreviewSiteSlugs) {
+      applyViewshedVisibilityForSite?.(slug)
+    }
+    hiddenPreviewSiteSlugs.clear()
+  }
+
+  function clearAlternateViewshedPreview() {
+    dismissAlternateViewshedOverlay()
+    restoreHiddenPreviewSiteViewsheds()
+    vs()?.updatePinOverlays?.()
+  }
+
+  async function loadAlternateCoordViewshed(lat, lon) {
+    const vsDomain = vs()
+    if (!vsDomain) return
+    const gen = ++alternateViewshedGen
+    store.viewshed.visible.set(ALTERNATE_VIEWSHED_SLUG, true)
+    if (await vsDomain.tryLoadCoordViewshedFromCache?.(ALTERNATE_VIEWSHED_SLUG, lat, lon)) {
+      vsDomain.raiseViewshedLayers?.()
+      return
+    }
+    vsDomain.removeViewshedLayer?.(ALTERNATE_VIEWSHED_SLUG)
+    store.viewshed.loading.add(ALTERNATE_VIEWSHED_SLUG)
+    const epoch = vsDomain.getViewshedLoadEpoch?.()
+    store.viewshed.pendingEpoch.set(ALTERNATE_VIEWSHED_SLUG, epoch)
+    vsDomain.updatePinOverlays?.()
+    try {
+      const resp = await fetch(vsDomain.viewshedPrefetchWarmUrl(lat, lon), { method: 'POST' })
+      if (alternateViewshedGen !== gen) return
+      if (store.viewshed.pendingEpoch.get(ALTERNATE_VIEWSHED_SLUG) !== epoch) return
+      if (!resp.ok) {
+        cancelAlternateViewshedLoad()
+        vsDomain.updatePinOverlays?.()
+        return
+      }
+      const ready = await resp.json()
+      if (alternateViewshedGen !== gen) return
+      if (store.viewshed.pendingEpoch.get(ALTERNATE_VIEWSHED_SLUG) !== epoch) return
+      if (ready && ready.status === 'ready') {
+        vsDomain.handleViewshedReady({ ...ready, slug: ALTERNATE_VIEWSHED_SLUG }, epoch)
+        vsDomain.raiseViewshedLayers?.()
+      }
+    } catch (_) {
+      if (alternateViewshedGen === gen) {
+        cancelAlternateViewshedLoad()
+        vsDomain.updatePinOverlays?.()
+      }
+    }
+  }
+
+  function showViewshedForAlternate(feature) {
+    dismissAlternateViewshedOverlay()
+    restoreHiddenPreviewSiteViewsheds()
+
+    const props = feature?.properties || {}
+    const subjectSlug = store.alternates.siteSlug
+    if (subjectSlug) hideSiteViewshedLayer(subjectSlug)
+    if (props.is_site && props.site_slug) {
+      hideSiteViewshedLayer(String(props.site_slug))
+    }
+
+    const coords = feature?.geometry?.coordinates
+    if (!coords) return
+    const lon = Number(coords[0])
+    const lat = Number(coords[1])
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+    void loadAlternateCoordViewshed(lat, lon)
+  }
 
   function alternatesActive() {
     return !!store.alternates?.active && !!store.alternates.siteSlug
@@ -87,12 +192,17 @@ export function createAlternatesDomain(ctx) {
     store.alternates.selectedCandidateId = null
     store.alternates.payload = null
     setStatus('')
+    clearAlternateViewshedPreview()
     clearAlternatesLayers()
   }
 
   async function pollUntilDone(siteSlug, anchorSlugs, expectedGen, signal, epoch) {
+    const started = Date.now()
     for (;;) {
       if (signal?.aborted || epoch !== fetchEpoch) return { cancelled: true }
+      if (Date.now() - started > PROGRESS_TIMEOUT_MS) {
+        return { error: 'Alternates scan timed out' }
+      }
       let resp
       try {
         resp = await fetch(
@@ -118,15 +228,18 @@ export function createAlternatesDomain(ctx) {
       if (body?.status === 'error') {
         return { error: body.error || 'Alternates scan failed' }
       }
+      if (body?.status === 'idle' && Date.now() - started > PROGRESS_IDLE_GRACE_MS) {
+        return { error: 'Alternates scan lost sync — try again' }
+      }
       await sleepMs(PROGRESS_POLL_MS)
     }
   }
 
   async function findAlternatesForSite(siteSlug) {
     if (!siteSlug) return
-    const anchorSlugs = getAlternatesAnchorSlugs?.(siteSlug) || []
+    const anchorSlugs = [...(getAlternatesAnchorSlugs?.(siteSlug) || [])].sort()
     if (!anchorSlugs.length) {
-      setStatus('Needs at least one visible RF link.')
+      setStatus('Needs at least one RF link to a map-visible neighbor.')
       return
     }
 
@@ -140,6 +253,7 @@ export function createAlternatesDomain(ctx) {
     store.alternates.siteSlug = siteSlug
     store.alternates.selectedCandidateId = null
     store.alternates.payload = null
+    clearAlternateViewshedPreview()
     clearAlternatesLayers()
     setScanning(true)
     setStatus('Starting alternates scan…')
@@ -151,6 +265,7 @@ export function createAlternatesDomain(ctx) {
       const kickoff = await resp.json().catch(() => ({}))
       if (epoch !== fetchEpoch) return
       if (!resp.ok) {
+        setScanning(false)
         setStatus(kickoff.error || `Alternates failed (${resp.status})`)
         return
       }
@@ -162,6 +277,7 @@ export function createAlternatesDomain(ctx) {
       if (epoch !== fetchEpoch) return
       if (outcome.cancelled) return
       if (outcome.error) {
+        setScanning(false)
         setStatus(outcome.error)
         return
       }
@@ -193,6 +309,7 @@ export function createAlternatesDomain(ctx) {
     if (store.alternates.payload) {
       applyPayload(store.alternates.payload)
     }
+    showViewshedForAlternate(feature)
     if (props.is_site && props.site_name) {
       setStatus(`Selected ${props.site_name} (existing site)`)
       return

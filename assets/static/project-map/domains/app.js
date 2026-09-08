@@ -19,7 +19,6 @@ import { createMapInteractionsDomain } from './map-interactions.js'
 import { createSiteLayersDomain } from './site-layers.js'
 import { createEntityChromeDomain } from './entity-chrome.js'
 import { bootProjectMap, createMapChromeDomain } from './map-chrome.js'
-import { sidebarSites } from '../stores/sites.js'
 
 /** @param {{ store?: object, onStoreSync?: () => void }} [ctx] */
 export function runApp(ctx = {}) {
@@ -136,10 +135,6 @@ export function runApp(ctx = {}) {
     syncEditMapShell: () => placementDomain?.syncEditMapShell(),
   })
 
-  function visibleSiteSlugs() {
-    return sidebarSites(store, { map, mapReady: store.ui.mapReady }).map((site) => site.slug)
-  }
-
   function initMapDomains() {
     linksDomain = createLinksDomain({
       store,
@@ -147,7 +142,6 @@ export function runApp(ctx = {}) {
       projectSlug,
       getMapReady: () => store.ui.mapReady,
       getSites: () => sites,
-      getVisibleSiteSlugs: visibleSiteSlugs,
       isSiteMapHidden: (slug) => siteLayers.isSiteMapHidden(slug),
       isViewshedVisible: (slug) => viewshedDomain.isViewshedVisible(slug),
       siteVisibleInMap: (site) => siteLayers.siteVisibleInMap(site),
@@ -414,6 +408,9 @@ export function runApp(ctx = {}) {
         loadSingleSiteLinks: (slug) => linksDomain?.loadSingleSiteLinks(slug),
         raiseSiteLayers: () => mapChrome.raiseSiteLayers(),
         getAlternatesAnchorSlugs: (slug) => linksDomain?.visibleLinkedPeersForSite(slug) || [],
+        getViewshed: () => viewshedDomain,
+        applyViewshedVisibilityForSite: (slug) =>
+          viewshedDomain?.applyViewshedVisibilityForSite(slug),
       })
       if (store.ui.mapReady) alternatesDomain.installMapHandlers(map)
     }

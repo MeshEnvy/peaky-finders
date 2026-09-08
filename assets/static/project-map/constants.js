@@ -83,6 +83,7 @@ export const LAND_PREVIEW_LINE_WIDTH = 2.5
 export const VIEWSHED_OPACITY_DEFAULT = 0.75
 export const VIEWSHED_OVERLAY_BATCH = 4
 export const DRAFT_VIEWSHED_SLUG = '_draft'
+export const ALTERNATE_VIEWSHED_SLUG = '_alternate'
 export const VIEWSHED_PREVIEW_QUALITY = 1
 export const SKADI_DEM_SPACING_M = 30
 export const VIEWSHED_QUALITY_MIN = 1

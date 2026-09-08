@@ -388,7 +388,7 @@ export function mountSiteSheet(store, appApi) {
                 class="site-panel__footer-btn"
                 :class="{ 'site-panel__footer-btn--active': alternatesForThisSite && !alternatesBusy }"
                 :disabled="!canFindAlternates || alternatesBusy"
-                :title="canFindAlternates ? (alternatesForThisSite ? 'Clear alternate dots' : 'Find alternate placements') : 'Needs at least one visible RF link'"
+                :title="canFindAlternates ? (alternatesForThisSite ? 'Clear alternate dots' : 'Find alternate placements') : 'Needs at least one RF link to a map-visible neighbor'"
                 @click="toggleAlternates">
                 {{ alternatesBusy ? 'Finding…' : alternatesForThisSite ? 'Clear' : 'Alternates' }}
               </button>

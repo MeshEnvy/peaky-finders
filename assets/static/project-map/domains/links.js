@@ -35,7 +35,6 @@ const WARM_VIEWPORT_SLUG_CAP = 48
  * @param {(slug: string) => boolean} opts.isSiteOutboundLinksReady
  * @param {() => void} opts.renderSelectedPanel
  * @param {(slug: string) => object|undefined} opts.getSiteBySlug
- * @param {() => string[]} [opts.getVisibleSiteSlugs]
  */
 export function createLinksDomain(opts) {
   const {
@@ -56,7 +55,6 @@ export function createLinksDomain(opts) {
     isSiteOutboundLinksReady,
     renderSelectedPanel,
     getSiteBySlug,
-    getVisibleSiteSlugs,
   } = opts
 
   const singleSiteLinksInflight = new Set()
@@ -311,16 +309,12 @@ export function createLinksDomain(opts) {
     return peers.sort()
   }
 
-  function visibleSiteSlugSet() {
-    if (typeof getVisibleSiteSlugs === 'function') {
-      return new Set(getVisibleSiteSlugs())
-    }
-    return new Set(getSites().map((site) => site.slug).filter((slug) => !isSiteMapHidden(slug)))
-  }
-
   function visibleLinkedPeersForSite(slug) {
-    const visible = visibleSiteSlugSet()
-    return linkedPeersForSite(slug).filter((peer) => visible.has(peer))
+    if (isSiteMapHidden(slug)) return []
+    return linkedPeersForSite(slug).filter((peer) => {
+      if (isSiteMapHidden(peer)) return false
+      return Boolean(findSiteLinkFeature(slug, peer))
+    })
   }
 
   function selectedSiteLinks({ visibleOnly = false } = {}) {
