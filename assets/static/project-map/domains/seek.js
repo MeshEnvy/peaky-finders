@@ -15,7 +15,6 @@ import {
 import {
   haversineMeters,
   seekPeakBinSizeMForBounds,
-  buildSeekWedgeFeature,
   normalizeTagInput,
 } from '../geo.js'
 import { seekScanBoundsForRequest as seekScanBoundsForRequestAt } from '../map/viewport.js'
@@ -634,26 +633,8 @@ export function createSeekDomain(ctx) {
     if (!map || !s?.hops) return
     s.hops.forEach((hop, idx) => {
       if (idx === 0) return
-      if (hop.site_slug) {
-        const siteName = hop.site_name || siteBySlug.get(hop.site_slug)?.name || ''
-        const el = document.createElement('div')
-        el.className = 'seek-hop-marker-wrap'
-        if (siteName) {
-          const label = document.createElement('div')
-          label.className = 'seek-hop-marker-label'
-          label.textContent = siteName
-          el.appendChild(label)
-        }
-        const dot = document.createElement('div')
-        dot.className = 'seek-hop-marker seek-hop-marker--site'
-        el.appendChild(dot)
-        seekMarkers.push(
-          new maplibregl.Marker({ element: el, anchor: 'center' })
-            .setLngLat([hop.lon, hop.lat])
-            .addTo(map),
-        )
-        return
-      }
+      // Existing preset sites stay on the sites layer (see isSiteMapHidden); no overlay marker.
+      if (hop.site_slug) return
       let peakNum = 0
       for (let i = 1; i <= idx; i += 1) {
         if (!s.hops[i].site_slug) peakNum += 1

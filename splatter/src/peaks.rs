@@ -24,12 +24,13 @@ pub const MIN_BIN_M: f64 = 500.0;
 pub const MIN_PEAK_PROMINENCE_M: f64 = 20.0;
 const WEB_MERCATOR_ORIGIN: f64 = 20037508.342_789_244;
 
-/// Goal-direction wedge filter for hop-disc peak scans (matches peaky-serve seek wedge).
+/// Progress lens for hop-disc peak scans: closer to goal than start (matches peaky-serve seek).
 #[derive(Clone, Copy, Debug)]
-pub struct GoalWedgeFilter {
+pub struct GoalProgressFilter {
     pub goal_lat: f64,
     pub goal_lon: f64,
-    pub far_angle_scale: f64,
+    /// Peaks must satisfy haversine(peak, goal) < this.
+    pub max_peak_goal_dist_m: f64,
 }
 
 /// Annulus sector for on-demand finder scans (ring band + bearing wedge, optional flank-only widen).
@@ -340,7 +341,7 @@ struct HopDiscTileCtx<'a> {
     spacing_m_lon: f64,
     radius_sq_m: f64,
     scan_bbox: Option<(f64, f64, f64, f64)>,
-    wedge: Option<GoalWedgeFilter>,
+    progress_lens: Option<GoalProgressFilter>,
     ring_sector: Option<RingSectorFilter>,
     /// Per-cell eligible land (`.elmk`); skips ineligible cells during local-max scan.
     usable: Option<Arc<Vec<Vec<bool>>>>,
@@ -453,43 +454,17 @@ fn angle_diff_deg(a: f64, b: f64) -> f64 {
     d
 }
 
-fn seek_wedge_half_angle_deg(hop_m: f64, hop_radius_m: f64) -> f64 {
-    const NEAR_DEG: f64 = 10.0;
-    const FAR_DEG: f64 = 50.0;
-    if hop_radius_m <= 0.0 {
-        return FAR_DEG;
-    }
-    let t = (hop_m / hop_radius_m).clamp(0.0, 1.0);
-    NEAR_DEG + t * (FAR_DEG - NEAR_DEG)
-}
-
-pub fn cell_in_goal_wedge(
-    from_lat: f64,
-    from_lon: f64,
+pub fn cell_in_progress_lens(
     goal_lat: f64,
     goal_lon: f64,
     peak_lat: f64,
     peak_lon: f64,
-    hop_radius_m: f64,
-    far_angle_scale: f64,
+    max_peak_goal_dist_m: f64,
 ) -> bool {
-    let hop_m = crate::propagate::haversine_m(from_lat, from_lon, peak_lat, peak_lon);
-    if hop_m <= 1.0 {
+    if max_peak_goal_dist_m <= 1.0 {
         return false;
     }
-    let goal_bearing = bearing_deg(from_lat, from_lon, goal_lat, goal_lon);
-    let peak_bearing = bearing_deg(from_lat, from_lon, peak_lat, peak_lon);
-    let delta = angle_diff_deg(peak_bearing, goal_bearing);
-    if delta >= 90.0 {
-        return false;
-    }
-    let mut half = seek_wedge_half_angle_deg(hop_m, hop_radius_m);
-    if far_angle_scale > 1.0 {
-        let near = seek_wedge_half_angle_deg(0.0, hop_radius_m);
-        half = near + (half - near) * far_angle_scale;
-        half = half.min(89.0);
-    }
-    delta <= half
+    crate::propagate::haversine_m(peak_lat, peak_lon, goal_lat, goal_lon) < max_peak_goal_dist_m
 }
 
 fn hop_disc_tile_ctx<'a>(
@@ -498,7 +473,7 @@ fn hop_disc_tile_ctx<'a>(
     center_lon: f64,
     radius_m: f64,
     scan_bbox: Option<(f64, f64, f64, f64)>,
-    wedge: Option<GoalWedgeFilter>,
+    progress_lens: Option<GoalProgressFilter>,
     ring_sector: Option<RingSectorFilter>,
     usable: Option<Arc<Vec<Vec<bool>>>>,
 ) -> Option<HopDiscTileCtx<'a>> {
@@ -535,7 +510,7 @@ fn hop_disc_tile_ctx<'a>(
         spacing_m_lon: spacing * 111_000.0 * cos_lat,
         radius_sq_m: effective_radius * effective_radius,
         scan_bbox,
-        wedge,
+        progress_lens,
         ring_sector,
         usable,
     })
@@ -580,16 +555,13 @@ fn cell_in_hop_disc(ctx: &HopDiscTileCtx, iy: usize, ix: usize) -> bool {
             rs.half_angle_include_deg,
         );
     }
-    if let Some(wedge) = ctx.wedge {
-        if !cell_in_goal_wedge(
-            ctx.center_lat,
-            ctx.center_lon,
-            wedge.goal_lat,
-            wedge.goal_lon,
+    if let Some(lens) = ctx.progress_lens {
+        if !cell_in_progress_lens(
+            lens.goal_lat,
+            lens.goal_lon,
             lat,
             lon,
-            ctx.hop_radius_m,
-            wedge.far_angle_scale,
+            lens.max_peak_goal_dist_m,
         ) {
             return false;
         }
@@ -751,7 +723,7 @@ pub fn binned_peaks_in_hop_disc(
     radius_m: f64,
     bin_size_m: f64,
     scan_bbox: Option<(f64, f64, f64, f64)>,
-    wedge: Option<GoalWedgeFilter>,
+    progress_lens: Option<GoalProgressFilter>,
     ring_sector: Option<RingSectorFilter>,
     land_filter: Option<&MultiPolygon<f64>>,
     land_index: Option<&LandFilterIndex>,
@@ -765,7 +737,7 @@ pub fn binned_peaks_in_hop_disc(
         radius_m,
         bin_size_m,
         scan_bbox,
-        wedge,
+        progress_lens,
         ring_sector,
         land_filter,
         land_index,
@@ -783,7 +755,7 @@ pub fn binned_high_points_in_hop_disc(
     radius_m: f64,
     bin_size_m: f64,
     scan_bbox: Option<(f64, f64, f64, f64)>,
-    wedge: Option<GoalWedgeFilter>,
+    progress_lens: Option<GoalProgressFilter>,
     ring_sector: Option<RingSectorFilter>,
     land_filter: Option<&MultiPolygon<f64>>,
     land_index: Option<&LandFilterIndex>,
@@ -797,7 +769,7 @@ pub fn binned_high_points_in_hop_disc(
         radius_m,
         bin_size_m,
         scan_bbox,
-        wedge,
+        progress_lens,
         ring_sector,
         land_filter,
         land_index,
@@ -814,7 +786,7 @@ fn binned_in_hop_disc(
     radius_m: f64,
     bin_size_m: f64,
     scan_bbox: Option<(f64, f64, f64, f64)>,
-    wedge: Option<GoalWedgeFilter>,
+    progress_lens: Option<GoalProgressFilter>,
     ring_sector: Option<RingSectorFilter>,
     land_filter: Option<&MultiPolygon<f64>>,
     land_index: Option<&LandFilterIndex>,
@@ -845,7 +817,7 @@ fn binned_in_hop_disc(
                     center_lon,
                     radius_m,
                     scan_bbox,
-                    wedge,
+                    progress_lens,
                     ring_sector,
                     usable,
                 )

@@ -24,9 +24,9 @@ export const SEEK_PATH_SOURCE = 'seek-path'
 export const SEEK_PATH_LAYER = 'seek-path-line'
 export const SEEK_GOAL_LINE_SOURCE = 'seek-goal-line'
 export const SEEK_GOAL_LINE_LAYER = 'seek-goal-line'
-export const SEEK_WEDGE_SOURCE = 'seek-goal-wedge'
-export const SEEK_WEDGE_FILL_LAYER = 'seek-goal-wedge-fill'
-export const SEEK_WEDGE_OUTLINE_LAYER = 'seek-goal-wedge-outline'
+export const SEEK_LENS_SOURCE = 'seek-progress-lens'
+export const SEEK_LENS_FILL_LAYER = 'seek-progress-lens-fill'
+export const SEEK_LENS_OUTLINE_LAYER = 'seek-progress-lens-outline'
 export const SEEK_ANCILLARY_LINES_SOURCE = 'seek-ancillary-lines'
 export const SEEK_ANCILLARY_LINES_LAYER = 'seek-ancillary-lines-line'
 export const SEEK_ANCILLARY_LINES_LABELS_LAYER = 'seek-ancillary-lines-label'
@@ -58,12 +58,9 @@ export const SITE_STACK_RAISE_IDS = [
   SITES_CIRCLE,
   SITES_LABELS,
   SITES_SELECTED,
-  SEEK_WEDGE_FILL_LAYER,
-  SEEK_WEDGE_OUTLINE_LAYER,
+  SEEK_LENS_FILL_LAYER,
+  SEEK_LENS_OUTLINE_LAYER,
 ]
-
-export const SEEK_WEDGE_NEAR_DEG = 10
-export const SEEK_WEDGE_FAR_DEG = 50
 export const SEEK_ANCILLARY_LINKS_DEBOUNCE_MS = 450
 export const SEEK_PLAN_SAVE_MS = 400
 export const SEEK_PEAK_BIN_MIN_M = 500

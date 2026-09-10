@@ -8,7 +8,7 @@ use rayon::prelude::*;
 
 use crate::dem::DemMosaic;
 use crate::peaks::{
-    binned_peaks_in_hop_disc, peak_passes_land_filter, GoalWedgeFilter, HopDiscScanProgress,
+    binned_peaks_in_hop_disc, peak_passes_land_filter, GoalProgressFilter, HopDiscScanProgress,
     LandFilterIndex, Peak, RingSectorFilter,
 };
 use crate::propagate::{
@@ -28,7 +28,7 @@ pub fn disc_binned_peaks_with_dem(
     hop_radius_m: f64,
     land_filter: Option<&MultiPolygon<f64>>,
     scan_bbox: Option<(f64, f64, f64, f64)>,
-    wedge: Option<GoalWedgeFilter>,
+    progress_lens: Option<GoalProgressFilter>,
     ring_sector: Option<RingSectorFilter>,
     bin_size_m: f64,
     land_index: Option<&LandFilterIndex>,
@@ -42,7 +42,7 @@ pub fn disc_binned_peaks_with_dem(
         hop_radius_m,
         bin_size_m,
         scan_bbox,
-        wedge,
+        progress_lens,
         ring_sector,
         land_filter,
         land_index,

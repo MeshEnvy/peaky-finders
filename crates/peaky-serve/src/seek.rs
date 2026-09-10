@@ -18,6 +18,7 @@ use splatter::peaks::LandFilterIndex;
 use splatter::Session;
 
 use crate::rf::{pair_within_hop_range, preset_to_request, default_repeater_tx_height_m, resolved_site_tx_height_m, rf_json_for_preset};
+use crate::seek_path::{compute_forward_goal_reachable, hop_makes_goal_progress, SEEK_PROGRESS_MARGIN_M};
 use crate::seek_progress::SeekProgressHub;
 use crate::seek_rank::{
     angle_diff_deg, bearing_deg, cmp_seek_peak_rank, forward_reach_m, haversine_m, peak_is_past_goal,
@@ -351,18 +352,8 @@ pub fn resolve_seek_peak_bin_size_m(seek_cfg: &SeekConfig, requested: Option<f64
     Ok(SEEK_PEAK_BIN_MIN_M.max(ceiling.min(req)))
 }
 
-/// Half-width of the goal-direction search wedge at ``hop_m`` (degrees). Narrow at the source, widens with distance.
-fn seek_wedge_half_angle_deg(hop_m: f64, hop_radius_m: f64) -> f64 {
-    const NEAR_DEG: f64 = 10.0;
-    const FAR_DEG: f64 = 50.0;
-    if hop_radius_m <= 0.0 {
-        return FAR_DEG;
-    }
-    let t = (hop_m / hop_radius_m).clamp(0.0, 1.0);
-    NEAR_DEG + t * (FAR_DEG - NEAR_DEG)
-}
-
-fn peak_in_goal_wedge(
+/// Hop disc ∩ closer-to-goal than start.
+fn peak_in_progress_lens(
     from_lat: f64,
     from_lon: f64,
     goal_lat: f64,
@@ -370,28 +361,19 @@ fn peak_in_goal_wedge(
     peak_lat: f64,
     peak_lon: f64,
     hop_radius_m: f64,
-    far_angle_scale: f64,
 ) -> bool {
-    let hop_m = haversine_m(from_lat, from_lon, peak_lat, peak_lon);
-    if hop_m <= 1.0 {
-        return false;
-    }
-    let goal_bearing = bearing_deg(from_lat, from_lon, goal_lat, goal_lon);
-    let peak_bearing = bearing_deg(from_lat, from_lon, peak_lat, peak_lon);
-    let delta = angle_diff_deg(peak_bearing, goal_bearing);
-    if delta >= 90.0 {
-        return false;
-    }
-    let mut half = seek_wedge_half_angle_deg(hop_m, hop_radius_m);
-    if far_angle_scale > 1.0 {
-        let near = seek_wedge_half_angle_deg(0.0, hop_radius_m);
-        half = near + (half - near) * far_angle_scale;
-        half = half.min(89.0);
-    }
-    delta <= half
+    hop_makes_goal_progress(
+        from_lat,
+        from_lon,
+        goal_lat,
+        goal_lon,
+        peak_lat,
+        peak_lon,
+        hop_radius_m,
+    )
 }
 
-fn filter_peaks_in_goal_wedge(
+fn filter_peaks_in_progress_lens(
     peaks: Vec<(f64, f64, f64)>,
     from_lat: f64,
     from_lon: f64,
@@ -402,7 +384,7 @@ fn filter_peaks_in_goal_wedge(
     peaks
         .into_iter()
         .filter(|(lon, lat, _)| {
-            peak_in_goal_wedge(
+            peak_in_progress_lens(
                 from_lat,
                 from_lon,
                 goal_lat,
@@ -410,10 +392,44 @@ fn filter_peaks_in_goal_wedge(
                 *lat,
                 *lon,
                 hop_radius_m,
-                1.0,
             )
         })
         .collect()
+}
+
+fn progress_lens_half_angle_deg(hop_m: f64, goal_dist_m: f64) -> f64 {
+    if goal_dist_m <= 1.0 || hop_m >= 2.0 * goal_dist_m {
+        return 180.0;
+    }
+    (hop_m / (2.0 * goal_dist_m)).clamp(0.0, 1.0).acos().to_degrees()
+}
+
+fn signed_bearing_delta(from_deg: f64, to_deg: f64) -> f64 {
+    let mut d = (to_deg - from_deg) % 360.0;
+    if d > 180.0 {
+        d -= 360.0;
+    } else if d < -180.0 {
+        d += 360.0;
+    }
+    d
+}
+
+fn append_bearing_arc(
+    coords: &mut Vec<Coord<f64>>,
+    center_lat: f64,
+    center_lon: f64,
+    radius_m: f64,
+    from_bearing: f64,
+    to_bearing: f64,
+    steps: usize,
+) {
+    let delta = signed_bearing_delta(from_bearing, to_bearing);
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let bearing = from_bearing + delta * t;
+        let (lat, lon) = destination_point(center_lat, center_lon, bearing, radius_m);
+        coords.push(Coord { x: lon, y: lat });
+    }
 }
 
 /// Max cross-track distance that stays inside both hop discs.
@@ -532,7 +548,7 @@ fn sample_goal_corridor(
     sample_landing_points(session, land_index, &locs, exclude)
 }
 
-/// Preset sites already inside the start hop disc (local mesh). Not wedge-clipped.
+/// Preset sites already inside the start hop disc (local mesh). Not lens-clipped.
 fn local_mesh_neighbors(
     preset: &Preset,
     from_lat: f64,
@@ -658,22 +674,17 @@ fn hop_disc_wgs84(lat: f64, lon: f64, radius_m: f64) -> Polygon<f64> {
     Polygon::new(LineString::from(coords), vec![])
 }
 
-/// Forward goal-direction wedge (scale 1.0, same as [`filter_peaks_in_goal_wedge`]).
-fn goal_wedge_polygon(
+/// Hop disc ∩ closer-to-goal disc (same rule as [`filter_peaks_in_progress_lens`]).
+fn progress_lens_polygon(
     from_lat: f64,
     from_lon: f64,
     goal_lat: f64,
     goal_lon: f64,
     hop_radius_m: f64,
-    far_angle_scale: f64,
 ) -> Polygon<f64> {
+    let goal_dist = haversine_m(from_lat, from_lon, goal_lat, goal_lon);
     let goal_bearing = bearing_deg(from_lat, from_lon, goal_lat, goal_lon);
-    let mut half = seek_wedge_half_angle_deg(hop_radius_m, hop_radius_m);
-    if far_angle_scale > 1.0 {
-        let near = seek_wedge_half_angle_deg(0.0, hop_radius_m);
-        half = near + (half - near) * far_angle_scale;
-        half = half.min(89.0);
-    }
+    let half = progress_lens_half_angle_deg(hop_radius_m, goal_dist);
     let n = 32usize;
     let mut coords = vec![Coord {
         x: from_lon,
@@ -685,6 +696,13 @@ fn goal_wedge_polygon(
         let (lat, lon) = destination_point(from_lat, from_lon, bearing, hop_radius_m);
         coords.push(Coord { x: lon, y: lat });
     }
+    let (plus_lat, plus_lon) = destination_point(from_lat, from_lon, goal_bearing + half, hop_radius_m);
+    let (minus_lat, minus_lon) = destination_point(from_lat, from_lon, goal_bearing - half, hop_radius_m);
+    let b_plus = bearing_deg(goal_lat, goal_lon, plus_lat, plus_lon);
+    let b_minus = bearing_deg(goal_lat, goal_lon, minus_lat, minus_lon);
+    let b_near = bearing_deg(goal_lat, goal_lon, from_lat, from_lon);
+    append_bearing_arc(&mut coords, goal_lat, goal_lon, goal_dist, b_plus, b_near, n);
+    append_bearing_arc(&mut coords, goal_lat, goal_lon, goal_dist, b_near, b_minus, n);
     coords.push(Coord {
         x: from_lon,
         y: from_lat,
@@ -725,22 +743,23 @@ fn landing_rf_lens_bbox(
     )
 }
 
-/// Bounding box for peak DEM scan: goal wedge at hop range (scale 1.0, not map viewport).
-fn seek_goal_wedge_scan_bbox(
+/// Bounding box for peak DEM scan: hop disc ∩ closer-to-goal disc (not map viewport).
+fn seek_progress_lens_scan_bbox(
     from_lat: f64,
     from_lon: f64,
     goal_lat: f64,
     goal_lon: f64,
     hop_m: f64,
 ) -> (f64, f64, f64, f64) {
-    let wedge = goal_wedge_polygon(from_lat, from_lon, goal_lat, goal_lon, hop_m, 1.0);
-    if let Some(rect) = wedge.bounding_rect() {
+    let lens = progress_lens_polygon(from_lat, from_lon, goal_lat, goal_lon, hop_m);
+    if let Some(rect) = lens.bounding_rect() {
         return (rect.min().x, rect.min().y, rect.max().x, rect.max().y);
     }
-    let hop = hop_disc_wgs84(from_lat, from_lon, hop_m);
-    hop.bounding_rect()
-        .map(|r| (r.min().x, r.min().y, r.max().x, r.max().y))
-        .unwrap_or((from_lon, from_lat, from_lon, from_lat))
+    let goal_dist = haversine_m(from_lat, from_lon, goal_lat, goal_lon);
+    bbox_intersection(
+        hop_disc_bbox(from_lat, from_lon, hop_m),
+        hop_disc_bbox(goal_lat, goal_lon, goal_dist),
+    )
 }
 
 /// When the goal is already inside hop range, only scan short of the destination.
@@ -806,7 +825,7 @@ fn bbox_polygon(west: f64, south: f64, east: f64, north: f64) -> Polygon<f64> {
     .to_polygon()
 }
 
-/// Hop disc ∩ map viewport (UI trim hints only; peak scan uses goal-wedge bbox).
+/// Hop disc ∩ map viewport (UI trim hints only; peak scan uses progress-lens bbox).
 fn seek_viewport_hop_region(
     from_lat: f64,
     from_lon: f64,
@@ -896,6 +915,17 @@ fn collect_reachable_site_rows(
             if !pair_within_hop_range(preset, from_lat, from_lon, lat, lon) {
                 return None;
             }
+            if !hop_makes_goal_progress(
+                from_lat,
+                from_lon,
+                goal_lat,
+                goal_lon,
+                lat,
+                lon,
+                hop_radius_m,
+            ) {
+                return None;
+            }
             if near_excluded(lat, lon, exclude) {
                 return None;
             }
@@ -906,17 +936,6 @@ fn collect_reachable_site_rows(
                 if !pair_within_hop_range(preset, goal_lat, goal_lon, lat, lon) {
                     return None;
                 }
-            } else if !peak_in_goal_wedge(
-                from_lat,
-                from_lon,
-                goal_lat,
-                goal_lon,
-                lat,
-                lon,
-                hop_radius_m,
-                1.0,
-            ) {
-                return None;
             }
             let elev = site.height_m.unwrap_or(0.0);
             Some((slug.clone(), site.name.clone(), lon, lat, elev))
@@ -1038,7 +1057,7 @@ fn load_seek_candidates_body(
             hop_m,
         )
     } else {
-        seek_goal_wedge_scan_bbox(
+        seek_progress_lens_scan_bbox(
             req.from_lat,
             req.from_lon,
             req.goal_lat,
@@ -1102,13 +1121,14 @@ fn load_seek_candidates_body(
         0,
         "Trimming to hop range…",
     );
-    let scan_wedge = splatter::peaks::GoalWedgeFilter {
+    let from_goal_dist = haversine_m(req.from_lat, req.from_lon, req.goal_lat, req.goal_lon);
+    let scan_lens = splatter::peaks::GoalProgressFilter {
         goal_lat: req.goal_lat,
         goal_lon: req.goal_lon,
-        far_angle_scale: 1.0,
+        max_peak_goal_dist_m: (from_goal_dist - SEEK_PROGRESS_MARGIN_M).max(1.0),
     };
 
-    let (filtered, n_peaks_scanned, n_peaks_in_wedge) = if land_parts.is_empty() {
+    let (filtered, n_peaks_scanned, n_peaks_in_lens) = if land_parts.is_empty() {
         (Vec::new(), 0, 0)
     } else {
         ensure_active()?;
@@ -1141,7 +1161,7 @@ fn load_seek_candidates_body(
             if use_ridge_bins {
                 "Sampling the RF-reachable lens…"
             } else {
-                "Scanning ridge bins in goal wedge…"
+                "Scanning ridge bins in progress lens…"
             },
         );
         if use_ridge_bins {
@@ -1165,7 +1185,7 @@ fn load_seek_candidates_body(
                     scan_radius_m,
                     None,
                     Some(scan_bbox),
-                    Some(scan_wedge),
+                    Some(scan_lens),
                     None,
                     peak_bin_m,
                     Some(&land_index),
@@ -1179,7 +1199,7 @@ fn load_seek_candidates_body(
                 .filter(|p| !near_excluded(p.lat, p.lon, &req.exclude))
                 .map(|p| (p.lon, p.lat, p.elev_m))
                 .collect();
-            let peaks = filter_peaks_in_goal_wedge(
+            let peaks = filter_peaks_in_progress_lens(
                 peaks,
                 req.from_lat,
                 req.from_lon,
@@ -1187,8 +1207,8 @@ fn load_seek_candidates_body(
                 req.goal_lon,
                 scan_radius_m,
             );
-            let n_wedge = peaks.len();
-            (peaks, n, n_wedge)
+            let n_lens = peaks.len();
+            (peaks, n, n_lens)
         }
     };
 
@@ -1204,7 +1224,7 @@ fn load_seek_candidates_body(
             if use_ridge_bins {
                 "on the start–goal corridor"
             } else {
-                "in goal wedge"
+                "in progress lens"
             }
         ),
     );
@@ -1212,7 +1232,7 @@ fn load_seek_candidates_body(
     let cap = seek_cfg.max_candidates as usize;
     let mut capped: Vec<(f64, f64, f64)> = Vec::new();
     let mut peak_completes_flags: Vec<bool> = Vec::new();
-    let mut n_peak_rf_viable_in_wedge = 0usize;
+    let mut n_peak_rf_viable_in_lens = 0usize;
 
     let goal_on_eligible = goal_in_hop_range && land_index.contains(req.goal_lon, req.goal_lat);
     let goal_near_prior_hop =
@@ -1280,7 +1300,7 @@ fn load_seek_candidates_body(
                     .map_err(|e| SeekRunError::User(e.to_string(), 503))?,
             );
         }
-        n_peak_rf_viable_in_wedge = from_margins.iter().filter(|v| v.is_some()).count();
+        n_peak_rf_viable_in_lens = from_margins.iter().filter(|v| v.is_some()).count();
         let mut viable: Vec<(f64, f64, f64)> = Vec::new();
         let mut viable_from_margin: Vec<f64> = Vec::new();
         for (peak, margin) in filtered.iter().copied().zip(from_margins) {
@@ -1538,6 +1558,73 @@ fn load_seek_candidates_body(
         }
     }
 
+    let mut n_forward_path_pruned = 0usize;
+    let n_before_forward = site_rows.len() + capped.len();
+    if n_before_forward > 0 {
+        ensure_active()?;
+        progress.update(
+            &req.slug,
+            scan_gen,
+            "forward_path",
+            0,
+            n_before_forward.max(1) as i32,
+            "Checking forward paths…",
+        );
+        let path = compute_forward_goal_reachable(
+            session,
+            &preset,
+            req.from_lat,
+            req.from_lon,
+            req.goal_lat,
+            req.goal_lon,
+            goal_tx_h,
+            hop_m,
+            &rf_json,
+            &capped,
+            &req.exclude_slugs,
+            &mut || {
+                if !progress.active(&req.slug, scan_gen) {
+                    return Err("cancelled".into());
+                }
+                Ok(())
+            },
+        )
+        .map_err(|e| {
+            if e == "cancelled" {
+                SeekRunError::Cancelled
+            } else {
+                SeekRunError::User(e, 503)
+            }
+        })?;
+
+        if !site_rows.is_empty() {
+            let mut next_rows = Vec::new();
+            let mut next_completes = Vec::new();
+            for (i, row) in site_rows.into_iter().enumerate() {
+                let completes = site_completes.get(i).copied().unwrap_or(false);
+                if completes || path.reachable_site_slugs.contains(&row.0) {
+                    next_rows.push(row);
+                    next_completes.push(completes);
+                }
+            }
+            site_rows = next_rows;
+            site_completes = next_completes;
+        }
+
+        let mut next_capped = Vec::new();
+        let mut next_peak_completes = Vec::new();
+        for (i, (peak, completes)) in capped.into_iter().zip(peak_completes_flags).enumerate() {
+            if completes || path.reachable_peak_indices.contains(&i) {
+                next_capped.push(peak);
+                next_peak_completes.push(completes);
+            }
+        }
+        capped = next_capped;
+        peak_completes_flags = next_peak_completes;
+        n_forward_path_pruned =
+            n_before_forward.saturating_sub(site_rows.len() + capped.len());
+    }
+
     let mut peak_pairs: Vec<((f64, f64, f64), bool)> = capped
         .into_iter()
         .zip(peak_completes_flags)
@@ -1639,7 +1726,7 @@ fn load_seek_candidates_body(
             .map_err(|e| SeekRunError::User(e.to_string(), 503))?;
     }
     rf_viable.extend(peak_rf_viable_flags);
-    let n_peak_rf_viable = n_peak_rf_viable_in_wedge.min(peak_count);
+    let n_peak_rf_viable = n_peak_rf_viable_in_lens.min(peak_count);
 
     let mut candidate_features = Vec::new();
     let mut line_features = Vec::new();
@@ -1681,6 +1768,7 @@ fn load_seek_candidates_body(
             "bearing_delta_deg": bearing_delta.round(),
             "rf_viable": viable,
             "completes_goal": row.completes_goal,
+            "goal_path_exists": true,
             "goal_distance_km": (haversine_m(row.lat, row.lon, req.goal_lat, req.goal_lon) / 1000.0 * 10.0).round() / 10.0,
         });
         if row.is_goal {
@@ -1765,7 +1853,7 @@ fn load_seek_candidates_body(
         },
         "meta": {
             "n_peaks_linkable": n_peak_rf_viable,
-            "n_peaks_in_wedge": n_peaks_in_wedge,
+            "n_peaks_in_lens": n_peaks_in_lens,
             "n_peaks_binned": n_peaks_scanned,
             "n_candidates": n_peak_candidates,
             "n_site_candidates": site_candidate_slugs.len(),
@@ -1782,6 +1870,7 @@ fn load_seek_candidates_body(
             "hop_range_km": hop_km,
             "peak_bin_size_m": peak_bin_m,
             "scan_ms": scan_t0.elapsed().as_millis(),
+            "n_forward_path_pruned": n_forward_path_pruned,
         },
     }))
 }
@@ -1844,13 +1933,13 @@ mod tests {
     }
 
     #[test]
-    fn wedge_excludes_sideways_peak_near_source() {
+    fn lens_accepts_sideways_peak_when_closer_to_goal() {
         let from_lat = 38.0;
         let from_lon = -117.0;
         let goal_lat = 40.0;
         let goal_lon = -117.0;
         let hop_m = 72_000.0;
-        assert!(peak_in_goal_wedge(
+        assert!(peak_in_progress_lens(
             from_lat,
             from_lon,
             goal_lat,
@@ -1858,37 +1947,51 @@ mod tests {
             from_lat + 0.4,
             from_lon,
             hop_m,
-            1.0,
         ));
-        assert!(!peak_in_goal_wedge(
+        assert!(!peak_in_progress_lens(
             from_lat,
             from_lon,
             goal_lat,
             goal_lon,
-            from_lat,
-            from_lon + 0.15,
+            from_lat - 0.4,
+            from_lon,
             hop_m,
-            1.0,
         ));
     }
 
     #[test]
-    fn empty_wedge_does_not_return_off_axis_peaks() {
+    fn lens_rejects_backward_peak() {
         let from_lat = 39.75567;
         let from_lon = -119.46126;
         let goal_lat = 39.778464;
         let goal_lon = -119.049911;
-        let hop_m = 35_300.0;
-        let russell = (-119.3289, 39.90951, 1708.0);
-        let out = filter_peaks_in_goal_wedge(
-            vec![russell],
+        let hop_m = 72_000.0;
+        let behind = (-119.65, 39.75567, 1708.0);
+        let out = filter_peaks_in_progress_lens(
+            vec![behind],
             from_lat,
             from_lon,
             goal_lat,
             goal_lon,
             hop_m,
         );
-        assert!(out.is_empty(), "off-axis leftover must not survive empty wedge");
+        assert!(out.is_empty(), "backward peak must not survive progress lens");
+    }
+
+    #[test]
+    fn progress_lens_scan_bbox_covers_intersection() {
+        let from_lat = 39.75567;
+        let from_lon = -119.46126;
+        let goal_lat = 39.778464;
+        let goal_lon = -119.049911;
+        let hop_m = 72_000.0;
+        let bbox = seek_progress_lens_scan_bbox(from_lat, from_lon, goal_lat, goal_lon, hop_m);
+        let lens = progress_lens_polygon(from_lat, from_lon, goal_lat, goal_lon, hop_m);
+        let rect = lens.bounding_rect().expect("lens bbox");
+        assert!(rect.min().x >= bbox.0 - 1e-6);
+        assert!(rect.min().y >= bbox.1 - 1e-6);
+        assert!(rect.max().x <= bbox.2 + 1e-6);
+        assert!(rect.max().y <= bbox.3 + 1e-6);
     }
 
     #[test]
@@ -1955,14 +2058,6 @@ mod tests {
         assert_eq!(taken.len(), 2);
         assert!((taken[0].0.0 - a.0.0).abs() < 1e-6);
         assert!((taken[1].0.0 - b.0.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn wedge_widens_toward_hop_range() {
-        let hop_m = 72_000.0;
-        let near = seek_wedge_half_angle_deg(5_000.0, hop_m);
-        let far = seek_wedge_half_angle_deg(70_000.0, hop_m);
-        assert!(far > near);
     }
 
     #[test]

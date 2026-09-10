@@ -2,8 +2,6 @@ import {
   SEEK_PEAK_BIN_MIN_M,
   SEEK_PEAK_BIN_MAX_M,
   SEEK_PEAK_BINS_ACROSS_VIEWPORT,
-  SEEK_WEDGE_FAR_DEG,
-  SEEK_WEDGE_NEAR_DEG,
 } from './constants.js'
 
 export function compareHuman(left, right) {
@@ -120,10 +118,26 @@ export function bearingDeg(lat1, lon1, lat2, lon2) {
   return (toDeg(Math.atan2(y, x)) + 360) % 360
 }
 
-export function seekWedgeHalfAngleDeg(hopM, hopRadiusM) {
-  if (hopRadiusM <= 0) return SEEK_WEDGE_FAR_DEG
-  const t = Math.min(1, Math.max(0, hopM / hopRadiusM))
-  return SEEK_WEDGE_NEAR_DEG + t * (SEEK_WEDGE_FAR_DEG - SEEK_WEDGE_NEAR_DEG)
+export function progressLensHalfAngleDeg(hopM, goalDistM) {
+  if (goalDistM <= 1 || hopM >= 2 * goalDistM) return 180
+  return (Math.acos(Math.min(1, Math.max(0, hopM / (2 * goalDistM)))) * 180) / Math.PI
+}
+
+function signedBearingDelta(fromDeg, toDeg) {
+  let d = (toDeg - fromDeg) % 360
+  if (d > 180) d -= 360
+  else if (d < -180) d += 360
+  return d
+}
+
+function appendBearingArc(ring, centerLat, centerLon, radiusM, fromBearing, toBearing, steps) {
+  const delta = signedBearingDelta(fromBearing, toBearing)
+  for (let i = 1; i <= steps; i += 1) {
+    const t = i / steps
+    const bearing = fromBearing + delta * t
+    const [lat, lon] = destinationPointLatLon(centerLat, centerLon, bearing, radiusM)
+    ring.push([lon, lat])
+  }
 }
 
 export function destinationPointLatLon(lat, lon, bearingDegVal, distanceM) {
@@ -145,39 +159,40 @@ export function destinationPointLatLon(lat, lon, bearingDegVal, distanceM) {
   return [(lat2 * 180) / Math.PI, (lon2 * 180) / Math.PI]
 }
 
-export function buildSeekWedgeFeature(from, goal, hopRadiusM) {
+export function buildSeekLensFeature(from, goal, hopRadiusM) {
+  const goalDist = haversineMeters(from.lat, from.lon, goal.lat, goal.lon)
   const goalBearing = bearingDeg(from.lat, from.lon, goal.lat, goal.lon)
-  const steps = 36
+  const half = progressLensHalfAngleDeg(hopRadiusM, goalDist)
+  const steps = 32
   const ring = [[from.lon, from.lat]]
   for (let i = 0; i <= steps; i += 1) {
     const t = i / steps
-    const d = t * hopRadiusM
-    const half = seekWedgeHalfAngleDeg(d, hopRadiusM)
-    const [lat, lon] = destinationPointLatLon(
-      from.lat,
-      from.lon,
-      goalBearing - half,
-      d,
-    )
+    const bearing = goalBearing - half + t * (2 * half)
+    const [lat, lon] = destinationPointLatLon(from.lat, from.lon, bearing, hopRadiusM)
     ring.push([lon, lat])
   }
-  for (let i = steps; i >= 0; i -= 1) {
-    const t = i / steps
-    const d = t * hopRadiusM
-    const half = seekWedgeHalfAngleDeg(d, hopRadiusM)
-    const [lat, lon] = destinationPointLatLon(
-      from.lat,
-      from.lon,
-      goalBearing + half,
-      d,
-    )
-    ring.push([lon, lat])
-  }
+  const [plusLat, plusLon] = destinationPointLatLon(
+    from.lat,
+    from.lon,
+    goalBearing + half,
+    hopRadiusM,
+  )
+  const [minusLat, minusLon] = destinationPointLatLon(
+    from.lat,
+    from.lon,
+    goalBearing - half,
+    hopRadiusM,
+  )
+  const bPlus = bearingDeg(goal.lat, goal.lon, plusLat, plusLon)
+  const bMinus = bearingDeg(goal.lat, goal.lon, minusLat, minusLon)
+  const bNear = bearingDeg(goal.lat, goal.lon, from.lat, from.lon)
+  appendBearingArc(ring, goal.lat, goal.lon, goalDist, bPlus, bNear, steps)
+  appendBearingArc(ring, goal.lat, goal.lon, goalDist, bNear, bMinus, steps)
   ring.push([from.lon, from.lat])
   return {
     type: 'Feature',
     geometry: { type: 'Polygon', coordinates: [ring] },
-    properties: { kind: 'seek-wedge' },
+    properties: { kind: 'seek-lens' },
   }
 }
 

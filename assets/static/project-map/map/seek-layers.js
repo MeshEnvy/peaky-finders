@@ -14,11 +14,11 @@ import {
   SEEK_PATH_LAYER,
   SEEK_GOAL_LINE_SOURCE,
   SEEK_GOAL_LINE_LAYER,
-  SEEK_WEDGE_SOURCE,
-  SEEK_WEDGE_FILL_LAYER,
-  SEEK_WEDGE_OUTLINE_LAYER,
+  SEEK_LENS_SOURCE,
+  SEEK_LENS_FILL_LAYER,
+  SEEK_LENS_OUTLINE_LAYER,
 } from '../constants.js'
-import { buildSeekWedgeFeature, buildSeekGoalLineFeature } from '../geo.js'
+import { buildSeekLensFeature, buildSeekGoalLineFeature } from '../geo.js'
 import { linkLabelsLayerSpec, linksGeoJsonWithLabels } from './links-layers.js'
 
 /** @param {string} layerId @param {string} sourceId */
@@ -126,7 +126,7 @@ export function removeSeekLayers(map, clearMarkers) {
   removeSeekCandidateLayers(map)
   if (map.getLayer(SEEK_PATH_LAYER)) map.removeLayer(SEEK_PATH_LAYER)
   if (map.getSource(SEEK_PATH_SOURCE)) map.removeSource(SEEK_PATH_SOURCE)
-  removeSeekWedgeLayers(map)
+  removeSeekLensLayers(map)
   if (clearMarkers) clearMarkers()
 }
 
@@ -137,16 +137,16 @@ export function removeSeekGoalLineLayer(map) {
 }
 
 /** @param {maplibregl.Map} map */
-export function removeSeekWedgeLayers(map) {
-  if (map.getLayer(SEEK_WEDGE_OUTLINE_LAYER)) map.removeLayer(SEEK_WEDGE_OUTLINE_LAYER)
-  if (map.getLayer(SEEK_WEDGE_FILL_LAYER)) map.removeLayer(SEEK_WEDGE_FILL_LAYER)
-  if (map.getSource(SEEK_WEDGE_SOURCE)) map.removeSource(SEEK_WEDGE_SOURCE)
+export function removeSeekLensLayers(map) {
+  if (map.getLayer(SEEK_LENS_OUTLINE_LAYER)) map.removeLayer(SEEK_LENS_OUTLINE_LAYER)
+  if (map.getLayer(SEEK_LENS_FILL_LAYER)) map.removeLayer(SEEK_LENS_FILL_LAYER)
+  if (map.getSource(SEEK_LENS_SOURCE)) map.removeSource(SEEK_LENS_SOURCE)
 }
 
-/** Paint the goal wedge above every other map layer. @param {maplibregl.Map} map */
-export function raiseSeekWedgeLayers(map) {
+/** Paint the progress lens above every other map layer. @param {maplibregl.Map} map */
+export function raiseSeekLensLayers(map) {
   if (!map) return
-  for (const id of [SEEK_WEDGE_FILL_LAYER, SEEK_WEDGE_OUTLINE_LAYER]) {
+  for (const id of [SEEK_LENS_FILL_LAYER, SEEK_LENS_OUTLINE_LAYER]) {
     if (!map.getLayer(id)) continue
     try {
       map.moveLayer(id)
@@ -162,30 +162,30 @@ export function raiseSeekWedgeLayers(map) {
  * @param {{ lat: number, lon: number }} goal
  * @param {number} hopRadiusM
  */
-export function syncSeekWedge(map, from, goal, hopRadiusM) {
+export function syncSeekLens(map, from, goal, hopRadiusM) {
   const data = {
     type: 'FeatureCollection',
-    features: [buildSeekWedgeFeature(from, goal, hopRadiusM)],
+    features: [buildSeekLensFeature(from, goal, hopRadiusM)],
   }
-  if (map.getSource(SEEK_WEDGE_SOURCE)) {
-    map.getSource(SEEK_WEDGE_SOURCE).setData(data)
-    raiseSeekWedgeLayers(map)
+  if (map.getSource(SEEK_LENS_SOURCE)) {
+    map.getSource(SEEK_LENS_SOURCE).setData(data)
+    raiseSeekLensLayers(map)
     return
   }
-  map.addSource(SEEK_WEDGE_SOURCE, { type: 'geojson', data })
+  map.addSource(SEEK_LENS_SOURCE, { type: 'geojson', data })
   map.addLayer({
-    id: SEEK_WEDGE_FILL_LAYER,
+    id: SEEK_LENS_FILL_LAYER,
     type: 'fill',
-    source: SEEK_WEDGE_SOURCE,
+    source: SEEK_LENS_SOURCE,
     paint: {
       'fill-color': '#22c55e',
       'fill-opacity': 0.1,
     },
   })
   map.addLayer({
-    id: SEEK_WEDGE_OUTLINE_LAYER,
+    id: SEEK_LENS_OUTLINE_LAYER,
     type: 'line',
-    source: SEEK_WEDGE_SOURCE,
+    source: SEEK_LENS_SOURCE,
     paint: {
       'line-color': '#22c55e',
       'line-width': 1.5,
@@ -194,7 +194,7 @@ export function syncSeekWedge(map, from, goal, hopRadiusM) {
     },
     layout: { 'line-cap': 'round', 'line-join': 'round' },
   })
-  raiseSeekWedgeLayers(map)
+  raiseSeekLensLayers(map)
 }
 
 /**
@@ -229,9 +229,9 @@ export function syncSeekGoalLine(map, from, goal, hopRadiusM, raiseSiteLayers) {
       SITES_CIRCLE,
     )
   }
-  syncSeekWedge(map, from, goal, hopRadiusM)
+  syncSeekLens(map, from, goal, hopRadiusM)
   if (raiseSiteLayers) raiseSiteLayers()
-  raiseSeekWedgeLayers(map)
+  raiseSeekLensLayers(map)
 }
 
 /**
@@ -415,5 +415,5 @@ export function applySeekLayers(map, payload, opts) {
   if (opts.onPathUpdate) opts.onPathUpdate()
   if (opts.onGoalLine) opts.onGoalLine()
   if (opts.raiseSiteLayers) opts.raiseSiteLayers()
-  raiseSeekWedgeLayers(map)
+  raiseSeekLensLayers(map)
 }

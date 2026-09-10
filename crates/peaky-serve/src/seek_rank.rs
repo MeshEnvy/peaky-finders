@@ -74,7 +74,7 @@ pub(crate) fn peak_is_past_goal(
     along_m > d_goal + PAST_GOAL_MARGIN_M
 }
 
-/// Completers first, then extra local-mesh links, then weaker-leg margin, then forward reach.
+/// Completers first; non-completers by goal progress, then mesh links, margin, forward reach.
 pub(crate) fn seek_peak_rank_key(
     from_lat: f64,
     from_lon: f64,
@@ -83,13 +83,20 @@ pub(crate) fn seek_peak_rank_key(
     peak_lon: f64,
     peak_lat: f64,
     score: SeekRankScore,
-) -> (u8, u32, f64, f64) {
-    let progress = forward_reach_m(from_lat, from_lon, goal_lat, goal_lon, peak_lat, peak_lon);
+) -> (u8, f64, u32, f64, f64) {
+    let forward = forward_reach_m(from_lat, from_lon, goal_lat, goal_lon, peak_lat, peak_lon);
+    let goal_progress = if score.completes {
+        0.0
+    } else {
+        haversine_m(from_lat, from_lon, goal_lat, goal_lon)
+            - haversine_m(peak_lat, peak_lon, goal_lat, goal_lon)
+    };
     (
         u8::from(score.completes),
+        goal_progress,
         score.mesh_links,
         score.margin_db,
-        progress,
+        forward,
     )
 }
 
@@ -235,7 +242,7 @@ mod tests {
         let hop_m = haversine_m(from_lat, from_lon, best.1, best.0);
         assert!(
             hop_m > 30_000.0,
-            "best peak should be farthest in wedge, got {hop_m}m"
+            "best peak should be farthest on bearing, got {hop_m}m"
         );
     }
 
@@ -290,6 +297,29 @@ mod tests {
         assert!(!peak_is_past_goal(
             from_lat, from_lon, goal_lat, goal_lon, ridge_lat, ridge_lon
         ));
+    }
+
+    #[test]
+    fn rank_prefers_closer_non_completer_over_stronger_sideways_margin() {
+        let from_lat = 38.0;
+        let from_lon = -117.0;
+        let goal_lat = 40.0;
+        let goal_lon = -117.0;
+        let closer = (from_lon + 0.2, from_lat + 0.35, 2200.0);
+        let sideways = (from_lon + 0.45, from_lat + 0.05, 2400.0);
+        assert_eq!(
+            cmp_seek_peak_rank(
+                from_lat,
+                from_lon,
+                goal_lat,
+                goal_lon,
+                closer,
+                sideways,
+                score(false, 0, 2.0),
+                score(false, 0, 18.0),
+            ),
+            std::cmp::Ordering::Less
+        );
     }
 
     #[test]

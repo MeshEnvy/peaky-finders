@@ -17,6 +17,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **Goal seek progress lens** — approach-hop peak scan is hop disc ∩ closer-to-goal than start (replaces the narrow goal wedge). Existing sites in hop range always appear as candidates. Non-completers rank by goal-distance progress before RF margin. Map overlay shows the lens shape.
+- **Goal seek forward-path gate** — candidates must have at least one RF-feasible path to the goal through preset sites and scan peaks where every hop moves closer to the goal. Dead-end relays are dropped before the map shows them.
 - **Site `node` field** — optional `sites.<slug>.node` (ME key) is preserved on YAML load/save so a site can point at one fleet unit. Location stays on the site.
 - **Sites sidebar** — full-width list rows instead of shrink-wrapped buttons. Tag chips scroll in a capped stack so the site list keeps height. Hover uses light text on a brighter wash. **In view** sits above the chips and limits both tags and sites to the current map.
 - **Land sidebar** — folders, sources, and layers read as a tree. Layer rows replace the low-contrast chips. Edit and delete sit quieter than the visibility control.
