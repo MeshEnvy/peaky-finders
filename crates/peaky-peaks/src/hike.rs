@@ -140,7 +140,7 @@ pub fn hike_difficulty(max_grade_pct: f64, avg_grade_pct: f64) -> &'static str {
     }
 }
 
-fn grade_histogram(segments: &[HikeSegment]) -> Vec<GradeHistogramBucket> {
+pub(crate) fn grade_histogram(segments: &[HikeSegment]) -> Vec<GradeHistogramBucket> {
     let total: f64 = segments.iter().map(|s| s.dist_m).sum();
     GRADE_BUCKETS
         .iter()

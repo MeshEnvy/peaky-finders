@@ -34,8 +34,9 @@ use crate::hike::{
     profile_passes, snap_to_local_summit_filtered, stored_peak_hike, HikeProfile, HikeSampleElev,
     DEFAULT_MAX_HIKE_M, DEFAULT_MAX_SLOPE_GRADE_PCT, DEFAULT_SUMMIT_SNAP_M,
 };
-use peaky_preset::PeakHikeProfile;
-use crate::osm::{build_jeep_road_index, ensure_osm_pbf, JeepRoadIndex};
+use peaky_preset::{PeakHikeProfile, PeakJeepProfile, DEFAULT_MAX_JEEP_M};
+use crate::jeep::{profile_along_polyline, route_jeep_detailed, stored_peak_jeep};
+use crate::osm::{build_osm_routing, ensure_osm_pbf, OsmRouting};
 use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candidate, RawCandidate};
 
 const SITE_DEDUP_M: f64 = 300.0;
@@ -50,6 +51,7 @@ enum FilterDrop {
     Road,
     Hike,
     Slope,
+    Jeep,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +66,10 @@ struct FilterPass {
     hike_m_3d: f64,
     max_slope_deg: f64,
     hike: PeakHikeProfile,
+    paved_lat: f64,
+    paved_lon: f64,
+    jeep_m: f64,
+    jeep: PeakJeepProfile,
 }
 
 fn peaks_filter_workers() -> usize {
@@ -106,6 +112,7 @@ pub struct PeaksBuildSummary {
     pub dropped_road: usize,
     pub dropped_hike: usize,
     pub dropped_slope: usize,
+    pub dropped_jeep: usize,
     pub dropped_dedup: usize,
     pub dropped_region: usize,
     pub gnis: usize,
@@ -121,6 +128,7 @@ struct DropCounts {
     road: usize,
     hike: usize,
     slope: usize,
+    jeep: usize,
     dedup: usize,
     region: usize,
 }
@@ -129,7 +137,7 @@ fn filter_candidate(
     cand: &RawCandidate,
     session: &Session,
     land: &LandFilterIndex,
-    roads: &JeepRoadIndex,
+    routing: &OsmRouting,
     scan_region: &ScanRegion,
     site_locs: &[(f64, f64)],
     rules: &PeakAccessRules,
@@ -151,8 +159,9 @@ fn filter_candidate(
     if !point_in_region(scan_region, peak_lat, peak_lon) {
         return Err(FilterDrop::Region);
     }
-    let Some((road_lat, road_lon, road_m)) =
-        roads.nearest_within(peak_lat, peak_lon, rules.max_hike_m)
+    let Some((road_lat, road_lon, road_m)) = routing
+        .jeep_roads
+        .nearest_within(peak_lat, peak_lon, rules.max_hike_m)
     else {
         return Err(FilterDrop::Road);
     };
@@ -181,6 +190,22 @@ fn filter_candidate(
         return Err(FilterDrop::Hike);
     }
     let hike = stored_peak_hike(&detail);
+    let jeep_route = route_jeep_detailed(
+        &routing.graph,
+        &routing.paved,
+        road_lat,
+        road_lon,
+        rules.max_jeep_m,
+    )
+    .ok_or(FilterDrop::Jeep)?;
+    let jeep_detail = profile_along_polyline(
+        &elev,
+        &jeep_route.coords,
+        30.0,
+        &jeep_route.road_segments,
+    )
+    .ok_or(FilterDrop::Jeep)?;
+    let jeep = stored_peak_jeep(&jeep_detail);
     Ok(FilterPass {
         cand: cand.clone(),
         peak_lat,
@@ -192,6 +217,10 @@ fn filter_candidate(
         hike_m_3d: profile.hike_m_3d,
         max_slope_deg: profile.max_slope_deg,
         hike,
+        paved_lat: jeep_route.paved_lat,
+        paved_lon: jeep_route.paved_lon,
+        jeep_m: jeep_detail.horiz_m,
+        jeep,
     })
 }
 
@@ -233,7 +262,7 @@ pub fn build_peaks_catalog(
     );
 
     let pbf = ensure_osm_pbf(project_dir, opts.force_osm)?;
-    let roads = Arc::new(build_jeep_road_index(
+    let routing = Arc::new(build_osm_routing(
         &pbf,
         bbox.west,
         bbox.south,
@@ -252,10 +281,12 @@ pub fn build_peaks_catalog(
     rules.max_hike_m = DEFAULT_MAX_HIKE_M;
     rules.max_slope_grade_pct = DEFAULT_MAX_SLOPE_GRADE_PCT;
     rules.max_slope_deg = default_max_slope_deg();
+    rules.max_jeep_m = DEFAULT_MAX_JEEP_M;
     info!(
         max_hike_m = rules.max_hike_m,
         max_slope_grade_pct = rules.max_slope_grade_pct,
         max_slope_deg = rules.max_slope_deg,
+        max_jeep_m = rules.max_jeep_m,
         "peaks: access rules"
     );
 
@@ -326,21 +357,22 @@ pub fn build_peaks_catalog(
             }
             if (i + 1) % 500 == 0 {
                 info!(
-                    "[{}/{}] scanning… kept={} land={} road={} hike={} slope={}",
+                    "[{}/{}] scanning… kept={} land={} road={} hike={} slope={} jeep={}",
                     i + 1,
                     universe.len(),
                     deduped.len(),
                     drops.land,
                     drops.road,
                     drops.hike,
-                    drops.slope
+                    drops.slope,
+                    drops.jeep
                 );
             }
             match filter_candidate(
                 cand,
                 session.as_ref(),
                 land_index.as_ref(),
-                roads.as_ref(),
+                routing.as_ref(),
                 &scan_region,
                 &site_locs,
                 &rules,
@@ -380,6 +412,7 @@ pub fn build_peaks_catalog(
                 Err(FilterDrop::Road) => drops.road += 1,
                 Err(FilterDrop::Hike) => drops.hike += 1,
                 Err(FilterDrop::Slope) => drops.slope += 1,
+                Err(FilterDrop::Jeep) => drops.jeep += 1,
             }
         }
         (drops, deduped)
@@ -406,6 +439,7 @@ pub fn build_peaks_catalog(
         let drop_road = AtomicUsize::new(0);
         let drop_hike = AtomicUsize::new(0);
         let drop_slope = AtomicUsize::new(0);
+        let drop_jeep = AtomicUsize::new(0);
         let universe_len = universe.len();
 
         let passes: Vec<FilterPass> = pool.install(|| {
@@ -415,13 +449,14 @@ pub fn build_peaks_catalog(
                     let n = processed.fetch_add(1, Ordering::Relaxed) + 1;
                     if n % 500 == 0 || n == universe_len {
                         info!(
-                            "[{}/{}] filtering… land={} road={} hike={} slope={}",
+                            "[{}/{}] filtering… land={} road={} hike={} slope={} jeep={}",
                             n,
                             universe_len,
                             drop_land.load(Ordering::Relaxed),
                             drop_road.load(Ordering::Relaxed),
                             drop_hike.load(Ordering::Relaxed),
                             drop_slope.load(Ordering::Relaxed),
+                            drop_jeep.load(Ordering::Relaxed),
                         );
                     }
 
@@ -429,7 +464,7 @@ pub fn build_peaks_catalog(
                         cand,
                         session.as_ref(),
                         land_index.as_ref(),
-                        roads.as_ref(),
+                        routing.as_ref(),
                         scan_region.as_ref(),
                         site_locs.as_ref(),
                         rules.as_ref(),
@@ -459,6 +494,10 @@ pub fn build_peaks_catalog(
                             drop_slope.fetch_add(1, Ordering::Relaxed);
                             None
                         }
+                        Err(FilterDrop::Jeep) => {
+                            drop_jeep.fetch_add(1, Ordering::Relaxed);
+                            None
+                        }
                     }
                 })
                 .collect()
@@ -476,6 +515,7 @@ pub fn build_peaks_catalog(
             road: drop_road.load(Ordering::Relaxed),
             hike: drop_hike.load(Ordering::Relaxed),
             slope: drop_slope.load(Ordering::Relaxed),
+            jeep: drop_jeep.load(Ordering::Relaxed),
             region: drop_region.load(Ordering::Relaxed),
             dedup: drop_site.load(Ordering::Relaxed),
             ..DropCounts::default()
@@ -518,6 +558,9 @@ pub fn build_peaks_catalog(
                 hike_m: Some((pass.hike_m_3d * 10.0).round() / 10.0),
                 max_slope_deg: Some((pass.max_slope_deg * 10.0).round() / 10.0),
                 hike: Some(pass.hike),
+                paved_loc: Some([pass.paved_lat, pass.paved_lon]),
+                jeep_m: Some((pass.jeep_m * 10.0).round() / 10.0),
+                jeep: Some(pass.jeep),
                 deny: None,
             },
         );
@@ -532,6 +575,7 @@ pub fn build_peaks_catalog(
         dropped_road = drops.road,
         dropped_hike = drops.hike,
         dropped_slope = drops.slope,
+        dropped_jeep = drops.jeep,
         dropped_dedup = drops.dedup,
         dropped_region = drops.region,
         elapsed_secs = t0.elapsed().as_secs_f64(),
@@ -550,6 +594,7 @@ pub fn build_peaks_catalog(
         dropped_road: drops.road,
         dropped_hike: drops.hike,
         dropped_slope: drops.slope,
+        dropped_jeep: drops.jeep,
         dropped_dedup: drops.dedup,
         dropped_region: drops.region,
         gnis: gnis.len(),

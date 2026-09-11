@@ -28,7 +28,7 @@ use crate::links::{
 };
 use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
 use crate::state::AppState;
-use crate::peaks::{list_peaks_payload, peak_hike_payload};
+use crate::peaks::{list_peaks_payload, peak_hike_payload, peak_jeep_payload};
 use crate::land::{
     land_data_gdbs_payload, land_delete_source, land_import_preview_payload, land_import_source,
     land_patch_sidebar, land_patch_source, land_preview_fields_payload,
@@ -95,6 +95,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/events", get(project_events))
         .route("/api/p/{slug}/peaks", get(peaks_list))
         .route("/api/p/{slug}/peaks/{peak_slug}/hike", get(peak_hike))
+        .route("/api/p/{slug}/peaks/{peak_slug}/jeep", get(peak_jeep))
         .route("/api/p/{slug}/land", get(land_list))
         .route(
             "/api/p/{slug}/land/overlays/{kind}/geojson",
@@ -694,6 +695,15 @@ async fn peak_hike(
     Path((_slug, peak_slug)): Path<(String, String)>,
 ) -> Result<Json<Value>, StatusCode> {
     peak_hike_payload(&state.preset_path(), &state.session, &peak_slug)
+        .map(Json)
+        .map_err(|_| StatusCode::NOT_FOUND)
+}
+
+async fn peak_jeep(
+    State(state): State<AppState>,
+    Path((_slug, peak_slug)): Path<(String, String)>,
+) -> Result<Json<Value>, StatusCode> {
+    peak_jeep_payload(&state.preset_path(), &state.session, &peak_slug)
         .map(Json)
         .map_err(|_| StatusCode::NOT_FOUND)
 }

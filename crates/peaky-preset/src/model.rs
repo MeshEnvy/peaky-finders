@@ -172,6 +172,15 @@ pub struct PeakAccessRules {
     pub max_slope_deg: f64,
     #[serde(default = "default_jeep_highways")]
     pub road_highways: Vec<String>,
+    /// Max horizontal jeep route from paved road to park point (20 mi default).
+    #[serde(default = "default_max_jeep_m")]
+    pub max_jeep_m: f64,
+    #[serde(default = "default_paved_highways")]
+    pub paved_highways: Vec<String>,
+}
+
+fn default_max_jeep_m() -> f64 {
+    DEFAULT_MAX_JEEP_M
 }
 
 fn default_max_slope_grade_pct() -> f64 {
@@ -192,6 +201,20 @@ fn default_jeep_highways() -> Vec<String> {
     ]
 }
 
+fn default_paved_highways() -> Vec<String> {
+    vec![
+        "primary".into(),
+        "secondary".into(),
+        "tertiary".into(),
+        "trunk".into(),
+        "motorway".into(),
+        "unclassified".into(),
+        "residential".into(),
+    ]
+}
+
+pub const DEFAULT_MAX_JEEP_M: f64 = 32_187.0;
+
 impl Default for PeakAccessRules {
     fn default() -> Self {
         Self {
@@ -199,6 +222,8 @@ impl Default for PeakAccessRules {
             max_slope_grade_pct: default_max_slope_grade_pct(),
             max_slope_deg: default_max_slope_deg(),
             road_highways: default_jeep_highways(),
+            max_jeep_m: DEFAULT_MAX_JEEP_M,
+            paved_highways: default_paved_highways(),
         }
     }
 }
@@ -238,6 +263,40 @@ pub struct PeakHikeProfile {
     pub histogram: Vec<PeakHikeGradeBucket>,
 }
 
+/// One point on a jeep access profile (paved → park).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeakJeepProfilePoint {
+    pub dist_m: f64,
+    pub elev_m: f64,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// Distance along jeep route colored by OSM road class.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeakJeepRoadSegment {
+    pub highway: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracktype: Option<String>,
+    pub dist_m: f64,
+}
+
+/// Full jeep stats + path, frozen at catalog build time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeakJeepProfile {
+    pub jeep_m_3d: f64,
+    pub horiz_m: f64,
+    pub gain_m: f64,
+    pub loss_m: f64,
+    pub max_slope_deg: f64,
+    pub max_grade_pct: f64,
+    pub avg_grade_pct: f64,
+    pub difficulty: String,
+    pub profile: Vec<PeakJeepProfilePoint>,
+    pub histogram: Vec<PeakHikeGradeBucket>,
+    pub segments: Vec<PeakJeepRoadSegment>,
+}
+
 /// One row in the eligible-peaks catalog (``peaks.yaml``).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeakCatalogEntry {
@@ -258,6 +317,13 @@ pub struct PeakCatalogEntry {
     pub max_slope_deg: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hike: Option<PeakHikeProfile>,
+    /// Paved-road anchor where jeep route starts `[lat, lon]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paved_loc: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jeep_m: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jeep: Option<PeakJeepProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deny: Option<bool>,
 }

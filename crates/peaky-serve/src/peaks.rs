@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use peaky_peaks::{profile_hike_detailed, HikeSampleElev};
+use peaky_peaks::{profile_along_polyline, profile_hike_detailed, HikeSampleElev};
 use peaky_preset::load_peaks_catalog;
 use serde_json::{json, Value};
 use splatter::Session;
@@ -37,6 +37,10 @@ pub fn list_peaks_payload(preset_path: &Path) -> Result<Value> {
                 "hike_m": entry.hike_m,
                 "max_slope_deg": entry.max_slope_deg,
                 "hike": entry.hike,
+                "paved_lat": entry.paved_loc.map(|loc| loc[0]),
+                "paved_lon": entry.paved_loc.map(|loc| loc[1]),
+                "jeep_m": entry.jeep_m,
+                "jeep": entry.jeep,
             })
         })
         .collect();
@@ -92,5 +96,48 @@ pub fn peak_hike_payload(
         "road_lat": road_lat,
         "road_lon": road_lon,
         "hike": hike,
+    }))
+}
+
+pub fn peak_jeep_payload(
+    preset_path: &Path,
+    session: &Arc<Session>,
+    peak_slug: &str,
+) -> Result<Value> {
+    let catalog = load_peaks_catalog(preset_path)?;
+    let entry = catalog
+        .entries
+        .get(peak_slug)
+        .filter(|e| !e.deny.unwrap_or(false))
+        .context("peak not found")?;
+    let road_loc = entry.road_loc.context("peak has no park point")?;
+    let road_lat = road_loc[0];
+    let road_lon = road_loc[1];
+
+    let jeep = if let Some(stored) = &entry.jeep {
+        serde_json::to_value(stored).context("serialize stored jeep")?
+    } else {
+        let paved_loc = entry.paved_loc.context("peak has no paved anchor")?;
+        let paved_lat = paved_loc[0];
+        let paved_lon = paved_loc[1];
+        session
+            .ensure_tiles_for_points(&[(road_lat, road_lon), (paved_lat, paved_lon)], 900.0)
+            .context("preload DEM for jeep profile")?;
+        let elev = SessionElev(session.as_ref());
+        let coords = [(paved_lat, paved_lon), (road_lat, road_lon)];
+        let detail =
+            profile_along_polyline(&elev, &coords, 30.0, &[]).context("jeep profile")?;
+        serde_json::to_value(detail).context("serialize jeep profile")?
+    };
+
+    Ok(json!({
+        "slug": peak_slug,
+        "name": entry.name,
+        "road_lat": road_lat,
+        "road_lon": road_lon,
+        "paved_lat": entry.paved_loc.map(|loc| loc[0]),
+        "paved_lon": entry.paved_loc.map(|loc| loc[1]),
+        "jeep_m": entry.jeep_m,
+        "jeep": jeep,
     }))
 }

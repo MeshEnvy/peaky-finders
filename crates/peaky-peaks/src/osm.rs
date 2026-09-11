@@ -1,6 +1,6 @@
-//! OSM jeep-class road index (Geofabrik PBF → sampled points → R-tree).
+//! OSM jeep-class roads: R-tree index + routing graph + paved anchors.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -17,6 +17,16 @@ pub const JEEP_HIGHWAY_TAGS: &[&str] = &[
     "service",
     "residential",
     "tertiary",
+];
+
+pub const PAVED_HIGHWAY_TAGS: &[&str] = &[
+    "primary",
+    "secondary",
+    "tertiary",
+    "trunk",
+    "motorway",
+    "unclassified",
+    "residential",
 ];
 
 const ROAD_SAMPLE_STEP_M: f64 = 40.0;
@@ -68,6 +78,187 @@ impl JeepRoadIndex {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct GraphEdge {
+    pub to: u32,
+    pub length_m: f64,
+    pub highway: String,
+    pub tracktype: Option<String>,
+    pub surface: Option<String>,
+    pub fourwd_only: bool,
+}
+
+pub struct JeepRoadGraph {
+    nodes: Vec<(f64, f64)>,
+    adj: Vec<Vec<GraphEdge>>,
+}
+
+impl JeepRoadGraph {
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            adj: Vec::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn node_coords(&self, idx: u32) -> (f64, f64) {
+        self.nodes[idx as usize]
+    }
+
+    pub fn edges(&self, idx: u32) -> &[GraphEdge] {
+        &self.adj[idx as usize]
+    }
+
+    pub fn insert_node(&mut self, lat: f64, lon: f64) -> u32 {
+        let idx = self.nodes.len() as u32;
+        self.nodes.push((lat, lon));
+        self.adj.push(Vec::new());
+        idx
+    }
+
+    pub fn add_edge(&mut self, from: u32, edge: GraphEdge) {
+        self.adj[from as usize].push(edge);
+    }
+
+    pub fn nearest_node(&self, lat: f64, lon: f64, max_m: f64) -> Option<u32> {
+        let mut best: Option<(u32, f64)> = None;
+        for (idx, &(nlat, nlon)) in self.nodes.iter().enumerate() {
+            let d = haversine_m(lat, lon, nlat, nlon);
+            if d <= max_m + 1.0 && best.map(|(_, bd)| d < bd).unwrap_or(true) {
+                best = Some((idx as u32, d));
+            }
+        }
+        best.map(|(idx, _)| idx)
+    }
+
+    fn get_or_insert_node(
+        &mut self,
+        osm_id: i64,
+        lat: f64,
+        lon: f64,
+        map: &mut HashMap<i64, u32>,
+    ) -> u32 {
+        if let Some(&idx) = map.get(&osm_id) {
+            return idx;
+        }
+        let idx = self.insert_node(lat, lon);
+        map.insert(osm_id, idx);
+        idx
+    }
+
+    fn add_way_segment(
+        &mut self,
+        a: u32,
+        b: u32,
+        lat1: f64,
+        lon1: f64,
+        lat2: f64,
+        lon2: f64,
+        highway: &str,
+        tracktype: Option<&str>,
+        surface: Option<&str>,
+        fourwd_only: bool,
+    ) {
+        let len = haversine_m(lat1, lon1, lat2, lon2);
+        if len < 0.5 {
+            return;
+        }
+        let tt = tracktype.map(str::to_string);
+        let surf = surface.map(str::to_string);
+        let hw = highway.to_string();
+        self.add_edge(
+            a,
+            GraphEdge {
+                to: b,
+                length_m: len,
+                highway: hw.clone(),
+                tracktype: tt.clone(),
+                surface: surf.clone(),
+                fourwd_only,
+            },
+        );
+        self.add_edge(
+            b,
+            GraphEdge {
+                to: a,
+                length_m: len,
+                highway: hw,
+                tracktype: tt,
+                surface: surf,
+                fourwd_only,
+            },
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PavedPoint {
+    pub lat: f64,
+    pub lon: f64,
+    pub node_idx: u32,
+}
+
+impl RTreeObject for PavedPoint {
+    type Envelope = AABB<[f64; 2]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_point([self.lon, self.lat])
+    }
+}
+
+pub struct PavedAnchorIndex {
+    tree: RTree<PavedPoint>,
+}
+
+impl PavedAnchorIndex {
+    pub fn from_nodes(graph: &JeepRoadGraph, nodes: &[(u32, f64, f64)]) -> Self {
+        let points: Vec<PavedPoint> = nodes
+            .iter()
+            .map(|&(idx, lat, lon)| PavedPoint {
+                lat,
+                lon,
+                node_idx: idx,
+            })
+            .collect();
+        Self {
+            tree: RTree::bulk_load(points),
+        }
+    }
+
+    pub fn sources_within(&self, lat: f64, lon: f64, max_m: f64) -> Vec<(f64, f64, u32)> {
+        if self.tree.size() == 0 {
+            return Vec::new();
+        }
+        let deg = (max_m / 111_000.0).max(0.002);
+        let envelope = AABB::from_corners([lon - deg, lat - deg], [lon + deg, lat + deg]);
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        for pt in self.tree.locate_in_envelope_intersecting(&envelope) {
+            if haversine_m(lat, lon, pt.lat, pt.lon) > max_m + 1.0 {
+                continue;
+            }
+            if seen.insert(pt.node_idx) {
+                out.push((pt.lat, pt.lon, pt.node_idx));
+            }
+        }
+        out
+    }
+}
+
+pub struct OsmRouting {
+    pub jeep_roads: JeepRoadIndex,
+    pub graph: JeepRoadGraph,
+    pub paved: PavedAnchorIndex,
+}
+
 pub fn osm_cache_path(project_dir: &Path) -> PathBuf {
     project_dir.join(".peaky/cache/osm/nevada-latest.osm.pbf")
 }
@@ -109,7 +300,15 @@ pub fn ensure_osm_pbf(project_dir: &Path, force: bool) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn is_jeep_highway<'a, I>(tags: I) -> bool
+#[derive(Debug, Clone, Copy)]
+struct WayTags<'a> {
+    highway: &'a str,
+    tracktype: Option<&'a str>,
+    surface: Option<&'a str>,
+    fourwd_only: bool,
+}
+
+fn parse_way_tags<'a, I>(tags: I) -> Option<WayTags<'a>>
 where
     I: IntoIterator<Item = (&'a str, &'a str)>,
 {
@@ -126,26 +325,86 @@ where
             _ => {}
         }
     }
-    let Some(hw) = highway else {
-        return false;
-    };
-    if !JEEP_HIGHWAY_TAGS.iter().any(|t| *t == hw) {
+    highway.map(|hw| WayTags {
+        highway: hw,
+        tracktype,
+        surface,
+        fourwd_only,
+    })
+}
+
+fn is_jeep_highway(tags: WayTags<'_>) -> bool {
+    if !JEEP_HIGHWAY_TAGS.iter().any(|t| *t == tags.highway) {
         return false;
     }
-    if hw == "track" {
-        if fourwd_only {
+    if tags.highway == "track" {
+        if tags.fourwd_only {
             return true;
         }
-        if let Some(tt) = tracktype {
+        if let Some(tt) = tags.tracktype {
             if matches!(tt, "grade1" | "grade2") {
                 return false;
             }
         }
-        if surface == Some("paved") {
+        if tags.surface == Some("paved") {
             return false;
         }
     }
     true
+}
+
+fn is_paved_highway(tags: WayTags<'_>) -> bool {
+    PAVED_HIGHWAY_TAGS.iter().any(|t| *t == tags.highway)
+}
+
+fn is_paved_surface(surface: Option<&str>) -> bool {
+    matches!(
+        surface,
+        Some("paved") | Some("asphalt") | Some("concrete") | Some("chipseal") | Some("tarmac")
+    )
+}
+
+fn is_unpaved_surface(surface: Option<&str>) -> bool {
+    matches!(
+        surface,
+        Some("unpaved")
+            | Some("gravel")
+            | Some("fine_gravel")
+            | Some("compacted")
+            | Some("dirt")
+            | Some("ground")
+            | Some("sand")
+            | Some("mud")
+            | Some("grass")
+            | Some("earth")
+    )
+}
+
+/// Paved Dijkstra sources only — not every jeep-class road.
+fn is_paved_anchor(tags: WayTags<'_>) -> bool {
+    if matches!(
+        tags.highway,
+        "track" | "footway" | "path" | "steps" | "service" | "bridleway"
+    ) {
+        return false;
+    }
+    if is_unpaved_surface(tags.surface) {
+        return false;
+    }
+    if is_paved_surface(tags.surface) {
+        return is_paved_highway(tags) || matches!(tags.highway, "tertiary" | "tertiary_link");
+    }
+    matches!(
+        tags.highway,
+        "motorway"
+            | "trunk"
+            | "primary"
+            | "secondary"
+            | "motorway_link"
+            | "trunk_link"
+            | "primary_link"
+            | "secondary_link"
+    )
 }
 
 fn sample_way(nodes: &[(f64, f64)], step_m: f64) -> Vec<RoadPoint> {
@@ -176,14 +435,14 @@ fn node_in_bbox(lat: f64, lon: f64, west: f64, south: f64, east: f64, north: f64
     lon >= west && lon <= east && lat >= south && lat <= north
 }
 
-/// Parse PBF and build jeep-road index clipped to WGS84 bbox (with ~0.05° pad).
-pub fn build_jeep_road_index(
+/// Parse PBF once: jeep-road R-tree, routing graph, paved anchor index.
+pub fn build_osm_routing(
     pbf_path: &Path,
     west: f64,
     south: f64,
     east: f64,
     north: f64,
-) -> Result<JeepRoadIndex> {
+) -> Result<OsmRouting> {
     let pad = 0.05;
     let west = west - pad;
     let south = south - pad;
@@ -197,7 +456,7 @@ pub fn build_jeep_road_index(
     );
     let t0 = Instant::now();
 
-    let mut nodes: HashMap<i64, (f64, f64)> = HashMap::new();
+    let mut osm_nodes: HashMap<i64, (f64, f64)> = HashMap::new();
     ElementReader::from_path(pbf_path)
         .context("open OSM PBF")?
         .for_each(|element| {
@@ -207,60 +466,129 @@ pub fn build_jeep_road_index(
                 _ => return,
             };
             if node_in_bbox(lat, lon, west, south, east, north) {
-                nodes.insert(id, (lat, lon));
+                osm_nodes.insert(id, (lat, lon));
             }
         })?;
     info!(
-        nodes = nodes.len(),
+        nodes = osm_nodes.len(),
         elapsed_secs = t0.elapsed().as_secs_f64(),
         "peaks: OSM nodes loaded"
     );
 
-    let mut samples: Vec<RoadPoint> = Vec::new();
-    let mut way_count = 0usize;
-    let mut highway_counts: HashMap<String, usize> = HashMap::new();
+    let mut jeep_samples: Vec<RoadPoint> = Vec::new();
+    let mut jeep_way_count = 0usize;
+    let mut graph = JeepRoadGraph::new();
+    let mut graph_node_map: HashMap<i64, u32> = HashMap::new();
+    let mut paved_points: Vec<PavedPoint> = Vec::new();
+    let mut graph_way_count = 0usize;
 
     ElementReader::from_path(pbf_path)
         .context("reopen OSM PBF")?
         .for_each(|element| {
             if let Element::Way(way) = element {
-                if !is_jeep_highway(way.tags()) {
+                let Some(tags) = parse_way_tags(way.tags()) else {
+                    return;
+                };
+                let jeep = is_jeep_highway(tags);
+                let paved = is_paved_highway(tags);
+                if !jeep && !paved {
                     return;
                 }
                 let mut coords = Vec::new();
+                let mut osm_ids = Vec::new();
                 for nid in way.refs() {
-                    if let Some((lat, lon)) = nodes.get(&nid) {
+                    if let Some((lat, lon)) = osm_nodes.get(&nid) {
                         coords.push((*lat, *lon));
+                        osm_ids.push(nid);
                     }
                 }
                 if coords.len() < 2 {
                     return;
                 }
-                for (k, v) in way.tags() {
-                    if k == "highway" {
-                        *highway_counts.entry(v.to_string()).or_default() += 1;
+                if jeep {
+                    jeep_samples.extend(sample_way(&coords, ROAD_SAMPLE_STEP_M));
+                    jeep_way_count += 1;
+                }
+                if jeep || paved {
+                    graph_way_count += 1;
+                    for i in 0..coords.len() - 1 {
+                        let (lat1, lon1) = coords[i];
+                        let (lat2, lon2) = coords[i + 1];
+                        let a = graph.get_or_insert_node(
+                            osm_ids[i],
+                            lat1,
+                            lon1,
+                            &mut graph_node_map,
+                        );
+                        let b = graph.get_or_insert_node(
+                            osm_ids[i + 1],
+                            lat2,
+                            lon2,
+                            &mut graph_node_map,
+                        );
+                        graph.add_way_segment(
+                            a,
+                            b,
+                            lat1,
+                            lon1,
+                            lat2,
+                            lon2,
+                            tags.highway,
+                            tags.tracktype,
+                            tags.surface,
+                            tags.fourwd_only,
+                        );
+                        if is_paved_anchor(tags) {
+                            paved_points.push(PavedPoint {
+                                lat: lat1,
+                                lon: lon1,
+                                node_idx: a,
+                            });
+                            paved_points.push(PavedPoint {
+                                lat: lat2,
+                                lon: lon2,
+                                node_idx: b,
+                            });
+                        }
                     }
                 }
-                samples.extend(sample_way(&coords, ROAD_SAMPLE_STEP_M));
-                way_count += 1;
             }
         })?;
 
-    let point_count = samples.len();
-    let tree = RTree::bulk_load(samples);
+    let jeep_point_count = jeep_samples.len();
+    let jeep_tree = RTree::bulk_load(jeep_samples);
+    let paved_tree = RTree::bulk_load(paved_points);
+
     info!(
-        ways = way_count,
-        points = point_count,
-        highways = ?highway_counts,
+        jeep_ways = jeep_way_count,
+        jeep_points = jeep_point_count,
+        graph_ways = graph_way_count,
+        graph_nodes = graph.node_count(),
+        paved_anchors = paved_tree.size(),
         elapsed_secs = t0.elapsed().as_secs_f64(),
-        "peaks: jeep road index ready"
+        "peaks: OSM routing ready"
     );
 
-    Ok(JeepRoadIndex {
-        tree,
-        point_count,
-        way_count,
+    Ok(OsmRouting {
+        jeep_roads: JeepRoadIndex {
+            tree: jeep_tree,
+            point_count: jeep_point_count,
+            way_count: jeep_way_count,
+        },
+        graph,
+        paved: PavedAnchorIndex { tree: paved_tree },
     })
+}
+
+/// Backward-compatible jeep-road index only.
+pub fn build_jeep_road_index(
+    pbf_path: &Path,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+) -> Result<JeepRoadIndex> {
+    Ok(build_osm_routing(pbf_path, west, south, east, north)?.jeep_roads)
 }
 
 #[cfg(test)]
@@ -286,10 +614,64 @@ mod tests {
 
     #[test]
     fn jeep_highway_accepts_track_and_rejects_footway() {
-        assert!(is_jeep_highway([("highway", "track")]));
-        assert!(is_jeep_highway([("highway", "service")]));
-        assert!(!is_jeep_highway([("highway", "footway")]));
-        assert!(!is_jeep_highway([("highway", "motorway")]));
+        assert!(is_jeep_highway(WayTags {
+            highway: "track",
+            tracktype: None,
+            surface: None,
+            fourwd_only: false,
+        }));
+        assert!(!is_jeep_highway(WayTags {
+            highway: "footway",
+            tracktype: None,
+            surface: None,
+            fourwd_only: false,
+        }));
+    }
+
+    #[test]
+    fn paved_highway_includes_primary() {
+        assert!(is_paved_highway(WayTags {
+            highway: "primary",
+            tracktype: None,
+            surface: None,
+            fourwd_only: false,
+        }));
+    }
+
+    #[test]
+    fn unclassified_without_surface_is_not_paved_anchor() {
+        assert!(!is_paved_anchor(WayTags {
+            highway: "unclassified",
+            tracktype: None,
+            surface: None,
+            fourwd_only: false,
+        }));
+        assert!(is_paved_anchor(WayTags {
+            highway: "unclassified",
+            tracktype: None,
+            surface: Some("asphalt"),
+            fourwd_only: false,
+        }));
+    }
+
+    #[test]
+    fn service_road_is_never_paved_anchor() {
+        assert!(!is_paved_anchor(WayTags {
+            highway: "service",
+            tracktype: None,
+            surface: Some("gravel"),
+            fourwd_only: false,
+        }));
+    }
+
+    #[test]
+    fn primary_without_surface_is_paved_anchor() {
+        assert!(is_paved_anchor(WayTags {
+            highway: "primary",
+            tracktype: None,
+            surface: None,
+            fourwd_only: false,
+        }));
     }
 
     #[test]
