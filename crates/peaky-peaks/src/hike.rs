@@ -42,21 +42,45 @@ pub fn snap_to_local_summit<E: HikeSampleElev>(
     radius_m: f64,
     step_m: f64,
 ) -> Option<(f64, f64, f64)> {
-    let seed_elev = elev.sample_elev_m(seed_lat, seed_lon);
-    if !(seed_elev.is_finite() && seed_elev > 0.0) {
-        return None;
-    }
+    snap_to_local_summit_filtered(elev, seed_lat, seed_lon, radius_m, step_m, |_, _| true)
+}
+
+/// Like [`snap_to_local_summit`] but only considers samples where ``eligible(lat, lon)`` is true.
+/// Use for catalog builds so an ineligible crest cell does not steal snap from a green shoulder.
+pub fn snap_to_local_summit_filtered<E, F>(
+    elev: &E,
+    seed_lat: f64,
+    seed_lon: f64,
+    radius_m: f64,
+    step_m: f64,
+    eligible: F,
+) -> Option<(f64, f64, f64)>
+where
+    E: HikeSampleElev,
+    F: Fn(f64, f64) -> bool,
+{
     let step = step_m.max(15.0);
     let max_ring = ((radius_m / step).ceil() as i32).max(0);
-    let mut best = (seed_lat, seed_lon, seed_elev);
+    let mut best: Option<(f64, f64, f64)> = None;
 
-    for ring in 0..=max_ring {
+    let mut consider = |lat: f64, lon: f64| {
+        if !eligible(lat, lon) {
+            return;
+        }
+        let e = elev.sample_elev_m(lat, lon);
+        if !(e.is_finite() && e > 0.0) {
+            return;
+        }
+        if best.map(|(_, _, be)| e > be).unwrap_or(true) {
+            best = Some((lat, lon, e));
+        }
+    };
+
+    consider(seed_lat, seed_lon);
+    for ring in 1..=max_ring {
         let dist = ring as f64 * step;
         if dist > radius_m + 1.0 {
             break;
-        }
-        if ring == 0 {
-            continue;
         }
         let n_dirs = (8 * ring).max(8);
         for i in 0..n_dirs {
@@ -65,13 +89,10 @@ pub fn snap_to_local_summit<E: HikeSampleElev>(
             if haversine_m(seed_lat, seed_lon, lat, lon) > radius_m + 1.0 {
                 continue;
             }
-            let e = elev.sample_elev_m(lat, lon);
-            if e.is_finite() && e > best.2 {
-                best = (lat, lon, e);
-            }
+            consider(lat, lon);
         }
     }
-    Some(best)
+    best
 }
 
 pub fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -232,6 +253,34 @@ mod tests {
         assert!((elev - 2200.0).abs() < 1.0);
         assert!(haversine_m(lat, lon, bump.peak_lat, bump.peak_lon) < 60.0);
         assert!(haversine_m(seed_lat, seed_lon, lat, lon) > 100.0);
+    }
+
+    #[test]
+    fn snap_on_eligible_skips_ineligible_crest() {
+        let bump = OffsetBump {
+            peak_lat: 38.0,
+            peak_lon: -117.0,
+            peak_elev: 2400.0,
+            base: 2000.0,
+        };
+        let seed_lat = 38.0 + 0.0018;
+        let seed_lon = -117.0;
+        let crest_ineligible =
+            |lat: f64, lon: f64| haversine_m(lat, lon, bump.peak_lat, bump.peak_lon) > 50.0;
+        let (lat, lon, elev) = snap_to_local_summit_filtered(
+            &bump,
+            seed_lat,
+            seed_lon,
+            DEFAULT_SUMMIT_SNAP_M,
+            30.0,
+            crest_ineligible,
+        )
+        .unwrap();
+        let (crest_lat, _, crest_elev) =
+            snap_to_local_summit(&bump, seed_lat, seed_lon, DEFAULT_SUMMIT_SNAP_M, 30.0).unwrap();
+        assert!((crest_elev - 2400.0).abs() < 1.0);
+        assert!((elev - 2000.0).abs() < 1.0);
+        assert!(haversine_m(lat, lon, crest_lat, bump.peak_lon) > 80.0);
     }
 
     #[test]

@@ -22,8 +22,8 @@ use tracing::info;
 
 use crate::gnis::load_gnis_candidates;
 use crate::hike::{
-    clamp_calibrated_slope_deg, haversine_m, profile_hike, profile_passes, snap_to_local_summit,
-    HikeSampleElev, DEFAULT_MAX_HIKE_M, DEFAULT_SUMMIT_SNAP_M,
+    clamp_calibrated_slope_deg, haversine_m, profile_hike, profile_passes,
+    snap_to_local_summit_filtered, HikeSampleElev, DEFAULT_MAX_HIKE_M, DEFAULT_SUMMIT_SNAP_M,
 };
 use crate::osm::{build_jeep_road_index, ensure_osm_pbf, JeepRoadIndex};
 use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candidate, RawCandidate};
@@ -32,6 +32,14 @@ pub const RAZORBACK_CALIB_SITE: &str = "old-razorback";
 const SITE_DEDUP_M: f64 = 300.0;
 const CANDIDATE_DEDUP_M: f64 = 300.0;
 const DEM_BIN_M: f64 = 1500.0;
+
+#[derive(Debug, Clone)]
+struct KeptSummit {
+    lat: f64,
+    lon: f64,
+    elev: f64,
+    slug: String,
+}
 
 struct SessionElev<'a>(&'a Session);
 
@@ -150,15 +158,19 @@ pub fn build_peaks_catalog(
     let dem_peaks = load_dem_candidates(
         &session,
         land_index.clone(),
-        &roads,
         bbox,
-        rules.max_hike_m,
         &mask_dir,
     )?;
-    info!(count = dem_peaks.len(), "peaks: DEM candidates near roads");
+    info!(count = dem_peaks.len(), "peaks: DEM candidates on eligible land");
     universe.extend(dem_peaks.clone());
 
     universe = dedup_nearby(universe, CANDIDATE_DEDUP_M);
+    universe.sort_by(|a, b| {
+        b.elev_m
+            .unwrap_or(0.0)
+            .partial_cmp(&a.elev_m.unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     info!(count = universe.len(), "peaks: universe after dedup");
 
     let site_locs: Vec<(f64, f64)> = preset
@@ -177,8 +189,9 @@ pub fn build_peaks_catalog(
     let mut drops = DropCounts::default();
     let mut kept = 0usize;
     let mut existing_slugs: HashSet<String> = HashSet::new();
-    let mut kept_summits: Vec<(f64, f64)> = Vec::new();
+    let mut kept_summits: Vec<KeptSummit> = Vec::new();
     let elev = SessionElev(&session);
+    let land = land_index.clone();
 
     for (i, cand) in universe.iter().enumerate() {
         if (i + 1) % 50 == 0 || i + 1 == universe.len() {
@@ -198,26 +211,29 @@ pub fn build_peaks_catalog(
             drops.dedup += 1;
             continue;
         }
-        let Some((peak_lat, peak_lon, peak_elev)) = snap_to_local_summit(
+        let Some((peak_lat, peak_lon, peak_elev)) = snap_to_local_summit_filtered(
             &elev,
             cand.lat,
             cand.lon,
             DEFAULT_SUMMIT_SNAP_M,
             30.0,
+            |lat, lon| land.as_ref().contains(lon, lat),
         ) else {
             drops.land += 1;
             continue;
         };
-        if !land_index.as_ref().contains(peak_lon, peak_lat) {
-            drops.land += 1;
-            continue;
-        }
-        if kept_summits
-            .iter()
-            .any(|(slat, slon)| haversine_m(peak_lat, peak_lon, *slat, *slon) <= CANDIDATE_DEDUP_M)
-        {
-            drops.dedup += 1;
-            continue;
+        let replace_idx = kept_summits.iter().position(|k| {
+            haversine_m(peak_lat, peak_lon, k.lat, k.lon) <= CANDIDATE_DEDUP_M
+        });
+        if let Some(idx) = replace_idx {
+            if peak_elev <= kept_summits[idx].elev {
+                drops.dedup += 1;
+                continue;
+            }
+            catalog.entries.remove(&kept_summits[idx].slug);
+            existing_slugs.remove(&kept_summits[idx].slug);
+            kept_summits.remove(idx);
+            kept = kept.saturating_sub(1);
         }
         let Some((road_lat, road_lon, road_m)) =
             roads.nearest_within(peak_lat, peak_lon, rules.max_hike_m)
@@ -271,7 +287,12 @@ pub fn build_peaks_catalog(
         snapped.elev_m = elev_m;
         let slug = slug_for_candidate(&snapped, &existing_slugs);
         existing_slugs.insert(slug.clone());
-        kept_summits.push((peak_lat, peak_lon));
+        kept_summits.push(KeptSummit {
+            lat: peak_lat,
+            lon: peak_lon,
+            elev: peak_elev,
+            slug: slug.clone(),
+        });
         catalog.entries.insert(
             slug,
             PeakCatalogEntry {
@@ -421,14 +442,9 @@ mod tests {
 fn load_dem_candidates(
     session: &Session,
     land: Arc<LandFilterIndex>,
-    roads: &JeepRoadIndex,
     bbox: LonLatBBox,
-    max_road_m: f64,
     mask_dir: &Path,
 ) -> Result<Vec<RawCandidate>> {
-    if roads.is_empty() {
-        return Ok(Vec::new());
-    }
     let _ = std::fs::create_dir_all(mask_dir);
     let peaks = session
         .binned_peaks_in_bounds(
@@ -442,24 +458,17 @@ fn load_dem_candidates(
             None,
         )
         .context("DEM peak scan")?;
-    let mut out = Vec::new();
-    for p in peaks {
-        if roads
-            .nearest_within(p.lat, p.lon, max_road_m)
-            .is_none()
-        {
-            continue;
-        }
-        out.push(RawCandidate {
+    Ok(peaks
+        .into_iter()
+        .map(|p| RawCandidate {
             name: None,
             lat: p.lat,
             lon: p.lon,
             elev_m: Some(p.elev_m),
             source: "dem".into(),
             seed_slug: None,
-        });
-    }
-    Ok(out)
+        })
+        .collect())
 }
 
 fn resolve_bbox(

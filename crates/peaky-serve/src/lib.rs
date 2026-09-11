@@ -11,7 +11,6 @@ mod peaks;
 mod links;
 pub mod rf;
 mod seek;
-mod seek_path;
 mod seek_rank;
 mod seek_plan;
 mod seek_progress;

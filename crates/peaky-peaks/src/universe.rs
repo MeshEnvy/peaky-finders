@@ -56,15 +56,23 @@ pub fn slug_for_candidate(c: &RawCandidate, existing: &HashSet<String>) -> Strin
     slug
 }
 
+fn candidate_elev(c: &RawCandidate) -> f64 {
+    c.elev_m.unwrap_or(0.0)
+}
+
+/// Drop nearby duplicates; keep the higher-elevation row when two seeds share a mountain.
 pub fn dedup_nearby(candidates: Vec<RawCandidate>, min_m: f64) -> Vec<RawCandidate> {
     let mut kept: Vec<RawCandidate> = Vec::new();
-    'outer: for c in candidates {
-        for k in &kept {
-            if crate::hike::haversine_m(c.lat, c.lon, k.lat, k.lon) < min_m {
-                continue 'outer;
+    for c in candidates {
+        if let Some(idx) = kept.iter().position(|k| {
+            crate::hike::haversine_m(c.lat, c.lon, k.lat, k.lon) < min_m
+        }) {
+            if candidate_elev(&c) > candidate_elev(&kept[idx]) {
+                kept[idx] = c;
             }
+        } else {
+            kept.push(c);
         }
-        kept.push(c);
     }
     kept
 }

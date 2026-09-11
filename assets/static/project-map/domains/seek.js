@@ -1244,7 +1244,6 @@ export function createSeekDomain(ctx) {
       goal_lat: String(goal.lat),
       goal_lon: String(goal.lon),
       bbox: seekViewportBbox(),
-      peak_bin_size_m: String(seekPeakBinSizeM()),
     })
     const exclude = seekExcludeParam()
     if (exclude) params.set('exclude', exclude)

@@ -1,6 +1,7 @@
 //! Goal-seek ranking: complete the goal, then extra mesh links, then weaker-leg margin.
 //! Elevation is not a score. Forward reach is the last tiebreak (approach hops).
 
+pub const SEEK_PROGRESS_MARGIN_M: f64 = 1.0;
 const PAST_GOAL_MARGIN_M: f64 = 250.0;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -12,6 +13,25 @@ pub(crate) struct SeekRankScore {
 
 pub(crate) fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     splatter::propagate::haversine_m(lat1, lon1, lat2, lon2)
+}
+
+/// True when `to` is within hop of `from` and strictly closer to the goal than `from`.
+pub(crate) fn hop_makes_goal_progress(
+    from_lat: f64,
+    from_lon: f64,
+    goal_lat: f64,
+    goal_lon: f64,
+    to_lat: f64,
+    to_lon: f64,
+    hop_m: f64,
+) -> bool {
+    let hop = haversine_m(from_lat, from_lon, to_lat, to_lon);
+    if hop <= 1.0 || hop > hop_m + 1.0 {
+        return false;
+    }
+    let from_goal = haversine_m(from_lat, from_lon, goal_lat, goal_lon);
+    let to_goal = haversine_m(to_lat, to_lon, goal_lat, goal_lon);
+    to_goal < from_goal - SEEK_PROGRESS_MARGIN_M
 }
 
 pub(crate) fn bearing_deg(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -320,6 +340,19 @@ mod tests {
             ),
             std::cmp::Ordering::Less
         );
+    }
+
+    #[test]
+    fn hop_makes_goal_progress_requires_closer_to_goal() {
+        let from = (39.0, -118.0);
+        let goal = (39.0, -117.0);
+        let backward = (39.0, -118.5);
+        assert!(hop_makes_goal_progress(
+            from.0, from.1, goal.0, goal.1, goal.0, goal.1, 100_000.0
+        ));
+        assert!(!hop_makes_goal_progress(
+            from.0, from.1, goal.0, goal.1, backward.0, backward.1, 100_000.0
+        ));
     }
 
     #[test]
