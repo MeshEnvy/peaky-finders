@@ -15,6 +15,7 @@ pub fn run(
     corridor_width_mi: f64,
     force: bool,
     verbose: bool,
+    stop_after: Option<usize>,
 ) -> Result<()> {
     let preset_path = resolve_preset_path(&project.to_string_lossy());
     if !preset_path.is_file() {
@@ -47,6 +48,7 @@ pub fn run(
             corridor_width_mi,
             force_osm: force,
             verbose,
+            stop_after,
         },
     )
     .context("peaks catalog build failed")?;

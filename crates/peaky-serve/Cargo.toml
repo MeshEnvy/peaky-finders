@@ -12,6 +12,7 @@ futures = "0.3"
 geo.workspace = true
 geojson.workspace = true
 peaky-geo.workspace = true
+peaky-peaks.workspace = true
 peaky-preset.workspace = true
 parking_lot = "0.12"
 rust-embed.workspace = true

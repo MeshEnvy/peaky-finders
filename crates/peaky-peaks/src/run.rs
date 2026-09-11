@@ -16,7 +16,10 @@ use peaky_preset::{
     PeakAccessRules, PeakCatalogEntry, PeaksCatalog, Preset, resolved_dem_fetch_max_workers,
     resolved_skadi_mirror_dir_for_project,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+use rayon::prelude::*;
 use splatter::peaks::LandFilterIndex;
 use splatter::Session;
 use tracing::info;
@@ -27,23 +30,52 @@ use crate::corridor::{
 };
 use crate::gnis::load_gnis_candidates;
 use crate::hike::{
-    clamp_calibrated_slope_deg, haversine_m, profile_hike, profile_passes,
-    snap_to_local_summit_filtered, HikeSampleElev, DEFAULT_MAX_HIKE_M, DEFAULT_SUMMIT_SNAP_M,
+    default_max_slope_deg, format_hike_report, haversine_m, profile_hike, profile_hike_detailed,
+    profile_passes, snap_to_local_summit_filtered, stored_peak_hike, HikeProfile, HikeSampleElev,
+    DEFAULT_MAX_HIKE_M, DEFAULT_MAX_SLOPE_GRADE_PCT, DEFAULT_SUMMIT_SNAP_M,
 };
+use peaky_preset::PeakHikeProfile;
 use crate::osm::{build_jeep_road_index, ensure_osm_pbf, JeepRoadIndex};
 use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candidate, RawCandidate};
 
-pub const RAZORBACK_CALIB_SITE: &str = "old-razorback";
 const SITE_DEDUP_M: f64 = 300.0;
 const CANDIDATE_DEDUP_M: f64 = 300.0;
 const DEM_BIN_M: f64 = 1500.0;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FilterDrop {
+    SiteDedup,
+    Land,
+    Region,
+    Road,
+    Hike,
+    Slope,
+}
+
 #[derive(Debug, Clone)]
-struct KeptSummit {
-    lat: f64,
-    lon: f64,
-    elev: f64,
-    slug: String,
+struct FilterPass {
+    cand: RawCandidate,
+    peak_lat: f64,
+    peak_lon: f64,
+    peak_elev: f64,
+    road_lat: f64,
+    road_lon: f64,
+    road_m: f64,
+    hike_m_3d: f64,
+    max_slope_deg: f64,
+    hike: PeakHikeProfile,
+}
+
+fn peaks_filter_workers() -> usize {
+    std::env::var("PEAKY_PEAKS_WORKERS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n >= 1)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|p| p.get())
+                .unwrap_or(4)
+        })
 }
 
 struct SessionElev<'a>(&'a Session);
@@ -62,6 +94,8 @@ pub struct PeaksBuildOptions {
     pub corridor_width_mi: f64,
     pub force_osm: bool,
     pub verbose: bool,
+    /// Stop after N qualifying peaks (serial filter; prints hike profile for each).
+    pub stop_after: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -89,6 +123,76 @@ struct DropCounts {
     slope: usize,
     dedup: usize,
     region: usize,
+}
+
+fn filter_candidate(
+    cand: &RawCandidate,
+    session: &Session,
+    land: &LandFilterIndex,
+    roads: &JeepRoadIndex,
+    scan_region: &ScanRegion,
+    site_locs: &[(f64, f64)],
+    rules: &PeakAccessRules,
+) -> Result<FilterPass, FilterDrop> {
+    if is_near_any_site(cand.lat, cand.lon, site_locs, SITE_DEDUP_M) {
+        return Err(FilterDrop::SiteDedup);
+    }
+    let elev = SessionElev(session);
+    let Some((peak_lat, peak_lon, peak_elev)) = snap_to_local_summit_filtered(
+        &elev,
+        cand.lat,
+        cand.lon,
+        DEFAULT_SUMMIT_SNAP_M,
+        30.0,
+        |lat, lon| land.contains(lon, lat),
+    ) else {
+        return Err(FilterDrop::Land);
+    };
+    if !point_in_region(scan_region, peak_lat, peak_lon) {
+        return Err(FilterDrop::Region);
+    }
+    let Some((road_lat, road_lon, road_m)) =
+        roads.nearest_within(peak_lat, peak_lon, rules.max_hike_m)
+    else {
+        return Err(FilterDrop::Road);
+    };
+    let Some(detail) = profile_hike_detailed(
+        &elev,
+        road_lat,
+        road_lon,
+        peak_lat,
+        peak_lon,
+        30.0,
+    ) else {
+        return Err(FilterDrop::Hike);
+    };
+    let profile = HikeProfile {
+        hike_m_3d: detail.hike_m_3d,
+        max_slope_deg: detail.max_slope_deg,
+        n_samples: detail.profile.len(),
+    };
+    if profile.hike_m_3d > rules.max_hike_m + 1.0 {
+        return Err(FilterDrop::Hike);
+    }
+    if profile.max_slope_deg > rules.max_slope_deg + 0.5 {
+        return Err(FilterDrop::Slope);
+    }
+    if !profile_passes(&profile, rules.max_hike_m, rules.max_slope_deg) {
+        return Err(FilterDrop::Hike);
+    }
+    let hike = stored_peak_hike(&detail);
+    Ok(FilterPass {
+        cand: cand.clone(),
+        peak_lat,
+        peak_lon,
+        peak_elev,
+        road_lat,
+        road_lon,
+        road_m,
+        hike_m_3d: profile.hike_m_3d,
+        max_slope_deg: profile.max_slope_deg,
+        hike,
+    })
 }
 
 pub fn build_peaks_catalog(
@@ -129,31 +233,28 @@ pub fn build_peaks_catalog(
     );
 
     let pbf = ensure_osm_pbf(project_dir, opts.force_osm)?;
-    let roads = build_jeep_road_index(
+    let roads = Arc::new(build_jeep_road_index(
         &pbf,
         bbox.west,
         bbox.south,
         bbox.east,
         bbox.north,
-    )?;
+    )?);
 
     let mirror = resolved_skadi_mirror_dir_for_project(project_dir);
     let dem_workers = resolved_dem_fetch_max_workers(&preset);
-    let session = Session::new(mirror, opts.verbose, dem_workers);
+    let session = Arc::new(Session::new(mirror, opts.verbose, dem_workers));
     session
         .ensure_tiles_for_bounds(bbox.west, bbox.south, bbox.east, bbox.north)
         .context("preload DEM for bbox")?;
 
     let mut rules = PeakAccessRules::default();
     rules.max_hike_m = DEFAULT_MAX_HIKE_M;
-    rules.max_slope_deg = calibrate_max_slope(
-        &preset,
-        &session,
-        &roads,
-        rules.max_hike_m,
-    )?;
+    rules.max_slope_grade_pct = DEFAULT_MAX_SLOPE_GRADE_PCT;
+    rules.max_slope_deg = default_max_slope_deg();
     info!(
         max_hike_m = rules.max_hike_m,
+        max_slope_grade_pct = rules.max_slope_grade_pct,
         max_slope_deg = rules.max_slope_deg,
         "peaks: access rules"
     );
@@ -211,129 +312,212 @@ pub fn build_peaks_catalog(
         rules: rules.clone(),
         entries: HashMap::new(),
     };
+    let max_slope_deg = rules.max_slope_deg;
 
-    let mut drops = DropCounts::default();
-    let mut kept = 0usize;
-    let mut existing_slugs: HashSet<String> = HashSet::new();
-    let mut kept_summits: Vec<KeptSummit> = Vec::new();
-    let elev = SessionElev(&session);
-    let land = land_index.clone();
+    let (drops, deduped) = if let Some(limit) = opts.stop_after {
+        info!(limit, candidates = universe.len(), "peaks: stop-after serial filter");
+        let mut drops = DropCounts::default();
+        let mut kept_centroids: Vec<(f64, f64)> = Vec::new();
+        let mut deduped = Vec::new();
+        let elev = SessionElev(session.as_ref());
+        for (i, cand) in universe.iter().enumerate() {
+            if deduped.len() >= limit {
+                break;
+            }
+            if (i + 1) % 500 == 0 {
+                info!(
+                    "[{}/{}] scanning… kept={} land={} road={} hike={} slope={}",
+                    i + 1,
+                    universe.len(),
+                    deduped.len(),
+                    drops.land,
+                    drops.road,
+                    drops.hike,
+                    drops.slope
+                );
+            }
+            match filter_candidate(
+                cand,
+                session.as_ref(),
+                land_index.as_ref(),
+                roads.as_ref(),
+                &scan_region,
+                &site_locs,
+                &rules,
+            ) {
+                Ok(pass) => {
+                    if kept_centroids.iter().any(|(lat, lon)| {
+                        haversine_m(pass.peak_lat, pass.peak_lon, *lat, *lon) <= CANDIDATE_DEDUP_M
+                    }) {
+                        drops.dedup += 1;
+                        continue;
+                    }
+                    kept_centroids.push((pass.peak_lat, pass.peak_lon));
+                    let slug_preview = pass.cand.name.as_deref().unwrap_or("peak");
+                    eprintln!(
+                        "{}",
+                        format_hike_report(
+                            pass.cand.name.as_deref(),
+                            slug_preview,
+                            &profile_hike_detailed(
+                                &elev,
+                                pass.road_lat,
+                                pass.road_lon,
+                                pass.peak_lat,
+                                pass.peak_lon,
+                                30.0,
+                            )
+                            .unwrap_or_else(|| {
+                                panic!("hike profile missing for {slug_preview}");
+                            }),
+                        )
+                    );
+                    deduped.push(pass);
+                }
+                Err(FilterDrop::SiteDedup) => drops.dedup += 1,
+                Err(FilterDrop::Land) => drops.land += 1,
+                Err(FilterDrop::Region) => drops.region += 1,
+                Err(FilterDrop::Road) => drops.road += 1,
+                Err(FilterDrop::Hike) => drops.hike += 1,
+                Err(FilterDrop::Slope) => drops.slope += 1,
+            }
+        }
+        (drops, deduped)
+    } else {
+        let filter_workers = peaks_filter_workers();
+        info!(
+            workers = filter_workers,
+            candidates = universe.len(),
+            "peaks: parallel filter"
+        );
 
-    for (i, cand) in universe.iter().enumerate() {
-        if (i + 1) % 50 == 0 || i + 1 == universe.len() {
-            info!(
-                "[{}/{}] filtering… kept={} land={} road={} hike={} slope={}",
-                i + 1,
-                universe.len(),
-                kept,
-                drops.land,
-                drops.road,
-                drops.hike,
-                drops.slope
-            );
-        }
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(filter_workers)
+            .build()
+            .context("build peaks filter thread pool")?;
 
-        if is_near_any_site(cand.lat, cand.lon, &site_locs, SITE_DEDUP_M) {
-            drops.dedup += 1;
-            continue;
-        }
-        let Some((peak_lat, peak_lon, peak_elev)) = snap_to_local_summit_filtered(
-            &elev,
-            cand.lat,
-            cand.lon,
-            DEFAULT_SUMMIT_SNAP_M,
-            30.0,
-            |lat, lon| land.as_ref().contains(lon, lat),
-        ) else {
-            drops.land += 1;
-            continue;
-        };
-        if !point_in_region(&scan_region, peak_lat, peak_lon) {
-            drops.region += 1;
-            continue;
-        }
-        let replace_idx = kept_summits.iter().position(|k| {
-            haversine_m(peak_lat, peak_lon, k.lat, k.lon) <= CANDIDATE_DEDUP_M
+        let scan_region = Arc::new(scan_region);
+        let rules = Arc::new(rules);
+        let site_locs = Arc::new(site_locs);
+        let processed = AtomicUsize::new(0);
+        let drop_site = AtomicUsize::new(0);
+        let drop_land = AtomicUsize::new(0);
+        let drop_region = AtomicUsize::new(0);
+        let drop_road = AtomicUsize::new(0);
+        let drop_hike = AtomicUsize::new(0);
+        let drop_slope = AtomicUsize::new(0);
+        let universe_len = universe.len();
+
+        let passes: Vec<FilterPass> = pool.install(|| {
+            universe
+                .par_iter()
+                .filter_map(|cand| {
+                    let n = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                    if n % 500 == 0 || n == universe_len {
+                        info!(
+                            "[{}/{}] filtering… land={} road={} hike={} slope={}",
+                            n,
+                            universe_len,
+                            drop_land.load(Ordering::Relaxed),
+                            drop_road.load(Ordering::Relaxed),
+                            drop_hike.load(Ordering::Relaxed),
+                            drop_slope.load(Ordering::Relaxed),
+                        );
+                    }
+
+                    match filter_candidate(
+                        cand,
+                        session.as_ref(),
+                        land_index.as_ref(),
+                        roads.as_ref(),
+                        scan_region.as_ref(),
+                        site_locs.as_ref(),
+                        rules.as_ref(),
+                    ) {
+                        Ok(pass) => Some(pass),
+                        Err(FilterDrop::SiteDedup) => {
+                            drop_site.fetch_add(1, Ordering::Relaxed);
+                            None
+                        }
+                        Err(FilterDrop::Land) => {
+                            drop_land.fetch_add(1, Ordering::Relaxed);
+                            None
+                        }
+                        Err(FilterDrop::Region) => {
+                            drop_region.fetch_add(1, Ordering::Relaxed);
+                            None
+                        }
+                        Err(FilterDrop::Road) => {
+                            drop_road.fetch_add(1, Ordering::Relaxed);
+                            None
+                        }
+                        Err(FilterDrop::Hike) => {
+                            drop_hike.fetch_add(1, Ordering::Relaxed);
+                            None
+                        }
+                        Err(FilterDrop::Slope) => {
+                            drop_slope.fetch_add(1, Ordering::Relaxed);
+                            None
+                        }
+                    }
+                })
+                .collect()
         });
-        if let Some(idx) = replace_idx {
-            if peak_elev <= kept_summits[idx].elev {
+
+        let mut survivors = passes;
+        survivors.sort_by(|a, b| {
+            b.peak_elev
+                .partial_cmp(&a.peak_elev)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mut drops = DropCounts {
+            land: drop_land.load(Ordering::Relaxed),
+            road: drop_road.load(Ordering::Relaxed),
+            hike: drop_hike.load(Ordering::Relaxed),
+            slope: drop_slope.load(Ordering::Relaxed),
+            region: drop_region.load(Ordering::Relaxed),
+            dedup: drop_site.load(Ordering::Relaxed),
+            ..DropCounts::default()
+        };
+
+        let mut kept_centroids: Vec<(f64, f64)> = Vec::new();
+        let mut deduped: Vec<FilterPass> = Vec::new();
+        for pass in survivors {
+            if kept_centroids.iter().any(|(lat, lon)| {
+                haversine_m(pass.peak_lat, pass.peak_lon, *lat, *lon) <= CANDIDATE_DEDUP_M
+            }) {
                 drops.dedup += 1;
                 continue;
             }
-            catalog.entries.remove(&kept_summits[idx].slug);
-            existing_slugs.remove(&kept_summits[idx].slug);
-            kept_summits.remove(idx);
-            kept = kept.saturating_sub(1);
+            kept_centroids.push((pass.peak_lat, pass.peak_lon));
+            deduped.push(pass);
         }
-        let Some((road_lat, road_lon, road_m)) =
-            roads.nearest_within(peak_lat, peak_lon, rules.max_hike_m)
-        else {
-            drops.road += 1;
-            continue;
-        };
-        let Some(profile) = profile_hike(
-            &elev,
-            road_lat,
-            road_lon,
-            peak_lat,
-            peak_lon,
-            30.0,
-        ) else {
-            drops.hike += 1;
-            continue;
-        };
-        if profile.hike_m_3d > rules.max_hike_m + 1.0 {
-            drops.hike += 1;
-            if opts.verbose {
-                info!(
-                    name = ?cand.name,
-                    hike_m = profile.hike_m_3d,
-                    "peaks: drop hike length"
-                );
-            }
-            continue;
-        }
-        if profile.max_slope_deg > rules.max_slope_deg + 0.5 {
-            drops.slope += 1;
-            if opts.verbose {
-                info!(
-                    name = ?cand.name,
-                    slope = profile.max_slope_deg,
-                    "peaks: drop slope"
-                );
-            }
-            continue;
-        }
-        if !profile_passes(&profile, rules.max_hike_m, rules.max_slope_deg) {
-            drops.hike += 1;
-            continue;
-        }
+        (drops, deduped)
+    };
 
-        let elev_m = Some(peak_elev);
-
-        let mut snapped = cand.clone();
-        snapped.lat = peak_lat;
-        snapped.lon = peak_lon;
+    let mut existing_slugs: HashSet<String> = HashSet::new();
+    let mut kept = 0usize;
+    for pass in deduped {
+        let elev_m = Some(pass.peak_elev);
+        let mut snapped = pass.cand.clone();
+        snapped.lat = pass.peak_lat;
+        snapped.lon = pass.peak_lon;
         snapped.elev_m = elev_m;
         let slug = slug_for_candidate(&snapped, &existing_slugs);
         existing_slugs.insert(slug.clone());
-        kept_summits.push(KeptSummit {
-            lat: peak_lat,
-            lon: peak_lon,
-            elev: peak_elev,
-            slug: slug.clone(),
-        });
         catalog.entries.insert(
             slug,
             PeakCatalogEntry {
-                name: cand.name.clone(),
-                loc: [peak_lat, peak_lon],
+                name: pass.cand.name.clone(),
+                loc: [pass.peak_lat, pass.peak_lon],
                 elev_m,
-                source: cand.source.clone(),
-                road_m: Some((road_m * 10.0).round() / 10.0),
-                road_loc: Some([road_lat, road_lon]),
-                hike_m: Some((profile.hike_m_3d * 10.0).round() / 10.0),
-                max_slope_deg: Some((profile.max_slope_deg * 10.0).round() / 10.0),
+                source: pass.cand.source.clone(),
+                road_m: Some((pass.road_m * 10.0).round() / 10.0),
+                road_loc: Some([pass.road_lat, pass.road_lon]),
+                hike_m: Some((pass.hike_m_3d * 10.0).round() / 10.0),
+                max_slope_deg: Some((pass.max_slope_deg * 10.0).round() / 10.0),
+                hike: Some(pass.hike),
                 deny: None,
             },
         );
@@ -371,43 +555,9 @@ pub fn build_peaks_catalog(
         gnis: gnis.len(),
         site_seeds: site_seeds.len(),
         dem: dem_peaks.len(),
-        max_slope_deg: rules.max_slope_deg,
+        max_slope_deg,
         output,
     })
-}
-
-fn calibrate_max_slope(
-    preset: &Preset,
-    session: &Session,
-    roads: &JeepRoadIndex,
-    max_road_m: f64,
-) -> Result<f64> {
-    let Some(site) = preset.sites.get(RAZORBACK_CALIB_SITE) else {
-        info!(
-            site = RAZORBACK_CALIB_SITE,
-            "peaks: Razorback site missing — using default max_slope_deg=35"
-        );
-        return Ok(35.0);
-    };
-    let lat = site.lat();
-    let lon = site.lon();
-    session
-        .ensure_tiles_for_points(&[(lat, lon)], max_road_m * 2.0)
-        .context("DEM for Razorback calibration")?;
-    let Some((road_lat, road_lon, road_m)) = roads.nearest_within(lat, lon, max_road_m * 4.0) else {
-        info!("peaks: no OSM road near Razorback — using default max_slope_deg=35");
-        return Ok(35.0);
-    };
-    let elev = SessionElev(session);
-    let profile = profile_hike(&elev, road_lat, road_lon, lat, lon, 30.0)
-        .context("Razorback hike profile")?;
-    info!(
-        road_m,
-        hike_m = profile.hike_m_3d,
-        max_slope_deg = profile.max_slope_deg,
-        "peaks: Razorback calibration"
-    );
-    Ok(clamp_calibrated_slope_deg(profile.max_slope_deg))
 }
 
 #[cfg(test)]
@@ -434,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn steeper_than_calibrated_ceiling_fails_slope_gate() {
+    fn steeper_than_fixed_ceiling_fails_slope_gate() {
         let roads = test_index_from_points(&[(38.0, -117.0)]);
         let peak_lat = 38.003;
         let peak_lon = -117.0;
@@ -451,7 +601,7 @@ mod tests {
         }
         let ramp = SteepRamp { base_lat: 38.0 };
         let profile = profile_hike(&ramp, rlat, rlon, peak_lat, peak_lon, 30.0).unwrap();
-        let ceiling = clamp_calibrated_slope_deg(profile.max_slope_deg - 5.0);
+        let ceiling = default_max_slope_deg();
         assert!(profile.max_slope_deg > ceiling + 0.5);
         assert!(!profile_passes(&profile, DEFAULT_MAX_HIKE_M, ceiling));
     }

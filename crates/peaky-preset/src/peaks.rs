@@ -80,7 +80,8 @@ mod tests {
             generated_at: "2026-09-10".into(),
             rules: PeakAccessRules {
                 max_hike_m: 805.0,
-                max_slope_deg: 28.0,
+                max_slope_grade_pct: 30.0,
+                max_slope_deg: 16.7,
                 road_highways: vec!["track".into()],
             },
             entries: HashMap::from([(
@@ -94,6 +95,7 @@ mod tests {
                     road_loc: Some([38.0, -117.01]),
                     hike_m: Some(80.0),
                     max_slope_deg: Some(12.0),
+                    hike: None,
                     deny: None,
                 },
             )]),
@@ -119,6 +121,7 @@ mod tests {
                 road_loc: None,
                 hike_m: None,
                 max_slope_deg: None,
+                hike: None,
                 deny: Some(true),
             },
         );
@@ -138,6 +141,7 @@ mod tests {
                 road_loc: Some([38.1, -117.11]),
                 hike_m: Some(150.0),
                 max_slope_deg: Some(12.0),
+                hike: None,
                 deny: None,
             },
         );

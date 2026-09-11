@@ -166,9 +166,20 @@ impl Default for SeekConfig {
 #[serde(default)]
 pub struct PeakAccessRules {
     pub max_hike_m: f64,
+    /// Max segment grade on road-to-summit profile (percent; rise/run × 100).
+    #[serde(default = "default_max_slope_grade_pct")]
+    pub max_slope_grade_pct: f64,
     pub max_slope_deg: f64,
     #[serde(default = "default_jeep_highways")]
     pub road_highways: Vec<String>,
+}
+
+fn default_max_slope_grade_pct() -> f64 {
+    30.0
+}
+
+fn default_max_slope_deg() -> f64 {
+    (default_max_slope_grade_pct() / 100.0).atan().to_degrees()
 }
 
 fn default_jeep_highways() -> Vec<String> {
@@ -185,10 +196,46 @@ impl Default for PeakAccessRules {
     fn default() -> Self {
         Self {
             max_hike_m: 805.0,
-            max_slope_deg: 35.0,
+            max_slope_grade_pct: default_max_slope_grade_pct(),
+            max_slope_deg: default_max_slope_deg(),
             road_highways: default_jeep_highways(),
         }
     }
+}
+
+/// Precomputed road-to-summit hike profile (stored in ``peaks.yaml``).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeakHikeProfilePoint {
+    pub dist_m: f64,
+    pub elev_m: f64,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// Distance-weighted grade bucket for hike histogram.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeakHikeGradeBucket {
+    pub label: String,
+    pub min_grade_pct: f64,
+    pub max_grade_pct: f64,
+    pub dist_m: f64,
+    pub pct_of_route: f64,
+}
+
+/// Full hike stats + path, frozen at catalog build time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeakHikeProfile {
+    pub hike_m_3d: f64,
+    pub horiz_m: f64,
+    pub gain_m: f64,
+    pub loss_m: f64,
+    pub max_slope_deg: f64,
+    pub max_grade_pct: f64,
+    pub avg_grade_pct: f64,
+    /// ``easy`` | ``medium`` | ``difficult`` | ``extreme``
+    pub difficulty: String,
+    pub profile: Vec<PeakHikeProfilePoint>,
+    pub histogram: Vec<PeakHikeGradeBucket>,
 }
 
 /// One row in the eligible-peaks catalog (``peaks.yaml``).
@@ -209,6 +256,8 @@ pub struct PeakCatalogEntry {
     pub hike_m: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_slope_deg: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hike: Option<PeakHikeProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deny: Option<bool>,
 }

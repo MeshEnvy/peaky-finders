@@ -12,9 +12,10 @@ peaky-geo.workspace = true
 peaky-preset.workspace = true
 reqwest.workspace = true
 rstar.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_yaml.workspace = true
+rayon.workspace = true
 splatter.workspace = true
 tracing.workspace = true
 osmpbf = "0.3"

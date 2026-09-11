@@ -1,5 +1,6 @@
 //! Peaky CLI — serve, find, and freeze.
 
+mod export;
 mod find;
 mod freeze;
 mod peaks;
@@ -75,6 +76,26 @@ enum Commands {
         /// Re-download OSM PBF even if cached
         #[arg(long)]
         force: bool,
+        #[arg(long)]
+        verbose: bool,
+        /// Stop after N qualifying peaks (serial scan; prints hike profile for each)
+        #[arg(long)]
+        stop_after: Option<usize>,
+    },
+    /// Export tag-filtered sites as KML points (onX field clipboard)
+    Export {
+        /// Project directory (or path to config.yaml)
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
+        /// Include sites that have any of these tags
+        #[arg(long, required = true)]
+        tag: Vec<String>,
+        /// Exclude sites that have any of these tags
+        #[arg(long)]
+        exclude_tag: Vec<String>,
+        /// Output KML path (default: {first-tag}.kml)
+        #[arg(short, long, value_name = "PATH")]
+        output: Option<PathBuf>,
         #[arg(long)]
         verbose: bool,
     },
@@ -184,6 +205,7 @@ async fn main() -> Result<()> {
             corridor_width_mi,
             force,
             verbose,
+            stop_after,
         } => {
             peaks::run(
                 project,
@@ -194,7 +216,17 @@ async fn main() -> Result<()> {
                 corridor_width_mi,
                 force,
                 verbose,
+                stop_after,
             )?;
+        }
+        Commands::Export {
+            project,
+            tag,
+            exclude_tag,
+            output,
+            verbose,
+        } => {
+            export::run(project, &tag, &exclude_tag, output, verbose)?;
         }
         Commands::Freeze {
             project,

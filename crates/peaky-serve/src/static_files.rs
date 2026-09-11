@@ -38,16 +38,17 @@ async fn serve_static(uri: Uri) -> impl IntoResponse {
     serve_asset(path).await
 }
 
-/// Resolve disk static root for debug dev loop (no cargo rebuild on JS edits).
+/// Resolve disk static root when `PEAKY_STATIC_DIR` is set, or in debug builds
+/// from the workspace `assets/static/` tree (no cargo rebuild on JS/CSS edits).
 fn static_dir_on_disk() -> Option<PathBuf> {
-    if !cfg!(debug_assertions) {
-        return None;
-    }
     if let Ok(raw) = std::env::var("PEAKY_STATIC_DIR") {
         let dir = PathBuf::from(raw);
         if dir.is_dir() {
             return dir.canonicalize().ok();
         }
+    }
+    if !cfg!(debug_assertions) {
+        return None;
     }
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let dir = manifest.join("../../assets/static");

@@ -344,6 +344,26 @@ pub fn resolve_seek_peak_bin_size_m(seek_cfg: &SeekConfig, requested: Option<f64
     Ok(MIN_M.max(ceiling.min(req)))
 }
 
+/// Load ``peaks.yaml`` rows that pass ``keep(lat, lon)`` (deny rows omitted).
+pub fn catalog_peaks_filtered(
+    preset_path: &std::path::Path,
+    keep: impl Fn(f64, f64) -> bool,
+) -> Result<(Vec<(f64, f64, f64)>, usize), String> {
+    let catalog = load_peaks_catalog(preset_path).map_err(|e| format!("load peaks.yaml: {e}"))?;
+    let n_catalog = catalog.entries.len();
+    if n_catalog == 0 {
+        return Err("peaks.yaml is empty; run peaky peaks to build the catalog".into());
+    }
+    let peaks = catalog
+        .entries
+        .values()
+        .filter(|entry| !entry.deny.unwrap_or(false))
+        .filter(|entry| keep(entry.lat(), entry.lon()))
+        .map(|entry| (entry.lon(), entry.lat(), entry.elev_m.unwrap_or(0.0)))
+        .collect();
+    Ok((peaks, n_catalog))
+}
+
 fn catalog_peaks_for_hop(
     preset_path: &std::path::Path,
     from_lat: f64,
@@ -353,34 +373,11 @@ fn catalog_peaks_for_hop(
     hop_m: f64,
     exclude: &[SeekPoint],
 ) -> Result<(Vec<(f64, f64, f64)>, usize), SeekRunError> {
-    let catalog = load_peaks_catalog(preset_path)
-        .map_err(|e| SeekRunError::User(format!("load peaks.yaml: {e}"), 422))?;
-    let n_catalog = catalog.entries.len();
-    if n_catalog == 0 {
-        return Err(SeekRunError::User(
-            "peaks.yaml is empty; run peaky peaks to build the catalog".into(),
-            422,
-        ));
-    }
-    let peaks = catalog
-        .entries
-        .values()
-        .filter(|entry| !entry.deny.unwrap_or(false))
-        .filter(|entry| {
-            peak_in_progress_lens(
-                from_lat,
-                from_lon,
-                goal_lat,
-                goal_lon,
-                entry.lat(),
-                entry.lon(),
-                hop_m,
-            )
-        })
-        .filter(|entry| !near_excluded(entry.lat(), entry.lon(), exclude))
-        .map(|entry| (entry.lon(), entry.lat(), entry.elev_m.unwrap_or(0.0)))
-        .collect();
-    Ok((peaks, n_catalog))
+    catalog_peaks_filtered(preset_path, |lat, lon| {
+        peak_in_progress_lens(from_lat, from_lon, goal_lat, goal_lon, lat, lon, hop_m)
+            && !near_excluded(lat, lon, exclude)
+    })
+    .map_err(|e| SeekRunError::User(e, 422))
 }
 
 /// Hop disc ∩ closer-to-goal than start.

@@ -9,26 +9,22 @@ use std::time::Instant;
 
 use anyhow::Result;
 use geo::{BoundingRect, Coord, LineString, Polygon};
-use peaky_geo::{
-    eligible_land_dem_mask_dir, load_or_build_eligible_land_parts, EligibleLandError, LonLatBBox,
-};
+use peaky_geo::{load_or_build_eligible_land_parts, EligibleLandError, LonLatBBox};
 use peaky_preset::{load_preset, Preset};
 use serde_json::{json, Value};
-use splatter::peaks::LandFilterIndex;
 use splatter::Session;
 
 use crate::links::load_single_site_links;
 use crate::rf::{
     default_repeater_tx_height_m, preset_to_request, resolved_site_tx_height_m, rf_json_for_preset,
 };
-use crate::seek::resolve_seek_peak_bin_size_m;
+use crate::seek::catalog_peaks_filtered;
 use crate::seek_progress::SeekProgressHub;
 use crate::seek_rank::{bearing_deg, haversine_m};
 
 const SUBJECT_EXCLUDE_M: f64 = 500.0;
+const SITE_PEAK_DEDUP_M: f64 = 500.0;
 const LANDING_COARSE_M: f64 = 1500.0;
-const LANDING_FINE_M: f64 = 400.0;
-const LANDING_REFINE_RADIUS_M: f64 = 1200.0;
 const CANDIDATE_SEP_M: f64 = 800.0;
 const RF_CHUNK: usize = 512;
 const MESH_NEIGHBOR_CAP: usize = 32;
@@ -338,50 +334,6 @@ pub fn grid_points_in_lens(
     out
 }
 
-fn landing_refine_locs(seeds: &[(f64, f64)], radius_m: f64, step_m: f64) -> Vec<(f64, f64)> {
-    let mut out = Vec::new();
-    for &(lat0, lon0) in seeds {
-        let mut north = -radius_m;
-        while north <= radius_m + 1.0 {
-            let mut east = -radius_m;
-            while east <= radius_m + 1.0 {
-                if north * north + east * east <= radius_m * radius_m + 1.0 {
-                    let (lat, lon) = destination_point(lat0, lon0, 0.0, north);
-                    let (lat, lon) = destination_point(lat, lon, 90.0, east);
-                    out.push((lat, lon));
-                }
-                east += step_m;
-            }
-            north += step_m;
-        }
-    }
-    out
-}
-
-fn sample_landing_points(
-    session: &Session,
-    land_index: &LandFilterIndex,
-    locs: &[(f64, f64)],
-    subject_lat: f64,
-    subject_lon: f64,
-) -> Vec<(f64, f64, f64)> {
-    let mut samples = Vec::new();
-    for &(lat, lon) in locs {
-        if haversine_m(lat, lon, subject_lat, subject_lon) <= SUBJECT_EXCLUDE_M {
-            continue;
-        }
-        if !land_index.contains(lon, lat) {
-            continue;
-        }
-        let elev = session.sample_elev_m(lat, lon);
-        if elev <= 1.0 {
-            continue;
-        }
-        samples.push((lon, lat, elev));
-    }
-    samples
-}
-
 fn take_spatially_diverse<T: Clone>(
     ranked: Vec<(T, f64, f64)>,
     min_sep_m: f64,
@@ -553,8 +505,6 @@ fn load_alternates_body(
 
     let preset = load_preset(&req.preset_path)?;
     let seek_cfg = preset.seek.clone();
-    let peak_bin_m = resolve_seek_peak_bin_size_m(&seek_cfg, req.peak_bin_size_m)
-        .map_err(|e| AlternatesRunError::User(e.0, 422))?;
     let cap = seek_cfg.max_candidates as usize;
     let hop_m = hop_m_from_preset(&preset);
 
@@ -637,7 +587,6 @@ fn load_alternates_body(
     )?;
     let eligible_digest = land_parts.digest.clone();
     let land_index = land_parts.index();
-    let mask_dir = eligible_land_dem_mask_dir(&req.preset_path, &eligible_digest);
     let rf_json = rf_json_for_preset(&preset).map_err(|e| AlternatesRunError::User(e.to_string(), 422))?;
 
     ensure_active()?;
@@ -654,57 +603,32 @@ fn load_alternates_body(
     let mesh = local_mesh_sites(&preset, hop_m, &exclude_slugs, &lens_anchors);
 
     ensure_active()?;
+    progress.update(key, scan_gen, "catalog", 0, 0, "Loading peaks catalog…");
+
+    let (mut peaks, n_catalog_peaks) =
+        catalog_peaks_filtered(&req.preset_path, |lat, lon| {
+            inside_all_discs(lat, lon, &lens_anchors, hop_m)
+                && haversine_m(lat, lon, subject_lat, subject_lon) > SUBJECT_EXCLUDE_M
+        })
+        .map_err(|e| AlternatesRunError::User(e, 422))?;
+
+    peaks.retain(|(lon, lat, _)| {
+        !preset.sites.iter().any(|(slug, site)| {
+            if exclude_slugs.contains(slug) {
+                return false;
+            }
+            haversine_m(*lat, *lon, site.loc[0], site.loc[1]) <= SITE_PEAK_DEDUP_M
+        })
+    });
+
     progress.update(
         key,
         scan_gen,
-        "peak_scan",
-        0,
-        0,
-        "Sampling the shared RF lens…",
+        "catalog",
+        peaks.len() as i32,
+        n_catalog_peaks.max(1) as i32,
+        &format!("Found {} catalog peak(s) in RF lens", peaks.len()),
     );
-
-    let grid_locs = grid_points_in_lens(scan_bbox, &lens_anchors, hop_m, LANDING_COARSE_M);
-    let mut peaks = sample_landing_points(
-        session,
-        &land_index,
-        &grid_locs,
-        subject_lat,
-        subject_lon,
-    );
-
-    if !land_parts.is_empty() {
-        let binned = session
-            .disc_binned_peaks(
-                lens_anchors[0].0,
-                lens_anchors[0].1,
-                hop_m,
-                None,
-                Some(scan_bbox),
-                None,
-                None,
-                peak_bin_m,
-                Some(&land_index),
-                Some(&mask_dir),
-                None,
-            )
-            .map_err(|e| AlternatesRunError::User(e.to_string(), 503))?;
-        for p in binned {
-            if !inside_all_discs(p.lat, p.lon, &lens_anchors, hop_m) {
-                continue;
-            }
-            if haversine_m(p.lat, p.lon, subject_lat, subject_lon) <= SUBJECT_EXCLUDE_M {
-                continue;
-            }
-            peaks.push((p.lon, p.lat, p.elev_m));
-        }
-    }
-
-    peaks.sort_by(|a, b| {
-        a.1.partial_cmp(&b.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
-    });
-    peaks.dedup_by(|a, b| haversine_m(a.1, a.0, b.1, b.0) < 80.0);
 
     ensure_active()?;
     progress.update(
@@ -735,49 +659,6 @@ fn load_alternates_body(
             };
             let mesh_links = count_mesh_links(session, &mesh, *lat, *lon, tx_h, hop_m, &rf_json)?;
             viable.push((*lon, *lat, *elev, min_margin, mesh_links));
-        }
-    }
-
-    if !viable.is_empty() {
-        ensure_active()?;
-        progress.update(
-            key,
-            scan_gen,
-            "rf_refine",
-            0,
-            viable.len().max(1) as i32,
-            "Refining around completing hops…",
-        );
-        let seeds: Vec<(f64, f64)> = viable
-            .iter()
-            .map(|(lon, lat, _, _, _)| (*lat, *lon))
-            .collect();
-        let fine_locs = landing_refine_locs(&seeds, LANDING_REFINE_RADIUS_M, LANDING_FINE_M);
-        let fine_locs: Vec<(f64, f64)> = fine_locs
-            .into_iter()
-            .filter(|(lat, lon)| inside_all_discs(*lat, *lon, &lens_anchors, hop_m))
-            .collect();
-        let fine = sample_landing_points(
-            session,
-            &land_index,
-            &fine_locs,
-            subject_lat,
-            subject_lon,
-        );
-        for (lon, lat, elev) in fine {
-            if viable
-                .iter()
-                .any(|(vlon, vlat, _, _, _)| haversine_m(lat, lon, *vlat, *vlon) < 80.0)
-            {
-                continue;
-            }
-            let tx_h = default_candidate_tx_height(&preset, lat, lon);
-            let margin = margins_to_all_anchors(session, lat, lon, tx_h, &anchors, &rf_json)?;
-            let Some(min_margin) = margin else {
-                continue;
-            };
-            let mesh_links = count_mesh_links(session, &mesh, lat, lon, tx_h, hop_m, &rf_json)?;
-            viable.push((lon, lat, elev, min_margin, mesh_links));
         }
     }
 
@@ -938,7 +819,7 @@ fn load_alternates_body(
             "anchor_slugs": peer_slugs,
             "eligible_digest": eligible_digest,
             "hop_range_km": hop_m / 1000.0,
-            "peak_bin_size_m": peak_bin_m,
+            "n_catalog_peaks": n_catalog_peaks,
             "scan_ms": scan_t0.elapsed().as_millis(),
         },
     }))
