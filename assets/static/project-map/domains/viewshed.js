@@ -61,6 +61,9 @@ const OUTBOUND_LINKS_PARALLEL = 3
  * @param {number} opts.warmPriorityInteractive
  * @param {number} opts.warmPriorityViewport
  * @param {() => void} opts.raiseSiteLayers
+ * @param {(site: object) => void} [opts.ensureSiteAccess]
+ * @param {(sites: object[]) => void} [opts.ensureSitesAccess]
+ * @param {() => void} [opts.onSiteAccessVisibilityChange]
  * @param {(marker: maplibregl.Marker, lon: number, lat: number) => boolean} opts.setMarkerLngLatSafe
  * @param {() => void} opts.syncViewshedCheckbox
  * @param {() => void} [opts.onDraftViewshedReady]
@@ -92,6 +95,9 @@ export function createViewshedDomain(opts) {
     warmPriorityInteractive,
     warmPriorityViewport,
     raiseSiteLayers,
+    ensureSiteAccess,
+    ensureSitesAccess,
+    onSiteAccessVisibilityChange,
     setMarkerLngLatSafe,
     syncViewshedCheckbox,
     onDraftViewshedReady,
@@ -288,6 +294,7 @@ export function createViewshedDomain(opts) {
   function applyViewshedVisibilityForSite(slug) {
     const visible = !isSiteMapHidden(slug) && isViewshedVisible(slug)
     setViewshedLayerVisibility(map, slug, visible)
+    onSiteAccessVisibilityChange?.()
   }
 
   function setViewshedVisible(slug, visible) {
@@ -392,6 +399,8 @@ export function createViewshedDomain(opts) {
     finalizeViewshedReady(vs)
     if (!isEphemeralViewshedSlug(vs.slug)) {
       void loadSingleSiteLinks(vs.slug)
+      const site = getSites().find((s) => s.slug === vs.slug)
+      if (site) ensureSiteAccess?.(site)
     } else {
       markSiteOutboundLinksReady(vs.slug)
     }
@@ -404,6 +413,8 @@ export function createViewshedDomain(opts) {
     finalizeViewshedReady(vs)
     if (!isEphemeralViewshedSlug(vs.slug)) {
       void loadSingleSiteLinks(vs.slug)
+      const site = getSites().find((s) => s.slug === vs.slug)
+      if (site) ensureSiteAccess?.(site)
     } else {
       markSiteOutboundLinksReady(vs.slug)
     }
@@ -629,6 +640,7 @@ export function createViewshedDomain(opts) {
       site.slug === store.ui.selectedSlug ? warmPriorityInteractive : warmPriorityViewport
     void bumpWarmPriorities([site.slug], priority)
     void tryLoadViewshedFromCache(site.slug)
+    ensureSiteAccess?.(site)
   }
 
   async function loadViewshedIndex() {
@@ -662,6 +674,11 @@ export function createViewshedDomain(opts) {
       }
       await applyViewshedOverlaysBatched(readyOverlays)
       void fetchOutboundLinksParallel(readySlugs)
+      ensureSitesAccess?.(
+        readySlugs
+          .map((slug) => getSites().find((s) => s.slug === slug))
+          .filter(Boolean),
+      )
       for (const site of missing) {
         scheduleViewshedLoad(site)
       }

@@ -54,7 +54,8 @@ pub fn normalize_site_tags(raw: Option<&serde_yaml::Value>) -> Result<Vec<String
     Ok(out)
 }
 
-/// Derive a unique site key from `name` (same rules as list-import in coerce_preset_sites).
+/// Derive a unique place key from `name` against an existing slug set
+/// (sites and peaks share one namespace).
 pub fn unique_site_slug(existing: &HashSet<String>, name: &str) -> String {
     let base = slugify_files_segment(name);
     if !existing.contains(&base) {
@@ -68,6 +69,15 @@ pub fn unique_site_slug(existing: &HashSet<String>, name: &str) -> String {
         }
         n += 1;
     }
+}
+
+/// Prefer keeping `preferred` when free; otherwise suffix like [`unique_site_slug`].
+pub fn unique_place_slug(existing: &HashSet<String>, preferred: &str, fallback_name: &str) -> String {
+    let preferred = slugify_files_segment(preferred);
+    if !preferred.is_empty() && !existing.contains(&preferred) {
+        return preferred;
+    }
+    unique_site_slug(existing, fallback_name)
 }
 
 pub fn validate_coords(lat: f64, lon: f64) -> Result<(), String> {

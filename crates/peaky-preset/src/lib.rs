@@ -1,5 +1,7 @@
 //! Peaky preset YAML schema, I/O, and path resolution.
 
+pub mod access;
+pub mod compute_key;
 pub mod home;
 pub mod init;
 pub mod io;
@@ -20,9 +22,20 @@ pub use init::{
     default_meshcore_preset, ensure_project_initialized, project_needs_init,
 };
 
+pub use access::{
+    access_dir, access_meta_path, access_path, delete_access, ensure_access_meta,
+    list_access_slugs, load_access, load_access_meta, upsert_access,
+};
+pub use compute_key::{
+    access_compute_key, peak_access_compute_key, peak_row_compute_key, place_access_compute_key,
+    place_access_has_profiles, place_access_is_fresh, ACCESS_ALGO_VERSION, ACCESS_PROFILE_SAMPLE_M,
+    OSM_ROAD_SAMPLE_STEP_M, PEAK_ALGO_VERSION, PLACE_ACCESS_ROAD_SEARCH_M,
+};
+
 pub use peaks::{
-    denied_slugs, load_peaks_catalog, peaks_catalog_path, preserve_denied_entries,
-    write_peaks_catalog,
+    clean_peaks_catalog, denied_slugs, delete_peak, list_peak_slugs, load_peak, load_peaks_catalog,
+    peaks_catalog_path, peaks_dir, place_slugs, preserve_denied_entries, upsert_peak,
+    upsert_peak_with_access, write_peaks_catalog,
 };
 pub use io::{
     delete_land_source, import_land_source, insert_preset_site, land_source_id_for_path,
@@ -38,10 +51,10 @@ pub use model::{
     resolved_viewshed_polygon_style, slugify_files_segment, validate_preset,
     validate_project_preset_document, CoverageProvider, DisplayConfig, LandAttributeFilter,
     LandConfig, LandDownloadKind, LandLayerEntry, LandLayerRole, LandLayerStyle, LandLayerStyleValue,
-    LandSidebar, LandSidebarFolder, LandSourceEntry, LandSourceRefresh, PeakAccessRules,
+    LandSidebar, LandSidebarFolder, LandSourceEntry, LandSourceRefresh, AccessMeta, PeakAccessRules,
     PeakCatalogEntry, PeakHikeGradeBucket, PeakHikeProfile, PeakHikeProfilePoint,
-    PeakJeepProfile, PeakJeepProfilePoint, PeakJeepRoadSegment, PeaksCatalog,
-    DEFAULT_MAX_JEEP_M,
+    PeakJeepProfile, PeakJeepProfilePoint, PeakJeepRoadSegment, PeaksCatalog, PlaceAccess,
+    DEFAULT_MAX_JEEP_M, DEFAULT_PLACE_ROAD_SEARCH_M,
     Preset, PresetResult, PresetValidationError, SeekConfig,
     SeekPlan, SeekPlanHop, SimulationConfig,
     SimulationMaxWorkers, SiteEntry, ViewshedPolygonStyle, DEFAULT_COVERAGE_MAX_WORKERS,
@@ -60,6 +73,6 @@ pub use paths::{
     resolved_viewshed_root, workspace_root,
 };
 pub use sites::{
-    normalize_site_tags, site_row_from_entry, site_row_from_yaml_ent, slugify, unique_site_slug,
-    validate_coords, validate_site_height,
+    normalize_site_tags, site_row_from_entry, site_row_from_yaml_ent, slugify, unique_place_slug,
+    unique_site_slug, validate_coords, validate_site_height,
 };

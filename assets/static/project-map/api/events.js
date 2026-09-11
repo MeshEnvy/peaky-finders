@@ -4,7 +4,7 @@ import { projectEventsUrl } from './urls.js'
 
 /**
  * @param {string} projectSlug
- * @param {{ onHello?: () => void, onViewshed?: (data: object) => void, onLinks?: (data: object) => void }} handlers
+ * @param {{ onHello?: () => void, onViewshed?: (data: object) => void, onLinks?: (data: object) => void, onAccess?: (data: object) => void }} handlers
  */
 export function connectProjectEvents(projectSlug, handlers) {
   /** @type {EventSource|null} */
@@ -29,6 +29,13 @@ export function connectProjectEvents(projectSlug, handlers) {
     source.addEventListener('links', (ev) => {
       try {
         handlers.onLinks?.(JSON.parse(ev.data))
+      } catch {
+        /* malformed */
+      }
+    })
+    source.addEventListener('access', (ev) => {
+      try {
+        handlers.onAccess?.(JSON.parse(ev.data))
       } catch {
         /* malformed */
       }

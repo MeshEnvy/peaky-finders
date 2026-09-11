@@ -196,7 +196,7 @@ export async function ensurePeaksLayers(map) {
         type: 'line',
         source: PEAKS_JEEP_SOURCE,
         paint: {
-          'line-color': '#3b82f6',
+          'line-color': '#ea580c',
           'line-width': 4,
           'line-opacity': 0.95,
         },
@@ -251,7 +251,7 @@ export async function ensurePeaksLayers(map) {
         source: PEAKS_PAVED_SOURCE,
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 4, 14, 7, 17, 10],
-          'circle-color': '#3b82f6',
+          'circle-color': '#ea580c',
           'circle-stroke-color': '#0f172a',
           'circle-stroke-width': 1.5,
           'circle-opacity': 0.95,

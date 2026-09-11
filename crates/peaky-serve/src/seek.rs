@@ -344,15 +344,15 @@ pub fn resolve_seek_peak_bin_size_m(seek_cfg: &SeekConfig, requested: Option<f64
     Ok(MIN_M.max(ceiling.min(req)))
 }
 
-/// Load ``peaks.yaml`` rows that pass ``keep(lat, lon)`` (deny rows omitted).
+/// Load ``peaks/`` rows that pass ``keep(lat, lon)`` (deny rows omitted).
 pub fn catalog_peaks_filtered(
     preset_path: &std::path::Path,
     keep: impl Fn(f64, f64) -> bool,
 ) -> Result<(Vec<(f64, f64, f64)>, usize), String> {
-    let catalog = load_peaks_catalog(preset_path).map_err(|e| format!("load peaks.yaml: {e}"))?;
+    let catalog = load_peaks_catalog(preset_path).map_err(|e| format!("load peaks catalog: {e}"))?;
     let n_catalog = catalog.entries.len();
     if n_catalog == 0 {
-        return Err("peaks.yaml is empty; run peaky peaks to build the catalog".into());
+        return Err("peaks catalog is empty; run peaky peaks to build peaks/".into());
     }
     let peaks = catalog
         .entries
@@ -1813,24 +1813,42 @@ land:
             std::fs::write(project_dir.join("config.yaml"), config).expect("config");
             let geojson = r#"{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Polygon","coordinates":[[[-120,39],[-119,39],[-119,41],[-120,41],[-120,39]]]},"properties":{"name":"public"}}]}"#;
             std::fs::write(project_dir.join("data/eligible.geojson"), geojson).expect("geojson");
-            let peaks = r#"peaks:
-  generated_at: 2026-09-10
-  rules:
-    max_hike_m: 805.0
-    max_slope_deg: 35.0
-    road_highways: [track]
-  entries:
-    relay-peak:
-      loc: [40.12, -119.38]
-      elev_m: 2500.0
-      source: test
-      road_m: 100.0
-      road_loc: [40.11, -119.39]
-      hike_m: 200.0
-      max_slope_deg: 10.0
-"#;
-            std::fs::write(project_dir.join("peaks.yaml"), peaks).expect("peaks");
-            project_dir.join("config.yaml")
+            let config_path = project_dir.join("config.yaml");
+            let mut entries = std::collections::HashMap::new();
+            entries.insert(
+                "relay-peak".into(),
+                peaky_preset::PeakCatalogEntry {
+                    name: None,
+                    loc: [40.12, -119.38],
+                    elev_m: Some(2500.0),
+                    source: "test".into(),
+                    compute_key: None,
+                    road_m: Some(100.0),
+                    road_loc: Some([40.11, -119.39]),
+                    hike_m: Some(200.0),
+                    max_slope_deg: Some(10.0),
+                    hike: None,
+                    paved_loc: None,
+                    jeep_m: None,
+                    jeep: None,
+                    deny: None,
+                },
+            );
+            peaky_preset::write_peaks_catalog(
+                &config_path,
+                &peaky_preset::PeaksCatalog {
+                    generated_at: "2026-09-10".into(),
+                    rules: peaky_preset::PeakAccessRules {
+                        max_hike_m: 805.0,
+                        max_slope_deg: 35.0,
+                        road_highways: vec!["track".into()],
+                        ..Default::default()
+                    },
+                    entries,
+                },
+            )
+            .expect("peaks");
+            config_path
         }
 
         fn flat_tile(sw_lat: i32, sw_lon: i32, n: usize, spike: bool) -> DemTile {

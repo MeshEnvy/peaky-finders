@@ -39,7 +39,7 @@ enum Commands {
         #[command(subcommand)]
         command: FindCommands,
     },
-    /// Build eligible-peaks catalog (peaks.yaml)
+    /// Build eligible-peaks catalog (peaks/ + access/)
     Peaks {
         /// Project directory (or path to config.yaml)
         #[arg(value_name = "PROJECT")]
@@ -81,6 +81,9 @@ enum Commands {
         /// Stop after N qualifying peaks (serial scan; prints hike profile for each)
         #[arg(long)]
         stop_after: Option<usize>,
+        /// Wipe peaks/ + access/ and rebuild from this scan only (default: merge/freshen)
+        #[arg(long)]
+        clean: bool,
     },
     /// Export tag-filtered sites as KML points (onX field clipboard)
     Export {
@@ -206,6 +209,7 @@ async fn main() -> Result<()> {
             force,
             verbose,
             stop_after,
+            clean,
         } => {
             peaks::run(
                 project,
@@ -217,6 +221,7 @@ async fn main() -> Result<()> {
                 force,
                 verbose,
                 stop_after,
+                clean,
             )?;
         }
         Commands::Export {

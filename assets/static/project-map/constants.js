@@ -18,6 +18,14 @@ export const PEAKS_CURSOR_CIRCLE = 'eligible-peaks-cursor-circle'
 export const PEAKS_SYMBOL = 'eligible-peaks-symbol'
 export const PEAKS_ICON_ID = 'peaky-logo-pin'
 export const PEAKS_ICON_URL = '/favicon-96x96.png'
+export const SITES_ACCESS_SOURCE = 'sites-access'
+export const SITES_ACCESS_LINE = 'sites-access-line'
+export const SITES_JEEP_SOURCE = 'sites-jeep'
+export const SITES_JEEP_LINE = 'sites-jeep-line'
+export const SITES_PAVED_SOURCE = 'sites-paved'
+export const SITES_PAVED_CIRCLE = 'sites-paved-circle'
+export const SITES_PARK_SOURCE = 'sites-park'
+export const SITES_PARK_CIRCLE = 'sites-park-circle'
 export const SITES_SOURCE = 'sites'
 export const SITES_CIRCLE = 'sites-circle'
 export const SITES_LABELS = 'sites-labels'
@@ -74,6 +82,10 @@ export const SITE_STACK_RAISE_IDS = [
   SITES_SELECTED,
   SEEK_LENS_FILL_LAYER,
   SEEK_LENS_OUTLINE_LAYER,
+  SITES_JEEP_LINE,
+  SITES_ACCESS_LINE,
+  SITES_PAVED_CIRCLE,
+  SITES_PARK_CIRCLE,
   PEAKS_JEEP_LINE,
   PEAKS_ACCESS_LINE,
   PEAKS_PAVED_CIRCLE,

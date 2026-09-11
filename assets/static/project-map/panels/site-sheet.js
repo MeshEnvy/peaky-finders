@@ -3,6 +3,8 @@
 import { createApp, computed, ref, watch } from 'vue'
 import { formatCoord, normalizeTagInput } from '../geo.js'
 import { allProjectTags, tagChipChoices, toggleTag } from '../stores/sites.js'
+import * as apiUrls from '../api/urls.js'
+import { AccessProfilesPanel } from './access-profiles.js'
 
 /**
  * Vue site detail sheet for #site-panel (view / edit / create).
@@ -21,6 +23,7 @@ export function mountSiteSheet(store, appApi) {
   body.appendChild(mountPoint)
 
   const app = createApp({
+    components: { AccessProfilesPanel },
     setup() {
       const editName = ref('')
       const editLat = ref('')
@@ -32,6 +35,9 @@ export function mountSiteSheet(store, appApi) {
       const createTags = ref([])
       const createTagInput = ref('')
       const errorText = ref('')
+      const access = ref(/** @type {object|null} */ (null))
+      const accessLoading = ref(false)
+      const accessError = ref('')
 
       const projectTags = computed(() => allProjectTags(store))
       const editTagChoices = computed(() => tagChipChoices(projectTags.value, editTags.value))
@@ -48,6 +54,84 @@ export function mountSiteSheet(store, appApi) {
         if (!slug) return null
         return store.sites.list.find((s) => s.slug === slug) || null
       })
+
+      function accessFromStore(slug) {
+        const row = store.access?.bySlug?.[slug]
+        if (!row) return null
+        if (row.hike?.profile || row.jeep?.profile || row.hike || row.jeep) return row
+        return null
+      }
+
+      async function loadSiteAccess(site) {
+        if (!site?.slug) {
+          access.value = null
+          accessError.value = ''
+          return
+        }
+        const cached = accessFromStore(site.slug)
+        if (cached) {
+          access.value = cached
+          accessError.value = ''
+          accessLoading.value = false
+          return
+        }
+        accessLoading.value = true
+        accessError.value = ''
+        try {
+          const resp = await fetch(
+            apiUrls.placeAccessApiUrl(store.projectSlug, site.slug, {
+              warm: true,
+              lat: site.lat,
+              lon: site.lon,
+            }),
+          )
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+          access.value = await resp.json()
+        } catch (err) {
+          access.value = null
+          accessError.value = String(err?.message || err)
+        } finally {
+          accessLoading.value = false
+        }
+      }
+
+      watch(
+        () => [store.ui.selectedSlug, store.ui.createMode, store.ui.editMode],
+        () => {
+          const slug = store.ui.selectedSlug
+          if (!slug || store.ui.createMode || store.ui.editMode) {
+            access.value = null
+            return
+          }
+          const site = store.sites.list.find((s) => s.slug === slug)
+          void loadSiteAccess(site)
+        },
+        { immediate: true },
+      )
+
+      // Prefer live warm ingest over a prior fetch.
+      watch(
+        () => {
+          const slug = store.ui.selectedSlug
+          return slug ? store.access?.bySlug?.[slug] : null
+        },
+        (row) => {
+          if (!row || store.ui.createMode || store.ui.editMode) return
+          if (row.hike || row.jeep) {
+            access.value = row
+            accessLoading.value = false
+            accessError.value = ''
+          }
+        },
+      )
+
+      const accessHike = computed(() => access.value?.hike || null)
+      const accessJeep = computed(() => access.value?.jeep || null)
+
+      /** @param {{ lat: number, lon: number }} pt */
+      function onAccessPointClick(pt) {
+        appApi.flyToPeakProfilePoint?.(pt.lat, pt.lon)
+      }
 
       const panelVisible = computed(
         () => store.ui.createMode || store.ui.editMode || !!store.ui.selectedSlug
@@ -308,6 +392,12 @@ export function mountSiteSheet(store, appApi) {
         createTagChoices,
         createTagSuggestions,
         errorText,
+        access,
+        accessLoading,
+        accessError,
+        accessHike,
+        accessJeep,
+        onAccessPointClick,
         viewshedActive,
         canDelete,
         createCoordsLabel,
@@ -366,6 +456,18 @@ export function mountSiteSheet(store, appApi) {
           <div v-if="selectedSite.description" class="site-panel__section">
             <span class="site-panel__label">Description</span>
             <p class="site-panel__value">{{ selectedSite.description }}</p>
+          </div>
+          <div class="site-panel__section">
+            <span class="site-panel__label">Access</span>
+            <AccessProfilesPanel
+              :hike="accessHike"
+              :jeep="accessJeep"
+              :loading="accessLoading"
+              :error="accessError"
+              hike-end-label="Site"
+              empty-text="No access route yet"
+              @point-click="onAccessPointClick"
+            />
           </div>
           <div v-if="peerLinks.length" class="site-panel__section">
             <span class="site-panel__label">{{ peerLinks.length === 1 ? '1 link' : peerLinks.length + ' links' }}</span>

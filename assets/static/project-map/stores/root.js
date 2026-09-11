@@ -42,6 +42,10 @@ export function createRootStore(config, savedMapState) {
       list: [],
       rules: null,
     },
+    access: {
+      bySlug: {},
+      selected: null,
+    },
     ui: {
       mapReady: false,
       restoring: true,

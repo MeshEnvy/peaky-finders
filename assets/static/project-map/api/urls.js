@@ -57,6 +57,17 @@ export function peakJeepApiUrl(projectSlug, peakSlug) {
   return `/api/p/${projectSlug}/peaks/${encodeURIComponent(peakSlug)}/jeep`
 }
 
+/** @param {string} projectSlug @param {string} placeSlug @param {{ warm?: boolean, lat?: number, lon?: number }} [opts] */
+export function placeAccessApiUrl(projectSlug, placeSlug, opts = {}) {
+  const params = new URLSearchParams()
+  if (opts.warm) params.set('warm', '1')
+  if (Number.isFinite(opts.lat)) params.set('lat', String(opts.lat))
+  if (Number.isFinite(opts.lon)) params.set('lon', String(opts.lon))
+  const qs = params.toString()
+  const base = `/api/p/${projectSlug}/access/${encodeURIComponent(placeSlug)}`
+  return qs ? `${base}?${qs}` : base
+}
+
 export function landApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/land`
 }

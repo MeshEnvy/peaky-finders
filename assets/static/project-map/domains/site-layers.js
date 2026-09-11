@@ -50,6 +50,7 @@ export function createSiteLayersDomain(ctx) {
     linkFeatureTouchesSnapshotCoords,
     applyEntityVisibility,
     syncEditMapShell,
+    refreshSiteAccessLayers,
   } = ctx
 
   function sites() {
@@ -134,6 +135,7 @@ export function createSiteLayersDomain(ctx) {
       map.setFilter(layerId, filter)
     }
     updateSelectedLayer()
+    refreshSiteAccessLayers?.()
   }
 
   function addSiteLayers() {

@@ -29,7 +29,34 @@ pub const PAVED_HIGHWAY_TAGS: &[&str] = &[
     "residential",
 ];
 
-const ROAD_SAMPLE_STEP_M: f64 = 40.0;
+/// Options for OSM jeep/paved indexing (from ``access/_meta.yaml``).
+#[derive(Debug, Clone)]
+pub struct OsmRoutingOpts {
+    pub road_sample_step_m: f64,
+    pub jeep_highways: Vec<String>,
+    pub paved_highways: Vec<String>,
+}
+
+impl Default for OsmRoutingOpts {
+    fn default() -> Self {
+        Self {
+            road_sample_step_m: 40.0,
+            jeep_highways: JEEP_HIGHWAY_TAGS.iter().map(|s| (*s).to_string()).collect(),
+            paved_highways: PAVED_HIGHWAY_TAGS.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+}
+
+impl From<&peaky_preset::AccessMeta> for OsmRoutingOpts {
+    fn from(meta: &peaky_preset::AccessMeta) -> Self {
+        Self {
+            road_sample_step_m: meta.road_sample_step_m,
+            jeep_highways: meta.road_highways.clone(),
+            paved_highways: meta.paved_highways.clone(),
+        }
+    }
+}
+
 const GEOFABRIK_NV_URL: &str = "https://download.geofabrik.de/north-america/us/nevada-latest.osm.pbf";
 
 #[derive(Debug, Clone, Copy)]
@@ -333,8 +360,8 @@ where
     })
 }
 
-fn is_jeep_highway(tags: WayTags<'_>) -> bool {
-    if !JEEP_HIGHWAY_TAGS.iter().any(|t| *t == tags.highway) {
+fn is_jeep_highway(tags: WayTags<'_>, jeep_tags: &HashSet<&str>) -> bool {
+    if !jeep_tags.contains(tags.highway) {
         return false;
     }
     if tags.highway == "track" {
@@ -353,8 +380,8 @@ fn is_jeep_highway(tags: WayTags<'_>) -> bool {
     true
 }
 
-fn is_paved_highway(tags: WayTags<'_>) -> bool {
-    PAVED_HIGHWAY_TAGS.iter().any(|t| *t == tags.highway)
+fn is_paved_highway(tags: WayTags<'_>, paved_tags: &HashSet<&str>) -> bool {
+    paved_tags.contains(tags.highway)
 }
 
 fn is_paved_surface(surface: Option<&str>) -> bool {
@@ -381,7 +408,7 @@ fn is_unpaved_surface(surface: Option<&str>) -> bool {
 }
 
 /// Paved Dijkstra sources only — not every jeep-class road.
-fn is_paved_anchor(tags: WayTags<'_>) -> bool {
+fn is_paved_anchor(tags: WayTags<'_>, paved_tags: &HashSet<&str>) -> bool {
     if matches!(
         tags.highway,
         "track" | "footway" | "path" | "steps" | "service" | "bridleway"
@@ -392,7 +419,8 @@ fn is_paved_anchor(tags: WayTags<'_>) -> bool {
         return false;
     }
     if is_paved_surface(tags.surface) {
-        return is_paved_highway(tags) || matches!(tags.highway, "tertiary" | "tertiary_link");
+        return is_paved_highway(tags, paved_tags)
+            || matches!(tags.highway, "tertiary" | "tertiary_link");
     }
     matches!(
         tags.highway,
@@ -442,12 +470,16 @@ pub fn build_osm_routing(
     south: f64,
     east: f64,
     north: f64,
+    opts: &OsmRoutingOpts,
 ) -> Result<OsmRouting> {
     let pad = 0.05;
     let west = west - pad;
     let south = south - pad;
     let east = east + pad;
     let north = north + pad;
+    let jeep_tags: HashSet<&str> = opts.jeep_highways.iter().map(String::as_str).collect();
+    let paved_tags: HashSet<&str> = opts.paved_highways.iter().map(String::as_str).collect();
+    let sample_step = opts.road_sample_step_m;
 
     info!(
         path = %pbf_path.display(),
@@ -489,8 +521,8 @@ pub fn build_osm_routing(
                 let Some(tags) = parse_way_tags(way.tags()) else {
                     return;
                 };
-                let jeep = is_jeep_highway(tags);
-                let paved = is_paved_highway(tags);
+                let jeep = is_jeep_highway(tags, &jeep_tags);
+                let paved = is_paved_highway(tags, &paved_tags);
                 if !jeep && !paved {
                     return;
                 }
@@ -506,7 +538,7 @@ pub fn build_osm_routing(
                     return;
                 }
                 if jeep {
-                    jeep_samples.extend(sample_way(&coords, ROAD_SAMPLE_STEP_M));
+                    jeep_samples.extend(sample_way(&coords, sample_step));
                     jeep_way_count += 1;
                 }
                 if jeep || paved {
@@ -538,7 +570,7 @@ pub fn build_osm_routing(
                             tags.surface,
                             tags.fourwd_only,
                         );
-                        if is_paved_anchor(tags) {
+                        if is_paved_anchor(tags, &paved_tags) {
                             paved_points.push(PavedPoint {
                                 lat: lat1,
                                 lon: lon1,
@@ -588,7 +620,7 @@ pub fn build_jeep_road_index(
     east: f64,
     north: f64,
 ) -> Result<JeepRoadIndex> {
-    Ok(build_osm_routing(pbf_path, west, south, east, north)?.jeep_roads)
+    Ok(build_osm_routing(pbf_path, west, south, east, north, &OsmRoutingOpts::default())?.jeep_roads)
 }
 
 #[cfg(test)]
@@ -614,64 +646,90 @@ mod tests {
 
     #[test]
     fn jeep_highway_accepts_track_and_rejects_footway() {
-        assert!(is_jeep_highway(WayTags {
-            highway: "track",
-            tracktype: None,
-            surface: None,
-            fourwd_only: false,
-        }));
-        assert!(!is_jeep_highway(WayTags {
-            highway: "footway",
-            tracktype: None,
-            surface: None,
-            fourwd_only: false,
-        }));
+        let jeep: HashSet<&str> = JEEP_HIGHWAY_TAGS.iter().copied().collect();
+        assert!(is_jeep_highway(
+            WayTags {
+                highway: "track",
+                tracktype: None,
+                surface: None,
+                fourwd_only: false,
+            },
+            &jeep
+        ));
+        assert!(!is_jeep_highway(
+            WayTags {
+                highway: "footway",
+                tracktype: None,
+                surface: None,
+                fourwd_only: false,
+            },
+            &jeep
+        ));
     }
 
     #[test]
     fn paved_highway_includes_primary() {
-        assert!(is_paved_highway(WayTags {
-            highway: "primary",
-            tracktype: None,
-            surface: None,
-            fourwd_only: false,
-        }));
+        let paved: HashSet<&str> = PAVED_HIGHWAY_TAGS.iter().copied().collect();
+        assert!(is_paved_highway(
+            WayTags {
+                highway: "primary",
+                tracktype: None,
+                surface: None,
+                fourwd_only: false,
+            },
+            &paved
+        ));
     }
 
     #[test]
     fn unclassified_without_surface_is_not_paved_anchor() {
-        assert!(!is_paved_anchor(WayTags {
-            highway: "unclassified",
-            tracktype: None,
-            surface: None,
-            fourwd_only: false,
-        }));
-        assert!(is_paved_anchor(WayTags {
-            highway: "unclassified",
-            tracktype: None,
-            surface: Some("asphalt"),
-            fourwd_only: false,
-        }));
+        let paved: HashSet<&str> = PAVED_HIGHWAY_TAGS.iter().copied().collect();
+        assert!(!is_paved_anchor(
+            WayTags {
+                highway: "unclassified",
+                tracktype: None,
+                surface: None,
+                fourwd_only: false,
+            },
+            &paved
+        ));
+        assert!(is_paved_anchor(
+            WayTags {
+                highway: "unclassified",
+                tracktype: None,
+                surface: Some("asphalt"),
+                fourwd_only: false,
+            },
+            &paved
+        ));
     }
 
     #[test]
     fn service_road_is_never_paved_anchor() {
-        assert!(!is_paved_anchor(WayTags {
-            highway: "service",
-            tracktype: None,
-            surface: Some("gravel"),
-            fourwd_only: false,
-        }));
+        let paved: HashSet<&str> = PAVED_HIGHWAY_TAGS.iter().copied().collect();
+        assert!(!is_paved_anchor(
+            WayTags {
+                highway: "service",
+                tracktype: None,
+                surface: Some("gravel"),
+                fourwd_only: false,
+            },
+            &paved
+        ));
     }
 
     #[test]
     fn primary_without_surface_is_paved_anchor() {
-        assert!(is_paved_anchor(WayTags {
-            highway: "primary",
-            tracktype: None,
-            surface: None,
-            fourwd_only: false,
-        }));
+        let paved: HashSet<&str> = PAVED_HIGHWAY_TAGS.iter().copied().collect();
+        assert!(is_paved_anchor(
+            WayTags {
+                highway: "primary",
+                tracktype: None,
+                surface: None,
+                fourwd_only: false,
+            },
+            &paved
+        ));
     }
 
     #[test]

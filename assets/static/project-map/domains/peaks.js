@@ -52,8 +52,8 @@ export function createPeaksDomain(opts) {
       map.setPaintProperty(PEAKS_JEEP_LINE, 'line-color', [
         'case',
         ['==', ['get', 'slug'], sel],
-        '#93c5fd',
-        '#3b82f6',
+        '#fdba74',
+        '#ea580c',
       ])
     }
   }
@@ -119,6 +119,47 @@ export function createPeaksDomain(opts) {
     if (getMapReady()) clearPeaksCursorPoint(getMap())
     flyToPeak(peak)
     syncMapViewport?.()
+    void enrichPeakAccess(peak)
+  }
+
+  /** @param {object} peak */
+  async function enrichPeakAccess(peak) {
+    if (!peak?.slug) return
+    if (peak.hike?.profile || peak.jeep?.profile) {
+      refreshPeakLayers()
+      return
+    }
+    try {
+      const resp = await fetch(apiUrls.placeAccessApiUrl(projectSlug, peak.slug))
+      if (!resp.ok) return
+      const access = await resp.json()
+      const idx = store.peaks.list.findIndex((p) => p.slug === peak.slug)
+      if (idx < 0) return
+      const merged = {
+        ...store.peaks.list[idx],
+        road_lat: access.road_lat ?? store.peaks.list[idx].road_lat,
+        road_lon: access.road_lon ?? store.peaks.list[idx].road_lon,
+        paved_lat: access.paved_lat ?? store.peaks.list[idx].paved_lat,
+        paved_lon: access.paved_lon ?? store.peaks.list[idx].paved_lon,
+        hike_m: access.hike_m ?? store.peaks.list[idx].hike_m,
+        jeep_m: access.jeep_m ?? store.peaks.list[idx].jeep_m,
+        hike: access.hike ?? store.peaks.list[idx].hike,
+        jeep: access.jeep ?? store.peaks.list[idx].jeep,
+      }
+      store.peaks.list.splice(idx, 1, merged)
+      if (store.ui.selectedPeakSlug === peak.slug) {
+        flyToPeak(merged)
+      }
+      refreshPeakLayers()
+      updatePeakHighlight(store.ui.selectedPeakSlug)
+    } catch (err) {
+      console.warn('peaks: access load failed', err)
+    }
+  }
+
+  function refreshPeakLayers() {
+    if (!getMapReady()) return
+    setPeaksLayerData(getMap(), store.peaks.list)
   }
 
   function deselectPeak() {

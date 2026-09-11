@@ -16,6 +16,7 @@ pub fn run(
     force: bool,
     verbose: bool,
     stop_after: Option<usize>,
+    clean: bool,
 ) -> Result<()> {
     let preset_path = resolve_preset_path(&project.to_string_lossy());
     if !preset_path.is_file() {
@@ -49,26 +50,29 @@ pub fn run(
             force_osm: force,
             verbose,
             stop_after,
+            clean,
         },
     )
     .context("peaks catalog build failed")?;
 
     println!("{}", summary.output.display());
     println!(
-        "kept={} denied={} gnis={} site_seeds={} dem={} max_slope_deg={:.1}",
+        "kept={} denied={} gnis={} site_seeds={} dem={} max_slope_deg={:.1} entries={}",
         summary.kept,
         summary.denied,
         summary.gnis,
         summary.site_seeds,
         summary.dem,
-        summary.max_slope_deg
+        summary.max_slope_deg,
+        summary.entries,
     );
     println!(
-        "dropped: land={} road={} hike={} slope={} dedup={} region={}",
+        "dropped: land={} road={} hike={} slope={} jeep={} dedup={} region={}",
         summary.dropped_land,
         summary.dropped_road,
         summary.dropped_hike,
         summary.dropped_slope,
+        summary.dropped_jeep,
         summary.dropped_dedup,
         summary.dropped_region
     );

@@ -9,7 +9,12 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use peaky_preset::{load_preset, resolved_viewshed_root, Preset, SiteEntry};
+use peaky_peaks::{
+    load_routing_for_points, warm_place_access_with_routing, OsmRouting, OsmRoutingOpts,
+};
+use peaky_preset::{
+    ensure_access_meta, load_access, load_preset, resolved_viewshed_root, Preset, SiteEntry,
+};
 use serde_json::{json, Value};
 use splatter::{propagate::required_tile_names_for_points, PRIORITY_DEM_BACKGROUND, PRIORITY_DEM_VIEWPORT, Session};
 
@@ -17,6 +22,7 @@ use crate::events::ServeEventHub;
 use crate::links::{
     store_project_site_links_cache, warm_project_site_links,
 };
+use crate::peaks::{access_fresh_on_disk, access_payload_json};
 use crate::rf::{max_hop_range_m, preset_to_request_with_sim, viewshed_workspace_digest};
 use crate::viewshed::{
     coords_viewshed_overlay_if_ready, ensure_viewshed_progressive_for_coords_blocking,
@@ -205,6 +211,8 @@ pub struct WarmHub {
     coverage_workers: usize,
     projects: Arc<Mutex<HashMap<String, Arc<ProjectWarm>>>>,
     workers_started: Arc<AtomicBool>,
+    /// Project-wide OSM routing graph (lazy; shared across site access warms).
+    osm_routing: Arc<Mutex<Option<Arc<OsmRouting>>>>,
 }
 
 impl WarmHub {
@@ -221,6 +229,7 @@ impl WarmHub {
             coverage_workers: coverage_workers.max(1),
             projects: Arc::new(Mutex::new(HashMap::new())),
             workers_started: Arc::new(AtomicBool::new(false)),
+            osm_routing: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -332,7 +341,13 @@ impl WarmHub {
         Ok(())
     }
 
-    fn warm_site_job(&self, warm: Arc<ProjectWarm>, site_slug: &str, site: &SiteEntry) {
+    fn warm_site_job(
+        &self,
+        warm: Arc<ProjectWarm>,
+        site_slug: &str,
+        site: &SiteEntry,
+        warm_access: bool,
+    ) {
         let preset_path = warm.preset_path.clone();
         let session = self.session.clone();
         let slug = warm.slug.clone();
@@ -360,22 +375,173 @@ impl WarmHub {
 
         viewshed_progress_log(&format!("warm start {slug}/{site_slug}"));
 
-        if let Err(e) = ensure_viewshed_progressive_for_site_blocking(
-            session,
+        let viewshed_needed = match site_viewshed_overlay_if_ready(
             &slug,
             &preset_path,
-            &preset,
             &site_slug,
             &site,
-            hub.verbose,
-            |overlay| hub.publish_viewshed(&slug, overlay),
+            &preset,
+            None,
         ) {
-            tracing::warn!("viewshed warm {slug}/{site_slug}: {e:#}");
-            hub.events.publish(
+            Ok(Some(overlay)) => !Self::overlay_is_at_target(&overlay),
+            _ => true,
+        };
+
+        if viewshed_needed {
+            if let Err(e) = ensure_viewshed_progressive_for_site_blocking(
+                session.clone(),
                 &slug,
-                "viewshed",
-                json!({ "project": slug, "slug": site_slug, "status": "error", "error": e.to_string() }),
-            );
+                &preset_path,
+                &preset,
+                &site_slug,
+                &site,
+                hub.verbose,
+                |overlay| hub.publish_viewshed(&slug, overlay),
+            ) {
+                tracing::warn!("viewshed warm {slug}/{site_slug}: {e:#}");
+                hub.events.publish(
+                    &slug,
+                    "viewshed",
+                    json!({ "project": slug, "slug": site_slug, "status": "error", "error": e.to_string() }),
+                );
+            }
+        }
+
+        // Access paths only for UI-requested warms (viewport/interactive), same gate as
+        // viewshed paint — not AOI background prefetch.
+        if warm_access {
+            hub.warm_and_publish_site_access(&preset_path, &slug, &site_slug, &site, &preset);
+        }
+    }
+
+    fn ensure_project_osm_routing(
+        &self,
+        preset_path: &std::path::Path,
+        preset: &Preset,
+    ) -> Result<Arc<OsmRouting>> {
+        {
+            let guard = self.osm_routing.lock().unwrap();
+            if let Some(routing) = guard.as_ref() {
+                return Ok(routing.clone());
+            }
+        }
+        let project_dir = preset_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("preset path has no parent"))?;
+        let points: Vec<(f64, f64)> = preset
+            .sites
+            .values()
+            .map(|s| (s.lat(), s.lon()))
+            .collect();
+        let meta = ensure_access_meta(preset_path)?;
+        let opts = OsmRoutingOpts::from(&meta);
+        let routing = Arc::new(load_routing_for_points(
+            project_dir,
+            &points,
+            0.5,
+            false,
+            &opts,
+        )?);
+        let mut guard = self.osm_routing.lock().unwrap();
+        if let Some(existing) = guard.as_ref() {
+            return Ok(existing.clone());
+        }
+        *guard = Some(routing.clone());
+        Ok(routing)
+    }
+
+    fn warm_and_publish_site_access(
+        &self,
+        preset_path: &std::path::Path,
+        project_slug: &str,
+        site_slug: &str,
+        site: &SiteEntry,
+        preset: &Preset,
+    ) {
+        if let Ok(Some(access)) = load_access(preset_path, site_slug) {
+            if access_fresh_on_disk(preset_path, &access) {
+                let mut payload = access_payload_json(site_slug, &access);
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("project".into(), json!(project_slug));
+                }
+                self.events.publish(project_slug, "access", payload);
+                return;
+            }
+        }
+        let routing = match self.ensure_project_osm_routing(preset_path, preset) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("access warm {project_slug}/{site_slug}: osm {e:#}");
+                self.events.publish(
+                    project_slug,
+                    "access",
+                    json!({
+                        "project": project_slug,
+                        "slug": site_slug,
+                        "status": "error",
+                        "error": e.to_string(),
+                    }),
+                );
+                return;
+            }
+        };
+        let meta = match ensure_access_meta(preset_path) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("access warm {project_slug}/{site_slug}: meta {e:#}");
+                self.events.publish(
+                    project_slug,
+                    "access",
+                    json!({
+                        "project": project_slug,
+                        "slug": site_slug,
+                        "status": "error",
+                        "error": e.to_string(),
+                    }),
+                );
+                return;
+            }
+        };
+        match warm_place_access_with_routing(
+            preset_path,
+            &self.session,
+            routing.as_ref(),
+            &meta,
+            site_slug,
+            site.lat(),
+            site.lon(),
+        ) {
+            Ok(Some(access)) => {
+                let mut payload = access_payload_json(site_slug, &access);
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("project".into(), json!(project_slug));
+                }
+                self.events.publish(project_slug, "access", payload);
+            }
+            Ok(None) => {
+                self.events.publish(
+                    project_slug,
+                    "access",
+                    json!({
+                        "project": project_slug,
+                        "slug": site_slug,
+                        "status": "missing",
+                    }),
+                );
+            }
+            Err(e) => {
+                tracing::warn!("access warm {project_slug}/{site_slug}: {e:#}");
+                self.events.publish(
+                    project_slug,
+                    "access",
+                    json!({
+                        "project": project_slug,
+                        "slug": site_slug,
+                        "status": "error",
+                        "error": e.to_string(),
+                    }),
+                );
+            }
         }
     }
 
@@ -391,6 +557,7 @@ impl WarmHub {
             Ok(k) => k,
             Err(_) => return false,
         };
+        let mut viewshed_needed = true;
         if let Ok(Some(overlay)) = site_viewshed_overlay_if_ready(
             &warm.slug,
             &warm.preset_path,
@@ -400,19 +567,46 @@ impl WarmHub {
             None,
         ) {
             if Self::overlay_is_at_target(&overlay) {
-                return false;
+                viewshed_needed = false;
             }
         } else if Self::site_coverage_exists(&warm.preset_path, &key) {
             let _ = std::fs::remove_dir_all(resolved_viewshed_root(&warm.preset_path).join(&key));
+        }
+        // Same gate as UI viewshed paint: access only for interactive/viewport bumps.
+        let warm_access = priority < PRIORITY_BACKGROUND;
+        let access_ready = warm_access
+            && load_access(&warm.preset_path, site_slug)
+                .ok()
+                .flatten()
+                .map(|a| access_fresh_on_disk(&warm.preset_path, &a))
+                .unwrap_or(false);
+        if !viewshed_needed && (!warm_access || access_ready) {
+            if warm_access && access_ready {
+                // Republish cached access so the UI can paint after a reconnect.
+                if let Ok(Some(access)) = load_access(&warm.preset_path, site_slug) {
+                    let mut payload = access_payload_json(site_slug, &access);
+                    if let Some(obj) = payload.as_object_mut() {
+                        obj.insert("project".into(), json!(warm.slug));
+                    }
+                    self.events.publish(&warm.slug, "access", payload);
+                }
+            }
+            return false;
         }
         let hub = self.clone();
         let warm2 = warm.clone();
         let site_slug = site_slug.to_string();
         let site = site.clone();
+        // Distinct queue key so access-only refresh isn't blocked by viewshed digest.
+        let job_key = if viewshed_needed {
+            key
+        } else {
+            format!("access:{site_slug}")
+        };
         warm.queue.submit(
-            key,
+            job_key,
             priority,
-            Box::new(move || hub.warm_site_job(warm2, &site_slug, &site)),
+            Box::new(move || hub.warm_site_job(warm2, &site_slug, &site, warm_access)),
         )
     }
 

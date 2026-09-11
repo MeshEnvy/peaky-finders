@@ -14,8 +14,8 @@ use axum::{
 use peaky_geo::{parse_kml_point_placemarks, parse_kmz_point_placemarks};
 use peaky_preset::{
     insert_preset_site, load_preset, load_preset_raw, patch_preset_site, patch_preset_sites_tags,
-    preset_site_slugs, remove_preset_site, unique_site_slug, validate_coords, LandSidebar,
-    SiteEntry,
+    place_slugs, preset_site_slugs, remove_preset_site, unique_place_slug, unique_site_slug,
+    validate_coords, LandSidebar, SiteEntry,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -28,7 +28,9 @@ use crate::links::{
 };
 use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
 use crate::state::AppState;
-use crate::peaks::{list_peaks_payload, peak_hike_payload, peak_jeep_payload};
+use crate::peaks::{
+    list_peaks_payload, peak_hike_payload, peak_jeep_payload, place_access_payload,
+};
 use crate::land::{
     land_data_gdbs_payload, land_delete_source, land_import_preview_payload, land_import_source,
     land_patch_sidebar, land_patch_source, land_preview_fields_payload,
@@ -96,6 +98,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/peaks", get(peaks_list))
         .route("/api/p/{slug}/peaks/{peak_slug}/hike", get(peak_hike))
         .route("/api/p/{slug}/peaks/{peak_slug}/jeep", get(peak_jeep))
+        .route("/api/p/{slug}/access/{place_slug}", get(place_access))
+        .route("/api/p/{slug}/access/{place_slug}/warm", post(place_access_warm))
         .route("/api/p/{slug}/land", get(land_list))
         .route(
             "/api/p/{slug}/land/overlays/{kind}/geojson",
@@ -178,6 +182,9 @@ struct AddSiteBody {
     #[serde(default)]
     tags: Vec<String>,
     height_m: Option<f64>,
+    /// When promoting a peak, keep this slug so `access/<slug>.yaml` carries over.
+    #[serde(default)]
+    preferred_slug: Option<String>,
 }
 
 async fn add_site(State(state): State<AppState>,
@@ -187,10 +194,16 @@ async fn add_site(State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
     validate_coords(body.lat, body.lon).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let path = state.preset_path();
-    let raw = load_preset_raw(&path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
-    let map = raw.as_mapping().ok_or((StatusCode::INTERNAL_SERVER_ERROR, "invalid preset".to_string()))?;
-    let existing = preset_site_slugs(map);
-    let site_slug = unique_site_slug(&existing, &body.name);
+    let mut existing = place_slugs(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Allow reusing a peak slug when promoting (peak row may remain; access is shared by slug).
+    if let Some(pref) = body.preferred_slug.as_deref() {
+        existing.remove(pref);
+    }
+    let site_slug = if let Some(pref) = body.preferred_slug.as_deref() {
+        unique_place_slug(&existing, pref, &body.name)
+    } else {
+        unique_site_slug(&existing, &body.name)
+    };
     let entry = SiteEntry {
         name: body.name,
         loc: [body.lat, body.lon],
@@ -706,6 +719,51 @@ async fn peak_jeep(
     peak_jeep_payload(&state.preset_path(), &state.session, &peak_slug)
         .map(Json)
         .map_err(|_| StatusCode::NOT_FOUND)
+}
+
+async fn place_access(
+    State(state): State<AppState>,
+    Path((_slug, place_slug)): Path<(String, String)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, StatusCode> {
+    let warm = params.get("warm").map(|v| v == "1" || v == "true").unwrap_or(false);
+    let lat = params.get("lat").and_then(|s| s.parse().ok());
+    let lon = params.get("lon").and_then(|s| s.parse().ok());
+    place_access_payload(
+        &state.preset_path(),
+        &state.session,
+        &place_slug,
+        warm,
+        lat,
+        lon,
+    )
+    .map(Json)
+    .map_err(|_| StatusCode::NOT_FOUND)
+}
+
+async fn place_access_warm(
+    State(state): State<AppState>,
+    Path((_slug, place_slug)): Path<(String, String)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let lat = params
+        .get("lat")
+        .and_then(|s| s.parse().ok())
+        .ok_or((StatusCode::BAD_REQUEST, "lat required".into()))?;
+    let lon = params
+        .get("lon")
+        .and_then(|s| s.parse().ok())
+        .ok_or((StatusCode::BAD_REQUEST, "lon required".into()))?;
+    place_access_payload(
+        &state.preset_path(),
+        &state.session,
+        &place_slug,
+        true,
+        Some(lat),
+        Some(lon),
+    )
+    .map(Json)
+    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))
 }
 
 async fn land_list(State(state): State<AppState>,

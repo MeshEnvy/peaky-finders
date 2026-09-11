@@ -349,6 +349,9 @@ export function createAlternatesDomain(ctx) {
       lat,
       lon,
     }
+    if (props.peak_slug || props.slug) {
+      body.preferred_slug = String(props.peak_slug || props.slug)
+    }
     if (subject.height_m != null && Number.isFinite(Number(subject.height_m))) {
       body.height_m = Number(subject.height_m)
     }

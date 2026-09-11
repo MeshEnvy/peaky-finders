@@ -18,6 +18,7 @@ import { createEditPreviewDomain } from './edit-preview.js'
 import { createMapInteractionsDomain } from './map-interactions.js'
 import { createSiteLayersDomain } from './site-layers.js'
 import { createPeaksDomain } from './peaks.js'
+import { createSiteAccessDomain } from './site-access.js'
 import { createEntityChromeDomain } from './entity-chrome.js'
 import { bootProjectMap, createMapChromeDomain } from './map-chrome.js'
 
@@ -59,6 +60,8 @@ export function runApp(ctx = {}) {
   let siteLayers = null
   /** @type {ReturnType<typeof createPeaksDomain>|null} */
   let peaksDomain = null
+  /** @type {ReturnType<typeof createSiteAccessDomain>|null} */
+  let siteAccessDomain = null
   /** @type {ReturnType<typeof createEntityChromeDomain>|null} */
   let entityChrome = null
   /** @type {ReturnType<typeof createMapChromeDomain>|null} */
@@ -124,6 +127,16 @@ export function runApp(ctx = {}) {
     syncMapViewport: () => entityChrome?.syncMapViewport(),
   })
 
+  siteAccessDomain = createSiteAccessDomain({
+    store,
+    projectSlug: String(store.projectSlug || projectSlug || ''),
+    getMap: () => map,
+    getMapReady: () => store.ui.mapReady,
+    getSites: () => sites,
+    isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
+    isViewshedVisible: (slug) => viewshedDomain?.isViewshedVisible(slug) ?? true,
+  })
+
   siteLayers = createSiteLayersDomain({
     store,
     getMap: () => map,
@@ -145,6 +158,7 @@ export function runApp(ctx = {}) {
       editPreviewDomain?.linkFeatureTouchesSnapshotCoords(feature) ?? false,
     applyEntityVisibility: () => entityChrome?.applyEntityVisibility(),
     syncEditMapShell: () => placementDomain?.syncEditMapShell(),
+    refreshSiteAccessLayers: () => siteAccessDomain?.refreshLayers(),
   })
 
   function initMapDomains() {
@@ -187,6 +201,9 @@ export function runApp(ctx = {}) {
       warmPriorityInteractive: linksDomain.WARM_PRIORITY_INTERACTIVE,
       warmPriorityViewport: linksDomain.WARM_PRIORITY_VIEWPORT,
       raiseSiteLayers: () => mapChrome.raiseSiteLayers(),
+      ensureSiteAccess: (site) => siteAccessDomain?.ensureSiteAccess(site),
+      ensureSitesAccess: (list) => siteAccessDomain?.ensureSitesAccess(list),
+      onSiteAccessVisibilityChange: () => siteAccessDomain?.refreshLayers(),
       setMarkerLngLatSafe(marker, lon, lat) {
         if (!marker || !coordsUsableForMarker(lon, lat)) return false
         try {
@@ -486,6 +503,7 @@ export function runApp(ctx = {}) {
         if (!data) return
         linksDomain?.applySiteLinksPayload(data)
       },
+      onAccess: (data) => siteAccessDomain?.handleAccessEvent(data),
     })
   }
 
@@ -501,6 +519,7 @@ export function runApp(ctx = {}) {
     entityChrome.syncMapViewport()
     map.resize()
     siteLayers.addSiteLayers()
+    siteAccessDomain?.refreshLayers()
     void peaksDomain.loadPeaks()
     mapInteractionsDomain.install()
     connectProjectEvents()
@@ -549,6 +568,9 @@ export function runApp(ctx = {}) {
     selectPeak: (...args) => peaksDomain.selectPeak(...args),
     deselectPeak: (...args) => peaksDomain.deselectPeak(...args),
     flyToPeakProfilePoint: (...args) => peaksDomain.flyToProfilePoint(...args),
+    sitesDomain,
+    applySavedSiteToMap: (...args) => placementDomain?.applySavedSiteToMap(...args),
+    selectSite: (...args) => placementDomain?.selectSite(...args),
     openEditPanel: () => placementDomain.openEditPanel(),
     cancelEdit: () => placementDomain.cancelEdit(),
     cancelCreate: () => placementDomain.cancelCreate(),

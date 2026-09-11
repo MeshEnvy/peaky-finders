@@ -161,7 +161,7 @@ impl Default for SeekConfig {
     }
 }
 
-/// Access rules stamped into ``peaks.yaml`` when ``peaky peaks`` runs.
+/// Access rules stamped into ``peaks/_meta.yaml`` when ``peaky peaks`` runs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PeakAccessRules {
@@ -215,6 +215,15 @@ fn default_paved_highways() -> Vec<String> {
 
 pub const DEFAULT_MAX_JEEP_M: f64 = 32_187.0;
 
+/// Default place/site road search radius (meters) when ``access/_meta.yaml`` is absent.
+pub const DEFAULT_PLACE_ROAD_SEARCH_M: f64 = 20_000.0;
+
+/// Default DEM sample spacing along hike/jeep polylines (meters).
+pub const DEFAULT_ACCESS_PROFILE_SAMPLE_M: f64 = 30.0;
+
+/// Default OSM jeep-road sample spacing when indexing the PBF (meters).
+pub const DEFAULT_OSM_ROAD_SAMPLE_STEP_M: f64 = 40.0;
+
 impl Default for PeakAccessRules {
     fn default() -> Self {
         Self {
@@ -228,7 +237,55 @@ impl Default for PeakAccessRules {
     }
 }
 
-/// Precomputed road-to-summit hike profile (stored in ``peaks.yaml``).
+/// Bump when hike/jeep routing or DEM profile semantics change (forces recompute).
+/// Written into ``access/_meta.yaml`` as ``algo_version``.
+pub const ACCESS_ALGO_VERSION: u32 = 1;
+
+/// Bump when peak eligibility / summit snap / universe filter semantics change.
+pub const PEAK_ALGO_VERSION: u32 = 1;
+
+/// Pathfinding settings in ``access/_meta.yaml`` (jeep/hike routing + algo stamp).
+///
+/// Peak eligibility gates (``max_hike_m``, slope) stay in ``peaks/_meta.yaml``.
+/// Changing these fields or ``algo_version`` invalidates ``compute_key`` on access files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AccessMeta {
+    /// Bump when hike/jeep routing or DEM profile semantics change (forces recompute).
+    pub algo_version: u32,
+    pub profile_sample_m: f64,
+    pub road_sample_step_m: f64,
+    pub max_jeep_m: f64,
+    pub road_highways: Vec<String>,
+    pub paved_highways: Vec<String>,
+    /// How far site/place warm searches for a jeep-class park point.
+    pub place_road_search_m: f64,
+}
+
+impl Default for AccessMeta {
+    fn default() -> Self {
+        Self {
+            algo_version: ACCESS_ALGO_VERSION,
+            profile_sample_m: DEFAULT_ACCESS_PROFILE_SAMPLE_M,
+            road_sample_step_m: DEFAULT_OSM_ROAD_SAMPLE_STEP_M,
+            max_jeep_m: DEFAULT_MAX_JEEP_M,
+            road_highways: default_jeep_highways(),
+            paved_highways: default_paved_highways(),
+            place_road_search_m: DEFAULT_PLACE_ROAD_SEARCH_M,
+        }
+    }
+}
+
+impl AccessMeta {
+    /// Copy jeep/highway knobs into peak eligibility rules (stamp / routing share).
+    pub fn apply_to_peak_rules(&self, rules: &mut PeakAccessRules) {
+        rules.max_jeep_m = self.max_jeep_m;
+        rules.road_highways = self.road_highways.clone();
+        rules.paved_highways = self.paved_highways.clone();
+    }
+}
+
+/// Precomputed road-to-summit hike profile (stored in ``access/<slug>.yaml``).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PeakHikeProfilePoint {
     pub dist_m: f64,
@@ -297,7 +354,31 @@ pub struct PeakJeepProfile {
     pub segments: Vec<PeakJeepRoadSegment>,
 }
 
-/// One row in the eligible-peaks catalog (``peaks.yaml``).
+/// Shared paved→park→pad access for a place slug (`access/<slug>.yaml`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PlaceAccess {
+    /// Fingerprint of algo version + settings that produced this access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute_key: Option<String>,
+    /// Paved-road anchor where jeep route starts `[lat, lon]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paved_loc: Option<[f64; 2]>,
+    /// Park / leave-vehicle point `[lat, lon]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub road_loc: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jeep_m: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jeep: Option<PeakJeepProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hike_m: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hike: Option<PeakHikeProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_slope_deg: Option<f64>,
+}
+
+/// One row in the eligible-peaks catalog (`peaks/<slug>.yaml`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeakCatalogEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -306,22 +387,27 @@ pub struct PeakCatalogEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elev_m: Option<f64>,
     pub source: String,
+    /// Fingerprint of peak eligibility algo + rules + land digest at build time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub road_m: Option<f64>,
-    /// Nearest jeep-road sample `[lat, lon]`.
+    /// Nearest jeep-road sample `[lat, lon]` (also mirrored in access).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub road_loc: Option<[f64; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hike_m: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_slope_deg: Option<f64>,
+    /// Full hike profile — carried in-memory / via ``access/``; omitted from thin peak rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hike: Option<PeakHikeProfile>,
-    /// Paved-road anchor where jeep route starts `[lat, lon]`.
+    /// Paved-road anchor `[lat, lon]` (also mirrored in access).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paved_loc: Option<[f64; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jeep_m: Option<f64>,
+    /// Full jeep profile — carried in-memory / via ``access/``; omitted from thin peak rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jeep: Option<PeakJeepProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -336,9 +422,63 @@ impl PeakCatalogEntry {
     pub fn lon(&self) -> f64 {
         self.loc[1]
     }
+
+    /// Build access payload from embedded or thin fields.
+    pub fn to_place_access(&self) -> PlaceAccess {
+        PlaceAccess {
+            compute_key: None,
+            paved_loc: self.paved_loc,
+            road_loc: self.road_loc,
+            jeep_m: self.jeep_m,
+            jeep: self.jeep.clone(),
+            hike_m: self.hike_m,
+            hike: self.hike.clone(),
+            max_slope_deg: self.max_slope_deg,
+        }
+    }
+
+    /// Peak row written under `peaks/<slug>.yaml` (no profile blobs).
+    pub fn thin(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            loc: self.loc,
+            elev_m: self.elev_m,
+            source: self.source.clone(),
+            compute_key: self.compute_key.clone(),
+            road_m: self.road_m,
+            road_loc: self.road_loc,
+            hike_m: self.hike_m,
+            max_slope_deg: self.max_slope_deg,
+            hike: None,
+            paved_loc: self.paved_loc,
+            jeep_m: self.jeep_m,
+            jeep: None,
+            deny: self.deny,
+        }
+    }
+
+    /// Apply access coords/profiles onto this peak row (in-memory / API join).
+    pub fn with_access(&self, access: &PlaceAccess) -> Self {
+        Self {
+            name: self.name.clone(),
+            loc: self.loc,
+            elev_m: self.elev_m,
+            source: self.source.clone(),
+            compute_key: self.compute_key.clone(),
+            road_m: self.road_m,
+            road_loc: access.road_loc.or(self.road_loc),
+            hike_m: access.hike_m.or(self.hike_m),
+            max_slope_deg: access.max_slope_deg.or(self.max_slope_deg),
+            hike: access.hike.clone().or_else(|| self.hike.clone()),
+            paved_loc: access.paved_loc.or(self.paved_loc),
+            jeep_m: access.jeep_m.or(self.jeep_m),
+            jeep: access.jeep.clone().or_else(|| self.jeep.clone()),
+            deny: self.deny,
+        }
+    }
 }
 
-/// Eligible-peaks catalog written by ``peaky peaks``.
+/// Eligible-peaks catalog (in-memory; on disk as `peaks/` + `access/`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PeaksCatalog {

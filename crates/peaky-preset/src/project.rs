@@ -1,4 +1,5 @@
-//! Multi-file project layout: ``config.yaml`` plus optional ``sites.yaml`` / ``land.yaml`` / ``peaks.yaml``.
+//! Multi-file project layout: ``config.yaml`` plus optional ``sites.yaml`` / ``land.yaml``,
+//! plus sharded ``peaks/`` and ``access/`` directories.
 
 use std::path::{Path, PathBuf};
 
@@ -32,8 +33,28 @@ impl ProjectLayout {
         self.project_dir.join("land.yaml")
     }
 
-    pub fn split_peaks_path(&self) -> PathBuf {
-        self.project_dir.join("peaks.yaml")
+    pub fn peaks_dir(&self) -> PathBuf {
+        self.project_dir.join("peaks")
+    }
+
+    pub fn peaks_meta_path(&self) -> PathBuf {
+        self.peaks_dir().join("_meta.yaml")
+    }
+
+    pub fn peak_entry_path(&self, slug: &str) -> PathBuf {
+        self.peaks_dir().join(format!("{slug}.yaml"))
+    }
+
+    pub fn access_dir(&self) -> PathBuf {
+        self.project_dir.join("access")
+    }
+
+    pub fn access_entry_path(&self, slug: &str) -> PathBuf {
+        self.access_dir().join(format!("{slug}.yaml"))
+    }
+
+    pub fn access_meta_path(&self) -> PathBuf {
+        self.access_dir().join("_meta.yaml")
     }
 
     pub fn uses_split_sites(&self) -> bool {
@@ -44,8 +65,8 @@ impl ProjectLayout {
         self.split_land_path().is_file()
     }
 
-    pub fn peaks_document_path(&self) -> PathBuf {
-        self.split_peaks_path()
+    pub fn uses_sharded_peaks(&self) -> bool {
+        self.peaks_meta_path().is_file() || self.peaks_dir().is_dir()
     }
 
     pub fn sites_document_path(&self) -> PathBuf {

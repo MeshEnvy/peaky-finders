@@ -12,6 +12,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **Sharded peaks + access** — `peaks/<slug>.yaml` + `access/<slug>.yaml` (plus `peaks/_meta.yaml` and `access/_meta.yaml`). Site and peak slugs share one namespace. `GET /api/p/{slug}/access/{place_slug}` loads profiles. Peak **Add as site** keeps the peak slug so access carries over. Leftover monolithic `peaks.yaml` is deleted on load/write (no migrate).
+- **Access pathfinding meta** — `access/_meta.yaml` owns jeep/hike routing settings (`algo_version`, OSM highway lists, jeep cap, DEM/OSM sample spacing, place road-search radius). Serve warm and `peaky peaks` read it; missing file is created with defaults.
+- **Site access with viewsheds** — when the map warms or paints a site viewshed, the same pipeline fetches/warms `access/{site}` and draws jeep + hike lines (SSE `access` + GET warm). No need to open the site sheet first. Site access ignores peak eligibility gates (builds paths even when hike > 0.5 mi or slope is steep). Same show gate as viewsheds: only compute/paint for sites that are map-visible with viewshed on (not AOI background warm).
 - **`peaky export`** — write tag-filtered site points to KML for onX import (`--tag`, optional `--exclude-tag`, `-o`). Placemark names include the book slug for copy-back after field stakes. `sites.yaml` stays source of truth.
 - **Sites panel Export** — download KML for sites visible in the current map viewport (same placemark format as CLI export).
 - **`peaky peaks`** — build an eligible-peaks catalog (`peaks.yaml`) from GNIS summits, EIP/AlertWildfire/installed site seeds, and DEM local maxima near jeep-class OSM roads. Filters: eligible land, road within 0.5 mi, DEM hike profile ≤ 0.5 mi, max segment grade 30%. Operator `deny: true` rows survive regen. Copious INFO logging; OSM PBF cached under `.peaky/cache/osm/`.
@@ -20,12 +23,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - **Find alternates** — on a site with RF links, search other eligible placements that still mutual-P2P to the same neighbors. Dots on the map; add a chosen spot as a new site (original pin stays).
 - **Eligible land overlay** — built-in land-panel toggle for seek land. Include minus exclude, clipped to the AOI. Rebuilt only when those land layers change.
 - **Peaks corridor clip** — `peaky peaks --corridor` / `--corridor-sites` / `--polygon` scan a geodesic strip or GeoJSON polygon instead of a rectangular bbox. Default width 100 mi.
-- **Jeep access routes** — `peaky peaks` routes from the nearest paved road to the park point (OSM graph + weighted shortest path, prefer maintained roads, 20 mi cap). Stored in `peaks.yaml` as `paved_loc`, `jeep_m`, and `jeep` profile. Map: blue jeep line + paved dot; peak panel shows jeep stats and a grade-colored elevation profile (Paved → Park).
+- **Jeep access routes** — `peaky peaks` routes from the nearest paved road to the park point (OSM graph + weighted shortest path, prefer maintained roads, 20 mi cap). Stored in `peaks.yaml` as `paved_loc`, `jeep_m`, and `jeep` profile. Map: orange jeep line + paved dot (distinct from blue RF links); peak panel shows jeep stats and a grade-colored elevation profile (Paved → Park).
 - **Peak hike panel** — click a peak pin for foot-hike stats and a grade-colored elevation profile (Road → Summit). Click the profile to pan the map to that spot (white/red cursor on the route).
+- **Site access panel** — selecting a site shows the same hike/jeep difficulty, distances, grades, and clickable elevation profiles as the peak sheet (shared `AccessProfilesPanel`; Road → Site). Click a profile point to pan/mark the map.
+- **Access / peak compute keys** — `access/<slug>.yaml` and `peaks/<slug>.yaml` store a `compute_key` fingerprint (algo version + settings). Stale or missing keys force re-warm on serve. Pathfinding settings + `algo_version` live in `access/_meta.yaml` (bump code `ACCESS_ALGO_VERSION` or edit the meta file to invalidate). Peak eligibility gates stay in `peaks/_meta.yaml`.
 - **`--stop-after N`** on `peaky peaks` — stop after N qualifying peaks (serial filter; prints hike report for each).
 
-### Changed
+### Fixed
 
+- **Access path rewrite** — loading the peaks catalog no longer drops `hike`/`jeep` polylines from `access/`. A thin reload + catalog rewrite (e.g. start of `peaky peaks`) used to leave scalar-only access files.
+- **`peaky peaks` catalog merge** — default merges into existing catalog (freshen nearby rows, keep peaks outside the scan). Pass `--clean` to wipe and rebuild from this scan only (operator `deny: true` rows still survive). Progressive upserts every 10 new/freshened peaks.
 - **`peaky peaks` max slope** — fixed **30% grade** (~16.7°) max segment on road-to-summit profile. Removed Old Razorback site calibration.
 - **`peaky peaks` parallel filter** — summit snap + road + hike profile run on a rayon pool (default: all cores; `PEAKY_PEAKS_WORKERS=N` to cap).
 - **Find alternates** — peak dots now come from the same `peaks.yaml` catalog as goal seek (shared RF lens filter), not live DEM grid/ridge scan.
@@ -38,6 +45,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Removed
 
+- **Monolithic `peaks.yaml` migrate** — greenfield only. Leftover `peaks.yaml` is scrapped (deleted), never converted into `peaks/` + `access/`.
 - **Ineligible overlay** — dropped. Eligible is include minus exclude, clipped to the AOI.
 - **Goal seek live peak scan** — DEM binned maxima, corridor landing grid, ridge refine, and forward-path dead-end prune are gone. Alternates still uses live scan.
 
