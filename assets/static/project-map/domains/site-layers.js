@@ -21,6 +21,7 @@ import {
   ensureSiteLayers,
   setSitesSourceData,
 } from '../map/sites-layers.js'
+import { downloadSitesKml } from '../kml-export.js'
 import { coordVisibleInMapViewport as coordVisibleInMapViewportAt } from '../map/viewport.js'
 
 /**
@@ -265,6 +266,26 @@ export function createSiteLayersDomain(ctx) {
     raiseSiteLayers?.()
   }
 
+  function viewportExportableSites() {
+    return sites()
+      .filter((site) => siteVisibleInMap(site) && !isSiteMapHidden(site.slug))
+      .sort((a, b) => b.lat - a.lat || String(a.slug).localeCompare(String(b.slug)))
+  }
+
+  /** @param {string} [projectSlug] */
+  function exportViewportSitesKml(projectSlug) {
+    if (!getMapReady() || !getMap()) {
+      throw new Error('Map not ready')
+    }
+    const visible = viewportExportableSites()
+    if (!visible.length) {
+      throw new Error('No sites in the current map view')
+    }
+    const slug = projectSlug || 'viewport'
+    downloadSitesKml(visible, `${slug}-viewport.kml`, 'viewport')
+    return visible.length
+  }
+
   return {
     sitesGeoJson,
     combineLayerFilters,
@@ -286,5 +307,7 @@ export function createSiteLayersDomain(ctx) {
     unregisterSite,
     applySiteTagChange,
     finishEditSaveUi,
+    viewportExportableSites,
+    exportViewportSitesKml,
   }
 }

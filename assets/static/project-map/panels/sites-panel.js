@@ -151,6 +151,7 @@ export function mountSitesPanel(store, appApi) {
 
   const bulkTagBtn = document.getElementById('entity-panel-bulk-tag')
   const addSiteBtn = document.getElementById('entity-panel-add-site')
+  const exportBtn = document.getElementById('entity-panel-export-sites')
   const importBtn = document.getElementById('entity-panel-import-sites')
   watch(
     () => sidebarSitesFromStore(store, mapOpts()).length,
@@ -168,8 +169,35 @@ export function mountSitesPanel(store, appApi) {
       }
     },
   )
+  function syncExportButton() {
+    if (!exportBtn) return
+    const count = appApi.viewportExportableSites?.()?.length ?? 0
+    exportBtn.disabled = !store.ui.mapReady || count === 0
+  }
+
+  watch(
+    () => [
+      store.ui.mapReady,
+      store.ui.viewportEpoch,
+      store.sites.revision,
+      store.ui.tagFilters.size,
+      store.ui.tagFilterMode,
+      store.sites.hidden.size,
+    ],
+    () => syncExportButton(),
+    { immediate: true },
+  )
+
   bulkTagBtn?.addEventListener('click', () => appApi.openBulkTagModal?.())
   addSiteBtn?.addEventListener('click', () => appApi.openAddSiteModal?.())
+  exportBtn?.addEventListener('click', () => {
+    try {
+      appApi.exportViewportSitesKml?.()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Export failed'
+      window.alert(message)
+    }
+  })
   importBtn?.addEventListener('click', () => appApi.openImportSitesModal?.())
 
   return { mountPoint, listMount }

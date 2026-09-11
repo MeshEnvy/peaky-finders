@@ -2,6 +2,7 @@
 
 pub mod eligible_land;
 pub mod lon_lat_bbox;
+pub mod kml_export;
 pub mod kml_import;
 pub mod land_aoi_clip;
 pub mod land_overlays;
@@ -36,6 +37,7 @@ pub use lon_lat_bbox::LonLatBBox;
 pub use land_aoi_clip::{
     apply_aoi_clip_to_geojson, clip_geojson_to_aoi, layer_skips_aoi_clip,
 };
+pub use kml_export::{write_kml_point_document, KmlPointPlacemark};
 pub use kml_import::{
     parse_kml_linestring_routes, parse_kml_point_placemarks, parse_kmz_linestring_routes,
     parse_kmz_point_placemarks, serialize_kml_point, KmlLineRoute, KmlPointSite, KmlRoute,
