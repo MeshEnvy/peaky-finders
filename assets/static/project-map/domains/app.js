@@ -116,9 +116,12 @@ export function runApp(ctx = {}) {
   }
 
   peaksDomain = createPeaksDomain({
+    store,
     projectSlug: String(store.projectSlug || projectSlug || ''),
     getMap: () => map,
     getMapReady: () => store.ui.mapReady,
+    deselectSite: () => placementDomain?.deselectSite(),
+    syncMapViewport: () => entityChrome?.syncMapViewport(),
   })
 
   siteLayers = createSiteLayersDomain({
@@ -233,6 +236,7 @@ export function runApp(ctx = {}) {
 
   const mapShell = document.querySelector('.map-shell')
   const sitePanel = document.getElementById('site-panel')
+  const peakPanel = document.getElementById('peak-panel')
   entityChrome = createEntityChromeDomain({
     store,
     getMap: () => map,
@@ -240,6 +244,7 @@ export function runApp(ctx = {}) {
     getSites: () => sites,
     mapShell,
     sitePanel,
+    peakPanel,
     entityPanel: document.getElementById('entity-panel'),
     entityPanelToggle: document.getElementById('entity-panel-toggle'),
     entityPanelSitesPane: document.getElementById('entity-panel-sites-pane'),
@@ -283,7 +288,8 @@ export function runApp(ctx = {}) {
         placementDomain.cancelEdit()
         return
       }
-      if (store.ui.selectedSlug) placementDomain.deselectSite()
+      if (store.ui.selectedPeakSlug) peaksDomain?.deselectPeak()
+      else if (store.ui.selectedSlug) placementDomain.deselectSite()
     },
   })
 
@@ -343,6 +349,7 @@ export function runApp(ctx = {}) {
         onCancelEdit: () => editPreviewDomain.endEditSession(),
         onCleanupEditSave: () => editPreviewDomain.cleanupEditSave(),
         onFinishEditSave: () => siteLayers.finishEditSaveUi(),
+        deselectPeak: () => peaksDomain?.deselectPeak(),
       })
     }
     if (!landDomain) {
@@ -454,6 +461,8 @@ export function runApp(ctx = {}) {
         setAddPlacementMode: (...args) => placementDomain.setAddPlacementMode(...args),
         selectSite: (...args) => placementDomain.selectSite(...args),
         deselectSite: (...args) => placementDomain.deselectSite(...args),
+        selectPeak: (...args) => peaksDomain.selectPeak(...args),
+        deselectPeak: (...args) => peaksDomain.deselectPeak(...args),
         openCreatePanel: (...args) => placementDomain.openCreatePanel(...args),
         beginCreateAtMapPoint: (...args) => placementDomain.beginCreateAtMapPoint(...args),
       })
@@ -537,6 +546,8 @@ export function runApp(ctx = {}) {
     getStore: () => store,
     selectSite: (...args) => placementDomain.selectSite(...args),
     deselectSite: (...args) => placementDomain.deselectSite(...args),
+    selectPeak: (...args) => peaksDomain.selectPeak(...args),
+    deselectPeak: (...args) => peaksDomain.deselectPeak(...args),
     openEditPanel: () => placementDomain.openEditPanel(),
     cancelEdit: () => placementDomain.cancelEdit(),
     cancelCreate: () => placementDomain.cancelCreate(),
@@ -562,6 +573,8 @@ export function runApp(ctx = {}) {
     onViewportFilterChange: () => entityChrome.onViewportFilterChange(),
     renderLandPanel: () => landDomain.bumpLandPanel(),
     renderEntityPanel: () => {},
+    viewportExportableSites: () => siteLayers.viewportExportableSites(),
+    exportViewportSitesKml: () => siteLayers.exportViewportSitesKml(projectSlug),
     ...bind(() => siteModalsDomain, [
       'openBulkTagModal',
       'closeBulkTagModal',

@@ -38,10 +38,15 @@ export function createRootStore(config, savedMapState) {
       tagFilterBypass: new Set(),
       revision: 0,
     },
+    peaks: {
+      list: [],
+      rules: null,
+    },
     ui: {
       mapReady: false,
       restoring: true,
       selectedSlug: null,
+      selectedPeakSlug: null,
       entityPanelOpen: savedMapState?.entityPanelOpen === true,
       entityPanelTab: savedMapState?.entityPanelTab === 'land' ? 'land' : 'sites',
       filterByViewport: savedMapState?.filterByViewport === true,

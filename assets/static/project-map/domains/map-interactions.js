@@ -1,6 +1,12 @@
 // @ts-check
 
-import { ALTERNATES_CANDIDATES_LAYER, SEEK_CANDIDATES_LAYER, SITES_CIRCLE, SITES_LABELS } from '../constants.js'
+import {
+  ALTERNATES_CANDIDATES_LAYER,
+  PEAKS_SYMBOL,
+  SEEK_CANDIDATES_LAYER,
+  SITES_CIRCLE,
+  SITES_LABELS,
+} from '../constants.js'
 
 const LONG_PRESS_MS = 500
 const LONG_PRESS_MOVE_PX = 12
@@ -24,6 +30,8 @@ export function createMapInteractionsDomain(ctx) {
     setAddPlacementMode,
     selectSite,
     deselectSite,
+    selectPeak,
+    deselectPeak,
     openCreatePanel,
     beginCreateAtMapPoint,
   } = ctx
@@ -144,6 +152,17 @@ export function createMapInteractionsDomain(ctx) {
       }
       syncMapCursor?.()
     })
+    map.on('mouseenter', PEAKS_SYMBOL, () => {
+      if (!map.getLayer(PEAKS_SYMBOL)) return
+      if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
+        map.getCanvas().style.cursor = 'crosshair'
+        return
+      }
+      map.getCanvas().style.cursor = 'pointer'
+    })
+    map.on('mouseleave', PEAKS_SYMBOL, () => {
+      syncMapCursor?.()
+    })
     for (const layerId of SITE_LAYER_IDS) {
       map.on('mouseenter', layerId, () => {
         if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
@@ -208,6 +227,18 @@ export function createMapInteractionsDomain(ctx) {
         }
       }
       if (trySelectAlternateAtPoint(ev.point)) return
+      if (map.getLayer(PEAKS_SYMBOL)) {
+        const peakFeats = map.queryRenderedFeatures(ev.point, { layers: [PEAKS_SYMBOL] })
+        if (peakFeats.length) {
+          const slug = peakFeats[0].properties?.slug
+          if (slug) {
+            ev.preventDefault()
+            if (store.ui.addPlacementMode) setAddPlacementMode(null)
+            selectPeak?.(slug)
+            return
+          }
+        }
+      }
       const feats = map.queryRenderedFeatures(ev.point, {
         layers: SITE_LAYER_IDS,
       })
@@ -225,6 +256,7 @@ export function createMapInteractionsDomain(ctx) {
         return
       }
       if (store?.alternates?.active) return
+      deselectPeak?.()
       deselectSite()
     })
     wireMapLongPress()

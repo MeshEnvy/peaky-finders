@@ -12,7 +12,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
-- **`peaky peaks`** — build an eligible-peaks catalog (`peaks.yaml`) from GNIS summits, EIP/AlertWildfire/installed site seeds, and DEM local maxima near jeep-class OSM roads. Filters: eligible land, road within 0.5 mi, DEM hike profile ≤ 0.5 mi, max slope calibrated from `old-razorback`. Operator `deny: true` rows survive regen. Copious INFO logging; OSM PBF cached under `.peaky/cache/osm/`.
+- **`peaky export`** — write tag-filtered site points to KML for onX import (`--tag`, optional `--exclude-tag`, `-o`). Placemark names include the book slug for copy-back after field stakes. `sites.yaml` stays source of truth.
+- **Sites panel Export** — download KML for sites visible in the current map viewport (same placemark format as CLI export).
+- **`peaky peaks`** — build an eligible-peaks catalog (`peaks.yaml`) from GNIS summits, EIP/AlertWildfire/installed site seeds, and DEM local maxima near jeep-class OSM roads. Filters: eligible land, road within 0.5 mi, DEM hike profile ≤ 0.5 mi, max segment grade 30%. Operator `deny: true` rows survive regen. Copious INFO logging; OSM PBF cached under `.peaky/cache/osm/`.
 - **Eligible peaks map layer** — project map always renders catalog peaks from `GET /api/p/{slug}/peaks` as Peaky logo pins below site markers. Dashed gold lines show road-to-summit access.
 - **Summit snap** — `peaky peaks` moves each candidate to the highest **eligible** DEM point within 500 m (disc-limited, no ridge chaining). Stores nearest road `[lat, lon]` in `peaks.yaml`.
 - **Find alternates** — on a site with RF links, search other eligible placements that still mutual-P2P to the same neighbors. Dots on the map; add a chosen spot as a new site (original pin stays).
@@ -21,6 +23,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **`peaky peaks` max slope** — fixed **30% grade** (~16.7°) max segment on road-to-summit profile. Removed Old Razorback site calibration.
+- **`peaky peaks` parallel filter** — summit snap + road + hike profile run on a rayon pool (default: all cores; `PEAKY_PEAKS_WORKERS=N` to cap).
+- **Find alternates** — peak dots now come from the same `peaks.yaml` catalog as goal seek (shared RF lens filter), not live DEM grid/ridge scan.
 - **Goal seek peaks** — candidates come from `peaks.yaml` only (hop disc ∩ closer-to-goal than start, then RF rank). No live DEM ridge scan, landing grid, or forward-path prune. Run `peaky peaks` first if the catalog is empty.
 - **Goal seek progress lens** — map overlay still shows hop disc ∩ closer-to-goal than start. Preset sites in hop range remain candidates alongside catalog peaks.
 - **Site `node` field** — optional `sites.<slug>.node` (ME key) is preserved on YAML load/save so a site can point at one fleet unit. Location stays on the site.

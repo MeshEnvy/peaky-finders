@@ -5,6 +5,8 @@ import {
   PEAKS_ACCESS_SOURCE,
   PEAKS_ICON_ID,
   PEAKS_ICON_URL,
+  PEAKS_ROAD_CIRCLE,
+  PEAKS_ROAD_SOURCE,
   PEAKS_SOURCE,
   PEAKS_SYMBOL,
   SITES_CIRCLE,
@@ -29,31 +31,62 @@ export function peaksGeoJson(peaks) {
   }
 }
 
+/** @param {object} peak */
+function hikePathCoordinates(peak) {
+  const profile = peak.hike?.profile
+  if (Array.isArray(profile) && profile.length >= 2) {
+    return profile
+      .filter((p) => Number.isFinite(p.lon) && Number.isFinite(p.lat))
+      .map((p) => [p.lon, p.lat])
+  }
+  if (
+    Number.isFinite(peak.road_lat) &&
+    Number.isFinite(peak.road_lon) &&
+    Number.isFinite(peak.lat) &&
+    Number.isFinite(peak.lon)
+  ) {
+    return [
+      [peak.road_lon, peak.road_lat],
+      [peak.lon, peak.lat],
+    ]
+  }
+  return null
+}
+
+/** @param {object[]} peaks */
+export function peaksRoadGeoJson(peaks) {
+  return {
+    type: 'FeatureCollection',
+    features: peaks
+      .filter((peak) => Number.isFinite(peak.road_lat) && Number.isFinite(peak.road_lon))
+      .map((peak) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [peak.road_lon, peak.road_lat] },
+        properties: {
+          slug: peak.slug || '',
+          road_m: peak.road_m ?? null,
+        },
+      })),
+  }
+}
+
 /** @param {object[]} peaks */
 export function peaksAccessGeoJson(peaks) {
   return {
     type: 'FeatureCollection',
     features: peaks
-      .filter(
-        (peak) =>
-          Number.isFinite(peak.lat) &&
-          Number.isFinite(peak.lon) &&
-          Number.isFinite(peak.road_lat) &&
-          Number.isFinite(peak.road_lon),
-      )
+      .filter((peak) => hikePathCoordinates(peak))
       .map((peak) => ({
         type: 'Feature',
         geometry: {
           type: 'LineString',
-          coordinates: [
-            [peak.road_lon, peak.road_lat],
-            [peak.lon, peak.lat],
-          ],
+          coordinates: hikePathCoordinates(peak),
         },
         properties: {
           slug: peak.slug || '',
           road_m: peak.road_m ?? null,
           hike_m: peak.hike_m ?? null,
+          difficulty: peak.hike?.difficulty ?? null,
         },
       })),
   }
@@ -72,6 +105,9 @@ export async function ensurePeaksLayers(map) {
   if (!map.getSource(PEAKS_ACCESS_SOURCE)) {
     map.addSource(PEAKS_ACCESS_SOURCE, { type: 'geojson', data: peaksAccessGeoJson([]) })
   }
+  if (!map.getSource(PEAKS_ROAD_SOURCE)) {
+    map.addSource(PEAKS_ROAD_SOURCE, { type: 'geojson', data: peaksRoadGeoJson([]) })
+  }
   if (!map.getSource(PEAKS_SOURCE)) {
     map.addSource(PEAKS_SOURCE, { type: 'geojson', data: peaksGeoJson([]) })
   }
@@ -82,10 +118,13 @@ export async function ensurePeaksLayers(map) {
         type: 'line',
         source: PEAKS_ACCESS_SOURCE,
         paint: {
-          'line-color': '#fbbf24',
-          'line-width': 2,
-          'line-opacity': 0.85,
-          'line-dasharray': [2, 1.5],
+          'line-color': '#22c55e',
+          'line-width': 3,
+          'line-opacity': 0.95,
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
         },
       },
       SITES_CIRCLE,
@@ -107,6 +146,23 @@ export async function ensurePeaksLayers(map) {
       SITES_CIRCLE,
     )
   }
+  if (!map.getLayer(PEAKS_ROAD_CIRCLE)) {
+    map.addLayer(
+      {
+        id: PEAKS_ROAD_CIRCLE,
+        type: 'circle',
+        source: PEAKS_ROAD_SOURCE,
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 4, 14, 7, 17, 10],
+          'circle-color': '#fbbf24',
+          'circle-stroke-color': '#0f172a',
+          'circle-stroke-width': 1.5,
+          'circle-opacity': 0.95,
+        },
+      },
+      PEAKS_SYMBOL,
+    )
+  }
 }
 
 /** @param {maplibregl.Map} map @param {object[]} peaks */
@@ -116,5 +172,8 @@ export function setPeaksLayerData(map, peaks) {
   }
   if (map.getSource(PEAKS_ACCESS_SOURCE)) {
     map.getSource(PEAKS_ACCESS_SOURCE).setData(peaksAccessGeoJson(peaks))
+  }
+  if (map.getSource(PEAKS_ROAD_SOURCE)) {
+    map.getSource(PEAKS_ROAD_SOURCE).setData(peaksRoadGeoJson(peaks))
   }
 }

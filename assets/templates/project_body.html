@@ -57,6 +57,7 @@
         <div id="entity-panel-sites-list" class="entity-panel__list"></div>
         <div class="entity-panel__footer">
           <div class="entity-panel__footer-actions">
+            <wa-button id="entity-panel-export-sites" appearance="outlined" size="s" class="pf-stretch" type="button" title="Export sites in the current map view to KML">Export</wa-button>
             <wa-button id="entity-panel-import-sites" appearance="outlined" size="s" class="pf-stretch" type="button" title="Import sites from KML">Import</wa-button>
             <wa-button id="entity-panel-add-site" appearance="outlined" variant="brand" size="s" class="pf-stretch" type="button" title="Add site">+ Site</wa-button>
           </div>
@@ -311,6 +312,10 @@
         </div>
       </div>
     </div>
+  </aside>
+
+  <aside id="peak-panel" class="site-panel peak-panel" hidden>
+    <div class="peak-panel__body site-panel__body"></div>
   </aside>
 </div>
 <wa-dialog id="home-settings-modal" label="Settings" style="--width: 56rem" with-footer>
