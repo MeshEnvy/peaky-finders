@@ -1,5 +1,9 @@
-//! Forward progress reachability for goal seek — candidates must have an RF path
-//! to the goal where every hop strictly decreases distance-to-goal.
+//! Forward progress reachability for goal seek.
+//!
+//! When some candidate of *this hop* already has an RF path to the goal
+//! (preset sites ∪ scan peaks, each hop closer to the goal), drop the rest
+//! as dead ends. If none do, the corridor is unfinished — keep RF-viable
+//! first hops instead of zeroing the scan.
 
 use std::collections::HashSet;
 
@@ -12,6 +16,25 @@ use crate::seek_rank::haversine_m;
 pub const SEEK_PROGRESS_MARGIN_M: f64 = 1.0;
 
 const RF_CHUNK: usize = 512;
+
+/// True when at least one candidate of this hop is on an RF path to the goal.
+/// Distant sites that can reach the goal on their own do not count — only
+/// this hop's peaks and site candidates. If none reach, skip dead-end prune.
+pub fn current_hop_reaches_goal(
+    peak_completes: &[bool],
+    reachable_peak_indices: &HashSet<usize>,
+    site_slugs: &[String],
+    site_completes: &[bool],
+    reachable_site_slugs: &HashSet<String>,
+) -> bool {
+    peak_completes
+        .iter()
+        .enumerate()
+        .any(|(i, completes)| *completes || reachable_peak_indices.contains(&i))
+        || site_slugs.iter().enumerate().any(|(i, slug)| {
+            site_completes.get(i).copied().unwrap_or(false) || reachable_site_slugs.contains(slug)
+        })
+}
 
 /// True when `to` is within hop of `from` and strictly closer to the goal than `from`.
 pub fn hop_makes_goal_progress(
@@ -321,6 +344,45 @@ mod tests {
         let rf = |from: usize, to: usize| edges.contains(&(from, to));
         let reachable = forward_reachable_with_oracle(&goal_dist_m, goal_idx, hop_m, &lat_lon, rf);
         assert!(reachable.contains(&3));
+    }
+
+    #[test]
+    fn hop_without_goal_path_skips_dead_end_prune() {
+        let reachable_peaks = HashSet::new();
+        let reachable_sites = HashSet::new();
+        assert!(!current_hop_reaches_goal(
+            &[false, false],
+            &reachable_peaks,
+            &["ridge".into()],
+            &[false],
+            &reachable_sites,
+        ));
+    }
+
+    #[test]
+    fn distant_goal_site_does_not_count_as_this_hop() {
+        let reachable_peaks = HashSet::new();
+        let reachable_sites: HashSet<String> = ["potosi-north-1".into()].into_iter().collect();
+        assert!(!current_hop_reaches_goal(
+            &[false, false],
+            &reachable_peaks,
+            &["tonopah-next".into()],
+            &[false],
+            &reachable_sites,
+        ));
+    }
+
+    #[test]
+    fn hop_peak_on_goal_path_enables_prune() {
+        let reachable_peaks: HashSet<usize> = [1].into_iter().collect();
+        let reachable_sites = HashSet::new();
+        assert!(current_hop_reaches_goal(
+            &[false, false],
+            &reachable_peaks,
+            &[],
+            &[],
+            &reachable_sites,
+        ));
     }
 
     #[test]

@@ -18,7 +18,10 @@ use splatter::peaks::LandFilterIndex;
 use splatter::Session;
 
 use crate::rf::{pair_within_hop_range, preset_to_request, default_repeater_tx_height_m, resolved_site_tx_height_m, rf_json_for_preset};
-use crate::seek_path::{compute_forward_goal_reachable, hop_makes_goal_progress, SEEK_PROGRESS_MARGIN_M};
+use crate::seek_path::{
+    compute_forward_goal_reachable, current_hop_reaches_goal, hop_makes_goal_progress,
+    SEEK_PROGRESS_MARGIN_M,
+};
 use crate::seek_progress::SeekProgressHub;
 use crate::seek_rank::{
     angle_diff_deg, bearing_deg, cmp_seek_peak_rank, forward_reach_m, haversine_m, peak_is_past_goal,
@@ -1597,32 +1600,41 @@ fn load_seek_candidates_body(
             }
         })?;
 
-        if !site_rows.is_empty() {
-            let mut next_rows = Vec::new();
-            let mut next_completes = Vec::new();
-            for (i, row) in site_rows.into_iter().enumerate() {
-                let completes = site_completes.get(i).copied().unwrap_or(false);
-                if completes || path.reachable_site_slugs.contains(&row.0) {
-                    next_rows.push(row);
-                    next_completes.push(completes);
+        let hop_site_slugs: Vec<String> = site_rows.iter().map(|row| row.0.clone()).collect();
+        if current_hop_reaches_goal(
+            &peak_completes_flags,
+            &path.reachable_peak_indices,
+            &hop_site_slugs,
+            &site_completes,
+            &path.reachable_site_slugs,
+        ) {
+            if !site_rows.is_empty() {
+                let mut next_rows = Vec::new();
+                let mut next_completes = Vec::new();
+                for (i, row) in site_rows.into_iter().enumerate() {
+                    let completes = site_completes.get(i).copied().unwrap_or(false);
+                    if completes || path.reachable_site_slugs.contains(&row.0) {
+                        next_rows.push(row);
+                        next_completes.push(completes);
+                    }
+                }
+                site_rows = next_rows;
+                site_completes = next_completes;
+            }
+
+            let mut next_capped = Vec::new();
+            let mut next_peak_completes = Vec::new();
+            for (i, (peak, completes)) in capped.into_iter().zip(peak_completes_flags).enumerate() {
+                if completes || path.reachable_peak_indices.contains(&i) {
+                    next_capped.push(peak);
+                    next_peak_completes.push(completes);
                 }
             }
-            site_rows = next_rows;
-            site_completes = next_completes;
+            capped = next_capped;
+            peak_completes_flags = next_peak_completes;
+            n_forward_path_pruned =
+                n_before_forward.saturating_sub(site_rows.len() + capped.len());
         }
-
-        let mut next_capped = Vec::new();
-        let mut next_peak_completes = Vec::new();
-        for (i, (peak, completes)) in capped.into_iter().zip(peak_completes_flags).enumerate() {
-            if completes || path.reachable_peak_indices.contains(&i) {
-                next_capped.push(peak);
-                next_peak_completes.push(completes);
-            }
-        }
-        capped = next_capped;
-        peak_completes_flags = next_peak_completes;
-        n_forward_path_pruned =
-            n_before_forward.saturating_sub(site_rows.len() + capped.len());
     }
 
     let mut peak_pairs: Vec<((f64, f64, f64), bool)> = capped
