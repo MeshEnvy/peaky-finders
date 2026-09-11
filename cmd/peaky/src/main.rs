@@ -44,8 +44,34 @@ enum Commands {
         #[arg(value_name = "PROJECT")]
         project: PathBuf,
         /// Scan bbox west,south,east,north (default: project AOI)
-        #[arg(long, value_name = "W,S,E,N", allow_hyphen_values = true)]
+        #[arg(
+            long,
+            value_name = "W,S,E,N",
+            allow_hyphen_values = true,
+            conflicts_with_all = ["polygon", "corridor", "corridor_sites"]
+        )]
         bbox: Option<String>,
+        /// Clip scan to a GeoJSON polygon file
+        #[arg(long, value_name = "PATH", conflicts_with_all = ["bbox", "corridor", "corridor_sites"])]
+        polygon: Option<PathBuf>,
+        /// Corridor from_lat,from_lon,to_lat,to_lon (100 mi wide by default)
+        #[arg(
+            long,
+            value_name = "LAT,LON,LAT,LON",
+            allow_hyphen_values = true,
+            conflicts_with_all = ["bbox", "polygon", "corridor_sites"]
+        )]
+        corridor: Option<String>,
+        /// Corridor from site slug to site slug (e.g. tonopah-overlook,eip-us1041015)
+        #[arg(
+            long,
+            value_name = "FROM,TO",
+            conflicts_with_all = ["bbox", "polygon", "corridor"]
+        )]
+        corridor_sites: Option<String>,
+        /// Total corridor width in miles (default 100)
+        #[arg(long, default_value_t = 100.0)]
+        corridor_width_mi: f64,
         /// Re-download OSM PBF even if cached
         #[arg(long)]
         force: bool,
@@ -152,10 +178,23 @@ async fn main() -> Result<()> {
         Commands::Peaks {
             project,
             bbox,
+            polygon,
+            corridor,
+            corridor_sites,
+            corridor_width_mi,
             force,
             verbose,
         } => {
-            peaks::run(project, bbox, force, verbose)?;
+            peaks::run(
+                project,
+                bbox,
+                polygon,
+                corridor,
+                corridor_sites,
+                corridor_width_mi,
+                force,
+                verbose,
+            )?;
         }
         Commands::Freeze {
             project,

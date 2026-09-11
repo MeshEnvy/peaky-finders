@@ -17,6 +17,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - **Summit snap** — `peaky peaks` moves each candidate to the highest **eligible** DEM point within 500 m (disc-limited, no ridge chaining). Stores nearest road `[lat, lon]` in `peaks.yaml`.
 - **Find alternates** — on a site with RF links, search other eligible placements that still mutual-P2P to the same neighbors. Dots on the map; add a chosen spot as a new site (original pin stays).
 - **Eligible land overlay** — built-in land-panel toggle for seek land. Include minus exclude, clipped to the AOI. Rebuilt only when those land layers change.
+- **Peaks corridor clip** — `peaky peaks --corridor` / `--corridor-sites` / `--polygon` scan a geodesic strip or GeoJSON polygon instead of a rectangular bbox. Default width 100 mi.
 
 ### Changed
 

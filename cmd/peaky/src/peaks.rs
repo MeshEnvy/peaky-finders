@@ -3,10 +3,19 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use peaky_peaks::{build_peaks_catalog, PeaksBuildOptions};
-use peaky_preset::resolve_preset_path;
+use peaky_peaks::{build_peaks_catalog, resolve_corridor_from_opts, PeaksBuildOptions};
+use peaky_preset::{load_preset, resolve_preset_path};
 
-pub fn run(project: PathBuf, bbox: Option<String>, force: bool, verbose: bool) -> Result<()> {
+pub fn run(
+    project: PathBuf,
+    bbox: Option<String>,
+    polygon: Option<PathBuf>,
+    corridor: Option<String>,
+    corridor_sites: Option<String>,
+    corridor_width_mi: f64,
+    force: bool,
+    verbose: bool,
+) -> Result<()> {
     let preset_path = resolve_preset_path(&project.to_string_lossy());
     if !preset_path.is_file() {
         anyhow::bail!(
@@ -14,6 +23,13 @@ pub fn run(project: PathBuf, bbox: Option<String>, force: bool, verbose: bool) -
             preset_path.display()
         );
     }
+
+    let preset = load_preset(&preset_path).context("load preset")?;
+    let corridor_coords = resolve_corridor_from_opts(
+        &preset,
+        corridor.as_deref(),
+        corridor_sites.as_deref(),
+    )?;
 
     let parsed_bbox = bbox
         .as_deref()
@@ -26,6 +42,9 @@ pub fn run(project: PathBuf, bbox: Option<String>, force: bool, verbose: bool) -
         &preset_path,
         PeaksBuildOptions {
             bbox: parsed_bbox,
+            polygon,
+            corridor: corridor_coords,
+            corridor_width_mi,
             force_osm: force,
             verbose,
         },
@@ -43,12 +62,13 @@ pub fn run(project: PathBuf, bbox: Option<String>, force: bool, verbose: bool) -
         summary.max_slope_deg
     );
     println!(
-        "dropped: land={} road={} hike={} slope={} dedup={}",
+        "dropped: land={} road={} hike={} slope={} dedup={} region={}",
         summary.dropped_land,
         summary.dropped_road,
         summary.dropped_hike,
         summary.dropped_slope,
-        summary.dropped_dedup
+        summary.dropped_dedup,
+        summary.dropped_region
     );
 
     Ok(())

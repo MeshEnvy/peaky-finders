@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use geo::Geometry;
 use peaky_geo::{
     collect_role_geometry, eligible_land_dem_mask_dir, load_or_build_eligible_land_parts,
     LonLatBBox,
@@ -20,6 +21,10 @@ use splatter::peaks::LandFilterIndex;
 use splatter::Session;
 use tracing::info;
 
+use crate::corridor::{
+    corridor_polygon, load_polygon_file, parse_corridor_coords, point_in_region,
+    resolve_corridor_sites, ScanRegion, MI_TO_M,
+};
 use crate::gnis::load_gnis_candidates;
 use crate::hike::{
     clamp_calibrated_slope_deg, haversine_m, profile_hike, profile_passes,
@@ -52,6 +57,9 @@ impl HikeSampleElev for SessionElev<'_> {
 #[derive(Debug, Clone)]
 pub struct PeaksBuildOptions {
     pub bbox: Option<(f64, f64, f64, f64)>,
+    pub polygon: Option<PathBuf>,
+    pub corridor: Option<(f64, f64, f64, f64)>,
+    pub corridor_width_mi: f64,
     pub force_osm: bool,
     pub verbose: bool,
 }
@@ -65,6 +73,7 @@ pub struct PeaksBuildSummary {
     pub dropped_hike: usize,
     pub dropped_slope: usize,
     pub dropped_dedup: usize,
+    pub dropped_region: usize,
     pub gnis: usize,
     pub site_seeds: usize,
     pub dem: usize,
@@ -79,6 +88,7 @@ struct DropCounts {
     hike: usize,
     slope: usize,
     dedup: usize,
+    region: usize,
 }
 
 pub fn build_peaks_catalog(
@@ -91,14 +101,23 @@ pub fn build_peaks_catalog(
         .parent()
         .context("preset path has no parent")?;
 
-    let bbox = resolve_bbox(preset_path, &preset, opts.bbox)?;
-    info!(
-        west = bbox.west,
-        south = bbox.south,
-        east = bbox.east,
-        north = bbox.north,
-        "peaks: scan bbox"
-    );
+    let (bbox, scan_region) = resolve_scan(preset_path, &preset, &opts)?;
+    match &scan_region {
+        ScanRegion::BboxOnly => info!(
+            west = bbox.west,
+            south = bbox.south,
+            east = bbox.east,
+            north = bbox.north,
+            "peaks: scan bbox"
+        ),
+        ScanRegion::Clip(_) => info!(
+            west = bbox.west,
+            south = bbox.south,
+            east = bbox.east,
+            north = bbox.north,
+            "peaks: scan corridor polygon (tile bbox above)"
+        ),
+    }
 
     let land_parts =
         load_or_build_eligible_land_parts(preset_path, Some(bbox)).context("eligible land")?;
@@ -164,6 +183,13 @@ pub fn build_peaks_catalog(
     info!(count = dem_peaks.len(), "peaks: DEM candidates on eligible land");
     universe.extend(dem_peaks.clone());
 
+    let pre_region = universe.len();
+    universe.retain(|c| point_in_region(&scan_region, c.lat, c.lon));
+    info!(
+        count = universe.len(),
+        dropped = pre_region.saturating_sub(universe.len()),
+        "peaks: universe after region clip"
+    );
     universe = dedup_nearby(universe, CANDIDATE_DEDUP_M);
     universe.sort_by(|a, b| {
         b.elev_m
@@ -222,6 +248,10 @@ pub fn build_peaks_catalog(
             drops.land += 1;
             continue;
         };
+        if !point_in_region(&scan_region, peak_lat, peak_lon) {
+            drops.region += 1;
+            continue;
+        }
         let replace_idx = kept_summits.iter().position(|k| {
             haversine_m(peak_lat, peak_lon, k.lat, k.lon) <= CANDIDATE_DEDUP_M
         });
@@ -319,6 +349,7 @@ pub fn build_peaks_catalog(
         dropped_hike = drops.hike,
         dropped_slope = drops.slope,
         dropped_dedup = drops.dedup,
+        dropped_region = drops.region,
         elapsed_secs = t0.elapsed().as_secs_f64(),
         "peaks: filter complete"
     );
@@ -336,6 +367,7 @@ pub fn build_peaks_catalog(
         dropped_hike: drops.hike,
         dropped_slope: drops.slope,
         dropped_dedup: drops.dedup,
+        dropped_region: drops.region,
         gnis: gnis.len(),
         site_seeds: site_seeds.len(),
         dem: dem_peaks.len(),
@@ -471,20 +503,62 @@ fn load_dem_candidates(
         .collect())
 }
 
-fn resolve_bbox(
+fn resolve_scan(
     preset_path: &Path,
     _preset: &Preset,
-    override_bbox: Option<(f64, f64, f64, f64)>,
-) -> Result<LonLatBBox> {
-    if let Some(b) = override_bbox {
-        return Ok(LonLatBBox::from_tuple(b));
+    opts: &PeaksBuildOptions,
+) -> Result<(LonLatBBox, ScanRegion)> {
+    if let Some(path) = &opts.polygon {
+        let poly = load_polygon_file(path)?;
+        let bbox = polygon_bbox(&poly);
+        return Ok((bbox, ScanRegion::Clip(poly)));
+    }
+    if let Some((from_lat, from_lon, to_lat, to_lon)) = opts.corridor {
+        let half_width_m = (opts.corridor_width_mi * MI_TO_M / 2.0).max(1.0);
+        let poly = corridor_polygon(from_lat, from_lon, to_lat, to_lon, half_width_m);
+        let bbox = polygon_bbox(&poly);
+        info!(
+            from_lat,
+            from_lon,
+            to_lat,
+            to_lon,
+            width_mi = opts.corridor_width_mi,
+            "peaks: corridor clip"
+        );
+        return Ok((bbox, ScanRegion::Clip(poly)));
+    }
+    if let Some(b) = opts.bbox {
+        return Ok((LonLatBBox::from_tuple(b), ScanRegion::BboxOnly));
     }
     let aoi = collect_role_geometry(preset_path, LandLayerRole::Aoi, None)
         .context("load AOI geometry")?;
     if let Some(b) = LonLatBBox::from_geometry(&aoi) {
-        return Ok(b.padded(0.02));
+        return Ok((b.padded(0.02), ScanRegion::BboxOnly));
     }
-    Ok(LonLatBBox::new(-120.0, 35.0, -114.0, 42.0))
+    Ok((
+        LonLatBBox::new(-120.0, 35.0, -114.0, 42.0),
+        ScanRegion::BboxOnly,
+    ))
+}
+
+fn polygon_bbox(poly: &geo::Polygon<f64>) -> LonLatBBox {
+    LonLatBBox::from_geometry(&Geometry::Polygon(poly.clone()))
+        .unwrap_or(LonLatBBox::new(-120.0, 35.0, -114.0, 42.0))
+        .padded(0.02)
+}
+
+pub fn resolve_corridor_from_opts(
+    preset: &Preset,
+    corridor: Option<&str>,
+    corridor_sites: Option<&str>,
+) -> Result<Option<(f64, f64, f64, f64)>> {
+    if let Some(raw) = corridor_sites {
+        return Ok(Some(resolve_corridor_sites(preset, raw)?));
+    }
+    if let Some(raw) = corridor {
+        return Ok(Some(parse_corridor_coords(raw)?));
+    }
+    Ok(None)
 }
 
 fn is_near_any_site(lat: f64, lon: f64, sites: &[(f64, f64)], min_m: f64) -> bool {
