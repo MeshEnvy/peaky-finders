@@ -1,0 +1,24 @@
+[package]
+name = "peaky-peaks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+geo.workspace = true
+geojson.workspace = true
+peaky-geo.workspace = true
+peaky-preset.workspace = true
+reqwest.workspace = true
+rstar.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+splatter.workspace = true
+tracing.workspace = true
+osmpbf = "0.3"
+tempfile.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

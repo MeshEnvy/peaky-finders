@@ -7,6 +7,7 @@ members = [
     "crates/peaky-freeze",
     "crates/peaky-serve",
     "crates/peaky-finder",
+    "crates/peaky-peaks",
     "cmd/peaky",
 ]
 
@@ -30,6 +31,7 @@ peaky-geo = { path = "crates/peaky-geo" }
 peaky-preset = { path = "crates/peaky-preset" }
 peaky-serve = { path = "crates/peaky-serve" }
 peaky-finder = { path = "crates/peaky-finder" }
+peaky-peaks = { path = "crates/peaky-peaks" }
 quick-xml = "0.37"
 rayon = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

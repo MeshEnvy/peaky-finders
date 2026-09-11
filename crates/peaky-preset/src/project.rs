@@ -1,4 +1,4 @@
-//! Multi-file project layout: ``config.yaml`` plus optional ``sites.yaml`` / ``land.yaml``.
+//! Multi-file project layout: ``config.yaml`` plus optional ``sites.yaml`` / ``land.yaml`` / ``peaks.yaml``.
 
 use std::path::{Path, PathBuf};
 
@@ -32,12 +32,20 @@ impl ProjectLayout {
         self.project_dir.join("land.yaml")
     }
 
+    pub fn split_peaks_path(&self) -> PathBuf {
+        self.project_dir.join("peaks.yaml")
+    }
+
     pub fn uses_split_sites(&self) -> bool {
         self.split_sites_path().is_file()
     }
 
     pub fn uses_split_land(&self) -> bool {
         self.split_land_path().is_file()
+    }
+
+    pub fn peaks_document_path(&self) -> PathBuf {
+        self.split_peaks_path()
     }
 
     pub fn sites_document_path(&self) -> PathBuf {

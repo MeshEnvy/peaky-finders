@@ -28,6 +28,7 @@ use crate::links::{
 };
 use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
 use crate::state::AppState;
+use crate::peaks::list_peaks_payload;
 use crate::land::{
     land_data_gdbs_payload, land_delete_source, land_import_preview_payload, land_import_source,
     land_patch_sidebar, land_patch_source, land_preview_fields_payload,
@@ -92,6 +93,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/warm/priorities", post(warm_priorities))
         .route("/api/p/{slug}/warm/status", get(warm_status))
         .route("/api/p/{slug}/events", get(project_events))
+        .route("/api/p/{slug}/peaks", get(peaks_list))
         .route("/api/p/{slug}/land", get(land_list))
         .route(
             "/api/p/{slug}/land/overlays/{kind}/geojson",
@@ -675,6 +677,15 @@ async fn project_events(
     axum::response::Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new().interval(Duration::from_secs(15)),
     )
+}
+
+async fn peaks_list(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    list_peaks_payload(&state.preset_path())
+        .map(Json)
+        .map_err(|_| StatusCode::NOT_FOUND)
 }
 
 async fn land_list(State(state): State<AppState>,

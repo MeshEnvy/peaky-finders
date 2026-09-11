@@ -5,6 +5,7 @@ pub mod init;
 pub mod io;
 pub mod model;
 pub mod paths;
+pub mod peaks;
 pub mod project;
 pub mod viewshed_quality;
 pub mod sites;
@@ -19,6 +20,10 @@ pub use init::{
     default_meshcore_preset, ensure_project_initialized, project_needs_init,
 };
 
+pub use peaks::{
+    denied_slugs, load_peaks_catalog, peaks_catalog_path, preserve_denied_entries,
+    write_peaks_catalog,
+};
 pub use io::{
     delete_land_source, import_land_source, insert_preset_site, land_source_id_for_path,
     load_preset, load_preset_raw, parse_preset_dict, patch_land_sidebar, patch_land_source,
@@ -33,8 +38,9 @@ pub use model::{
     resolved_viewshed_polygon_style, slugify_files_segment, validate_preset,
     validate_project_preset_document, CoverageProvider, DisplayConfig, LandAttributeFilter,
     LandConfig, LandDownloadKind, LandLayerEntry, LandLayerRole, LandLayerStyle, LandLayerStyleValue,
-    LandSidebar, LandSidebarFolder, LandSourceEntry, LandSourceRefresh, Preset, PresetResult,
-    PresetValidationError, SeekConfig, SeekPlan, SeekPlanHop, SimulationConfig,
+    LandSidebar, LandSidebarFolder, LandSourceEntry, LandSourceRefresh, PeakAccessRules,
+    PeakCatalogEntry, PeaksCatalog, Preset, PresetResult, PresetValidationError, SeekConfig,
+    SeekPlan, SeekPlanHop, SimulationConfig,
     SimulationMaxWorkers, SiteEntry, ViewshedPolygonStyle, DEFAULT_COVERAGE_MAX_WORKERS,
     DEFAULT_DEM_MAX_WORKERS,
 };

@@ -29,10 +29,11 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | Path | Role |
 |------|------|
 | `Dockerfile` | `peaky:latest` — mount project at `/project` |
-| `cmd/peaky/` | CLI binary (`serve`, `find path`, `freeze`; `serve --fast-boot`) |
+| `cmd/peaky/` | CLI binary (`serve`, `find path`, `freeze`, `peaks`; `serve --fast-boot`) |
 | `crates/peaky-freeze/` | Official base export: bake land pipeline → `project.geojson` + distilled `config.yaml` |
 | `crates/peaky-finder/` | Auto-finder: route → min-site RF chain + config patch |
-| `crates/peaky-preset/` | Preset model, YAML I/O, paths, sites, home catalogs |
+| `crates/peaky-preset/` | Preset model, YAML I/O, paths, sites, home catalogs, `peaks.yaml` catalog I/O |
+| `crates/peaky-peaks/` | `peaky peaks` pipeline: OSM jeep roads, DEM hike profile, GNIS/universe → `peaks.yaml` |
 | `crates/peaky-geo/` | GeoJSON land query, eligible land (bbox clip + include/exclude index), KML import, PPM polygonize |
 | `crates/peaky-serve/` | Axum app, API routes, HTML, embedded static |
 | `splatter/` | RF coverage engine (Skadi DEM, Fresnel/FSPL). Library only |
@@ -45,7 +46,9 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 
 Same vocabulary as v4: `sites:` (slug → `name`, `loc`, optional `tags`, `height_m`, optional `node` ME key), top-level `links:`, `simulation`, `display`, `land`, `seek`, plus **`modem_presets`** and **`environment_presets`** (self-contained project; no `$PEAKY_HOME` inheritance). No `sites.*.type`. Tags are UI-only. Fleet bind is `sites.*.node`; nodes.yaml is not read for RF.
 
-Paths: CLI takes a project dir (or `config.yaml`). Optional slug fallback: `$PEAKY_HOME/projects/<name>/`. Cache root: `<project>/.peaky/cache/` — `skadi/` (HGT + `.map_tiles/`), `viewsheds/`, `finder/`, `land/`. Optional `SPLAT_CACHE` overrides Skadi path. **PLSS:** not in Peaky — ops `tag_public_land.py` (CadNSDI → preset YAML); export runs it as prep.
+Paths: CLI takes a project dir (or `config.yaml`). Optional slug fallback: `$PEAKY_HOME/projects/<name>/`. Split files: `sites.yaml`, `land.yaml`, **`peaks.yaml`** (eligible-peaks catalog; not merged into typed `Preset` yet). Cache root: `<project>/.peaky/cache/` — `skadi/` (HGT + `.map_tiles/`), `viewsheds/`, `finder/`, `land/`, **`osm/`** (Geofabrik NV PBF). Optional `SPLAT_CACHE` overrides Skadi path.
+
+**Eligible peaks (`peaky peaks`):** Phase 1 CLI writes git-tracked `peaks.yaml`. Each candidate snaps to the highest DEM point within **500 m** (disc search, no ridge chaining). Rows store `road_loc` (nearest jeep-road sample) plus hike stats. Phase 2 map: logo pins + dashed gold road→summit lines from `GET /api/p/{slug}/peaks`. Access rules: jeep-class OSM ≤ 805 m, 3D hike ≤ 805 m, max slope from `old-razorback` (fallback 35°). Seek still uses live DEM scan until Phase 3. **PLSS:** not in Peaky — ops `tag_public_land.py` (CadNSDI → preset YAML); export runs it as prep.
 
 **YAML writes:** serve site edits patch the on-disk YAML tree (`insert_preset_site`, `patch_preset_site`, …) so unrelated sections keep their order. Full `save_preset` re-serializes the typed preset and should be reserved for whole-document updates. A `seek.plan` that names a missing site is dropped on load and when that site is deleted.
 
@@ -120,7 +123,7 @@ preset → CovRequest JSON (rf_json)
 | Home modem/environment catalogs | Implemented |
 | SSE `/events` | Implemented (hello + keepalive; publish on warm TBD) |
 | Links mesh, warm scheduler | Implemented (P2P mesh, warm queue, SSE) |
-| Goal seek (`/seek/candidates`, scan-progress, plan, convert-to-sites) | Implemented (P2P via `seek.rs` + `seek_path.rs` + `seek_repeater_link_margins`). Two generators, one ranker: **approach** (goal out of hop range) = local-max peaks in progress lens (hop disc ∩ closer to goal than start); **landing** (goal in hop range, start has no RF) = elevation-blind grid over start-disc ∩ goal-disc (RF lens), coarse then refine around completers, spatial diversify. Site candidates use the same progress lens from `from`. **Forward-path gate:** non-completers need an RF path to goal via preset sites ∪ scan peaks with strictly decreasing goal distance each hop (`seek_path.rs` DP). Rank: completes goal → goal progress (non-completers) → extra P2P into start-hop-disc sites → weaker-leg margin → forward reach. Elevation is not a score. Convert seeds site-mesh pairs for new slugs and bypasses tag-filter on the whole path |
+| Goal seek (`/seek/candidates`, scan-progress, plan, convert-to-sites) | Implemented (P2P via `seek.rs` + `seek_path.rs` + `seek_repeater_link_margins`). Two generators, one ranker: **approach** (goal out of hop range) = local-max peaks in progress lens (hop disc ∩ closer to goal than start); **landing** (goal in hop range, start has no RF) = elevation-blind grid over start-disc ∩ goal-disc (RF lens), coarse then refine around completers, spatial diversify. Site candidates use the same progress lens from `from`. **Forward-path gate:** drop dead-end relays only when some candidate of *this hop* already has an RF path to the goal through preset sites ∪ scan peaks (`seek_path.rs` DP, strictly closer each hop). An unfinished corridor (goal many hops away, no connecting intermediates) keeps RF-viable first hops. Rank: completes goal → goal progress (non-completers) → extra P2P into start-hop-disc sites → weaker-leg margin → forward reach. Elevation is not a score. Convert seeds site-mesh pairs for new slugs and bypasses tag-filter on the whole path |
 | Site alternates (`/alternates`, `/alternates/scan-progress`) | Implemented — N-anchor RF lens (hop-disc ∩), grid + ridge bins, mutual P2P to all linked peers; site sheet **Find alternates** + **Add as site** |
 | Land list + layer GeoJSON | Implemented (plus built-in eligible overlay GeoJSON, digest-cached) |
 | Skadi map tiles (`/api/dem/hillshade`, `/api/dem/terrarium`) | Implemented — PNG cache `<project>/.peaky/cache/skadi/.map_tiles/v3/`; render only when all required HGT on disk (503 until ready); hillshade uses padded HGT ring; **AOI HGT prefetch on project page load** (background); map tile prefetch capped (`PEAKY_DEM_MAP_QUEUE_CAP`, default 128) |

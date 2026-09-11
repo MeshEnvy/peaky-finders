@@ -2,6 +2,7 @@
 
 mod find;
 mod freeze;
+mod peaks;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -36,6 +37,20 @@ enum Commands {
     Find {
         #[command(subcommand)]
         command: FindCommands,
+    },
+    /// Build eligible-peaks catalog (peaks.yaml)
+    Peaks {
+        /// Project directory (or path to config.yaml)
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
+        /// Scan bbox west,south,east,north (default: project AOI)
+        #[arg(long, value_name = "W,S,E,N", allow_hyphen_values = true)]
+        bbox: Option<String>,
+        /// Re-download OSM PBF even if cached
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        verbose: bool,
     },
     /// Export a compact official project base (config.yaml + project.geojson)
     Freeze {
@@ -88,7 +103,9 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "peaky=info,tower_http=info".into()),
+                .unwrap_or_else(|_| {
+                    "peaky=info,peaky_peaks=info,peaky_geo=info,tower_http=info".into()
+                }),
         )
         .init();
 
@@ -131,6 +148,14 @@ async fn main() -> Result<()> {
                 watch_port,
             )
             .await?;
+        }
+        Commands::Peaks {
+            project,
+            bbox,
+            force,
+            verbose,
+        } => {
+            peaks::run(project, bbox, force, verbose)?;
         }
         Commands::Freeze {
             project,

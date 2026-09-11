@@ -12,13 +12,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **`peaky peaks`** — build an eligible-peaks catalog (`peaks.yaml`) from GNIS summits, EIP/AlertWildfire/installed site seeds, and DEM local maxima near jeep-class OSM roads. Filters: eligible land, road within 0.5 mi, DEM hike profile ≤ 0.5 mi, max slope calibrated from `old-razorback`. Operator `deny: true` rows survive regen. Copious INFO logging; OSM PBF cached under `.peaky/cache/osm/`.
+- **Eligible peaks map layer** — project map always renders catalog peaks from `GET /api/p/{slug}/peaks` as Peaky logo pins below site markers. Dashed gold lines show road-to-summit access.
+- **Summit snap** — `peaky peaks` moves each candidate to the highest DEM point within 500 m (disc-limited, no ridge chaining). Stores nearest road `[lat, lon]` in `peaks.yaml`.
 - **Find alternates** — on a site with RF links, search other eligible placements that still mutual-P2P to the same neighbors. Dots on the map; add a chosen spot as a new site (original pin stays).
 - **Eligible land overlay** — built-in land-panel toggle for seek land. Include minus exclude, clipped to the AOI. Rebuilt only when those land layers change.
 
 ### Changed
 
 - **Goal seek progress lens** — approach-hop peak scan is hop disc ∩ closer-to-goal than start (replaces the narrow goal wedge). Existing sites in hop range always appear as candidates. Non-completers rank by goal-distance progress before RF margin. Map overlay shows the lens shape.
-- **Goal seek forward-path gate** — candidates must have at least one RF-feasible path to the goal through preset sites and scan peaks where every hop moves closer to the goal. Dead-end relays are dropped before the map shows them.
+- **Goal seek forward-path gate** — when some candidate of this hop already has an RF path to the goal (preset sites ∪ scan peaks, closer each hop), the rest are dropped as dead ends. Unfinished corridors keep first-hop RF candidates.
 - **Site `node` field** — optional `sites.<slug>.node` (ME key) is preserved on YAML load/save so a site can point at one fleet unit. Location stays on the site.
 - **Sites sidebar** — full-width list rows instead of shrink-wrapped buttons. Tag chips scroll in a capped stack so the site list keeps height. Hover uses light text on a brighter wash. **In view** sits above the chips and limits both tags and sites to the current map.
 - **Land sidebar** — folders, sources, and layers read as a tree. Layer rows replace the low-contrast chips. Edit and delete sit quieter than the visibility control.
@@ -30,6 +33,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Goal seek empty corridor** — approach hops no longer drop every peak when leftover sites near the goal can RF it but nothing in this hop can. First-hop RF candidates stay so you can pioneer a new corridor.
 - **Delete site** — the Vue site sheet has Delete again. Confirm, then drop the site from YAML, map, and sidebar. The last site stays.
 - **Site tag edits** — the site edit sheet can add and remove tags. Bulk-removing a tag hides sites that no longer match the sidebar filter, instead of leaving them on the map.
 - **Edit draft links** — moving a site in the editor no longer draws a preview line back to its old pin. The viewshed-ready fetch was treating the move like a new site.

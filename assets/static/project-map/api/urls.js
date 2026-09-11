@@ -45,6 +45,10 @@ export function sitesPrefetchUrl(projectSlug, lat, lon, excludeSite) {
   return `/api/p/${projectSlug}/sites/prefetch?${params}`
 }
 
+export function peaksApiUrl(projectSlug) {
+  return `/api/p/${projectSlug}/peaks`
+}
+
 export function landApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/land`
 }

@@ -161,6 +161,88 @@ impl Default for SeekConfig {
     }
 }
 
+/// Access rules stamped into ``peaks.yaml`` when ``peaky peaks`` runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PeakAccessRules {
+    pub max_hike_m: f64,
+    pub max_slope_deg: f64,
+    #[serde(default = "default_jeep_highways")]
+    pub road_highways: Vec<String>,
+}
+
+fn default_jeep_highways() -> Vec<String> {
+    vec![
+        "track".into(),
+        "unclassified".into(),
+        "service".into(),
+        "residential".into(),
+        "tertiary".into(),
+    ]
+}
+
+impl Default for PeakAccessRules {
+    fn default() -> Self {
+        Self {
+            max_hike_m: 805.0,
+            max_slope_deg: 35.0,
+            road_highways: default_jeep_highways(),
+        }
+    }
+}
+
+/// One row in the eligible-peaks catalog (``peaks.yaml``).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeakCatalogEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub loc: [f64; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elev_m: Option<f64>,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub road_m: Option<f64>,
+    /// Nearest jeep-road sample `[lat, lon]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub road_loc: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hike_m: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_slope_deg: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deny: Option<bool>,
+}
+
+impl PeakCatalogEntry {
+    pub fn lat(&self) -> f64 {
+        self.loc[0]
+    }
+
+    pub fn lon(&self) -> f64 {
+        self.loc[1]
+    }
+}
+
+/// Eligible-peaks catalog written by ``peaky peaks``.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PeaksCatalog {
+    pub generated_at: String,
+    pub rules: PeakAccessRules,
+    #[serde(default)]
+    pub entries: HashMap<String, PeakCatalogEntry>,
+}
+
+impl Default for PeaksCatalog {
+    fn default() -> Self {
+        Self {
+            generated_at: String::new(),
+            rules: PeakAccessRules::default(),
+            entries: HashMap::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SiteEntry {
     pub name: String,

@@ -7,6 +7,7 @@ mod embed;
 mod events;
 mod html;
 mod land;
+mod peaks;
 mod links;
 pub mod rf;
 mod seek;
