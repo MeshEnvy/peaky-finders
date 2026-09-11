@@ -53,6 +53,10 @@ export function peakHikeApiUrl(projectSlug, peakSlug) {
   return `/api/p/${projectSlug}/peaks/${encodeURIComponent(peakSlug)}/hike`
 }
 
+export function peakJeepApiUrl(projectSlug, peakSlug) {
+  return `/api/p/${projectSlug}/peaks/${encodeURIComponent(peakSlug)}/jeep`
+}
+
 export function landApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/land`
 }

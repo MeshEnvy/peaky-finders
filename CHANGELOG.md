@@ -20,6 +20,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - **Find alternates** — on a site with RF links, search other eligible placements that still mutual-P2P to the same neighbors. Dots on the map; add a chosen spot as a new site (original pin stays).
 - **Eligible land overlay** — built-in land-panel toggle for seek land. Include minus exclude, clipped to the AOI. Rebuilt only when those land layers change.
 - **Peaks corridor clip** — `peaky peaks --corridor` / `--corridor-sites` / `--polygon` scan a geodesic strip or GeoJSON polygon instead of a rectangular bbox. Default width 100 mi.
+- **Jeep access routes** — `peaky peaks` routes from the nearest paved road to the park point (OSM graph + weighted shortest path, prefer maintained roads, 20 mi cap). Stored in `peaks.yaml` as `paved_loc`, `jeep_m`, and `jeep` profile. Map: blue jeep line + paved dot; peak panel shows jeep stats and a grade-colored elevation profile (Paved → Park).
+- **Peak hike panel** — click a peak pin for foot-hike stats and a grade-colored elevation profile (Road → Summit). Click a profile segment to pan the map to that spot.
+- **`--stop-after N`** on `peaky peaks` — stop after N qualifying peaks (serial filter; prints hike report for each).
 
 ### Changed
 

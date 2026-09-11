@@ -9,6 +9,10 @@ export const PEAKS_ACCESS_SOURCE = 'eligible-peaks-access'
 export const PEAKS_ACCESS_LINE = 'eligible-peaks-access-line'
 export const PEAKS_ROAD_SOURCE = 'eligible-peaks-road'
 export const PEAKS_ROAD_CIRCLE = 'eligible-peaks-road-circle'
+export const PEAKS_JEEP_SOURCE = 'eligible-peaks-jeep'
+export const PEAKS_JEEP_LINE = 'eligible-peaks-jeep-line'
+export const PEAKS_PAVED_SOURCE = 'eligible-peaks-paved'
+export const PEAKS_PAVED_CIRCLE = 'eligible-peaks-paved-circle'
 export const PEAKS_SYMBOL = 'eligible-peaks-symbol'
 export const PEAKS_ICON_ID = 'peaky-logo-pin'
 export const PEAKS_ICON_URL = '/favicon-96x96.png'
@@ -68,6 +72,11 @@ export const SITE_STACK_RAISE_IDS = [
   SITES_SELECTED,
   SEEK_LENS_FILL_LAYER,
   SEEK_LENS_OUTLINE_LAYER,
+  PEAKS_JEEP_LINE,
+  PEAKS_ACCESS_LINE,
+  PEAKS_PAVED_CIRCLE,
+  PEAKS_ROAD_CIRCLE,
+  PEAKS_SYMBOL,
 ]
 export const SEEK_ANCILLARY_LINKS_DEBOUNCE_MS = 450
 export const SEEK_PLAN_SAVE_MS = 400

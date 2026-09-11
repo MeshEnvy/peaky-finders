@@ -332,6 +332,10 @@ body.wide #map {
   opacity: 0.95;
 }
 
+.peak-elev-map__chart--interactive {
+  cursor: crosshair;
+}
+
 .peak-elev-map__outline {
   fill: none;
   stroke: rgba(255, 255, 255, 0.35);
@@ -350,6 +354,20 @@ body.wide #map {
 
 .peak-elev-map__dot--end {
   fill: #f8fafc;
+}
+
+.peak-elev-map__dot--paved {
+  fill: #3b82f6;
+}
+
+.peak-elev-map__dot--park {
+  fill: #fbbf24;
+}
+
+.peak-sheet__jeep-header {
+  margin-top: var(--wa-space-m);
+  padding-top: var(--wa-space-s);
+  border-top: 1px solid var(--wa-color-surface-border);
 }
 
 .peak-elev-map__elev-label {

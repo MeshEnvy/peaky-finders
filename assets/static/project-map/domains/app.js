@@ -548,6 +548,7 @@ export function runApp(ctx = {}) {
     deselectSite: (...args) => placementDomain.deselectSite(...args),
     selectPeak: (...args) => peaksDomain.selectPeak(...args),
     deselectPeak: (...args) => peaksDomain.deselectPeak(...args),
+    flyToPeakProfilePoint: (...args) => peaksDomain.flyToProfilePoint(...args),
     openEditPanel: () => placementDomain.openEditPanel(),
     cancelEdit: () => placementDomain.cancelEdit(),
     cancelCreate: () => placementDomain.cancelCreate(),

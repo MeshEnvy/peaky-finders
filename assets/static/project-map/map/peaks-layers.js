@@ -5,6 +5,10 @@ import {
   PEAKS_ACCESS_SOURCE,
   PEAKS_ICON_ID,
   PEAKS_ICON_URL,
+  PEAKS_JEEP_LINE,
+  PEAKS_JEEP_SOURCE,
+  PEAKS_PAVED_CIRCLE,
+  PEAKS_PAVED_SOURCE,
   PEAKS_ROAD_CIRCLE,
   PEAKS_ROAD_SOURCE,
   PEAKS_SOURCE,
@@ -53,6 +57,28 @@ function hikePathCoordinates(peak) {
   return null
 }
 
+/** @param {object} peak */
+function jeepPathCoordinates(peak) {
+  const profile = peak.jeep?.profile
+  if (Array.isArray(profile) && profile.length >= 2) {
+    return profile
+      .filter((p) => Number.isFinite(p.lon) && Number.isFinite(p.lat))
+      .map((p) => [p.lon, p.lat])
+  }
+  if (
+    Number.isFinite(peak.paved_lat) &&
+    Number.isFinite(peak.paved_lon) &&
+    Number.isFinite(peak.road_lat) &&
+    Number.isFinite(peak.road_lon)
+  ) {
+    return [
+      [peak.paved_lon, peak.paved_lat],
+      [peak.road_lon, peak.road_lat],
+    ]
+  }
+  return null
+}
+
 /** @param {object[]} peaks */
 export function peaksRoadGeoJson(peaks) {
   return {
@@ -65,6 +91,23 @@ export function peaksRoadGeoJson(peaks) {
         properties: {
           slug: peak.slug || '',
           road_m: peak.road_m ?? null,
+        },
+      })),
+  }
+}
+
+/** @param {object[]} peaks */
+export function peaksPavedGeoJson(peaks) {
+  return {
+    type: 'FeatureCollection',
+    features: peaks
+      .filter((peak) => Number.isFinite(peak.paved_lat) && Number.isFinite(peak.paved_lon))
+      .map((peak) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [peak.paved_lon, peak.paved_lat] },
+        properties: {
+          slug: peak.slug || '',
+          jeep_m: peak.jeep_m ?? null,
         },
       })),
   }
@@ -92,6 +135,27 @@ export function peaksAccessGeoJson(peaks) {
   }
 }
 
+/** @param {object[]} peaks */
+export function peaksJeepGeoJson(peaks) {
+  return {
+    type: 'FeatureCollection',
+    features: peaks
+      .filter((peak) => jeepPathCoordinates(peak))
+      .map((peak) => ({
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: jeepPathCoordinates(peak),
+        },
+        properties: {
+          slug: peak.slug || '',
+          jeep_m: peak.jeep_m ?? null,
+          difficulty: peak.jeep?.difficulty ?? null,
+        },
+      })),
+  }
+}
+
 /** @param {maplibregl.Map} map */
 async function ensurePeaksIcon(map) {
   if (map.hasImage(PEAKS_ICON_ID)) return
@@ -102,14 +166,39 @@ async function ensurePeaksIcon(map) {
 /** @param {maplibregl.Map} map */
 export async function ensurePeaksLayers(map) {
   await ensurePeaksIcon(map)
+  if (!map.getSource(PEAKS_JEEP_SOURCE)) {
+    map.addSource(PEAKS_JEEP_SOURCE, { type: 'geojson', data: peaksJeepGeoJson([]) })
+  }
   if (!map.getSource(PEAKS_ACCESS_SOURCE)) {
     map.addSource(PEAKS_ACCESS_SOURCE, { type: 'geojson', data: peaksAccessGeoJson([]) })
+  }
+  if (!map.getSource(PEAKS_PAVED_SOURCE)) {
+    map.addSource(PEAKS_PAVED_SOURCE, { type: 'geojson', data: peaksPavedGeoJson([]) })
   }
   if (!map.getSource(PEAKS_ROAD_SOURCE)) {
     map.addSource(PEAKS_ROAD_SOURCE, { type: 'geojson', data: peaksRoadGeoJson([]) })
   }
   if (!map.getSource(PEAKS_SOURCE)) {
     map.addSource(PEAKS_SOURCE, { type: 'geojson', data: peaksGeoJson([]) })
+  }
+  if (!map.getLayer(PEAKS_JEEP_LINE)) {
+    map.addLayer(
+      {
+        id: PEAKS_JEEP_LINE,
+        type: 'line',
+        source: PEAKS_JEEP_SOURCE,
+        paint: {
+          'line-color': '#3b82f6',
+          'line-width': 4,
+          'line-opacity': 0.95,
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+      },
+      SITES_CIRCLE,
+    )
   }
   if (!map.getLayer(PEAKS_ACCESS_LINE)) {
     map.addLayer(
@@ -146,6 +235,23 @@ export async function ensurePeaksLayers(map) {
       SITES_CIRCLE,
     )
   }
+  if (!map.getLayer(PEAKS_PAVED_CIRCLE)) {
+    map.addLayer(
+      {
+        id: PEAKS_PAVED_CIRCLE,
+        type: 'circle',
+        source: PEAKS_PAVED_SOURCE,
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 4, 14, 7, 17, 10],
+          'circle-color': '#3b82f6',
+          'circle-stroke-color': '#0f172a',
+          'circle-stroke-width': 1.5,
+          'circle-opacity': 0.95,
+        },
+      },
+      PEAKS_SYMBOL,
+    )
+  }
   if (!map.getLayer(PEAKS_ROAD_CIRCLE)) {
     map.addLayer(
       {
@@ -170,8 +276,14 @@ export function setPeaksLayerData(map, peaks) {
   if (map.getSource(PEAKS_SOURCE)) {
     map.getSource(PEAKS_SOURCE).setData(peaksGeoJson(peaks))
   }
+  if (map.getSource(PEAKS_JEEP_SOURCE)) {
+    map.getSource(PEAKS_JEEP_SOURCE).setData(peaksJeepGeoJson(peaks))
+  }
   if (map.getSource(PEAKS_ACCESS_SOURCE)) {
     map.getSource(PEAKS_ACCESS_SOURCE).setData(peaksAccessGeoJson(peaks))
+  }
+  if (map.getSource(PEAKS_PAVED_SOURCE)) {
+    map.getSource(PEAKS_PAVED_SOURCE).setData(peaksPavedGeoJson(peaks))
   }
   if (map.getSource(PEAKS_ROAD_SOURCE)) {
     map.getSource(PEAKS_ROAD_SOURCE).setData(peaksRoadGeoJson(peaks))

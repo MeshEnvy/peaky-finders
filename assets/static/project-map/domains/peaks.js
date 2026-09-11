@@ -1,7 +1,11 @@
 // @ts-check
 
 import * as apiUrls from '../api/urls.js'
-import { PEAKS_ACCESS_LINE, PEAKS_SYMBOL } from '../constants.js'
+import {
+  PEAKS_ACCESS_LINE,
+  PEAKS_JEEP_LINE,
+  PEAKS_SYMBOL,
+} from '../constants.js'
 import { ensurePeaksLayers, setPeaksLayerData } from '../map/peaks-layers.js'
 
 /**
@@ -23,42 +27,67 @@ export function createPeaksDomain(opts) {
   function updatePeakHighlight(slug) {
     if (!getMapReady()) return
     const map = getMap()
-    if (!map.getLayer(PEAKS_ACCESS_LINE)) return
     const sel = slug || ''
-    map.setPaintProperty(PEAKS_ACCESS_LINE, 'line-width', [
-      'case',
-      ['==', ['get', 'slug'], sel],
-      5,
-      3,
-    ])
-    map.setPaintProperty(PEAKS_ACCESS_LINE, 'line-color', [
-      'case',
-      ['==', ['get', 'slug'], sel],
-      '#fde047',
-      '#22c55e',
-    ])
+    if (map.getLayer(PEAKS_ACCESS_LINE)) {
+      map.setPaintProperty(PEAKS_ACCESS_LINE, 'line-width', [
+        'case',
+        ['==', ['get', 'slug'], sel],
+        5,
+        3,
+      ])
+      map.setPaintProperty(PEAKS_ACCESS_LINE, 'line-color', [
+        'case',
+        ['==', ['get', 'slug'], sel],
+        '#fde047',
+        '#22c55e',
+      ])
+    }
+    if (map.getLayer(PEAKS_JEEP_LINE)) {
+      map.setPaintProperty(PEAKS_JEEP_LINE, 'line-width', [
+        'case',
+        ['==', ['get', 'slug'], sel],
+        6,
+        4,
+      ])
+      map.setPaintProperty(PEAKS_JEEP_LINE, 'line-color', [
+        'case',
+        ['==', ['get', 'slug'], sel],
+        '#93c5fd',
+        '#3b82f6',
+      ])
+    }
   }
 
   function flyToPeak(peak) {
     if (!peak || !getMapReady()) return
     const map = getMap()
     const coords = []
-    if (Number.isFinite(peak.lat) && Number.isFinite(peak.lon)) {
-      coords.push([peak.lon, peak.lat])
+    const addCoord = (lon, lat) => {
+      if (Number.isFinite(lon) && Number.isFinite(lat)) coords.push([lon, lat])
     }
-    if (Number.isFinite(peak.road_lat) && Number.isFinite(peak.road_lon)) {
-      coords.push([peak.road_lon, peak.road_lat])
+    addCoord(peak.lon, peak.lat)
+    addCoord(peak.road_lon, peak.road_lat)
+    addCoord(peak.paved_lon, peak.paved_lat)
+    const jeepProfile = peak.jeep?.profile
+    if (Array.isArray(jeepProfile)) {
+      for (const p of jeepProfile) addCoord(p.lon, p.lat)
+    }
+    const hikeProfile = peak.hike?.profile
+    if (Array.isArray(hikeProfile)) {
+      for (const p of hikeProfile) addCoord(p.lon, p.lat)
     }
     if (!coords.length) return
     const lngs = coords.map((c) => c[0])
     const lats = coords.map((c) => c[1])
-    const shortHike = Number.isFinite(peak.hike_m) && peak.hike_m > 0 && peak.hike_m < 200
+    const shortAccess =
+      (Number.isFinite(peak.hike_m) && peak.hike_m > 0 && peak.hike_m < 200) ||
+      (Number.isFinite(peak.jeep_m) && peak.jeep_m > 0 && peak.jeep_m < 500)
     map.fitBounds(
       [
         [Math.min(...lngs), Math.min(...lats)],
         [Math.max(...lngs), Math.max(...lats)],
       ],
-      { padding: shortHike ? 120 : 80, maxZoom: shortHike ? 17 : 14, duration: 600 },
+      { padding: shortAccess ? 120 : 80, maxZoom: shortAccess ? 17 : 14, duration: 600 },
     )
   }
 
@@ -103,11 +132,22 @@ export function createPeaksDomain(opts) {
     return store.peaks.list.find((p) => p.slug === slug) || null
   }
 
+  function flyToProfilePoint(lat, lon, zoom = 15) {
+    if (!getMapReady() || !Number.isFinite(lat) || !Number.isFinite(lon)) return
+    getMap().flyTo({
+      center: [lon, lat],
+      zoom,
+      duration: 600,
+    })
+    syncMapViewport?.()
+  }
+
   return {
     loadPeaks,
     selectPeak,
     deselectPeak,
     getPeakBySlug,
     updatePeakHighlight,
+    flyToProfilePoint,
   }
 }
