@@ -6,7 +6,7 @@ import {
   PEAKS_JEEP_LINE,
   PEAKS_SYMBOL,
 } from '../constants.js'
-import { ensurePeaksLayers, setPeaksLayerData } from '../map/peaks-layers.js'
+import { ensurePeaksLayers, setPeaksLayerData, setPeaksCursorPoint, clearPeaksCursorPoint } from '../map/peaks-layers.js'
 
 /**
  * @param {object} opts
@@ -116,6 +116,7 @@ export function createPeaksDomain(opts) {
     const panel = peakPanelEl()
     if (panel) panel.hidden = false
     updatePeakHighlight(slug)
+    if (getMapReady()) clearPeaksCursorPoint(getMap())
     flyToPeak(peak)
     syncMapViewport?.()
   }
@@ -125,6 +126,7 @@ export function createPeaksDomain(opts) {
     const panel = peakPanelEl()
     if (panel) panel.hidden = true
     updatePeakHighlight(null)
+    if (getMapReady()) clearPeaksCursorPoint(getMap())
     syncMapViewport?.()
   }
 
@@ -134,7 +136,9 @@ export function createPeaksDomain(opts) {
 
   function flyToProfilePoint(lat, lon, zoom = 15) {
     if (!getMapReady() || !Number.isFinite(lat) || !Number.isFinite(lon)) return
-    getMap().flyTo({
+    const map = getMap()
+    setPeaksCursorPoint(map, lat, lon)
+    map.flyTo({
       center: [lon, lat],
       zoom,
       duration: 600,

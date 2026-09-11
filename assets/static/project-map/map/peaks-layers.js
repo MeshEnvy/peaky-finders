@@ -3,6 +3,8 @@
 import {
   PEAKS_ACCESS_LINE,
   PEAKS_ACCESS_SOURCE,
+  PEAKS_CURSOR_CIRCLE,
+  PEAKS_CURSOR_SOURCE,
   PEAKS_ICON_ID,
   PEAKS_ICON_URL,
   PEAKS_JEEP_LINE,
@@ -181,6 +183,12 @@ export async function ensurePeaksLayers(map) {
   if (!map.getSource(PEAKS_SOURCE)) {
     map.addSource(PEAKS_SOURCE, { type: 'geojson', data: peaksGeoJson([]) })
   }
+  if (!map.getSource(PEAKS_CURSOR_SOURCE)) {
+    map.addSource(PEAKS_CURSOR_SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+  }
   if (!map.getLayer(PEAKS_JEEP_LINE)) {
     map.addLayer(
       {
@@ -269,6 +277,45 @@ export async function ensurePeaksLayers(map) {
       PEAKS_SYMBOL,
     )
   }
+  if (!map.getLayer(PEAKS_CURSOR_CIRCLE)) {
+    map.addLayer({
+      id: PEAKS_CURSOR_CIRCLE,
+      type: 'circle',
+      source: PEAKS_CURSOR_SOURCE,
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 6, 14, 9, 17, 12],
+        'circle-color': '#f8fafc',
+        'circle-stroke-color': '#ef4444',
+        'circle-stroke-width': 2.5,
+        'circle-opacity': 0.98,
+      },
+    })
+  }
+}
+
+/** @param {maplibregl.Map} map @param {number} lat @param {number} lon */
+export function setPeaksCursorPoint(map, lat, lon) {
+  const source = map.getSource(PEAKS_CURSOR_SOURCE)
+  if (!source) return
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    source.setData({ type: 'FeatureCollection', features: [] })
+    return
+  }
+  source.setData({
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [lon, lat] },
+        properties: {},
+      },
+    ],
+  })
+}
+
+/** @param {maplibregl.Map} map */
+export function clearPeaksCursorPoint(map) {
+  setPeaksCursorPoint(map, NaN, NaN)
 }
 
 /** @param {maplibregl.Map} map @param {object[]} peaks */

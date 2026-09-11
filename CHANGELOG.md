@@ -21,7 +21,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - **Eligible land overlay** — built-in land-panel toggle for seek land. Include minus exclude, clipped to the AOI. Rebuilt only when those land layers change.
 - **Peaks corridor clip** — `peaky peaks --corridor` / `--corridor-sites` / `--polygon` scan a geodesic strip or GeoJSON polygon instead of a rectangular bbox. Default width 100 mi.
 - **Jeep access routes** — `peaky peaks` routes from the nearest paved road to the park point (OSM graph + weighted shortest path, prefer maintained roads, 20 mi cap). Stored in `peaks.yaml` as `paved_loc`, `jeep_m`, and `jeep` profile. Map: blue jeep line + paved dot; peak panel shows jeep stats and a grade-colored elevation profile (Paved → Park).
-- **Peak hike panel** — click a peak pin for foot-hike stats and a grade-colored elevation profile (Road → Summit). Click a profile segment to pan the map to that spot.
+- **Peak hike panel** — click a peak pin for foot-hike stats and a grade-colored elevation profile (Road → Summit). Click the profile to pan the map to that spot (white/red cursor on the route).
 - **`--stop-after N`** on `peaky peaks` — stop after N qualifying peaks (serial filter; prints hike report for each).
 
 ### Changed
