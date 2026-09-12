@@ -1831,6 +1831,8 @@ land:
                     paved_loc: None,
                     jeep_m: None,
                     jeep: None,
+                    hike_difficulty: None,
+                    jeep_difficulty: None,
                     deny: None,
                 },
             );

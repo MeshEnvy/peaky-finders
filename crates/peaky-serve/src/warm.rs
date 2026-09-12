@@ -407,11 +407,8 @@ impl WarmHub {
             }
         }
 
-        // Access paths only for UI-requested warms (viewport/interactive), same gate as
-        // viewshed paint — not AOI background prefetch.
-        if warm_access {
-            hub.warm_and_publish_site_access(&preset_path, &slug, &site_slug, &site, &preset);
-        }
+        // Access is warmed only via GET/POST place access (`warm=1`), not viewshed jobs.
+        let _ = warm_access;
     }
 
     fn ensure_project_osm_routing(
@@ -572,41 +569,17 @@ impl WarmHub {
         } else if Self::site_coverage_exists(&warm.preset_path, &key) {
             let _ = std::fs::remove_dir_all(resolved_viewshed_root(&warm.preset_path).join(&key));
         }
-        // Same gate as UI viewshed paint: access only for interactive/viewport bumps.
-        let warm_access = priority < PRIORITY_BACKGROUND;
-        let access_ready = warm_access
-            && load_access(&warm.preset_path, site_slug)
-                .ok()
-                .flatten()
-                .map(|a| access_fresh_on_disk(&warm.preset_path, &a))
-                .unwrap_or(false);
-        if !viewshed_needed && (!warm_access || access_ready) {
-            if warm_access && access_ready {
-                // Republish cached access so the UI can paint after a reconnect.
-                if let Ok(Some(access)) = load_access(&warm.preset_path, site_slug) {
-                    let mut payload = access_payload_json(site_slug, &access);
-                    if let Some(obj) = payload.as_object_mut() {
-                        obj.insert("project".into(), json!(warm.slug));
-                    }
-                    self.events.publish(&warm.slug, "access", payload);
-                }
-            }
+        if !viewshed_needed {
             return false;
         }
         let hub = self.clone();
         let warm2 = warm.clone();
         let site_slug = site_slug.to_string();
         let site = site.clone();
-        // Distinct queue key so access-only refresh isn't blocked by viewshed digest.
-        let job_key = if viewshed_needed {
-            key
-        } else {
-            format!("access:{site_slug}")
-        };
         warm.queue.submit(
-            job_key,
+            key,
             priority,
-            Box::new(move || hub.warm_site_job(warm2, &site_slug, &site, warm_access)),
+            Box::new(move || hub.warm_site_job(warm2, &site_slug, &site, false)),
         )
     }
 

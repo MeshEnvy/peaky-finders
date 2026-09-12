@@ -8,6 +8,7 @@ mod events;
 mod html;
 mod land;
 mod peaks;
+mod peaks_cache;
 mod links;
 pub mod rf;
 mod seek;

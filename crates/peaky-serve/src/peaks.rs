@@ -4,10 +4,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use peaky_peaks::{profile_along_polyline, profile_hike_detailed, warm_place_access, HikeSampleElev};
+use peaky_peaks::{profile_along_polyline, resolve_hike, warm_place_access, HikeSampleElev};
+use crate::peaks_cache::cached_peaks_list;
 use peaky_preset::{
-    ensure_access_meta, load_access, load_peak, load_peaks_catalog, peak_access_compute_key,
-    place_access_compute_key, place_access_is_fresh, PlaceAccess,
+    ensure_access_meta, load_access, load_peak, load_peaks_rules, peak_access_compute_key,
+    place_access_compute_key, place_access_is_fresh, PeakHikeProfile, PeakJeepProfile, PlaceAccess,
 };
 use serde_json::{json, Value};
 use splatter::Session;
@@ -18,6 +19,48 @@ impl HikeSampleElev for SessionElev<'_> {
     fn sample_elev_m(&self, lat: f64, lon: f64) -> f64 {
         self.0.sample_elev_m(lat, lon)
     }
+}
+
+fn slim_hike(hike: &PeakHikeProfile) -> PeakHikeProfile {
+    let mut out = hike.clone();
+    out.histogram.clear();
+    out.difficulty = peaky_preset::hike_difficulty(
+        out.max_grade_pct,
+        out.avg_grade_pct,
+        out.horiz_m,
+    )
+    .to_string();
+    out
+}
+
+fn slim_jeep(jeep: &PeakJeepProfile) -> PeakJeepProfile {
+    let mut out = jeep.clone();
+    out.histogram.clear();
+    out
+}
+
+fn slim_jeep_rated(jeep: &PeakJeepProfile) -> PeakJeepProfile {
+    let mut out = slim_jeep(jeep);
+    out.difficulty = peaky_preset::jeep_difficulty(&jeep.segments).to_string();
+    out
+}
+
+fn jeep_access_json(jeep: &PeakJeepProfile) -> Value {
+    let slim = slim_jeep_rated(jeep);
+    let mut value = serde_json::to_value(&slim).unwrap_or_else(|_| json!({}));
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("histogram");
+        obj.remove("segments");
+        if let Some(reason) = peaky_preset::jeep_class_reason(&jeep.segments) {
+            obj.insert("osm_highway".into(), json!(reason.highway));
+            obj.insert("osm_tracktype".into(), json!(reason.tracktype));
+            obj.insert(
+                "osm_class_m".into(),
+                json!((reason.dist_m * 10.0).round() / 10.0),
+            );
+        }
+    }
+    value
 }
 
 fn access_json(slug: &str, access: &PlaceAccess) -> Value {
@@ -31,9 +74,9 @@ fn access_json(slug: &str, access: &PlaceAccess) -> Value {
         "road_lon": access.road_loc.map(|loc| loc[1]),
         "hike_m": access.hike_m,
         "max_slope_deg": access.max_slope_deg,
-        "hike": access.hike,
+        "hike": access.hike.as_ref().map(slim_hike),
         "jeep_m": access.jeep_m,
-        "jeep": access.jeep,
+        "jeep": access.jeep.as_ref().map(jeep_access_json),
     })
 }
 
@@ -41,8 +84,8 @@ fn access_json(slug: &str, access: &PlaceAccess) -> Value {
 fn expected_access_keys(preset_path: &Path) -> Vec<String> {
     let access_meta = ensure_access_meta(preset_path).unwrap_or_default();
     let mut keys = vec![place_access_compute_key(&access_meta)];
-    let road_search = load_peaks_catalog(preset_path)
-        .map(|c| c.rules.max_hike_m)
+    let road_search = load_peaks_rules(preset_path)
+        .map(|r| r.max_hike_m)
         .unwrap_or_else(|_| peaky_preset::PeakAccessRules::default().max_hike_m);
     keys.push(peak_access_compute_key(&access_meta, road_search));
     keys
@@ -58,44 +101,9 @@ pub fn access_payload_json(slug: &str, access: &PlaceAccess) -> Value {
     access_json(slug, access)
 }
 
-/// Thin peak list (no profile blobs). Map uses 2-point fallbacks from paved/road locs.
+/// Thin peak list (no profile blobs). Jeep/hike lines paint only after access profiles load.
 pub fn list_peaks_payload(preset_path: &Path) -> Result<Value> {
-    let catalog = load_peaks_catalog(preset_path)?;
-    let mut peaks: Vec<Value> = catalog
-        .entries
-        .iter()
-        .filter(|(_, entry)| !entry.deny.unwrap_or(false))
-        .map(|(slug, entry)| {
-            json!({
-                "slug": slug,
-                "name": entry.name,
-                "lat": entry.lat(),
-                "lon": entry.lon(),
-                "elev_m": entry.elev_m,
-                "source": entry.source,
-                "road_m": entry.road_m,
-                "road_lat": entry.road_loc.map(|loc| loc[0]),
-                "road_lon": entry.road_loc.map(|loc| loc[1]),
-                "hike_m": entry.hike_m,
-                "max_slope_deg": entry.max_slope_deg,
-                "paved_lat": entry.paved_loc.map(|loc| loc[0]),
-                "paved_lon": entry.paved_loc.map(|loc| loc[1]),
-                "jeep_m": entry.jeep_m,
-                "compute_key": entry.compute_key,
-            })
-        })
-        .collect();
-    peaks.sort_by(|a, b| {
-        a.get("slug")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .cmp(b.get("slug").and_then(|v| v.as_str()).unwrap_or(""))
-    });
-    Ok(json!({
-        "generated_at": catalog.generated_at,
-        "rules": catalog.rules,
-        "peaks": peaks,
-    }))
+    cached_peaks_list(preset_path)
 }
 
 pub fn place_access_payload(
@@ -153,10 +161,7 @@ pub fn peak_hike_payload(
     session: &Arc<Session>,
     peak_slug: &str,
 ) -> Result<Value> {
-    let catalog = load_peaks_catalog(preset_path)?;
-    let entry = catalog
-        .entries
-        .get(peak_slug)
+    let entry = load_peak(preset_path, peak_slug)?
         .filter(|e| !e.deny.unwrap_or(false))
         .context("peak not found")?;
     let access = load_access(preset_path, peak_slug)?;
@@ -176,9 +181,23 @@ pub fn peak_hike_payload(
         session
             .ensure_tiles_for_points(&[(peak_lat, peak_lon), (road_lat, road_lon)], 900.0)
             .context("preload DEM for hike profile")?;
+        let access_meta = ensure_access_meta(preset_path).unwrap_or_default();
+        let max_slope_deg = load_peaks_rules(preset_path)
+            .map(|r| r.max_slope_deg)
+            .unwrap_or_else(|_| peaky_preset::PeakAccessRules::default().max_slope_deg);
         let elev = SessionElev(session.as_ref());
-        let detail = profile_hike_detailed(&elev, road_lat, road_lon, peak_lat, peak_lon, 30.0)
-            .context("hike profile")?;
+        let detail = resolve_hike(
+            &elev,
+            road_lat,
+            road_lon,
+            peak_lat,
+            peak_lon,
+            max_slope_deg,
+            access_meta.hike_path_max_m,
+            access_meta.profile_sample_m,
+            true,
+        )
+        .context("hike profile")?;
         serde_json::to_value(detail).context("serialize hike profile")?
     };
 
@@ -200,10 +219,7 @@ pub fn peak_jeep_payload(
     session: &Arc<Session>,
     peak_slug: &str,
 ) -> Result<Value> {
-    let catalog = load_peaks_catalog(preset_path)?;
-    let entry = catalog
-        .entries
-        .get(peak_slug)
+    let entry = load_peak(preset_path, peak_slug)?
         .filter(|e| !e.deny.unwrap_or(false))
         .context("peak not found")?;
     let access = load_access(preset_path, peak_slug)?;

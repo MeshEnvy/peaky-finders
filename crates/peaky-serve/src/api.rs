@@ -698,7 +698,10 @@ async fn peaks_list(
     State(state): State<AppState>,
     Path(_slug): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    list_peaks_payload(&state.preset_path())
+    let path = state.preset_path();
+    tokio::task::spawn_blocking(move || list_peaks_payload(&path))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map(Json)
         .map_err(|_| StatusCode::NOT_FOUND)
 }
