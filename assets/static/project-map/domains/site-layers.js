@@ -4,6 +4,7 @@ import {
   ALTERNATE_VIEWSHED_SLUG,
   FORTIFY_VIEWSHED_SLUG,
   DRAFT_VIEWSHED_SLUG,
+  PEAK_VIEWSHED_SLUG,
   SEEK_HOP_VIEWSHED_PREFIX,
   SITES_CIRCLE,
   SITES_LABELS,
@@ -90,6 +91,7 @@ export function createSiteLayersDomain(ctx) {
       slug === DRAFT_VIEWSHED_SLUG ||
       slug === ALTERNATE_VIEWSHED_SLUG ||
       slug === FORTIFY_VIEWSHED_SLUG ||
+      slug === PEAK_VIEWSHED_SLUG ||
       String(slug).startsWith(SEEK_HOP_VIEWSHED_PREFIX)
     )
   }

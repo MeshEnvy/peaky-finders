@@ -5,9 +5,15 @@ import {
   PEAKS_ACCESS_LINE,
   PEAKS_JEEP_LINE,
   PEAKS_SYMBOL,
+  PEAK_VIEWSHED_SLUG,
 } from '../constants.js'
-import { ensurePeaksLayers, setPeaksLayerData, setPeaksCursorPoint, clearPeaksCursorPoint } from '../map/peaks-layers.js'
 import { captureDeepLinkFromMap, writeDeepLink } from '../api/deep-link.js'
+import {
+  applyDraftLinksLayer,
+  removeDraftLinksLayer,
+} from '../map/links-layers.js'
+import { ensurePeaksLayers, setPeaksLayerData, setPeaksCursorPoint, clearPeaksCursorPoint } from '../map/peaks-layers.js'
+import { setPendingCoords } from '../stores/viewshed.js'
 
 /**
  * @param {object} opts
@@ -18,10 +24,30 @@ import { captureDeepLinkFromMap, writeDeepLink } from '../api/deep-link.js'
  * @param {() => void} [opts.deselectSite]
  * @param {() => void} [opts.syncMapViewport]
  * @param {() => void} [opts.clearLinkSelection]
+ * @param {() => object|null|undefined} [opts.getViewshed]
+ * @param {(slug: string) => boolean} [opts.isSiteMapHidden]
+ * @param {() => void} [opts.raiseSiteLayers]
  */
 export function createPeaksDomain(opts) {
-  const { store, projectSlug, getMap, getMapReady, deselectSite, syncMapViewport, clearLinkSelection } =
-    opts
+  const {
+    store,
+    projectSlug,
+    getMap,
+    getMapReady,
+    deselectSite,
+    syncMapViewport,
+    clearLinkSelection,
+    getViewshed,
+    isSiteMapHidden,
+    raiseSiteLayers,
+  } = opts
+
+  let peakViewshedGen = 0
+  let peakLinksPrefetchGen = 0
+
+  function vs() {
+    return getViewshed?.()
+  }
 
   function peakPanelEl() {
     return document.getElementById('peak-panel')
@@ -72,6 +98,106 @@ export function createPeaksDomain(opts) {
     }
   }
 
+  function draftPeerVisible(feature) {
+    const slug = (feature?.properties || {}).slug
+    if (!slug) return false
+    return !(isSiteMapHidden?.(slug) ?? false)
+  }
+
+  function removePeakDraftLinks() {
+    if (!getMapReady()) return
+    removeDraftLinksLayer(getMap())
+  }
+
+  function cancelPeakViewshedLoad() {
+    peakViewshedGen += 1
+    store.viewshed.pendingEpoch.delete(PEAK_VIEWSHED_SLUG)
+    store.viewshed.loading.delete(PEAK_VIEWSHED_SLUG)
+    vs()?.clearViewshedLoadingState?.(PEAK_VIEWSHED_SLUG)
+  }
+
+  function clearPeakRfPreview() {
+    cancelPeakViewshedLoad()
+    peakLinksPrefetchGen += 1
+    vs()?.removeViewshedLayer?.(PEAK_VIEWSHED_SLUG)
+    store.viewshed.visible.delete(PEAK_VIEWSHED_SLUG)
+    removePeakDraftLinks()
+    vs()?.updatePinOverlays?.()
+  }
+
+  async function loadPeakCoordViewshed(lat, lon) {
+    const vsDomain = vs()
+    if (!vsDomain || !Number.isFinite(lat) || !Number.isFinite(lon)) return
+    const gen = ++peakViewshedGen
+    store.viewshed.visible.set(PEAK_VIEWSHED_SLUG, true)
+    if (await vsDomain.tryLoadCoordViewshedFromCache?.(PEAK_VIEWSHED_SLUG, lat, lon)) {
+      vsDomain.raiseViewshedLayers?.()
+      return
+    }
+    vsDomain.removeViewshedLayer?.(PEAK_VIEWSHED_SLUG)
+    store.viewshed.loading.add(PEAK_VIEWSHED_SLUG)
+    const epoch = vsDomain.getViewshedLoadEpoch?.()
+    store.viewshed.pendingEpoch.set(PEAK_VIEWSHED_SLUG, epoch)
+    setPendingCoords(store, PEAK_VIEWSHED_SLUG, lat, lon)
+    vsDomain.updatePinOverlays?.()
+    try {
+      const resp = await fetch(vsDomain.viewshedPrefetchWarmUrl(lat, lon), { method: 'POST' })
+      if (peakViewshedGen !== gen) return
+      if (store.viewshed.pendingEpoch.get(PEAK_VIEWSHED_SLUG) !== epoch) return
+      if (!resp.ok) {
+        cancelPeakViewshedLoad()
+        vsDomain.updatePinOverlays?.()
+        return
+      }
+      const ready = await resp.json()
+      if (peakViewshedGen !== gen) return
+      if (store.viewshed.pendingEpoch.get(PEAK_VIEWSHED_SLUG) !== epoch) return
+      if (ready && ready.status === 'ready') {
+        vsDomain.handleViewshedReady({ ...ready, slug: PEAK_VIEWSHED_SLUG }, epoch)
+        vsDomain.raiseViewshedLayers?.()
+      }
+    } catch (_) {
+      if (peakViewshedGen === gen) {
+        cancelPeakViewshedLoad()
+        vsDomain.updatePinOverlays?.()
+      }
+    }
+  }
+
+  async function loadPeakPrefetchLinks(lat, lon) {
+    const gen = ++peakLinksPrefetchGen
+    removePeakDraftLinks()
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+    try {
+      const resp = await fetch(apiUrls.sitesPrefetchUrl(projectSlug, lat, lon))
+      if (gen !== peakLinksPrefetchGen) return
+      if (!resp.ok) return
+      const payload = await resp.json()
+      if (gen !== peakLinksPrefetchGen) return
+      if (!getMapReady()) return
+      if (payload?.links_geojson) {
+        applyDraftLinksLayer(getMap(), payload.links_geojson, draftPeerVisible, () =>
+          raiseSiteLayers?.(),
+        )
+      } else {
+        removePeakDraftLinks()
+      }
+    } catch (_) {
+      /* peak link prefetch optional */
+    }
+  }
+
+  /** @param {object} peak */
+  function showPeakRfPreview(peak) {
+    if (store.ui.createMode || store.ui.editMode) return
+    const lat = Number(peak?.lat)
+    const lon = Number(peak?.lon)
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+    clearPeakRfPreview()
+    void loadPeakCoordViewshed(lat, lon)
+    void loadPeakPrefetchLinks(lat, lon)
+  }
+
   async function loadPeaks() {
     if (!getMapReady()) return
     const map = getMap()
@@ -100,6 +226,7 @@ export function createPeaksDomain(opts) {
     updatePeakHighlight(slug)
     if (getMapReady()) clearPeaksCursorPoint(getMap())
     syncMapViewport?.()
+    showPeakRfPreview(peak)
     void enrichPeakAccess(peak)
     if (syncDeepLink) syncDeepLinkToUrl({ replace: false })
   }
@@ -146,6 +273,7 @@ export function createPeaksDomain(opts) {
 
   function deselectPeak({ syncDeepLink = true } = {}) {
     store.ui.selectedPeakSlug = null
+    clearPeakRfPreview()
     const panel = peakPanelEl()
     if (panel) panel.hidden = true
     updatePeakHighlight(null)
@@ -177,5 +305,6 @@ export function createPeaksDomain(opts) {
     getPeakBySlug,
     updatePeakHighlight,
     flyToProfilePoint,
+    clearPeakRfPreview,
   }
 }

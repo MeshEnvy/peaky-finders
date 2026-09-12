@@ -4,6 +4,7 @@ import * as apiUrls from '../api/urls.js'
 import {
   ALTERNATE_VIEWSHED_SLUG,
   FORTIFY_VIEWSHED_SLUG,
+  PEAK_VIEWSHED_SLUG,
   DRAFT_VIEWSHED_SLUG,
   SEEK_HOP_VIEWSHED_PREFIX,
   SEEK_SCAN_PIN,
@@ -246,7 +247,12 @@ export function createViewshedDomain(opts) {
 
   function viewshedOverlaySlugs() {
     const slugs = getSites().map((site) => site.slug)
-    slugs.push(DRAFT_VIEWSHED_SLUG, ALTERNATE_VIEWSHED_SLUG, FORTIFY_VIEWSHED_SLUG)
+    slugs.push(
+      DRAFT_VIEWSHED_SLUG,
+      ALTERNATE_VIEWSHED_SLUG,
+      FORTIFY_VIEWSHED_SLUG,
+      PEAK_VIEWSHED_SLUG,
+    )
     if (getSeekHopViewshedSlugs) {
       for (const slug of getSeekHopViewshedSlugs()) slugs.push(slug)
     }
@@ -410,22 +416,36 @@ export function createViewshedDomain(opts) {
     }
   }
 
-  function routeDraftViewshedToSeekHops(data) {
+  function coordsMatchDraftEvent(coords, data) {
+    return (
+      Math.abs(coords.lat - data.lat) <= 1e-5 && Math.abs(coords.lon - data.lon) <= 1e-5
+    )
+  }
+
+  /** Server coord warms publish as `_draft`; remap SSE to the client slug that owns the pending epoch. */
+  function routeDraftViewshedToPendingSlugs(data) {
     if (data.slug !== DRAFT_VIEWSHED_SLUG || data.status !== 'ready') return false
     if (data.lat == null || data.lon == null) return false
-    const seekHopCoords = getSeekHopViewshedCoords?.()
-    if (!seekHopCoords) return false
     let routed = false
-    for (const [slug, coords] of seekHopCoords) {
-      if (!viewshedPendingEpoch.has(slug)) continue
-      if (
-        Math.abs(coords.lat - data.lat) > 1e-5 ||
-        Math.abs(coords.lon - data.lon) > 1e-5
-      )
-        continue
-      const epoch = viewshedPendingEpoch.get(slug)
-      handleViewshedReady({ ...data, slug }, epoch)
-      routed = true
+    const seekHopCoords = getSeekHopViewshedCoords?.()
+    if (seekHopCoords) {
+      for (const [slug, coords] of seekHopCoords) {
+        if (!viewshedPendingEpoch.has(slug)) continue
+        if (!coordsMatchDraftEvent(coords, data)) continue
+        const epoch = viewshedPendingEpoch.get(slug)
+        handleViewshedReady({ ...data, slug }, epoch)
+        routed = true
+      }
+    }
+    const pendingCoords = store?.viewshed?.pendingCoords
+    if (pendingCoords) {
+      for (const [slug, coords] of pendingCoords) {
+        if (!viewshedPendingEpoch.has(slug)) continue
+        if (!coordsMatchDraftEvent(coords, data)) continue
+        const epoch = viewshedPendingEpoch.get(slug)
+        handleViewshedReady({ ...data, slug }, epoch)
+        routed = true
+      }
     }
     return routed
   }
@@ -442,7 +462,7 @@ export function createViewshedDomain(opts) {
         })
         updatePinOverlays()
       }
-      if (routeDraftViewshedToSeekHops(data)) return
+      if (routeDraftViewshedToPendingSlugs(data)) return
       const epoch = viewshedPendingEpoch.get(data.slug)
       if (epoch != null) {
         handleViewshedReady(data, epoch)

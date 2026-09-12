@@ -3,6 +3,7 @@
 import * as apiUrls from '../api/urls.js'
 import { ALTERNATE_VIEWSHED_SLUG, ALTERNATES_CANDIDATES_LAYER, viewshedLayerId } from '../constants.js'
 import { applyAlternatesLayers, removeAlternatesLayers } from '../map/alternates-layers.js'
+import { setPendingCoords } from '../stores/viewshed.js'
 
 const PROGRESS_POLL_MS = 250
 const PROGRESS_IDLE_GRACE_MS = 3000
@@ -106,6 +107,7 @@ export function createAlternatesDomain(ctx) {
     store.viewshed.loading.add(ALTERNATE_VIEWSHED_SLUG)
     const epoch = vsDomain.getViewshedLoadEpoch?.()
     store.viewshed.pendingEpoch.set(ALTERNATE_VIEWSHED_SLUG, epoch)
+    setPendingCoords(store, ALTERNATE_VIEWSHED_SLUG, lat, lon)
     vsDomain.updatePinOverlays?.()
     try {
       const resp = await fetch(vsDomain.viewshedPrefetchWarmUrl(lat, lon), { method: 'POST' })

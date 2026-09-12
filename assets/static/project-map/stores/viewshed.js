@@ -31,9 +31,20 @@ export function setPendingEpoch(store, slug, epoch) {
   store.viewshed.pendingEpoch.set(slug, epoch)
 }
 
+/** @param {object} store @param {string} slug @param {number} lat @param {number} lon */
+export function setPendingCoords(store, slug, lat, lon) {
+  store.viewshed.pendingCoords.set(slug, { lat, lon })
+}
+
+/** @param {object} store @param {string} slug */
+export function clearPendingCoords(store, slug) {
+  store.viewshed.pendingCoords.delete(slug)
+}
+
 /** @param {object} store @param {string} slug */
 export function clearPendingEpoch(store, slug) {
   store.viewshed.pendingEpoch.delete(slug)
+  clearPendingCoords(store, slug)
 }
 
 /** @param {object} store @returns {number} */

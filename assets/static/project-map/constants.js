@@ -126,6 +126,7 @@ export const VIEWSHED_OVERLAY_BATCH = 4
 export const DRAFT_VIEWSHED_SLUG = '_draft'
 export const ALTERNATE_VIEWSHED_SLUG = '_alternate'
 export const FORTIFY_VIEWSHED_SLUG = '_fortify'
+export const PEAK_VIEWSHED_SLUG = '_peak'
 export const VIEWSHED_PREVIEW_QUALITY = 1
 export const SKADI_DEM_SPACING_M = 30
 export const VIEWSHED_QUALITY_MIN = 1

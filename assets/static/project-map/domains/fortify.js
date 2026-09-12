@@ -3,6 +3,7 @@
 import * as apiUrls from '../api/urls.js'
 import { FORTIFY_CANDIDATES_LAYER, FORTIFY_VIEWSHED_SLUG, viewshedLayerId } from '../constants.js'
 import { applyFortifyLayers, removeFortifyLayers } from '../map/fortify-layers.js'
+import { setPendingCoords } from '../stores/viewshed.js'
 
 const PROGRESS_POLL_MS = 250
 const PROGRESS_IDLE_GRACE_MS = 3000
@@ -136,6 +137,7 @@ export function createFortifyDomain(ctx) {
     store.viewshed.loading.add(FORTIFY_VIEWSHED_SLUG)
     const epoch = vsDomain.getViewshedLoadEpoch?.()
     store.viewshed.pendingEpoch.set(FORTIFY_VIEWSHED_SLUG, epoch)
+    setPendingCoords(store, FORTIFY_VIEWSHED_SLUG, lat, lon)
     vsDomain.updatePinOverlays?.()
     try {
       const resp = await fetch(vsDomain.viewshedPrefetchWarmUrl(lat, lon), { method: 'POST' })

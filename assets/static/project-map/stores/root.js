@@ -86,6 +86,8 @@ export function createRootStore(config, savedMapState) {
       visible: new Map(),
       loading: new Set(),
       pendingEpoch: new Map(),
+      /** @type {Map<string, { lat: number, lon: number }>} coord warm waiting on _draft SSE */
+      pendingCoords: new Map(),
       loadEpoch: 0,
       ready: new Set(),
       outboundLinksReady: new Set(),

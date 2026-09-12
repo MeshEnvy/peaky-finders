@@ -137,6 +137,9 @@ export function runApp(ctx = {}) {
     deselectSite: (...args) => placementDomain?.deselectSite(...args),
     syncMapViewport: () => entityChrome?.syncMapViewport(),
     clearLinkSelection: () => linksDomain?.clearLinkSelection(),
+    getViewshed: () => viewshedDomain,
+    isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
+    raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
   })
 
   siteAccessDomain = createSiteAccessDomain({
