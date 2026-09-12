@@ -1,0 +1,23 @@
+[package]
+name = "peaky-map"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+geo.workspace = true
+geojson.workspace = true
+peaky-geo.workspace = true
+peaky-preset.workspace = true
+peaky-serve.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+splatter.workspace = true
+time = { version = "0.3", features = ["formatting", "macros"] }
+tracing.workspace = true
+
+[dev-dependencies]
+geo = { workspace = true, features = ["use-serde"] }

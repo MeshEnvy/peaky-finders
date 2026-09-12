@@ -15,7 +15,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 |------|-------|
 | Repo | `peaky-finders-v5` — pure Rust workspace |
 | v4 | Frozen reference; do not delete until v5 soak |
-| Interface | `peaky serve <project>` — web UI for one project directory |
+| Interface | `peaky serve <project>` — web UI for one project directory. Overlay: `peaky map export <project> --out-dir <static>` |
 | RF engine | `splatter/` crate (in-process `Session`, library only) |
 | Land | GeoJSON at runtime. GDB sources: **`peaky serve` boot** validates enabled sources, auto-refreshes missing/stale/invalid when `refresh.downloadUrl` is set, then warms preview + pipeline caches under `.peaky/cache/land/`. Successful validation is fingerprinted in `validate.json` (size + mtime + required GDB layers) so unchanged sources skip re-parse on later boots. Invalid enabled source **blocks boot** until `enabled: false` in `land.yaml`. Pass `--fast-boot` to skip boot prep (`--no-land-refresh` alias). **WGS84 required.** Seek/finder eligible land **clips to hop/route bbox** and keeps include + exclude R-trees (no statewide boolean dissolve). Built-in map overlay **eligible** `(include − exclude) ∩ AOI` is cached by land digest (`GET …/land/overlays/eligible/geojson`) and rebuilds only when include/exclude/AOI change. Parcel-wise (exclude rings as holes only when fully inside the parcel, clip to AOI). No statewide SMA boolean. Overlay is one GeoJSON per include source; per-parcel `i_overlay` difference/intersect (non-zero fill; geo 0.28 BooleanOps panics on this data and overlapping exclude rings punched as raw holes are invalid input for map tessellators — never do that). Fully excluded parcels are omitted. Seek still subtracts exclude via the R-tree. Map paint stack (bottom→top): AOI, include, overlay, exclude, eligible. Seek goal wedge raises last (above viewsheds and sites). |
 | Dev | Host: `cargo run -p peaky -- serve <project-dir>` (e.g. `peaky-nevada`). **Debug builds serve `/static/` from disk** — edit JS/CSS without `cargo rebuild`; release still uses rust-embed. `--release` for long RF only. Docker: mount project at `/project` only. Skadi + map tiles under `<project>/.peaky/cache/skadi/`. Optional `SPLAT_CACHE` override. Parallelism: `simulation.max_workers.coverage` (default 2, serve warm queue; env `PEAKY_COVERAGE_WORKERS`), `simulation.max_workers.dem` (default 4, Skadi fetch pool; env `PEAKY_DEM_FETCH_WORKERS`) |
@@ -28,14 +28,15 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 
 | Path | Role |
 |------|------|
-| `Dockerfile` | `peaky:latest` — mount project at `/project` |
-| `cmd/peaky/` | CLI binary (`serve`, `find path`, `export`, `freeze`, `peaks`; `serve --fast-boot`) |
+| `Dockerfile` | `peaky:latest` — mount project at `/project`; `gdal-bin` for `map export` |
+| `cmd/peaky/` | CLI binary (`serve`, `find path`, `export`, `map export`, `freeze`, `peaks`; `serve --fast-boot`) |
 | `crates/peaky-freeze/` | Official base export: bake land pipeline → `project.geojson` + distilled `config.yaml` |
 | `crates/peaky-finder/` | Auto-finder: route → min-site RF chain + config patch |
 | `crates/peaky-preset/` | Preset model, YAML I/O, paths, sites, home catalogs, sharded `peaks/` + `access/` I/O |
 | `crates/peaky-peaks/` | `peaky peaks` pipeline: OSM jeep roads, DEM hike profile, GNIS/universe → `peaks/` + `access/` |
 | `crates/peaky-geo/` | GeoJSON land query, eligible land (bbox clip + include/exclude index), KML import/export, PPM polygonize |
 | `crates/peaky-serve/` | Axum app, API routes, HTML, embedded static |
+| `crates/peaky-map/` | `peaky map export`: fleet filter + native `splat.png` mosaic + public GeoJSON/tiles |
 | `splatter/` | RF coverage engine (Skadi DEM, Fresnel/FSPL). Library only |
 | `assets/static/project-map/` | Vue 3 reactive UI: `main.js` → `boot.js`, `stores/` (incl. land display helpers), `domains/` (`app.js` wiring only), `panels/`, `map/` (adapters + land overlay catalog), `api/` (client, events, urls, **deep-link.js** — `?site=` / `?peak=` + camera in address bar; localStorage keeps basemap/land/viewshed prefs); debug disk-serve for `/static/` |
 | `assets/finder-watch/` | Embedded MapLibre page for `peaky find path --watch` |

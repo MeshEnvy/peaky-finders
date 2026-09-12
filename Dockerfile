@@ -21,7 +21,7 @@ RUN cargo build --locked --release -p peaky
 FROM debian:bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates gdal-bin python3-gdal \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/target/release/peaky /usr/local/bin/peaky

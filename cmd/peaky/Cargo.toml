@@ -17,6 +17,7 @@ peaky-geo.workspace = true
 peaky-peaks.workspace = true
 peaky-preset.workspace = true
 peaky-serve.workspace = true
+peaky-map.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

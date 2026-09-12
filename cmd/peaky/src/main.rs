@@ -3,6 +3,7 @@
 mod export;
 mod find;
 mod freeze;
+mod map_export;
 mod peaks;
 
 use anyhow::Result;
@@ -105,6 +106,11 @@ enum Commands {
         #[arg(long)]
         verbose: bool,
     },
+    /// Export splatter coverage overlay for meshenvy.org /map
+    Map {
+        #[command(subcommand)]
+        command: MapCommands,
+    },
     /// Export a compact official project base (config.yaml + project.geojson)
     Freeze {
         /// Project directory (or path to config.yaml)
@@ -116,6 +122,37 @@ enum Commands {
         /// Include sites in config.yaml
         #[arg(long)]
         include_sites: bool,
+        #[arg(long)]
+        verbose: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum MapCommands {
+    /// Write coverage-network.geojson + coverage-tiles/ from fleet splatter viewsheds
+    Export {
+        /// Project directory (or path to config.yaml)
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
+        /// Output directory (default: meshenvy.org/static when PEAKY_MAP_OUT is unset)
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<PathBuf>,
+        #[arg(long)]
+        workers: Option<usize>,
+        #[arg(long, default_value_t = 0.00045)]
+        merge_resolution_deg: f64,
+        #[arg(long, default_value_t = 0)]
+        close_iterations: u32,
+        #[arg(long, default_value_t = 6)]
+        tile_zoom_min: u32,
+        #[arg(long, default_value_t = 11)]
+        tile_zoom_max: u32,
+        #[arg(long)]
+        tile_workers: Option<u32>,
+        #[arg(long)]
+        skip_tiles: bool,
+        #[arg(long, default_value_t = 400.0)]
+        silver_base_step_m: f64,
         #[arg(long)]
         verbose: bool,
     },
@@ -238,6 +275,37 @@ async fn main() -> Result<()> {
         } => {
             export::run(project, &tag, &exclude_tag, output, verbose)?;
         }
+        Commands::Map {
+            command:
+                MapCommands::Export {
+                    project,
+                    out_dir,
+                    workers,
+                    merge_resolution_deg,
+                    close_iterations,
+                    tile_zoom_min,
+                    tile_zoom_max,
+                    tile_workers,
+                    skip_tiles,
+                    silver_base_step_m,
+                    verbose,
+                },
+        } => {
+            let out = out_dir.unwrap_or_else(default_map_out_dir);
+            map_export::run(
+                project,
+                out,
+                workers,
+                merge_resolution_deg,
+                close_iterations,
+                tile_zoom_min,
+                tile_zoom_max,
+                tile_workers,
+                skip_tiles,
+                silver_base_step_m,
+                verbose,
+            )?;
+        }
         Commands::Freeze {
             project,
             output,
@@ -248,4 +316,14 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn default_map_out_dir() -> PathBuf {
+    if let Ok(raw) = std::env::var("PEAKY_MAP_OUT") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    PathBuf::from("/Volumes/Code/repos/meshenvy/meshenvy.org/static")
 }
