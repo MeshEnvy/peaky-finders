@@ -13,7 +13,20 @@ import {
 
 const LONG_PRESS_MS = 500
 const LONG_PRESS_MOVE_PX = 12
+const SITE_HIT_PAD_PX = 12
 const SITE_LAYER_IDS = [SITES_CIRCLE, SITES_LABELS]
+
+/** @param {maplibregl.Map} map @param {{ x: number, y: number }} point */
+function siteFeaturesAtPoint(map, point) {
+  const pad = SITE_HIT_PAD_PX
+  return map.queryRenderedFeatures(
+    [
+      [point.x - pad, point.y - pad],
+      [point.x + pad, point.y + pad],
+    ],
+    { layers: SITE_LAYER_IDS },
+  )
+}
 
 /**
  * Map pointer routing: hover cursor, click/select, create, edit move, seek.
@@ -166,6 +179,10 @@ export function createMapInteractionsDomain(ctx) {
           return
         }
       }
+      if (siteFeaturesAtPoint(map, ev.point).length) {
+        map.getCanvas().style.cursor = 'pointer'
+        return
+      }
       if (map.getLayer(LINKS_LAYER)) {
         const linkFeats = map.queryRenderedFeatures(ev.point, { layers: [LINKS_LAYER] })
         if (linkFeats.length) {
@@ -284,21 +301,9 @@ export function createMapInteractionsDomain(ctx) {
       }
       if (trySelectFortifyAtPoint(ev.point)) return
       if (trySelectAlternateAtPoint(ev.point)) return
-      const linkFeature = links()?.linkFeatureAtPoint?.(ev)
-      if (linkFeature) {
-        const props = linkFeature.properties || {}
-        if (props.a && props.b) {
-          ev.preventDefault()
-          if (store.ui.addPlacementMode) setAddPlacementMode(null)
-          selectLink?.(props.a, props.b)
-          return
-        }
-      }
-      const feats = map.queryRenderedFeatures(ev.point, {
-        layers: SITE_LAYER_IDS,
-      })
-      if (feats.length) {
-        const slug = feats[0].properties && feats[0].properties.slug
+      const siteFeats = siteFeaturesAtPoint(map, ev.point)
+      if (siteFeats.length) {
+        const slug = siteFeats[0].properties && siteFeats[0].properties.slug
         if (slug) {
           ev.preventDefault()
           if (store.ui.addPlacementMode) setAddPlacementMode(null)
@@ -317,6 +322,16 @@ export function createMapInteractionsDomain(ctx) {
             selectPeak?.(slug)
             return
           }
+        }
+      }
+      const linkFeature = links()?.linkFeatureAtPoint?.(ev)
+      if (linkFeature) {
+        const props = linkFeature.properties || {}
+        if (props.a && props.b) {
+          ev.preventDefault()
+          if (store.ui.addPlacementMode) setAddPlacementMode(null)
+          selectLink?.(props.a, props.b)
+          return
         }
       }
       if (store.ui.addPlacementMode) {
