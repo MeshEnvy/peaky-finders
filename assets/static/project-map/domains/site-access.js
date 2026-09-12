@@ -107,10 +107,17 @@ export function createSiteAccessDomain(opts) {
    * Fetch access for a site (cache-first GET; warm=1 so server computes if missing).
    * @param {object} site
    */
+  function accessRowLoaded(row) {
+    return (
+      row &&
+      (Number.isFinite(row.hike_m) || Number.isFinite(row.jeep_m))
+    )
+  }
+
   function ensureSiteAccess(site) {
     if (!site?.slug) return
     if (!siteAccessShowing(site.slug)) return
-    if (store.access.bySlug[site.slug]?.hike || store.access.bySlug[site.slug]?.jeep) {
+    if (accessRowLoaded(store.access.bySlug[site.slug])) {
       refreshLayers()
       return
     }

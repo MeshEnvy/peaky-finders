@@ -39,6 +39,8 @@ const WARM_VIEWPORT_SLUG_CAP = 48
  * @param {() => void} [opts.syncMapViewport]
  * @param {() => void} [opts.deselectSite]
  * @param {() => void} [opts.deselectPeak]
+ * @param {(site: object|undefined) => void} [opts.ensureSiteAccess]
+ * @param {() => void} [opts.refreshSiteAccessLayers]
  */
 export function createLinksDomain(opts) {
   const {
@@ -49,6 +51,8 @@ export function createLinksDomain(opts) {
     syncMapViewport,
     deselectSite,
     deselectPeak,
+    ensureSiteAccess,
+    refreshSiteAccessLayers,
     getSites,
     isSiteMapHidden,
     isViewshedVisible,
@@ -176,6 +180,7 @@ export function createLinksDomain(opts) {
     const panel = linkPanelEl()
     if (panel) panel.hidden = true
     updateSelectedLinkHighlight()
+    refreshSiteAccessLayers?.()
   }
 
   function selectLink(slugA, slugB) {
@@ -187,6 +192,9 @@ export function createLinksDomain(opts) {
     const panel = linkPanelEl()
     if (panel) panel.hidden = false
     updateSelectedLinkHighlight()
+    ensureSiteAccess?.(getSiteBySlug(a))
+    ensureSiteAccess?.(getSiteBySlug(b))
+    refreshSiteAccessLayers?.()
     syncMapViewport?.()
   }
 

@@ -199,6 +199,8 @@ export function runApp(ctx = {}) {
       syncMapViewport: () => entityChrome?.syncMapViewport(),
       deselectSite: () => placementDomain?.deselectSite(),
       deselectPeak: () => peaksDomain?.deselectPeak(),
+      ensureSiteAccess: (site) => site && siteAccessDomain?.ensureSiteAccess(site),
+      refreshSiteAccessLayers: () => siteAccessDomain?.refreshLayers(),
     })
 
     viewshedDomain = createViewshedDomain({
