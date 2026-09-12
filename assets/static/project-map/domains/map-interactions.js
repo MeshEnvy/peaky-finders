@@ -2,6 +2,8 @@
 
 import {
   ALTERNATES_CANDIDATES_LAYER,
+  FORTIFY_CANDIDATES_LAYER,
+  LINKS_LAYER,
   PEAKS_RING_CIRCLE,
   PEAKS_SYMBOL,
   SEEK_CANDIDATES_LAYER,
@@ -24,6 +26,8 @@ export function createMapInteractionsDomain(ctx) {
     getMapReady,
     getSeek,
     getAlternates,
+    getFortify,
+    getLinks,
     getSiteBySlug,
     syncMapCursor,
     setEditDraftCoords,
@@ -33,6 +37,8 @@ export function createMapInteractionsDomain(ctx) {
     deselectSite,
     selectPeak,
     deselectPeak,
+    selectLink,
+    deselectLink,
     openCreatePanel,
     beginCreateAtMapPoint,
   } = ctx
@@ -47,6 +53,27 @@ export function createMapInteractionsDomain(ctx) {
 
   function alternates() {
     return getAlternates?.()
+  }
+
+  function fortify() {
+    return getFortify?.()
+  }
+
+  function links() {
+    return getLinks?.()
+  }
+
+  function trySelectFortifyAtPoint(point) {
+    const map = getMap()
+    if (!store?.fortify?.active || !map.getLayer(FORTIFY_CANDIDATES_LAYER)) {
+      return false
+    }
+    const feats = map.queryRenderedFeatures(point, {
+      layers: [FORTIFY_CANDIDATES_LAYER],
+    })
+    if (!feats.length) return false
+    fortify()?.selectFortifyCandidate?.(feats[0])
+    return true
   }
 
   function trySelectAlternateAtPoint(point) {
@@ -121,11 +148,27 @@ export function createMapInteractionsDomain(ctx) {
         return
       }
       const seekDomain = seek()
+      if (store?.fortify?.active && map.getLayer(FORTIFY_CANDIDATES_LAYER)) {
+        const fortifyFeats = map.queryRenderedFeatures(ev.point, {
+          layers: [FORTIFY_CANDIDATES_LAYER],
+        })
+        if (fortifyFeats.length) {
+          map.getCanvas().style.cursor = 'pointer'
+          return
+        }
+      }
       if (store?.alternates?.active && map.getLayer(ALTERNATES_CANDIDATES_LAYER)) {
         const altFeats = map.queryRenderedFeatures(ev.point, {
           layers: [ALTERNATES_CANDIDATES_LAYER],
         })
         if (altFeats.length) {
+          map.getCanvas().style.cursor = 'pointer'
+          return
+        }
+      }
+      if (map.getLayer(LINKS_LAYER)) {
+        const linkFeats = map.queryRenderedFeatures(ev.point, { layers: [LINKS_LAYER] })
+        if (linkFeats.length) {
           map.getCanvas().style.cursor = 'pointer'
           return
         }
@@ -166,6 +209,16 @@ export function createMapInteractionsDomain(ctx) {
         syncMapCursor?.()
       })
     }
+    map.on('mouseenter', LINKS_LAYER, () => {
+      if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
+        map.getCanvas().style.cursor = 'crosshair'
+        return
+      }
+      map.getCanvas().style.cursor = 'pointer'
+    })
+    map.on('mouseleave', LINKS_LAYER, () => {
+      syncMapCursor?.()
+    })
     for (const layerId of SITE_LAYER_IDS) {
       map.on('mouseenter', layerId, () => {
         if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
@@ -229,7 +282,18 @@ export function createMapInteractionsDomain(ctx) {
           }
         }
       }
+      if (trySelectFortifyAtPoint(ev.point)) return
       if (trySelectAlternateAtPoint(ev.point)) return
+      const linkFeature = links()?.linkFeatureAtPoint?.(ev)
+      if (linkFeature) {
+        const props = linkFeature.properties || {}
+        if (props.a && props.b) {
+          ev.preventDefault()
+          if (store.ui.addPlacementMode) setAddPlacementMode(null)
+          selectLink?.(props.a, props.b)
+          return
+        }
+      }
       const feats = map.queryRenderedFeatures(ev.point, {
         layers: SITE_LAYER_IDS,
       })
@@ -259,9 +323,10 @@ export function createMapInteractionsDomain(ctx) {
         openCreatePanel(ev.lngLat.lat, ev.lngLat.lng)
         return
       }
-      if (store?.alternates?.active) return
+      if (store?.alternates?.active || store?.fortify?.active) return
       deselectPeak?.()
       deselectSite()
+      deselectLink?.()
     })
     wireMapLongPress()
   }

@@ -27,6 +27,7 @@ function sleepMs(ms) {
  *   getAlternatesAnchorSlugs?: (slug: string) => string[],
  *   getViewshed?: () => object,
  *   applyViewshedVisibilityForSite?: (slug: string) => void,
+ *   clearFortify?: () => void,
  * }} ctx
  */
 export function createAlternatesDomain(ctx) {
@@ -36,6 +37,7 @@ export function createAlternatesDomain(ctx) {
     getMap,
     getMapReady,
     resetSeekRun,
+    clearFortify,
     sitesDomain,
     applySavedSiteToMap,
     loadSingleSiteLinks,
@@ -244,6 +246,7 @@ export function createAlternatesDomain(ctx) {
     }
 
     resetSeekRun?.()
+    clearFortify?.()
     bumpFetchEpoch()
     const epoch = fetchEpoch
     fetchAbort = new AbortController()

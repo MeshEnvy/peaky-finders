@@ -24,8 +24,9 @@ use crate::events::sse_keepalive_interval;
 use crate::html::{project_error_html, project_html, site_api_row};
 use crate::links::{
     compute_links_for_slugs, invalidate_project_site_links_cache, load_project_site_links,
-    load_single_site_links,
+    load_single_site_links, site_pair_link_detail,
 };
+use crate::fortify::parse_fortify_request;
 use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
 use crate::state::AppState;
 use crate::peaks::{
@@ -90,6 +91,7 @@ pub fn router() -> Router<AppState> {
             get(viewshed_cache_png),
         )
         .route("/api/p/{slug}/links", get(links_mesh))
+        .route("/api/p/{slug}/links/pair", get(link_pair_detail))
         .route("/api/p/{slug}/links/warm", post(links_warm))
         .route("/api/p/{slug}/sites/{site_slug}/links", get(site_links))
         .route("/api/p/{slug}/warm/priorities", post(warm_priorities))
@@ -143,6 +145,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/p/{slug}/alternates", get(alternates_scan))
         .route("/api/p/{slug}/alternates/scan-progress", get(alternates_progress))
+        .route("/api/p/{slug}/fortify", get(fortify_scan))
+        .route("/api/p/{slug}/fortify/scan-progress", get(fortify_progress))
         .route("/api/home/modems", get(home_modems))
         .route("/api/home/environments", get(home_environments))
         .route("/api/home/simulation", get(home_simulation))
@@ -1130,6 +1134,95 @@ async fn alternates_scan(
             "gen": gen,
         })),
     ))
+}
+
+async fn link_pair_detail(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !state.preset_path().is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "slug": state.slug.clone(), "error": "not found" })),
+        ));
+    }
+    let slug_a = q.get("a").map(String::as_str).unwrap_or("").trim();
+    let slug_b = q.get("b").map(String::as_str).unwrap_or("").trim();
+    if slug_a.is_empty() || slug_b.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": "a and b query parameters are required" })),
+        ));
+    }
+    let preset = load_preset(&state.preset_path()).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": e.to_string() })),
+        )
+    })?;
+    let detail = site_pair_link_detail(&state.session, &preset, slug_a, slug_b).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
+        )
+    })?;
+    Ok(Json(detail))
+}
+
+async fn fortify_scan(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    if !state.preset_path().is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "slug": state.slug.clone(), "error": "not found" })),
+        ));
+    }
+    let request = parse_fortify_request(state.preset_path(), &q).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
+        )
+    })?;
+    let gen = state.fortify.enqueue(request).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
+        )
+    })?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "project": state.slug.clone(),
+            "status": "pending",
+            "gen": gen,
+        })),
+    ))
+}
+
+async fn fortify_progress(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Json<Value> {
+    let slug_a = q.get("a").map(String::as_str).unwrap_or("").trim();
+    let slug_b = q.get("b").map(String::as_str).unwrap_or("").trim();
+    let key = if slug_a.is_empty() || slug_b.is_empty() {
+        String::new()
+    } else {
+        crate::fortify::fortify_progress_key(slug_a, slug_b)
+    };
+    if key.is_empty() {
+        return Json(json!({
+            "project": state.slug,
+            "status": "idle",
+            "progress": Value::Null,
+        }));
+    }
+    Json(state.fortify.poll(&key, &state.slug))
 }
 
 async fn alternates_progress(

@@ -118,6 +118,8 @@ preset → CovRequest JSON (rf_json)
 
 **Mutual = strong, one-way = weak** (map line styling). Out of hop range or no decode = not linked.
 
+**Link sheet + Fortify (map UI):** Click a drawn site link (`LINKS_LAYER`) → link side sheet with endpoint names, `distance_km`, mesh `strength`, and `GET …/links/pair?a=&b=` weaker-leg margin dB. **Fortify** (`GET …/fortify?a=&b=` + `…/fortify/scan-progress`) finds catalog peaks in `hop(A) ∩ hop(B)` along the A–B corridor (`along_track t ∈ (0.05, 0.95)`), mutual-P2P to both endpoints, ranked by min leg margin. Purple candidate dots + A–C–B lines; **Add as site** reuses peak slug. **Alternates** and **Fortify** clear each other when started. Solver: `peaky-serve/src/fortify.rs`.
+
 ## Elevation sources
 
 | Use | Dataset | Notes |

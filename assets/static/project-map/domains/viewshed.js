@@ -3,6 +3,7 @@
 import * as apiUrls from '../api/urls.js'
 import {
   ALTERNATE_VIEWSHED_SLUG,
+  FORTIFY_VIEWSHED_SLUG,
   DRAFT_VIEWSHED_SLUG,
   SEEK_HOP_VIEWSHED_PREFIX,
   SEEK_SCAN_PIN,
@@ -245,7 +246,7 @@ export function createViewshedDomain(opts) {
 
   function viewshedOverlaySlugs() {
     const slugs = getSites().map((site) => site.slug)
-    slugs.push(DRAFT_VIEWSHED_SLUG, ALTERNATE_VIEWSHED_SLUG)
+    slugs.push(DRAFT_VIEWSHED_SLUG, ALTERNATE_VIEWSHED_SLUG, FORTIFY_VIEWSHED_SLUG)
     if (getSeekHopViewshedSlugs) {
       for (const slug of getSeekHopViewshedSlugs()) slugs.push(slug)
     }

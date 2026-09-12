@@ -738,6 +738,53 @@ pub fn load_coords_site_links(
     Ok(records)
 }
 
+pub fn site_pair_link_detail(
+    session: &Session,
+    preset: &Preset,
+    slug_a: &str,
+    slug_b: &str,
+) -> Result<Value, LinksError> {
+    let (a, b) = canonical_site_pair(slug_a, slug_b);
+    let site_a = preset
+        .sites
+        .get(&a)
+        .ok_or_else(|| LinksError(format!("unknown site {a}")))?;
+    let site_b = preset
+        .sites
+        .get(&b)
+        .ok_or_else(|| LinksError(format!("unknown site {b}")))?;
+    let rf_json = rf_json_for_preset(preset).map_err(|e| LinksError(e.to_string()))?;
+    let lat_a = site_a.loc[0];
+    let lon_a = site_a.loc[1];
+    let tx_a = resolved_site_tx_height_m(preset, site_a).max(1.0);
+    let lat_b = site_b.loc[0];
+    let lon_b = site_b.loc[1];
+    let tx_b = resolved_site_tx_height_m(preset, site_b).max(1.0);
+    let distance_km =
+        (splatter::propagate::haversine_m(lat_a, lon_a, lat_b, lon_b) / 1000.0 * 10.0).round() / 10.0;
+    let strengths = session
+        .site_mesh_pair_strengths(
+            &[(lat_a, lon_a, tx_a, lat_b, lon_b, tx_b)],
+            &rf_json,
+        )
+        .map_err(|e| LinksError(e.to_string()))?;
+    let strength = strengths.first().copied().flatten();
+    let linked = strength.is_some();
+    let strength_str = strength.map(strength_label).unwrap_or("none");
+    let margins = session
+        .seek_repeater_link_margins(lat_a, lon_a, tx_a, &[(lat_b, lon_b, tx_b)], &rf_json)
+        .map_err(|e| LinksError(e.to_string()))?;
+    let margin_db = margins.first().copied().flatten();
+    Ok(json!({
+        "a": a,
+        "b": b,
+        "linked": linked,
+        "strength": strength_str,
+        "margin_db": margin_db.map(|m| (m * 10.0).round() / 10.0),
+        "distance_km": distance_km,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

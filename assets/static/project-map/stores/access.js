@@ -22,6 +22,7 @@ export function isAccessVisible(store, slug) {
 export function siteAccessShouldShow(store, slug, hidden = false) {
   if (!slug) return false
   if (store.ui?.selectedSlug === slug) return true
+  if (store.fortify?.accessSlug === slug) return true
   if (hidden) return false
   return isAccessVisible(store, slug)
 }

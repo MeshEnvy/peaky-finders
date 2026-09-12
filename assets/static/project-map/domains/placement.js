@@ -40,6 +40,7 @@ export function createPlacementDomain(ctx) {
     onCleanupEditSave,
     onFinishEditSave,
     deselectPeak,
+    clearLinkSelection,
   } = ctx
 
   /** @type {maplibregl.Marker|null} */
@@ -226,6 +227,7 @@ export function createPlacementDomain(ctx) {
     if (!site) return
     if (isCreateMode()) cancelCreate()
     if (isEditMode()) cancelEdit()
+    clearLinkSelection?.()
     deselectPeak?.()
     assignSelectedSlug(slug)
     const panel = sitePanelEl()

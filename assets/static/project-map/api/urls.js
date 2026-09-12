@@ -8,6 +8,11 @@ export function siteLinksApiUrl(projectSlug, slug) {
   return `/api/p/${projectSlug}/sites/${encodeURIComponent(slug)}/links`
 }
 
+export function linkPairApiUrl(projectSlug, slugA, slugB) {
+  const params = new URLSearchParams({ a: slugA, b: slugB })
+  return `/api/p/${projectSlug}/links/pair?${params}`
+}
+
 export function linksWarmApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/links/warm`
 }
@@ -188,4 +193,14 @@ export function alternatesScanProgressUrl(projectSlug, siteSlug, anchorSlugs = [
   const params = new URLSearchParams({ site: siteSlug })
   if (anchorSlugs?.length) params.set('anchors', anchorSlugs.join(','))
   return `/api/p/${projectSlug}/alternates/scan-progress?${params}`
+}
+
+export function fortifyScanUrl(projectSlug, slugA, slugB) {
+  const params = new URLSearchParams({ a: slugA, b: slugB })
+  return `/api/p/${projectSlug}/fortify?${params}`
+}
+
+export function fortifyScanProgressUrl(projectSlug, slugA, slugB) {
+  const params = new URLSearchParams({ a: slugA, b: slugB })
+  return `/api/p/${projectSlug}/fortify/scan-progress?${params}`
 }

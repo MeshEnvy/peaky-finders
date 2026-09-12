@@ -2,6 +2,7 @@
 
 mod alternates;
 mod api;
+mod fortify;
 mod app;
 mod embed;
 mod events;

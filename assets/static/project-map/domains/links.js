@@ -1,12 +1,13 @@
 // @ts-check
 
 import * as apiUrls from '../api/urls.js'
-import { SITES_CIRCLE } from '../constants.js'
+import { LINKS_LAYER, SITES_CIRCLE } from '../constants.js'
 import { compareHuman } from '../geo.js'
 import {
   applyLinksMeshGeoJson,
   clearLinksMesh,
   linksGeoJsonWithLabels,
+  linksLinePaint,
   setLinksLayerVisibility,
 } from '../map/links-layers.js'
 import { bumpWarmPriorities as bumpWarmPrioritiesApi } from '../stores/links.js'
@@ -35,6 +36,9 @@ const WARM_VIEWPORT_SLUG_CAP = 48
  * @param {(slug: string) => boolean} opts.isSiteOutboundLinksReady
  * @param {() => void} opts.renderSelectedPanel
  * @param {(slug: string) => object|undefined} opts.getSiteBySlug
+ * @param {() => void} [opts.syncMapViewport]
+ * @param {() => void} [opts.deselectSite]
+ * @param {() => void} [opts.deselectPeak]
  */
 export function createLinksDomain(opts) {
   const {
@@ -42,6 +46,9 @@ export function createLinksDomain(opts) {
     map,
     projectSlug,
     getMapReady,
+    syncMapViewport,
+    deselectSite,
+    deselectPeak,
     getSites,
     isSiteMapHidden,
     isViewshedVisible,
@@ -116,6 +123,85 @@ export function createLinksDomain(opts) {
     setLinksLayerVisibility(map, visible)
   }
 
+  function linkPanelEl() {
+    return document.getElementById('link-panel')
+  }
+
+  /** @param {string} a @param {string} b */
+  function canonicalLinkPair(a, b) {
+    return a <= b ? { a, b } : { a: b, b: a }
+  }
+
+  function updateSelectedLinkHighlight() {
+    if (!getMapReady()) return
+    if (!map.getLayer(LINKS_LAYER)) return
+    const sel = store.ui.selectedLink
+    const basePaint = linksLinePaint()
+    if (!sel?.a || !sel?.b) {
+      for (const [key, val] of Object.entries(basePaint)) {
+        map.setPaintProperty(LINKS_LAYER, key, val)
+      }
+      return
+    }
+    const { a, b } = canonicalLinkPair(sel.a, sel.b)
+    map.setPaintProperty(LINKS_LAYER, 'line-width', [
+      'case',
+      ['all', ['==', ['get', 'a'], a], ['==', ['get', 'b'], b]],
+      5,
+      2.5,
+    ])
+    map.setPaintProperty(LINKS_LAYER, 'line-opacity', [
+      'case',
+      ['all', ['==', ['get', 'a'], a], ['==', ['get', 'b'], b]],
+      1,
+      0.45,
+    ])
+    map.setPaintProperty(LINKS_LAYER, 'line-color', [
+      'case',
+      ['all', ['==', ['get', 'a'], a], ['==', ['get', 'b'], b]],
+      [
+        'case',
+        ['get', 'manual'],
+        '#14b8a6',
+        ['==', ['get', 'strength'], 'weak'],
+        '#f87171',
+        '#818cf8',
+      ],
+      basePaint['line-color'],
+    ])
+  }
+
+  function clearLinkSelection() {
+    store.ui.selectedLink = null
+    const panel = linkPanelEl()
+    if (panel) panel.hidden = true
+    updateSelectedLinkHighlight()
+  }
+
+  function selectLink(slugA, slugB) {
+    if (!slugA || !slugB || slugA === slugB) return
+    deselectSite?.()
+    deselectPeak?.()
+    const { a, b } = canonicalLinkPair(slugA, slugB)
+    store.ui.selectedLink = { a, b }
+    const panel = linkPanelEl()
+    if (panel) panel.hidden = false
+    updateSelectedLinkHighlight()
+    syncMapViewport?.()
+  }
+
+  function deselectLink() {
+    clearLinkSelection()
+    syncMapViewport?.()
+  }
+
+  /** @param {import('maplibregl').MapMouseEvent} ev */
+  function linkFeatureAtPoint(ev) {
+    if (!getMapReady() || !map.getLayer(LINKS_LAYER)) return null
+    const feats = map.queryRenderedFeatures(ev.point, { layers: [LINKS_LAYER] })
+    return feats[0] || null
+  }
+
   function addSiteLinksLayer(geojson) {
     const filtered = filterSiteLinksGeoJson(geojson)
     if (!filtered || !filtered.features || !filtered.features.length) {
@@ -128,6 +214,7 @@ export function createLinksDomain(opts) {
       visible: getShowSiteLinks(),
       beforeId: SITES_CIRCLE,
     })
+    updateSelectedLinkHighlight()
     raiseSiteLayers()
   }
 
@@ -385,6 +472,11 @@ export function createLinksDomain(opts) {
     selectedSiteLinks,
     findSiteLinkFeature,
     ensureSiteLinksForSlug,
+    selectLink,
+    deselectLink,
+    clearLinkSelection,
+    updateSelectedLinkHighlight,
+    linkFeatureAtPoint,
     WARM_PRIORITY_INTERACTIVE,
     WARM_PRIORITY_VIEWPORT,
   }

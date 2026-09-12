@@ -1992,12 +1992,14 @@ land:
             let events = ServeEventHub::default();
             let seek = SeekHub::new(Arc::clone(&session), false);
             let alternates = AlternatesHub::new(Arc::clone(&session), false);
+            let fortify = crate::fortify::FortifyHub::new(Arc::clone(&session), false);
             let state = AppState {
                 session: Arc::clone(&session),
                 events: events.clone(),
                 warm: WarmHub::new(session, events, false, 2),
                 seek,
                 alternates,
+                fortify,
                 verbose: false,
                 dem_tile_render: Arc::new(Semaphore::new(crate::state::DEM_TILE_RENDER_PERMITS)),
                 project_dir: preset_path.parent().unwrap().to_path_buf(),

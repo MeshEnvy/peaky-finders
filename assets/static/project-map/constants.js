@@ -59,6 +59,12 @@ export const ALTERNATES_CANDIDATES_LABELS_LAYER = 'alternates-candidates-label'
 export const ALTERNATES_LINES_SOURCE = 'alternates-candidate-lines'
 export const ALTERNATES_LINES_LAYER = 'alternates-candidate-lines-line'
 export const ALTERNATES_LINES_LABELS_LAYER = 'alternates-candidate-lines-label'
+export const FORTIFY_CANDIDATES_SOURCE = 'fortify-candidates'
+export const FORTIFY_CANDIDATES_LAYER = 'fortify-candidates-circle'
+export const FORTIFY_CANDIDATES_LABELS_LAYER = 'fortify-candidates-label'
+export const FORTIFY_LINES_SOURCE = 'fortify-candidate-lines'
+export const FORTIFY_LINES_LAYER = 'fortify-candidate-lines-line'
+export const FORTIFY_LINES_LABELS_LAYER = 'fortify-candidate-lines-label'
 
 /** Top-of-stack paint order after a basemap or overlay change. Peaks stay under sites and RF. */
 export const SITE_STACK_RAISE_IDS = [
@@ -77,6 +83,10 @@ export const SITE_STACK_RAISE_IDS = [
   ALTERNATES_LINES_LABELS_LAYER,
   ALTERNATES_CANDIDATES_LAYER,
   ALTERNATES_CANDIDATES_LABELS_LAYER,
+  FORTIFY_LINES_LAYER,
+  FORTIFY_LINES_LABELS_LAYER,
+  FORTIFY_CANDIDATES_LAYER,
+  FORTIFY_CANDIDATES_LABELS_LAYER,
   SEEK_ANCILLARY_LINES_LAYER,
   SEEK_ANCILLARY_LINES_LABELS_LAYER,
   SEEK_LINES_LAYER,
@@ -115,6 +125,7 @@ export const VIEWSHED_OPACITY_DEFAULT = 0.75
 export const VIEWSHED_OVERLAY_BATCH = 4
 export const DRAFT_VIEWSHED_SLUG = '_draft'
 export const ALTERNATE_VIEWSHED_SLUG = '_alternate'
+export const FORTIFY_VIEWSHED_SLUG = '_fortify'
 export const VIEWSHED_PREVIEW_QUALITY = 1
 export const SKADI_DEM_SPACING_M = 30
 export const VIEWSHED_QUALITY_MIN = 1

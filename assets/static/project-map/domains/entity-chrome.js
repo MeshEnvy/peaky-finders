@@ -13,6 +13,7 @@ export function createEntityChromeDomain(ctx) {
     mapShell,
     sitePanel,
     peakPanel,
+    linkPanel,
     entityPanel,
     entityPanelToggle,
     entityPanelSitesPane,
@@ -45,7 +46,8 @@ export function createEntityChromeDomain(ctx) {
     if (!mapShell) return
     const siteOpen = !!(sitePanel && !sitePanel.hidden)
     const peakOpen = !!(peakPanel && !peakPanel.hidden)
-    mapShell.classList.toggle('site-panel-open', siteOpen || peakOpen)
+    const linkOpen = !!(linkPanel && !linkPanel.hidden)
+    mapShell.classList.toggle('site-panel-open', siteOpen || peakOpen || linkOpen)
   }
 
   function setEntityTab(tab) {

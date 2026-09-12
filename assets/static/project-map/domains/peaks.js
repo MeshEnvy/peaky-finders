@@ -16,9 +16,11 @@ import { ensurePeaksLayers, setPeaksLayerData, setPeaksCursorPoint, clearPeaksCu
  * @param {() => boolean} opts.getMapReady
  * @param {() => void} [opts.deselectSite]
  * @param {() => void} [opts.syncMapViewport]
+ * @param {() => void} [opts.clearLinkSelection]
  */
 export function createPeaksDomain(opts) {
-  const { store, projectSlug, getMap, getMapReady, deselectSite, syncMapViewport } = opts
+  const { store, projectSlug, getMap, getMapReady, deselectSite, syncMapViewport, clearLinkSelection } =
+    opts
 
   function peakPanelEl() {
     return document.getElementById('peak-panel')
@@ -78,6 +80,7 @@ export function createPeaksDomain(opts) {
   function selectPeak(slug) {
     const peak = store.peaks.list.find((p) => p.slug === slug)
     if (!peak) return
+    clearLinkSelection?.()
     deselectSite?.()
     store.ui.selectedPeakSlug = slug
     const panel = peakPanelEl()

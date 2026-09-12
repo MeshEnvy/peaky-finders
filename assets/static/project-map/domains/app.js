@@ -12,6 +12,7 @@ import { createLinksDomain } from './links.js'
 import { createLandDomain } from './land.js'
 import { createSeekDomain } from './seek.js'
 import { createAlternatesDomain } from './alternates.js'
+import { createFortifyDomain } from './fortify.js'
 import { createSiteModalsDomain } from './site-modals.js'
 import { createPlacementDomain } from './placement.js'
 import { createEditPreviewDomain } from './edit-preview.js'
@@ -44,6 +45,8 @@ export function runApp(ctx = {}) {
   let seekDomain = null
   /** @type {ReturnType<typeof createAlternatesDomain>|null} */
   let alternatesDomain = null
+  /** @type {ReturnType<typeof createFortifyDomain>|null} */
+  let fortifyDomain = null
   /** @type {ReturnType<typeof createSiteModalsDomain>|null} */
   let siteModalsDomain = null
   /** @type {ReturnType<typeof createPlacementDomain>|null} */
@@ -126,6 +129,7 @@ export function runApp(ctx = {}) {
     getMapReady: () => store.ui.mapReady,
     deselectSite: () => placementDomain?.deselectSite(),
     syncMapViewport: () => entityChrome?.syncMapViewport(),
+    clearLinkSelection: () => linksDomain?.clearLinkSelection(),
   })
 
   siteAccessDomain = createSiteAccessDomain({
@@ -182,6 +186,9 @@ export function runApp(ctx = {}) {
         viewshedDomain?.isSiteOutboundLinksReady(slug) ?? false,
       renderSelectedPanel: () => {},
       getSiteBySlug: (slug) => siteBySlug.get(slug),
+      syncMapViewport: () => entityChrome?.syncMapViewport(),
+      deselectSite: () => placementDomain?.deselectSite(),
+      deselectPeak: () => peaksDomain?.deselectPeak(),
     })
 
     viewshedDomain = createViewshedDomain({
@@ -253,6 +260,7 @@ export function runApp(ctx = {}) {
   const mapShell = document.querySelector('.map-shell')
   const sitePanel = document.getElementById('site-panel')
   const peakPanel = document.getElementById('peak-panel')
+  const linkPanel = document.getElementById('link-panel')
   entityChrome = createEntityChromeDomain({
     store,
     getMap: () => map,
@@ -261,6 +269,7 @@ export function runApp(ctx = {}) {
     mapShell,
     sitePanel,
     peakPanel,
+    linkPanel,
     entityPanel: document.getElementById('entity-panel'),
     entityPanelToggle: document.getElementById('entity-panel-toggle'),
     entityPanelSitesPane: document.getElementById('entity-panel-sites-pane'),
@@ -298,8 +307,16 @@ export function runApp(ctx = {}) {
         seekDomain.toggleSeekPanel(false)
         return
       }
+      if (store?.fortify?.active) {
+        fortifyDomain?.clearFortify()
+        return
+      }
       if (store?.alternates?.active) {
         alternatesDomain?.clearAlternates()
+        return
+      }
+      if (store.ui.selectedLink) {
+        linksDomain?.deselectLink()
         return
       }
       if (store.ui.editMode) {
@@ -370,6 +387,7 @@ export function runApp(ctx = {}) {
         onCleanupEditSave: () => editPreviewDomain.cleanupEditSave(),
         onFinishEditSave: () => siteLayers.finishEditSaveUi(),
         deselectPeak: () => peaksDomain?.deselectPeak(),
+        clearLinkSelection: () => linksDomain?.clearLinkSelection(),
       })
     }
     if (!landDomain) {
@@ -447,8 +465,28 @@ export function runApp(ctx = {}) {
         getViewshed: () => viewshedDomain,
         applyViewshedVisibilityForSite: (slug) =>
           viewshedDomain?.applyViewshedVisibilityForSite(slug),
+        clearFortify: () => fortifyDomain?.clearFortify(),
       })
       if (store.ui.mapReady) alternatesDomain.installMapHandlers(map)
+    }
+    if (!fortifyDomain) {
+      fortifyDomain = createFortifyDomain({
+        store,
+        projectSlug,
+        getMap: () => map,
+        getMapReady: () => store.ui.mapReady,
+        clearAlternates: () => alternatesDomain?.clearAlternates(),
+        sitesDomain,
+        applySavedSiteToMap: (...args) => placementDomain?.applySavedSiteToMap(...args),
+        loadSingleSiteLinks: (slug) => linksDomain?.loadSingleSiteLinks(slug),
+        raiseSiteLayers: () => mapChrome.raiseSiteLayers(),
+        getSiteBySlug: (slug) => siteBySlug.get(slug),
+        getViewshed: () => viewshedDomain,
+        applyViewshedVisibilityForSite: (slug) =>
+          viewshedDomain?.applyViewshedVisibilityForSite(slug),
+        siteAccessDomain,
+      })
+      if (store.ui.mapReady) fortifyDomain.installMapHandlers(map)
     }
     if (!siteModalsDomain) {
       siteModalsDomain = createSiteModalsDomain({
@@ -474,6 +512,8 @@ export function runApp(ctx = {}) {
         getMapReady: () => store.ui.mapReady,
         getSeek: () => seekDomain,
         getAlternates: () => alternatesDomain,
+        getFortify: () => fortifyDomain,
+        getLinks: () => linksDomain,
         getSiteBySlug: (slug) => siteBySlug.get(slug),
         syncMapCursor,
         setEditDraftCoords: (...args) => placementDomain.setEditDraftCoords(...args),
@@ -483,6 +523,8 @@ export function runApp(ctx = {}) {
         deselectSite: (...args) => placementDomain.deselectSite(...args),
         selectPeak: (...args) => peaksDomain.selectPeak(...args),
         deselectPeak: (...args) => peaksDomain.deselectPeak(...args),
+        selectLink: (...args) => linksDomain.selectLink(...args),
+        deselectLink: (...args) => linksDomain.deselectLink(...args),
         openCreatePanel: (...args) => placementDomain.openCreatePanel(...args),
         beginCreateAtMapPoint: (...args) => placementDomain.beginCreateAtMapPoint(...args),
       })
@@ -571,6 +613,8 @@ export function runApp(ctx = {}) {
     deselectSite: (...args) => placementDomain.deselectSite(...args),
     selectPeak: (...args) => peaksDomain.selectPeak(...args),
     deselectPeak: (...args) => peaksDomain.deselectPeak(...args),
+    deselectLink: (...args) => linksDomain?.deselectLink(...args),
+    findSiteLinkFeature: (a, b) => linksDomain?.findSiteLinkFeature(a, b),
     flyToPeakProfilePoint: (...args) => peaksDomain.flyToProfilePoint(...args),
     sitesDomain,
     applySavedSiteToMap: (...args) => placementDomain?.applySavedSiteToMap(...args),
@@ -691,6 +735,13 @@ export function runApp(ctx = {}) {
       'clearAlternates',
       'addSelectedAlternateAsSite',
       'alternatesActive',
+    ]),
+    ...bind(() => fortifyDomain, [
+      'fortifyLink',
+      'clearFortify',
+      'addSelectedFortifyAsSite',
+      'selectFortifyCandidateById',
+      'fortifyActive',
     ]),
   }
 }

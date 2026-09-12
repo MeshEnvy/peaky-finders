@@ -3,6 +3,7 @@
 import { mountSitesPanel } from './sites-panel.js'
 import { mountSiteSheet } from './site-sheet.js'
 import { mountPeakSheet } from './peak-sheet.js'
+import { mountLinkSheet } from './link-sheet.js'
 import { mountLandPanel } from './land-panel.js'
 import { mountSeekPanel } from './seek-panel.js'
 import { mountBulkTagModal } from './bulk-tag-modal.js'
@@ -30,6 +31,7 @@ export function mountPanels(store, appApi) {
   run('seek', () => mountSeekPanel(store, appApi))
   run('site-sheet', () => mountSiteSheet(store, appApi))
   run('peak-sheet', () => mountPeakSheet(store, appApi))
+  run('link-sheet', () => mountLinkSheet(store, appApi))
   run('bulk-tag', () => mountBulkTagModal(store, appApi))
   run('add-site', () => mountAddSiteModal(store, appApi))
   run('import-sites', () => mountImportSitesModal(store, appApi))
