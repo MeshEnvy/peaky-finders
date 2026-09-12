@@ -29,7 +29,8 @@ pub use access::{
 };
 pub use difficulty::{
     difficulty_label, hike_difficulty, jeep_class_reason, jeep_difficulty, jeep_road_rank,
-    worse_difficulty, JeepClassReason, HIKE_AVG_MIN_HORIZ_M,
+    worse_difficulty, JeepClassReason, HIKE_AVG_MIN_HORIZ_M, HIKE_EXTREME_MIN_GAIN_M,
+    HIKE_EXTREME_MIN_HORIZ_M,
 };
 pub use compute_key::{
     access_compute_key, peak_access_compute_key, peak_row_compute_key, place_access_compute_key,

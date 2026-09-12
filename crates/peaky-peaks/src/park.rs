@@ -1,8 +1,11 @@
 //! Park-point pick: score jeep-road approaches by hike, not crow-flies.
 
-use crate::hike::{HikeProfileDetailed, HikeSampleElev};
+use crate::hike::{zero_hike_at, HikeProfileDetailed, HikeSampleElev};
 use crate::hike_route::resolve_hike;
 use crate::osm::{JeepRoadIndex, PavedAnchorIndex};
+
+/// Snap pad to a road sample within this radius (m). Matches OSM sample spacing.
+pub const ON_ROAD_SNAP_M: f64 = 40.0;
 
 const PARK_SECTORS: usize = 8;
 /// Extra along-road parks in the same sector (farther from dest than nearest).
@@ -111,7 +114,40 @@ pub struct ParkHike {
     pub road_lat: f64,
     pub road_lon: f64,
     pub road_m: f64,
+    /// True when the park is on a paved highway sample (not dirt shoulder).
+    pub park_paved: bool,
     pub hike: HikeProfileDetailed,
+}
+
+/// Pad on or beside a road sample — skip sector scoring.
+fn try_on_road_snap<E: HikeSampleElev>(
+    elev: &E,
+    roads: &JeepRoadIndex,
+    paved: Option<&PavedAnchorIndex>,
+    dest_lat: f64,
+    dest_lon: f64,
+) -> Option<ParkHike> {
+    if let Some(paved_idx) = paved {
+        if let Some((_, _, dist)) = paved_idx.nearest_within(dest_lat, dest_lon, ON_ROAD_SNAP_M) {
+            return Some(ParkHike {
+                road_lat: dest_lat,
+                road_lon: dest_lon,
+                road_m: dist,
+                park_paved: true,
+                hike: zero_hike_at(elev, dest_lat, dest_lon),
+            });
+        }
+    }
+    if let Some((_, _, dist)) = roads.nearest_within(dest_lat, dest_lon, ON_ROAD_SNAP_M) {
+        return Some(ParkHike {
+            road_lat: dest_lat,
+            road_lon: dest_lon,
+            road_m: dist,
+            park_paved: false,
+            hike: zero_hike_at(elev, dest_lat, dest_lon),
+        });
+    }
+    None
 }
 
 fn hike_better(
@@ -153,6 +189,9 @@ pub fn select_park_and_hike<E: HikeSampleElev>(
     sample_m: f64,
     gate_eligibility: bool,
 ) -> Option<ParkHike> {
+    if let Some(snap) = try_on_road_snap(elev, roads, paved, dest_lat, dest_lon) {
+        return Some(snap);
+    }
     let mut best: Option<(ParkHike, bool)> = None;
     for cand in park_candidates_scored(roads, paved, dest_lat, dest_lon, search_m) {
         let Some(hike) = resolve_hike(
@@ -178,6 +217,7 @@ pub fn select_park_and_hike<E: HikeSampleElev>(
                     road_lat: cand.lat,
                     road_lon: cand.lon,
                     road_m: cand.dist_m,
+                    park_paved: cand.paved,
                     hike,
                 },
                 cand.paved,
@@ -200,12 +240,15 @@ pub fn nearest_park_hike<E: HikeSampleElev>(
     sample_m: f64,
     gate_eligibility: bool,
 ) -> Option<ParkHike> {
+    if let Some(snap) = try_on_road_snap(elev, roads, paved, dest_lat, dest_lon) {
+        return Some(snap);
+    }
     let jeep = roads.nearest_within(dest_lat, dest_lon, search_m);
     let paved_pt = paved.and_then(|p| p.nearest_within(dest_lat, dest_lon, search_m));
-    let (road_lat, road_lon, road_m) = match (jeep, paved_pt) {
-        (Some(j), Some(p)) if p.2 <= j.2 + 80.0 => p,
-        (Some(j), _) => j,
-        (None, Some(p)) => p,
+    let (road_lat, road_lon, road_m, park_paved) = match (jeep, paved_pt) {
+        (Some(j), Some(p)) if p.2 <= j.2 + 80.0 => (p.0, p.1, p.2, true),
+        (Some(j), _) => (j.0, j.1, j.2, false),
+        (None, Some(p)) => (p.0, p.1, p.2, true),
         (None, None) => return None,
     };
     let hike = resolve_hike(
@@ -223,6 +266,7 @@ pub fn nearest_park_hike<E: HikeSampleElev>(
         road_lat,
         road_lon,
         road_m,
+        park_paved,
         hike,
     })
 }
@@ -318,8 +362,9 @@ mod tests {
 
     #[test]
     fn prefers_nearby_paved_over_closer_dirt() {
-        let peak = (38.0, -117.0);
-        let dirt = (38.0, -117.0004);
+        // Peak must sit outside ON_ROAD_SNAP_M of both roads so sector scoring runs.
+        let peak = (38.00015, -117.0);
+        let dirt = (38.004, -117.0004);
         let paved_pt = (38.0, -116.9992);
         let roads = test_index_from_points(&[dirt]);
         let paved = crate::osm::PavedAnchorIndex::test_from_points(&[paved_pt]);
@@ -369,6 +414,58 @@ mod tests {
         let high = fake_hike(50.0, 20.0, 10.0, 600.0);
         assert!(hike_better(&low, false, &high, false));
         assert!(!hike_better(&high, false, &low, false));
+    }
+
+    #[test]
+    fn on_road_snap_between_far_paved_vertices() {
+        use crate::osm::test_paved_from_line;
+        let start = (38.0, -117.0);
+        let end = (38.0018, -117.0);
+        let dest = (38.0009, -117.00005);
+        let roads = test_index_from_points(&[]);
+        let paved = test_paved_from_line(start, end, ON_ROAD_SNAP_M);
+        let elev = FlatPark(810.0);
+        let picked = select_park_and_hike(
+            &elev,
+            &roads,
+            Some(&paved),
+            dest.0,
+            dest.1,
+            1609.0,
+            default_max_slope_deg(),
+            1609.0,
+            30.0,
+            true,
+        )
+        .expect("on-road snap between vertices");
+        assert!(picked.park_paved);
+        assert!(picked.hike.horiz_m < 1.0);
+        assert!((picked.road_lat - dest.0).abs() < 1e-6);
+        assert!((picked.road_lon - dest.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn on_road_paved_snap_zero_hike() {
+        let peak = (36.64093, -116.38628);
+        let roads = test_index_from_points(&[(36.6425, -116.388)]);
+        let paved = crate::osm::PavedAnchorIndex::test_from_points(&[peak]);
+        let elev = FlatPark(810.0);
+        let picked = select_park_and_hike(
+            &elev,
+            &roads,
+            Some(&paved),
+            peak.0,
+            peak.1,
+            1609.0,
+            default_max_slope_deg(),
+            1609.0,
+            30.0,
+            true,
+        )
+        .expect("on-road snap");
+        assert!(picked.park_paved);
+        assert!(picked.hike.horiz_m < 1.0);
+        assert!((picked.road_lat - peak.0).abs() < 1e-6);
     }
 
     #[test]

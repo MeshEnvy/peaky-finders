@@ -242,7 +242,7 @@ impl Default for PeakAccessRules {
 
 /// Bump when hike/jeep routing or DEM profile semantics change (forces recompute).
 /// Written into ``access/_meta.yaml`` as ``algo_version``.
-pub const ACCESS_ALGO_VERSION: u32 = 8;
+pub const ACCESS_ALGO_VERSION: u32 = 10;
 
 /// Bump when peak eligibility / summit snap / universe filter semantics change.
 pub const PEAK_ALGO_VERSION: u32 = 5;
@@ -472,7 +472,12 @@ impl PeakCatalogEntry {
             jeep: None,
             hike_difficulty: self.hike_difficulty.clone().or_else(|| {
                 self.hike.as_ref().map(|h| {
-                    crate::difficulty::hike_difficulty(h.max_grade_pct, h.avg_grade_pct, h.horiz_m)
+                    crate::difficulty::hike_difficulty(
+                        h.max_grade_pct,
+                        h.avg_grade_pct,
+                        h.horiz_m,
+                        h.gain_m,
+                    )
                         .to_string()
                 })
             }),
@@ -505,7 +510,12 @@ impl PeakCatalogEntry {
                 .hike
                 .as_ref()
                 .map(|h| {
-                    crate::difficulty::hike_difficulty(h.max_grade_pct, h.avg_grade_pct, h.horiz_m)
+                    crate::difficulty::hike_difficulty(
+                        h.max_grade_pct,
+                        h.avg_grade_pct,
+                        h.horiz_m,
+                        h.gain_m,
+                    )
                         .to_string()
                 })
                 .or_else(|| self.hike_difficulty.clone()),

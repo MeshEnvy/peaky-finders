@@ -15,6 +15,14 @@ const GRADE_COLORS = [
 
 const CHART = { w: 300, h: 112, padX: 12, padTop: 22, padBottom: 22 }
 
+/** Match Rust `access::LEG_MIN_M` — hide zero-length jeep/hike legs. */
+const LEG_MIN_M = 5
+
+/** @param {object|null|undefined} leg */
+function hasAccessLeg(leg) {
+  return leg != null && Number.isFinite(leg.horiz_m) && leg.horiz_m > LEG_MIN_M
+}
+
 /** Keep chart segments wide enough to show grade colors (long jeep routes). */
 const CHART_MAX_DRAW_POINTS = 96
 
@@ -355,6 +363,8 @@ export const AccessProfilesPanel = {
       if (!cls?.highway) return ''
       return osmRoadClassHint(cls.highway, cls.tracktype)
     })
+    const showHike = computed(() => hasAccessLeg(props.hike))
+    const showJeep = computed(() => hasAccessLeg(props.jeep))
 
     return {
       elevationChart,
@@ -362,6 +372,8 @@ export const AccessProfilesPanel = {
       netDownhillNote,
       osmRoadClass,
       osmRoadHint,
+      showHike,
+      showJeep,
       onChartClick,
       formatAccessDist,
       formatGainLoss,
@@ -373,11 +385,11 @@ export const AccessProfilesPanel = {
     <div class="access-profiles">
       <wa-callout v-if="error" variant="danger">{{ error }}</wa-callout>
       <p v-else-if="loading" class="pf-muted">Loading access profile…</p>
-      <template v-else-if="hike || jeep">
-        <template v-if="hike">
+      <template v-else-if="showHike || showJeep">
+        <template v-if="showHike">
           <div class="peak-sheet__rating">
             <span class="peak-difficulty" :class="difficultyClass(hike.difficulty)">{{ hike.difficulty }}</span>
-            <span class="pf-muted">overall</span>
+            <span class="pf-muted">hike</span>
           </div>
           <wa-callout v-if="netDownhillNote" variant="neutral" class="peak-sheet__note">{{ netDownhillNote }}</wa-callout>
           <div class="site-panel__facts">
@@ -460,7 +472,7 @@ export const AccessProfilesPanel = {
             </div>
           </div>
         </template>
-        <template v-if="jeep">
+        <template v-if="showJeep">
           <div class="site-panel__section peak-sheet__jeep-header">
             <span class="site-panel__label">Jeep access</span>
             <div class="peak-sheet__rating">

@@ -28,6 +28,7 @@ fn slim_hike(hike: &PeakHikeProfile) -> PeakHikeProfile {
         out.max_grade_pct,
         out.avg_grade_pct,
         out.horiz_m,
+        out.gain_m,
     )
     .to_string();
     out

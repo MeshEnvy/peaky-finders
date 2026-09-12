@@ -33,11 +33,10 @@ use crate::corridor::{
 use crate::gnis::load_gnis_candidates;
 use crate::hike::{
     default_max_slope_deg, format_hike_report, haversine_m, neighbor_prominence_m, profile_hike,
-    profile_passes, snap_to_dem_local_max_filtered, stored_peak_hike, HikeProfile,
-    HikeProfileDetailed, HikeSampleElev, DEFAULT_MAX_HIKE_M, DEFAULT_MAX_SLOPE_GRADE_PCT,
-    DEFAULT_SUMMIT_SNAP_M,
+    profile_passes, snap_to_dem_local_max_filtered,     HikeProfile, HikeProfileDetailed, HikeSampleElev, DEFAULT_MAX_HIKE_M,
+    DEFAULT_MAX_SLOPE_GRADE_PCT, DEFAULT_SUMMIT_SNAP_M,
 };
-use crate::jeep::{profile_along_polyline, route_jeep_detailed, stored_peak_jeep};
+use crate::access::build_access_from_park;
 use crate::osm::{build_osm_routing, ensure_osm_pbf, OsmRouting};
 use crate::park::select_park_and_hike;
 use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candidate, RawCandidate};
@@ -199,49 +198,39 @@ fn filter_candidate(
     ) else {
         return Err(FilterDrop::Slope);
     };
-    let (road_lat, road_lon, road_m, detail) =
-        (picked.road_lat, picked.road_lon, picked.road_m, picked.hike);
+    let built = build_access_from_park(
+        &elev,
+        routing,
+        &picked,
+        rules.max_jeep_m,
+        profile_sample_m,
+    )
+    .ok_or(FilterDrop::Jeep)?;
+    let detail = picked.hike.clone();
     let profile = HikeProfile {
         hike_m_3d: detail.hike_m_3d,
         max_slope_deg: detail.max_slope_deg,
         n_samples: detail.profile.len(),
     };
-    if !profile_passes(&profile, rules.max_slope_deg) {
+    if built.mode.needs_hike() && !profile_passes(&profile, rules.max_slope_deg) {
         return Err(FilterDrop::Slope);
     }
-    let hike = stored_peak_hike(&detail);
-    let jeep_route = route_jeep_detailed(
-        &routing.graph,
-        &routing.paved,
-        road_lat,
-        road_lon,
-        rules.max_jeep_m,
-    )
-    .ok_or(FilterDrop::Jeep)?;
-    let jeep_detail = profile_along_polyline(
-        &elev,
-        &jeep_route.coords,
-        profile_sample_m,
-        &jeep_route.road_segments,
-    )
-    .ok_or(FilterDrop::Jeep)?;
-    let jeep = stored_peak_jeep(&jeep_detail);
     Ok(FilterPass {
         cand: cand.clone(),
         peak_lat,
         peak_lon,
         peak_elev,
-        road_lat,
-        road_lon,
-        road_m,
-        hike_m_3d: profile.hike_m_3d,
-        max_slope_deg: profile.max_slope_deg,
-        hike,
+        road_lat: built.road_lat,
+        road_lon: built.road_lon,
+        road_m: built.road_m,
+        hike_m_3d: built.hike_m,
+        max_slope_deg: built.max_slope_deg,
+        hike: built.hike,
         hike_detail: detail,
-        paved_lat: jeep_route.paved_lat,
-        paved_lon: jeep_route.paved_lon,
-        jeep_m: jeep_detail.horiz_m,
-        jeep,
+        paved_lat: built.paved_lat,
+        paved_lon: built.paved_lon,
+        jeep_m: built.jeep_m,
+        jeep: built.jeep,
     })
 }
 

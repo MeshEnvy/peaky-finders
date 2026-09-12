@@ -183,7 +183,7 @@ fn listed_hike_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
     match (entry.hike_m, entry.max_slope_deg) {
         (Some(hike_m), Some(max_deg)) if hike_m < crate::difficulty::HIKE_AVG_MIN_HORIZ_M => {
             let max_grade = max_deg.to_radians().tan() * 100.0;
-            Some(crate::difficulty::hike_difficulty(max_grade, 0.0, hike_m).to_string())
+            Some(crate::difficulty::hike_difficulty(max_grade, 0.0, hike_m, 0.0).to_string())
         }
         _ => entry.hike_difficulty.clone(),
     }

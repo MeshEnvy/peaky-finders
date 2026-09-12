@@ -1,5 +1,6 @@
 //! Eligible-peaks catalog builder for ``peaky peaks``.
 
+mod access;
 mod access_warm;
 mod corridor;
 mod gnis;

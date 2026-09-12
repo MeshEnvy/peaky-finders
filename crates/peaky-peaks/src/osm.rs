@@ -503,6 +503,78 @@ fn sample_way(nodes: &[(f64, f64)], step_m: f64) -> Vec<RoadPoint> {
     out
 }
 
+/// Distance from a point to a segment (m), using linear lat/lon projection.
+fn dist_point_to_segment_m(lat: f64, lon: f64, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    let seg_len = haversine_m(lat1, lon1, lat2, lon2);
+    if seg_len < 0.5 {
+        return haversine_m(lat, lon, lat1, lon1);
+    }
+    let cos = lat1.to_radians().cos().abs().max(1e-6);
+    let x1 = lon1 * cos;
+    let y1 = lat1;
+    let x2 = lon2 * cos;
+    let y2 = lat2;
+    let x = lon * cos;
+    let y = lat;
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len2 = dx * dx + dy * dy;
+    if len2 < 1e-18 {
+        return haversine_m(lat, lon, lat1, lon1);
+    }
+    let t = ((x - x1) * dx + (y - y1) * dy) / len2;
+    let t = t.clamp(0.0, 1.0);
+    let proj_lat = lat1 + t * (lat2 - lat1);
+    let proj_lon = lon1 + t * (lon2 - lon1);
+    haversine_m(lat, lon, proj_lat, proj_lon)
+}
+
+/// Interpolated paved samples for proximity snap; each ties to the nearer graph endpoint.
+fn paved_interpolated_samples(
+    coords: &[(f64, f64)],
+    vert_nodes: &[u32],
+    sample_step: f64,
+) -> Vec<PavedPoint> {
+    if coords.len() < 2 || vert_nodes.len() != coords.len() {
+        return Vec::new();
+    }
+    sample_way(coords, sample_step)
+        .into_iter()
+        .map(|pt| {
+            let mut best_seg = 0usize;
+            let mut best_d = f64::INFINITY;
+            for i in 0..coords.len() - 1 {
+                let d = dist_point_to_segment_m(
+                    pt.lat,
+                    pt.lon,
+                    coords[i].0,
+                    coords[i].1,
+                    coords[i + 1].0,
+                    coords[i + 1].1,
+                );
+                if d < best_d {
+                    best_d = d;
+                    best_seg = i;
+                }
+            }
+            let (lat1, lon1) = coords[best_seg];
+            let (lat2, lon2) = coords[best_seg + 1];
+            let node_idx = if haversine_m(pt.lat, pt.lon, lat1, lon1)
+                <= haversine_m(pt.lat, pt.lon, lat2, lon2)
+            {
+                vert_nodes[best_seg]
+            } else {
+                vert_nodes[best_seg + 1]
+            };
+            PavedPoint {
+                lat: pt.lat,
+                lon: pt.lon,
+                node_idx,
+            }
+        })
+        .collect()
+}
+
 fn node_in_bbox(lat: f64, lon: f64, west: f64, south: f64, east: f64, north: f64) -> bool {
     lon >= west && lon <= east && lat >= south && lat <= north
 }
@@ -587,17 +659,18 @@ pub fn build_osm_routing(
                 }
                 if jeep || paved {
                     graph_way_count += 1;
+                    let mut vert_nodes = Vec::with_capacity(coords.len());
+                    for i in 0..coords.len() {
+                        let (lat, lon) = coords[i];
+                        let n = graph.get_or_insert_node(osm_ids[i], lat, lon, &mut graph_node_map);
+                        vert_nodes.push(n);
+                    }
+                    let anchor = is_paved_anchor(tags, &paved_tags);
                     for i in 0..coords.len() - 1 {
                         let (lat1, lon1) = coords[i];
                         let (lat2, lon2) = coords[i + 1];
-                        let a =
-                            graph.get_or_insert_node(osm_ids[i], lat1, lon1, &mut graph_node_map);
-                        let b = graph.get_or_insert_node(
-                            osm_ids[i + 1],
-                            lat2,
-                            lon2,
-                            &mut graph_node_map,
-                        );
+                        let a = vert_nodes[i];
+                        let b = vert_nodes[i + 1];
                         graph.add_way_segment(
                             a,
                             b,
@@ -610,7 +683,7 @@ pub fn build_osm_routing(
                             tags.surface,
                             tags.fourwd_only,
                         );
-                        if is_paved_anchor(tags, &paved_tags) {
+                        if anchor {
                             paved_points.push(PavedPoint {
                                 lat: lat1,
                                 lon: lon1,
@@ -622,6 +695,13 @@ pub fn build_osm_routing(
                                 node_idx: b,
                             });
                         }
+                    }
+                    if anchor {
+                        paved_points.extend(paved_interpolated_samples(
+                            &coords,
+                            &vert_nodes,
+                            sample_step,
+                        ));
                     }
                 }
             }
@@ -669,6 +749,32 @@ pub fn build_jeep_road_index(
         &OsmRoutingOpts::default(),
     )?
     .jeep_roads)
+}
+
+#[cfg(test)]
+pub(crate) fn test_paved_from_line(
+    start: (f64, f64),
+    end: (f64, f64),
+    sample_step: f64,
+) -> PavedAnchorIndex {
+    let coords = [start, end];
+    let vert_nodes = [0u32, 1u32];
+    let mut points = vec![
+        PavedPoint {
+            lat: start.0,
+            lon: start.1,
+            node_idx: 0,
+        },
+        PavedPoint {
+            lat: end.0,
+            lon: end.1,
+            node_idx: 1,
+        },
+    ];
+    points.extend(paved_interpolated_samples(&coords, &vert_nodes, sample_step));
+    PavedAnchorIndex {
+        tree: RTree::bulk_load(points),
+    }
 }
 
 #[cfg(test)]
@@ -778,6 +884,27 @@ mod tests {
             },
             &paved
         ));
+    }
+
+    #[test]
+    fn paved_vertices_only_miss_midpoint_pad() {
+        let endpoints = PavedAnchorIndex::test_from_points(&[(38.0, -117.0), (38.0018, -117.0)]);
+        let dest = (38.0009, -117.00005);
+        assert!(
+            endpoints.nearest_within(dest.0, dest.1, 40.0).is_none(),
+            "sparse vertices should miss pad between them"
+        );
+    }
+
+    #[test]
+    fn paved_interpolated_hits_midpoint_pad() {
+        use crate::park::ON_ROAD_SNAP_M;
+        let paved = test_paved_from_line((38.0, -117.0), (38.0018, -117.0), 40.0);
+        let dest = (38.0009, -117.00005);
+        let hit = paved.nearest_within(dest.0, dest.1, ON_ROAD_SNAP_M);
+        assert!(hit.is_some(), "40 m samples should reach midpoint pad");
+        let (_, _, d) = hit.unwrap();
+        assert!(d <= ON_ROAD_SNAP_M + 1.0);
     }
 
     #[test]

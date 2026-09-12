@@ -15,13 +15,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - **Catalog peak RF preview** — clicking a catalog peak prefetches a viewshed raster and hop-range P2P draft links to booked sites (same placement preview APIs as seek/alternates). Deselect, close the sheet, or pick a site to clear; **Add as site** hands off to the real site mesh. Cold-cache warms paint on first click (SSE `_draft` → `_peak`).
 - **Map deep links** — selecting a site or catalog peak writes `?site=` / `?peak=` plus camera (`lat`, `lon`, `z`, optional `bearing`, `pitch`) to the address bar. Back, forward, refresh, and pasted URLs restore the pin and view. Basemap, land layers, and viewshed prefs stay in localStorage.
 
+### Fixed
+
+- **Access paths on RF links** — selecting a link paints jeep/hike routes on both endpoints (site deselect no longer hides them).
+
 ### Changed
 
+- **Paved snap uses interpolated samples** — paved anchors are densified every 40 m like jeep roads, so on-road snap reaches pads between sparse OSM vertices. `ACCESS_ALGO_VERSION` → **10**. Re-open a peak/site sheet to re-warm leftover pins.
+- **Four access modes** — jeep and hike are independent. Pad on pavement within 40 m → no jeep, no hike. On dirt → jeep only. Paved park with a walk → hike only. Dirt park → both. Stops inventing a dirt loop when the pin is already on the street. `ACCESS_ALGO_VERSION` → **9**. Re-open a peak/site sheet to re-warm leftover pins.
 - **Hike paths avoid wasted elevation** — A* contours around bumps instead of climbing then descending. Park picker tries two more along-road samples per sector and ranks by gain, then loss. `ACCESS_ALGO_VERSION` → **8**. Re-open a peak/site sheet to re-warm leftover pins.
 - **Catalog DEM peaks need 20 m prominence** — same 8-neighbor floor as hop-disc. Highway berms and playa ripples are not peaks. `PEAK_ALGO_VERSION` → **5**. Existing pins stay until you re-run `peaky peaks`.
 - **Park on pavement** — nearest paved highway competes with jeep-road sectors. Stay on pavement when the hike is comparable instead of detouring onto a grade-5 shoulder. `ACCESS_ALGO_VERSION` → **7**. Re-open a peak/site sheet to re-warm leftover pins.
 - **Access sheet is metric** — hike/jeep/road-class lengths and elevation (gain, profile, peak title) use m/km only. No yards, feet, or miles.
 - **Jeep difficulty is road class, not grade** — jeep easy/medium/difficult/extreme now follows OSM highway + tracktype (worst meaningful stretch). A 33% DEM spike on a grade-2 dirt road is no longer extreme. OSM `grade4` is difficult; only `grade5` is extreme. Hike rating stays grade-based, but average grade only counts on hikes ≥400 m.
+- **Hike extreme needs scale** — a steep 200 m roadside bump caps at difficult. Extreme requires ≥400 m horizontal or ≥100 m gain in addition to steep grades. Peak sheet badge label is **hike**, not “overall”.
 - **Park is the gentlest hike, not the nearest road** — eligibility still needs some jeep road within 805 m, but the park is the best of eight bearing-sector candidates within 1 mi (lowest max slope, then shortest hike). Sites use the same picker, then fall back to the nearest road only when nothing is within a hike path. `ACCESS_ALGO_VERSION` / `PEAK_ALGO_VERSION` → **4**. Re-run `peaky peaks`.
 - **Full-AOI `peaky peaks` replaces catalog** — a default statewide/AOI run keeps only this-run survivors plus `deny: true` rows. Corridor, bbox, polygon, and `--stop-after` still merge. After every scan, `access/` files that are neither a peak nor a site are deleted.
 - **Summit snap** — catalog placement hill-climbs the DEM to a local maximum (15 m steps, 500 m cap, land-filtered) instead of picking the highest 30 m ring sample (which could sit on a slope). `ACCESS_ALGO_VERSION` / `PEAK_ALGO_VERSION` → **3**. Re-run `peaky peaks`.

@@ -28,16 +28,33 @@ pub fn worse_difficulty(a: &str, b: &str) -> &'static str {
 /// Avg grade only counts on hikes long enough that a steady slope is the work.
 pub const HIKE_AVG_MIN_HORIZ_M: f64 = 400.0;
 
-/// Hike difficulty from segment grades. Short pads use max only.
-pub fn hike_difficulty(max_grade_pct: f64, avg_grade_pct: f64, horiz_m: f64) -> &'static str {
+/// Extreme needs real hike scale, not a steep roadside bump.
+pub const HIKE_EXTREME_MIN_HORIZ_M: f64 = 400.0;
+
+/// Short but brutal climbs can still qualify on gain alone.
+pub const HIKE_EXTREME_MIN_GAIN_M: f64 = 100.0;
+
+fn hike_qualifies_for_extreme(horiz_m: f64, gain_m: f64) -> bool {
+    horiz_m >= HIKE_EXTREME_MIN_HORIZ_M || gain_m >= HIKE_EXTREME_MIN_GAIN_M
+}
+
+/// Hike difficulty from segment grades. Short pads ignore avg grade and cap at difficult.
+pub fn hike_difficulty(
+    max_grade_pct: f64,
+    avg_grade_pct: f64,
+    horiz_m: f64,
+    gain_m: f64,
+) -> &'static str {
     let avg = if horiz_m >= HIKE_AVG_MIN_HORIZ_M {
         avg_grade_pct
     } else {
         0.0
     };
-    if max_grade_pct >= 25.0 || avg >= 12.0 {
+    let steep_extreme = max_grade_pct >= 25.0 || avg >= 12.0;
+    let steep_difficult = max_grade_pct >= 18.0 || avg >= 8.0;
+    if steep_extreme && hike_qualifies_for_extreme(horiz_m, gain_m) {
         "extreme"
-    } else if max_grade_pct >= 18.0 || avg >= 8.0 {
+    } else if steep_extreme || steep_difficult {
         "difficult"
     } else if max_grade_pct >= 10.0 || avg >= 5.0 {
         "medium"
@@ -195,8 +212,23 @@ mod tests {
 
     #[test]
     fn short_hike_ignores_avg_grade() {
-        assert_eq!(hike_difficulty(13.9, 9.7, 150.0), "medium");
-        assert_eq!(hike_difficulty(13.9, 9.7, 400.0), "difficult");
+        assert_eq!(hike_difficulty(13.9, 9.7, 150.0, 0.0), "medium");
+        assert_eq!(hike_difficulty(13.9, 9.7, 400.0, 50.0), "difficult");
+    }
+
+    #[test]
+    fn short_steep_bump_caps_at_difficult() {
+        assert_eq!(hike_difficulty(29.3, 16.0, 224.0, 36.0), "difficult");
+    }
+
+    #[test]
+    fn long_steep_hike_is_extreme() {
+        assert_eq!(hike_difficulty(29.3, 16.0, 500.0, 80.0), "extreme");
+    }
+
+    #[test]
+    fn short_high_gain_hike_can_be_extreme() {
+        assert_eq!(hike_difficulty(30.0, 25.0, 250.0, 120.0), "extreme");
     }
 
     #[test]

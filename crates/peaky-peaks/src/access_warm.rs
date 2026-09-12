@@ -15,8 +15,8 @@ use peaky_preset::{
 };
 use splatter::Session;
 
-use crate::hike::{default_max_slope_deg, stored_peak_hike, HikeSampleElev};
-use crate::jeep::{profile_along_polyline, route_jeep_detailed, stored_peak_jeep};
+use crate::access::build_access_from_park;
+use crate::hike::{default_max_slope_deg, HikeSampleElev};
 use crate::osm::{build_osm_routing, ensure_osm_pbf, OsmRouting, OsmRoutingOpts};
 use crate::park::{nearest_park_hike, select_park_and_hike};
 
@@ -68,29 +68,22 @@ pub fn compute_place_access(
             false,
         )
     })?;
-    let (road_lat, road_lon, hike_detail) = (picked.road_lat, picked.road_lon, picked.hike);
-    let jeep_route = route_jeep_detailed(
-        &routing.graph,
-        &routing.paved,
-        road_lat,
-        road_lon,
-        meta.max_jeep_m,
-    )?;
-    let jeep_detail = profile_along_polyline(
+    let built = build_access_from_park(
         &elev,
-        &jeep_route.coords,
+        routing,
+        &picked,
+        meta.max_jeep_m,
         meta.profile_sample_m,
-        &jeep_route.road_segments,
     )?;
     Some(PlaceAccess {
         compute_key: Some(place_access_compute_key(meta)),
-        paved_loc: Some([jeep_route.paved_lat, jeep_route.paved_lon]),
-        road_loc: Some([road_lat, road_lon]),
-        jeep_m: Some((jeep_detail.horiz_m * 10.0).round() / 10.0),
-        jeep: Some(stored_peak_jeep(&jeep_detail)),
-        hike_m: Some((hike_detail.hike_m_3d * 10.0).round() / 10.0),
-        hike: Some(stored_peak_hike(&hike_detail)),
-        max_slope_deg: Some((hike_detail.max_slope_deg * 10.0).round() / 10.0),
+        paved_loc: Some([built.paved_lat, built.paved_lon]),
+        road_loc: Some([built.road_lat, built.road_lon]),
+        jeep_m: Some((built.jeep_m * 10.0).round() / 10.0),
+        jeep: Some(built.jeep),
+        hike_m: Some((built.hike_m * 10.0).round() / 10.0),
+        hike: Some(built.hike),
+        max_slope_deg: Some((built.max_slope_deg * 10.0).round() / 10.0),
     })
 }
 

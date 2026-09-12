@@ -365,7 +365,7 @@ pub fn profile_polyline_detailed<E: HikeSampleElev>(
         max_slope_deg: max_slope,
         max_grade_pct,
         avg_grade_pct,
-        difficulty: hike_difficulty(max_grade_pct, avg_grade_pct, horiz_total).to_string(),
+        difficulty: hike_difficulty(max_grade_pct, avg_grade_pct, horiz_total, gain_m).to_string(),
         segments,
         profile,
         histogram,

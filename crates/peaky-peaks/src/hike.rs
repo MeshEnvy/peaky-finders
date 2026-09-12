@@ -323,6 +323,29 @@ pub fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 }
 
 /// Straight-line geodesic profile from road to summit at ~30 m steps.
+/// Zero-length hike at the pad (on-road / drive-up).
+pub fn zero_hike_at<E: HikeSampleElev>(elev: &E, lat: f64, lon: f64) -> HikeProfileDetailed {
+    let elev_m = elev.sample_elev_m(lat, lon);
+    HikeProfileDetailed {
+        hike_m_3d: 0.0,
+        horiz_m: 0.0,
+        gain_m: 0.0,
+        loss_m: 0.0,
+        max_slope_deg: 0.0,
+        max_grade_pct: 0.0,
+        avg_grade_pct: 0.0,
+        difficulty: hike_difficulty(0.0, 0.0, 0.0, 0.0).to_string(),
+        segments: vec![],
+        profile: vec![HikeProfilePoint {
+            dist_m: 0.0,
+            elev_m,
+            lat,
+            lon,
+        }],
+        histogram: vec![],
+    }
+}
+
 pub fn profile_hike_detailed<E: HikeSampleElev>(
     elev: &E,
     road_lat: f64,
@@ -439,7 +462,7 @@ pub fn profile_hike_detailed<E: HikeSampleElev>(
         max_slope_deg: max_slope,
         max_grade_pct,
         avg_grade_pct,
-        difficulty: hike_difficulty(max_grade_pct, avg_grade_pct, horiz_total).to_string(),
+        difficulty: hike_difficulty(max_grade_pct, avg_grade_pct, horiz_total, gain_m).to_string(),
         segments,
         profile,
         histogram,
