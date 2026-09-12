@@ -180,13 +180,11 @@ pub fn load_peaks_catalog(config_path: &Path) -> Result<PeaksCatalog> {
 }
 
 fn listed_hike_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
-    match (entry.hike_m, entry.max_slope_deg) {
-        (Some(hike_m), Some(max_deg)) if hike_m < crate::difficulty::HIKE_AVG_MIN_HORIZ_M => {
-            let max_grade = max_deg.to_radians().tan() * 100.0;
-            Some(crate::difficulty::hike_difficulty(max_grade, 0.0, hike_m, 0.0).to_string())
-        }
-        _ => entry.hike_difficulty.clone(),
-    }
+    crate::difficulty::derived_hike_difficulty(entry)
+}
+
+fn listed_jeep_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
+    crate::difficulty::derived_jeep_difficulty(entry)
 }
 
 /// List API payload: deny-filtered scalars, no hike/jeep blobs.
@@ -197,7 +195,7 @@ pub fn build_peaks_list_json(catalog: &PeaksCatalog) -> serde_json::Value {
         .filter(|(_, entry)| !entry.deny.unwrap_or(false))
         .map(|(slug, entry)| {
             let hike_diff = listed_hike_difficulty(entry);
-            let jeep_diff = entry.jeep_difficulty.clone();
+            let jeep_diff = listed_jeep_difficulty(entry);
             let access_diff = match (&hike_diff, &jeep_diff) {
                 (Some(h), Some(j)) => Some(crate::difficulty::worse_difficulty(h, j).to_string()),
                 (Some(h), None) => Some(h.clone()),
@@ -295,6 +293,55 @@ pub fn read_peaks_list_disk_cache(
 
 pub fn invalidate_peaks_list_cache(config_path: &Path) {
     let _ = fs::remove_file(peaks_list_cache_path(config_path));
+}
+
+/// Copy hike/jeep fact scalars from ``access/`` onto thin ``peaks/`` rows (no pathfinding).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RelabelSummary {
+    pub updated: usize,
+    pub skipped: usize,
+}
+
+pub fn relabel_peak_facts_from_access(config_path: &Path) -> Result<RelabelSummary> {
+    let slugs = list_peak_slugs(config_path)?;
+    let mut updated = 0usize;
+    let mut skipped = 0usize;
+    for slug in slugs {
+        let Some(mut entry) = load_peak_thin(config_path, &slug)? else {
+            skipped += 1;
+            continue;
+        };
+        let Some(access) = load_access(config_path, &slug)? else {
+            skipped += 1;
+            continue;
+        };
+        let mut changed = false;
+        if let Some(ref h) = access.hike {
+            crate::difficulty::copy_hike_facts_from_profile(&mut entry, h);
+            changed = true;
+        }
+        if let Some(ref j) = access.jeep {
+            crate::difficulty::copy_jeep_facts_from_profile(&mut entry, j);
+            if entry.jeep_m.is_none() {
+                entry.jeep_m = access.jeep_m;
+            }
+            changed = true;
+        }
+        if changed {
+            if let Some(d) = crate::difficulty::derived_hike_difficulty(&entry) {
+                entry.hike_difficulty = Some(d);
+            }
+            if let Some(d) = crate::difficulty::derived_jeep_difficulty(&entry) {
+                entry.jeep_difficulty = Some(d);
+            }
+            upsert_peak(config_path, &slug, &entry)?;
+            updated += 1;
+        } else {
+            skipped += 1;
+        }
+    }
+    invalidate_peaks_list_cache(config_path);
+    Ok(RelabelSummary { updated, skipped })
 }
 
 /// Upsert one peak row + its access file (profiles extracted from the entry).
@@ -493,10 +540,15 @@ mod tests {
                     road_m: Some(120.0),
                     road_loc: Some([38.0, -117.01]),
                     hike_m: Some(80.0),
+                    hike_gain_m: None,
+                    hike_avg_grade_pct: None,
+                    hike_max_grade_pct: None,
                     max_slope_deg: Some(12.0),
                     hike: None,
                     paved_loc: Some([37.99, -117.02]),
                     jeep_m: Some(1500.0),
+                    jeep_highway: None,
+                    jeep_tracktype: None,
                     jeep: None,
                     hike_difficulty: None,
                     jeep_difficulty: None,
@@ -553,6 +605,9 @@ peaks:
             road_m: Some(120.0),
             road_loc: Some([38.01, -117.0]),
             hike_m: Some(80.0),
+            hike_gain_m: None,
+            hike_avg_grade_pct: None,
+            hike_max_grade_pct: None,
             max_slope_deg: Some(12.0),
             hike: Some(PeakHikeProfile {
                 hike_m_3d: 80.0,
@@ -573,6 +628,8 @@ peaks:
             }),
             paved_loc: Some([37.99, -117.02]),
             jeep_m: Some(1500.0),
+            jeep_highway: None,
+            jeep_tracktype: None,
             jeep: None,
             hike_difficulty: None,
             jeep_difficulty: None,
@@ -614,10 +671,15 @@ peaks:
                 road_m: None,
                 road_loc: None,
                 hike_m: None,
+                hike_gain_m: None,
+                hike_avg_grade_pct: None,
+                hike_max_grade_pct: None,
                 max_slope_deg: None,
                 hike: None,
                 paved_loc: None,
                 jeep_m: None,
+                jeep_highway: None,
+                jeep_tracktype: None,
                 jeep: None,
                 hike_difficulty: None,
                 jeep_difficulty: None,
@@ -640,10 +702,15 @@ peaks:
                 road_m: Some(200.0),
                 road_loc: Some([38.1, -117.11]),
                 hike_m: Some(150.0),
+                hike_gain_m: None,
+                hike_avg_grade_pct: None,
+                hike_max_grade_pct: None,
                 max_slope_deg: Some(12.0),
                 hike: None,
                 paved_loc: None,
                 jeep_m: None,
+                jeep_highway: None,
+                jeep_tracktype: None,
                 jeep: None,
                 hike_difficulty: None,
                 jeep_difficulty: None,
@@ -673,6 +740,9 @@ peaks:
             road_m: Some(120.0),
             road_loc: Some([38.01, -117.0]),
             hike_m: Some(80.0),
+            hike_gain_m: None,
+            hike_avg_grade_pct: None,
+            hike_max_grade_pct: None,
             max_slope_deg: Some(12.0),
             hike: Some(PeakHikeProfile {
                 hike_m_3d: 80.0,
@@ -693,6 +763,8 @@ peaks:
             }),
             paved_loc: None,
             jeep_m: None,
+            jeep_highway: None,
+            jeep_tracktype: None,
             jeep: None,
             hike_difficulty: None,
             jeep_difficulty: None,
@@ -701,11 +773,141 @@ peaks:
         upsert_peak_with_access(&config, "peak-test", &entry).unwrap();
         let thin = load_peak_thin(&config, "peak-test").unwrap().unwrap();
         assert!(thin.hike.is_none());
-        assert_eq!(thin.hike_difficulty.as_deref(), Some("difficult"));
+        assert_eq!(thin.hike_difficulty.as_deref(), Some("medium"));
         let joined = load_peak(&config, "peak-test").unwrap().unwrap();
         assert!(joined.hike.is_some());
         let catalog = load_peaks_catalog_thin(&config).unwrap();
         assert!(catalog.entries["peak-test"].hike.is_none());
+        assert_eq!(thin.hike_gain_m, Some(10.0));
+    }
+
+    #[test]
+    fn thin_row_list_json_derives_hike_from_facts() {
+        use crate::model::{PeakHikeProfile, PeakHikeProfilePoint};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.yaml");
+        std::fs::write(&config, "simulation:\n  radius_km: 50\n").unwrap();
+        let entry = PeakCatalogEntry {
+            name: Some("Bump".into()),
+            loc: [37.28, -115.64],
+            elev_m: Some(1625.0),
+            source: "dem".into(),
+            compute_key: None,
+            road_m: Some(50.0),
+            road_loc: Some([37.28, -115.64]),
+            hike_m: Some(224.0),
+            hike_gain_m: None,
+            hike_avg_grade_pct: None,
+            hike_max_grade_pct: None,
+            max_slope_deg: Some(16.0),
+            hike: Some(PeakHikeProfile {
+                hike_m_3d: 230.0,
+                horiz_m: 224.0,
+                gain_m: 36.0,
+                loss_m: 0.0,
+                max_slope_deg: 16.0,
+                max_grade_pct: 29.3,
+                avg_grade_pct: 16.0,
+                difficulty: "extreme".into(),
+                profile: vec![PeakHikeProfilePoint {
+                    dist_m: 0.0,
+                    elev_m: 1600.0,
+                    lat: 37.28,
+                    lon: -115.64,
+                }],
+                histogram: vec![],
+            }),
+            paved_loc: None,
+            jeep_m: None,
+            jeep_highway: None,
+            jeep_tracktype: None,
+            jeep: None,
+            hike_difficulty: Some("extreme".into()),
+            jeep_difficulty: None,
+            deny: None,
+        };
+        upsert_peak_with_access(&config, "bump-peak", &entry).unwrap();
+        let thin = load_peak_thin(&config, "bump-peak").unwrap().unwrap();
+        assert_eq!(thin.hike_gain_m, Some(36.0));
+        assert_eq!(thin.hike_difficulty.as_deref(), Some("medium"));
+        let catalog = load_peaks_catalog_thin(&config).unwrap();
+        let list = build_peaks_list_json(&catalog);
+        let peaks = list
+            .get("peaks")
+            .and_then(|v| v.as_array())
+            .expect("peaks array");
+        let row = peaks
+            .iter()
+            .find(|p| p.get("slug").and_then(|s| s.as_str()) == Some("bump-peak"))
+            .expect("bump row");
+        assert_eq!(
+            row.get("hike_difficulty").and_then(|v| v.as_str()),
+            Some("medium")
+        );
+    }
+
+    #[test]
+    fn relabel_refreshes_thin_facts_from_access() {
+        use crate::model::{PeakHikeProfile, PeakHikeProfilePoint};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.yaml");
+        std::fs::write(&config, "simulation:\n  radius_km: 50\n").unwrap();
+        let entry = PeakCatalogEntry {
+            name: Some("Bump".into()),
+            loc: [37.28, -115.64],
+            elev_m: Some(1625.0),
+            source: "dem".into(),
+            compute_key: None,
+            road_m: Some(50.0),
+            road_loc: Some([37.28, -115.64]),
+            hike_m: Some(224.0),
+            hike_gain_m: None,
+            hike_avg_grade_pct: None,
+            hike_max_grade_pct: None,
+            max_slope_deg: Some(16.0),
+            hike: Some(PeakHikeProfile {
+                hike_m_3d: 230.0,
+                horiz_m: 224.0,
+                gain_m: 36.0,
+                loss_m: 0.0,
+                max_slope_deg: 16.0,
+                max_grade_pct: 29.3,
+                avg_grade_pct: 16.0,
+                difficulty: "extreme".into(),
+                profile: vec![PeakHikeProfilePoint {
+                    dist_m: 0.0,
+                    elev_m: 1600.0,
+                    lat: 37.28,
+                    lon: -115.64,
+                }],
+                histogram: vec![],
+            }),
+            paved_loc: None,
+            jeep_m: None,
+            jeep_highway: None,
+            jeep_tracktype: None,
+            jeep: None,
+            hike_difficulty: None,
+            jeep_difficulty: None,
+            deny: None,
+        };
+        upsert_peak_with_access(&config, "bump-peak", &entry).unwrap();
+        let mut stale = load_peak_thin(&config, "bump-peak").unwrap().unwrap();
+        stale.hike_gain_m = None;
+        stale.hike_avg_grade_pct = None;
+        stale.hike_max_grade_pct = None;
+        stale.hike_difficulty = Some("extreme".into());
+        upsert_peak(&config, "bump-peak", &stale).unwrap();
+        let summary = relabel_peak_facts_from_access(&config).unwrap();
+        assert_eq!(summary.updated, 1);
+        let fixed = load_peak_thin(&config, "bump-peak").unwrap().unwrap();
+        assert_eq!(fixed.hike_gain_m, Some(36.0));
+        assert_eq!(
+            crate::difficulty::derived_hike_difficulty(&fixed).as_deref(),
+            Some("medium")
+        );
     }
 
     #[test]
@@ -731,10 +933,15 @@ peaks:
             road_m: None,
             road_loc: Some([38.1, -117.11]),
             hike_m: Some(10.0),
+            hike_gain_m: None,
+            hike_avg_grade_pct: None,
+            hike_max_grade_pct: None,
             max_slope_deg: Some(5.0),
             hike: None,
             paved_loc: None,
             jeep_m: None,
+            jeep_highway: None,
+            jeep_tracktype: None,
             jeep: None,
             hike_difficulty: None,
             jeep_difficulty: None,

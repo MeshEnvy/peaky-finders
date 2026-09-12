@@ -28,9 +28,12 @@ pub use access::{
     list_access_slugs, load_access, load_access_meta, upsert_access,
 };
 pub use difficulty::{
-    difficulty_label, hike_difficulty, jeep_class_reason, jeep_difficulty, jeep_road_rank,
-    worse_difficulty, JeepClassReason, HIKE_AVG_MIN_HORIZ_M, HIKE_EXTREME_MIN_GAIN_M,
-    HIKE_EXTREME_MIN_HORIZ_M,
+    copy_hike_facts_from_profile, copy_jeep_facts_from_profile, derived_hike_difficulty,
+    derived_jeep_difficulty, difficulty_label, hike_difficulty, jeep_class_reason,
+    jeep_difficulty, jeep_road_rank, worse_difficulty, JeepClassReason,
+    HIKE_DIFFICULT_MIN_AVG_GRADE_PCT, HIKE_DIFFICULT_MIN_GAIN_M, HIKE_EXTREME_MIN_AVG_GRADE_PCT,
+    HIKE_EXTREME_MIN_GAIN_M, HIKE_MEDIUM_MIN_AVG_GRADE_PCT, HIKE_MEDIUM_MIN_GAIN_M,
+    HIKE_MEDIUM_MIN_MAX_GRADE_PCT,
 };
 pub use compute_key::{
     access_compute_key, peak_access_compute_key, peak_row_compute_key, place_access_compute_key,
@@ -43,8 +46,8 @@ pub use peaks::{
     list_peak_slugs, load_peak, load_peak_thin, load_peaks_catalog, load_peaks_catalog_thin,
     load_peaks_rules, peaks_catalog_path, peaks_dir, peaks_list_cache_path, peaks_list_fingerprint,
     place_slugs, preserve_denied_entries, prune_orphan_access, read_peaks_list_disk_cache,
-    upsert_peak, upsert_peak_with_access, write_peaks_catalog, write_peaks_list_disk_cache,
-    PEAKS_LIST_CACHE_VERSION,
+    relabel_peak_facts_from_access, upsert_peak, upsert_peak_with_access, write_peaks_catalog,
+    write_peaks_list_disk_cache, RelabelSummary, PEAKS_LIST_CACHE_VERSION,
 };
 pub use io::{
     delete_land_source, import_land_source, insert_preset_site, land_source_id_for_path,

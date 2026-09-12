@@ -408,6 +408,13 @@ pub struct PeakCatalogEntry {
     pub road_loc: Option<[f64; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hike_m: Option<f64>,
+    /// Horizontal hike distance (m). Same as ``hike:horiz_m`` when profile exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hike_gain_m: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hike_avg_grade_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hike_max_grade_pct: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_slope_deg: Option<f64>,
     /// Full hike profile — carried in-memory / via ``access/``; omitted from thin peak rows.
@@ -418,6 +425,11 @@ pub struct PeakCatalogEntry {
     pub paved_loc: Option<[f64; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jeep_m: Option<f64>,
+    /// Worst qualifying OSM highway on jeep route (enough to re-run ``jeep_road_rank``).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jeep_highway: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jeep_tracktype: Option<String>,
     /// Full jeep profile — carried in-memory / via ``access/``; omitted from thin peak rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jeep: Option<PeakJeepProfile>,
@@ -456,7 +468,7 @@ impl PeakCatalogEntry {
 
     /// Peak row written under `peaks/<slug>.yaml` (no profile blobs).
     pub fn thin(&self) -> Self {
-        Self {
+        let mut out = Self {
             name: self.name.clone(),
             loc: self.loc,
             elev_m: self.elev_m,
@@ -465,34 +477,38 @@ impl PeakCatalogEntry {
             road_m: self.road_m,
             road_loc: self.road_loc,
             hike_m: self.hike_m,
+            hike_gain_m: self.hike_gain_m,
+            hike_avg_grade_pct: self.hike_avg_grade_pct,
+            hike_max_grade_pct: self.hike_max_grade_pct,
             max_slope_deg: self.max_slope_deg,
             hike: None,
             paved_loc: self.paved_loc,
             jeep_m: self.jeep_m,
+            jeep_highway: self.jeep_highway.clone(),
+            jeep_tracktype: self.jeep_tracktype.clone(),
             jeep: None,
-            hike_difficulty: self.hike_difficulty.clone().or_else(|| {
-                self.hike.as_ref().map(|h| {
-                    crate::difficulty::hike_difficulty(
-                        h.max_grade_pct,
-                        h.avg_grade_pct,
-                        h.horiz_m,
-                        h.gain_m,
-                    )
-                        .to_string()
-                })
-            }),
-            jeep_difficulty: self.jeep_difficulty.clone().or_else(|| {
-                self.jeep
-                    .as_ref()
-                    .map(|j| crate::difficulty::jeep_difficulty(&j.segments).to_string())
-            }),
+            hike_difficulty: self.hike_difficulty.clone(),
+            jeep_difficulty: self.jeep_difficulty.clone(),
             deny: self.deny,
+        };
+        if let Some(ref h) = self.hike {
+            crate::difficulty::copy_hike_facts_from_profile(&mut out, h);
         }
+        if let Some(ref j) = self.jeep {
+            crate::difficulty::copy_jeep_facts_from_profile(&mut out, j);
+        }
+        if let Some(d) = crate::difficulty::derived_hike_difficulty(&out) {
+            out.hike_difficulty = Some(d);
+        }
+        if let Some(d) = crate::difficulty::derived_jeep_difficulty(&out) {
+            out.jeep_difficulty = Some(d);
+        }
+        out
     }
 
     /// Apply access coords/profiles onto this peak row (in-memory / API join).
     pub fn with_access(&self, access: &PlaceAccess) -> Self {
-        Self {
+        let mut out = Self {
             name: self.name.clone(),
             loc: self.loc,
             elev_m: self.elev_m,
@@ -501,31 +517,37 @@ impl PeakCatalogEntry {
             road_m: self.road_m,
             road_loc: access.road_loc.or(self.road_loc),
             hike_m: access.hike_m.or(self.hike_m),
+            hike_gain_m: self.hike_gain_m,
+            hike_avg_grade_pct: self.hike_avg_grade_pct,
+            hike_max_grade_pct: self.hike_max_grade_pct,
             max_slope_deg: access.max_slope_deg.or(self.max_slope_deg),
             hike: access.hike.clone().or_else(|| self.hike.clone()),
             paved_loc: access.paved_loc.or(self.paved_loc),
             jeep_m: access.jeep_m.or(self.jeep_m),
+            jeep_highway: self.jeep_highway.clone(),
+            jeep_tracktype: self.jeep_tracktype.clone(),
             jeep: access.jeep.clone().or_else(|| self.jeep.clone()),
-            hike_difficulty: access
-                .hike
-                .as_ref()
-                .map(|h| {
-                    crate::difficulty::hike_difficulty(
-                        h.max_grade_pct,
-                        h.avg_grade_pct,
-                        h.horiz_m,
-                        h.gain_m,
-                    )
-                        .to_string()
-                })
-                .or_else(|| self.hike_difficulty.clone()),
-            jeep_difficulty: access
-                .jeep
-                .as_ref()
-                .map(|j| crate::difficulty::jeep_difficulty(&j.segments).to_string())
-                .or_else(|| self.jeep_difficulty.clone()),
+            hike_difficulty: self.hike_difficulty.clone(),
+            jeep_difficulty: self.jeep_difficulty.clone(),
             deny: self.deny,
+        };
+        if let Some(ref h) = access.hike {
+            crate::difficulty::copy_hike_facts_from_profile(&mut out, h);
+        } else if let Some(ref h) = self.hike {
+            crate::difficulty::copy_hike_facts_from_profile(&mut out, h);
         }
+        if let Some(ref j) = access.jeep {
+            crate::difficulty::copy_jeep_facts_from_profile(&mut out, j);
+        } else if let Some(ref j) = self.jeep {
+            crate::difficulty::copy_jeep_facts_from_profile(&mut out, j);
+        }
+        if let Some(d) = crate::difficulty::derived_hike_difficulty(&out) {
+            out.hike_difficulty = Some(d);
+        }
+        if let Some(d) = crate::difficulty::derived_jeep_difficulty(&out) {
+            out.jeep_difficulty = Some(d);
+        }
+        out
     }
 }
 

@@ -8,10 +8,7 @@ use std::thread;
 use std::time::Instant;
 
 use anyhow::Result;
-use peaky_preset::{
-    hike_difficulty, load_peaks_catalog, load_preset, worse_difficulty, HIKE_AVG_MIN_HORIZ_M,
-    PeakCatalogEntry, Preset,
-};
+use peaky_preset::{load_peaks_catalog, load_preset, worse_difficulty, PeakCatalogEntry, Preset};
 use serde_json::{json, Value};
 use splatter::Session;
 
@@ -313,14 +310,8 @@ struct FortifyCandidate {
 }
 
 fn catalog_peak_difficulty(entry: &PeakCatalogEntry) -> (Option<String>, Option<String>, Option<String>) {
-    let hike = match (entry.hike_m, entry.max_slope_deg) {
-        (Some(hike_m), Some(max_deg)) if hike_m < HIKE_AVG_MIN_HORIZ_M => {
-            let max_grade = max_deg.to_radians().tan() * 100.0;
-            Some(hike_difficulty(max_grade, 0.0, hike_m, 0.0).to_string())
-        }
-        _ => entry.hike_difficulty.clone(),
-    };
-    let jeep = entry.jeep_difficulty.clone();
+    let hike = peaky_preset::derived_hike_difficulty(entry);
+    let jeep = peaky_preset::derived_jeep_difficulty(entry);
     let access = match (&hike, &jeep) {
         (Some(h), Some(j)) => Some(worse_difficulty(h, j).to_string()),
         (Some(h), None) => Some(h.clone()),

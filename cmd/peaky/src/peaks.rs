@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use peaky_peaks::{build_peaks_catalog, resolve_corridor_from_opts, PeaksBuildOptions};
-use peaky_preset::{load_preset, resolve_preset_path};
+use peaky_preset::{load_preset, relabel_peak_facts_from_access, resolve_preset_path};
 
 pub fn run(
     project: PathBuf,
@@ -17,6 +17,7 @@ pub fn run(
     verbose: bool,
     stop_after: Option<usize>,
     clean: bool,
+    relabel: bool,
 ) -> Result<()> {
     let preset_path = resolve_preset_path(&project.to_string_lossy());
     if !preset_path.is_file() {
@@ -24,6 +25,15 @@ pub fn run(
             "project not found (expected config.yaml): {}",
             preset_path.display()
         );
+    }
+
+    if relabel {
+        let summary = relabel_peak_facts_from_access(&preset_path).context("relabel peaks")?;
+        println!(
+            "relabel: updated={} skipped={}",
+            summary.updated, summary.skipped
+        );
+        return Ok(());
     }
 
     let preset = load_preset(&preset_path).context("load preset")?;

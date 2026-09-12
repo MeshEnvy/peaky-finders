@@ -1,6 +1,6 @@
 //! Access difficulty labels (easy / medium / difficult / extreme).
 
-use crate::model::PeakJeepRoadSegment;
+use crate::model::{PeakCatalogEntry, PeakHikeProfile, PeakJeepProfile, PeakJeepRoadSegment};
 
 pub fn difficulty_rank(label: &str) -> u8 {
     match label {
@@ -25,38 +25,35 @@ pub fn worse_difficulty(a: &str, b: &str) -> &'static str {
     difficulty_label(difficulty_rank(a).max(difficulty_rank(b)))
 }
 
-/// Avg grade only counts on hikes long enough that a steady slope is the work.
-pub const HIKE_AVG_MIN_HORIZ_M: f64 = 400.0;
+/// Razorback-class: hours of sustained steep climbing.
+pub const HIKE_EXTREME_MIN_GAIN_M: f64 = 250.0;
+pub const HIKE_EXTREME_MIN_AVG_GRADE_PCT: f64 = 18.0;
 
-/// Extreme needs real hike scale, not a steep roadside bump.
-pub const HIKE_EXTREME_MIN_HORIZ_M: f64 = 400.0;
+/// Goldfield-class: real scramble, not a roadside bump.
+pub const HIKE_DIFFICULT_MIN_GAIN_M: f64 = 80.0;
+pub const HIKE_DIFFICULT_MIN_AVG_GRADE_PCT: f64 = 15.0;
 
-/// Short but brutal climbs can still qualify on gain alone.
-pub const HIKE_EXTREME_MIN_GAIN_M: f64 = 100.0;
+/// Sustained effort or scrambling on a short pad.
+pub const HIKE_MEDIUM_MIN_MAX_GRADE_PCT: f64 = 15.0;
+pub const HIKE_MEDIUM_MIN_AVG_GRADE_PCT: f64 = 8.0;
+pub const HIKE_MEDIUM_MIN_GAIN_M: f64 = 40.0;
 
-fn hike_qualifies_for_extreme(horiz_m: f64, gain_m: f64) -> bool {
-    horiz_m >= HIKE_EXTREME_MIN_HORIZ_M || gain_m >= HIKE_EXTREME_MIN_GAIN_M
-}
-
-/// Hike difficulty from segment grades. Short pads ignore avg grade and cap at difficult.
+/// Hike difficulty from gain + sustained avg grade. Max grade only signals scrambling (medium).
 pub fn hike_difficulty(
     max_grade_pct: f64,
     avg_grade_pct: f64,
-    horiz_m: f64,
+    _horiz_m: f64,
     gain_m: f64,
 ) -> &'static str {
-    let avg = if horiz_m >= HIKE_AVG_MIN_HORIZ_M {
-        avg_grade_pct
-    } else {
-        0.0
-    };
-    let steep_extreme = max_grade_pct >= 25.0 || avg >= 12.0;
-    let steep_difficult = max_grade_pct >= 18.0 || avg >= 8.0;
-    if steep_extreme && hike_qualifies_for_extreme(horiz_m, gain_m) {
+    if gain_m >= HIKE_EXTREME_MIN_GAIN_M && avg_grade_pct >= HIKE_EXTREME_MIN_AVG_GRADE_PCT {
         "extreme"
-    } else if steep_extreme || steep_difficult {
+    } else if gain_m >= HIKE_DIFFICULT_MIN_GAIN_M && avg_grade_pct >= HIKE_DIFFICULT_MIN_AVG_GRADE_PCT
+    {
         "difficult"
-    } else if max_grade_pct >= 10.0 || avg >= 5.0 {
+    } else if max_grade_pct >= HIKE_MEDIUM_MIN_MAX_GRADE_PCT
+        || avg_grade_pct >= HIKE_MEDIUM_MIN_AVG_GRADE_PCT
+        || gain_m >= HIKE_MEDIUM_MIN_GAIN_M
+    {
         "medium"
     } else {
         "easy"
@@ -168,6 +165,64 @@ pub fn jeep_class_reason(segments: &[PeakJeepRoadSegment]) -> Option<JeepClassRe
     })
 }
 
+/// Copy hike grade facts from a profile onto a thin peak row.
+pub fn copy_hike_facts_from_profile(entry: &mut PeakCatalogEntry, h: &PeakHikeProfile) {
+    entry.hike_gain_m = Some(h.gain_m);
+    entry.hike_avg_grade_pct = Some(h.avg_grade_pct);
+    entry.hike_max_grade_pct = Some(h.max_grade_pct);
+    if entry.hike_m.is_none() {
+        entry.hike_m = Some(h.horiz_m);
+    }
+    if entry.max_slope_deg.is_none() {
+        entry.max_slope_deg = Some(h.max_slope_deg);
+    }
+}
+
+/// Copy jeep OSM class facts from a profile onto a thin peak row.
+pub fn copy_jeep_facts_from_profile(entry: &mut PeakCatalogEntry, j: &PeakJeepProfile) {
+    if let Some(reason) = jeep_class_reason(&j.segments) {
+        entry.jeep_highway = Some(reason.highway);
+        entry.jeep_tracktype = reason.tracktype;
+    }
+}
+
+/// Hike label at read time. Facts win over stored ``hike_difficulty``.
+pub fn derived_hike_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
+    if let (Some(gain), Some(avg), Some(max)) = (
+        entry.hike_gain_m,
+        entry.hike_avg_grade_pct,
+        entry.hike_max_grade_pct,
+    ) {
+        let horiz = entry.hike_m.unwrap_or(0.0);
+        return Some(hike_difficulty(max, avg, horiz, gain).to_string());
+    }
+    if let Some(h) = entry.hike.as_ref() {
+        return Some(
+            hike_difficulty(h.max_grade_pct, h.avg_grade_pct, h.horiz_m, h.gain_m).to_string(),
+        );
+    }
+    if entry.hike_difficulty.is_some() {
+        return entry.hike_difficulty.clone();
+    }
+    if let (Some(hike_m), Some(max_deg)) = (entry.hike_m, entry.max_slope_deg) {
+        let max_grade = max_deg.to_radians().tan() * 100.0;
+        return Some(hike_difficulty(max_grade, 0.0, hike_m, 0.0).to_string());
+    }
+    None
+}
+
+/// Jeep label at read time. OSM class facts win over stored ``jeep_difficulty``.
+pub fn derived_jeep_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
+    if let Some(hw) = entry.jeep_highway.as_deref() {
+        let rank = jeep_road_rank(hw, entry.jeep_tracktype.as_deref());
+        return Some(difficulty_label(rank).to_string());
+    }
+    if let Some(j) = entry.jeep.as_ref() {
+        return Some(jeep_difficulty(&j.segments).to_string());
+    }
+    entry.jeep_difficulty.clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,24 +266,28 @@ mod tests {
     }
 
     #[test]
-    fn short_hike_ignores_avg_grade() {
-        assert_eq!(hike_difficulty(13.9, 9.7, 150.0, 0.0), "medium");
-        assert_eq!(hike_difficulty(13.9, 9.7, 400.0, 50.0), "difficult");
+    fn walked_bare_mountain_east_bump_is_medium() {
+        assert_eq!(hike_difficulty(29.3, 16.0, 224.0, 36.0), "medium");
     }
 
     #[test]
-    fn short_steep_bump_caps_at_difficult() {
-        assert_eq!(hike_difficulty(29.3, 16.0, 224.0, 36.0), "difficult");
+    fn walked_sarcobatus_is_medium() {
+        assert_eq!(hike_difficulty(29.0, 9.5, 1283.0, 47.2), "medium");
     }
 
     #[test]
-    fn long_steep_hike_is_extreme() {
-        assert_eq!(hike_difficulty(29.3, 16.0, 500.0, 80.0), "extreme");
+    fn walked_goldfield_is_difficult() {
+        assert_eq!(hike_difficulty(33.3, 24.9, 398.0, 99.1), "difficult");
     }
 
     #[test]
-    fn short_high_gain_hike_can_be_extreme() {
-        assert_eq!(hike_difficulty(30.0, 25.0, 250.0, 120.0), "extreme");
+    fn walked_razorback_is_extreme() {
+        assert_eq!(hike_difficulty(103.1, 56.5, 595.0, 336.4), "extreme");
+    }
+
+    #[test]
+    fn flat_long_walk_is_easy() {
+        assert_eq!(hike_difficulty(12.0, 3.7, 1283.0, 20.0), "easy");
     }
 
     #[test]
@@ -256,5 +315,89 @@ mod tests {
     fn worse_picks_hike_extreme_over_jeep_medium() {
         assert_eq!(worse_difficulty("extreme", "medium"), "extreme");
         assert_eq!(worse_difficulty("easy", "difficult"), "difficult");
+    }
+
+    #[test]
+    fn derived_hike_uses_facts_not_stored_label() {
+        let entry = PeakCatalogEntry {
+            name: None,
+            loc: [37.28, -115.64],
+            elev_m: Some(1625.0),
+            source: "dem".into(),
+            compute_key: None,
+            road_m: None,
+            road_loc: None,
+            hike_m: Some(224.0),
+            hike_gain_m: Some(36.0),
+            hike_avg_grade_pct: Some(16.0),
+            hike_max_grade_pct: Some(29.3),
+            max_slope_deg: None,
+            hike: None,
+            paved_loc: None,
+            jeep_m: None,
+            jeep_highway: None,
+            jeep_tracktype: None,
+            jeep: None,
+            hike_difficulty: Some("extreme".into()),
+            jeep_difficulty: None,
+            deny: None,
+        };
+        assert_eq!(derived_hike_difficulty(&entry).as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn derived_hike_falls_back_to_stored_label_without_facts() {
+        let entry = PeakCatalogEntry {
+            name: None,
+            loc: [38.0, -117.0],
+            elev_m: None,
+            source: "dem".into(),
+            compute_key: None,
+            road_m: None,
+            road_loc: None,
+            hike_m: None,
+            hike_gain_m: None,
+            hike_avg_grade_pct: None,
+            hike_max_grade_pct: None,
+            max_slope_deg: None,
+            hike: None,
+            paved_loc: None,
+            jeep_m: None,
+            jeep_highway: None,
+            jeep_tracktype: None,
+            jeep: None,
+            hike_difficulty: Some("difficult".into()),
+            jeep_difficulty: None,
+            deny: None,
+        };
+        assert_eq!(derived_hike_difficulty(&entry).as_deref(), Some("difficult"));
+    }
+
+    #[test]
+    fn derived_jeep_uses_osm_facts() {
+        let entry = PeakCatalogEntry {
+            name: None,
+            loc: [38.0, -117.0],
+            elev_m: None,
+            source: "dem".into(),
+            compute_key: None,
+            road_m: None,
+            road_loc: None,
+            hike_m: None,
+            hike_gain_m: None,
+            hike_avg_grade_pct: None,
+            hike_max_grade_pct: None,
+            max_slope_deg: None,
+            hike: None,
+            paved_loc: None,
+            jeep_m: None,
+            jeep_highway: Some("track".into()),
+            jeep_tracktype: Some("grade4".into()),
+            jeep: None,
+            hike_difficulty: None,
+            jeep_difficulty: Some("easy".into()),
+            deny: None,
+        };
+        assert_eq!(derived_jeep_difficulty(&entry).as_deref(), Some("difficult"));
     }
 }
