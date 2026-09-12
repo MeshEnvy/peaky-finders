@@ -22,7 +22,18 @@ import {
  * @param {maplibregl.Map} map
  * @param {string} beforeId
  */
-export function ensureSiteAccessLayers(map, beforeId = SITES_CIRCLE) {
+/** @param {maplibregl.Map} map */
+function beforeSitesCircle(map) {
+  return map.getLayer(SITES_CIRCLE) ? SITES_CIRCLE : undefined
+}
+
+/** @param {maplibregl.Map} map @param {object} spec @param {string|undefined} beforeId */
+function addLayerBefore(map, spec, beforeId) {
+  if (beforeId) map.addLayer(spec, beforeId)
+  else map.addLayer(spec)
+}
+
+export function ensureSiteAccessLayers(map, beforeId = beforeSitesCircle(map)) {
   if (!map.getSource(SITES_JEEP_SOURCE)) {
     map.addSource(SITES_JEEP_SOURCE, { type: 'geojson', data: peaksJeepGeoJson([]) })
   }
@@ -36,7 +47,8 @@ export function ensureSiteAccessLayers(map, beforeId = SITES_CIRCLE) {
     map.addSource(SITES_PARK_SOURCE, { type: 'geojson', data: peaksRoadGeoJson([]) })
   }
   if (!map.getLayer(SITES_JEEP_LINE)) {
-    map.addLayer(
+    addLayerBefore(
+      map,
       {
         id: SITES_JEEP_LINE,
         type: 'line',
@@ -53,7 +65,8 @@ export function ensureSiteAccessLayers(map, beforeId = SITES_CIRCLE) {
     map.setPaintProperty(SITES_JEEP_LINE, 'line-color', '#ea580c')
   }
   if (!map.getLayer(SITES_ACCESS_LINE)) {
-    map.addLayer(
+    addLayerBefore(
+      map,
       {
         id: SITES_ACCESS_LINE,
         type: 'line',
@@ -69,7 +82,8 @@ export function ensureSiteAccessLayers(map, beforeId = SITES_CIRCLE) {
     )
   }
   if (!map.getLayer(SITES_PAVED_CIRCLE)) {
-    map.addLayer(
+    addLayerBefore(
+      map,
       {
         id: SITES_PAVED_CIRCLE,
         type: 'circle',
@@ -88,7 +102,8 @@ export function ensureSiteAccessLayers(map, beforeId = SITES_CIRCLE) {
     map.setPaintProperty(SITES_PAVED_CIRCLE, 'circle-stroke-color', '#fff7ed')
   }
   if (!map.getLayer(SITES_PARK_CIRCLE)) {
-    map.addLayer(
+    addLayerBefore(
+      map,
       {
         id: SITES_PARK_CIRCLE,
         type: 'circle',

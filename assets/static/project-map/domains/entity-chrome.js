@@ -28,6 +28,7 @@ export function createEntityChromeDomain(ctx) {
     getSeek,
     renderEntityPanel,
     ensureViewshedsForNewlyVisibleSites,
+    ensureAccessForVisibleSites,
     refreshSeekStartSelectIfOpen,
     pruneActiveTagFilters,
     onEscape,
@@ -104,6 +105,7 @@ export function createEntityChromeDomain(ctx) {
     pruneActiveTagFilters?.()
     applyEntityVisibility()
     ensureViewshedsForNewlyVisibleSites?.()
+    ensureAccessForVisibleSites?.()
     refreshSeekStartSelectIfOpen?.()
     scheduleSaveMapState?.()
   }
@@ -112,6 +114,7 @@ export function createEntityChromeDomain(ctx) {
     pruneActiveTagFilters?.()
     applyEntityVisibility()
     ensureViewshedsForNewlyVisibleSites?.()
+    ensureAccessForVisibleSites?.()
     refreshSeekStartSelectIfOpen?.()
     scheduleSaveMapState?.()
   }

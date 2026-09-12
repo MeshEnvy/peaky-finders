@@ -45,6 +45,7 @@ export function createRootStore(config, savedMapState) {
     access: {
       bySlug: {},
       selected: null,
+      visible: new Map(),
     },
     ui: {
       mapReady: false,
@@ -196,6 +197,11 @@ export function createRootStore(config, savedMapState) {
   if (savedMapState?.viewshedVisible && typeof savedMapState.viewshedVisible === 'object') {
     for (const [slug, visible] of Object.entries(savedMapState.viewshedVisible)) {
       store.viewshed.visible.set(slug, visible !== false)
+    }
+  }
+  if (savedMapState?.accessVisible && typeof savedMapState.accessVisible === 'object') {
+    for (const [slug, visible] of Object.entries(savedMapState.accessVisible)) {
+      store.access.visible.set(slug, visible !== false)
     }
   }
   if (savedMapState?.hiddenSites && Array.isArray(savedMapState.hiddenSites)) {

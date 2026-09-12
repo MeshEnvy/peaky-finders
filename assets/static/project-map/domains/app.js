@@ -68,6 +68,7 @@ export function runApp(ctx = {}) {
   let mapChrome = null
 
   const viewshedVisible = store.viewshed.visible
+  const accessVisible = store.access.visible
   const viewshedLoading = store.viewshed.loading
   const viewshedPendingEpoch = store.viewshed.pendingEpoch
   const siteBySlug = new Map(sites.map((s) => [s.slug, s]))
@@ -134,7 +135,7 @@ export function runApp(ctx = {}) {
     getMapReady: () => store.ui.mapReady,
     getSites: () => sites,
     isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
-    isViewshedVisible: (slug) => viewshedDomain?.isViewshedVisible(slug) ?? true,
+    raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
   })
 
   siteLayers = createSiteLayersDomain({
@@ -201,9 +202,6 @@ export function runApp(ctx = {}) {
       warmPriorityInteractive: linksDomain.WARM_PRIORITY_INTERACTIVE,
       warmPriorityViewport: linksDomain.WARM_PRIORITY_VIEWPORT,
       raiseSiteLayers: () => mapChrome.raiseSiteLayers(),
-      ensureSiteAccess: (site) => siteAccessDomain?.ensureSiteAccess(site),
-      ensureSitesAccess: (list) => siteAccessDomain?.ensureSitesAccess(list),
-      onSiteAccessVisibilityChange: () => siteAccessDomain?.refreshLayers(),
       setMarkerLngLatSafe(marker, lon, lat) {
         if (!marker || !coordsUsableForMarker(lon, lat)) return false
         try {
@@ -241,6 +239,7 @@ export function runApp(ctx = {}) {
     siteHidden,
     activeTagFilters,
     viewshedVisible,
+    accessVisible,
     landVisible,
     landSourceBatchVisible,
     landLabelsVisible,
@@ -281,6 +280,8 @@ export function runApp(ctx = {}) {
     getSeek: () => seekDomain,
     ensureViewshedsForNewlyVisibleSites: () =>
       viewshedDomain?.ensureViewshedsForNewlyVisibleSites(),
+    ensureAccessForVisibleSites: () =>
+      siteAccessDomain?.ensureAccessForVisibleSites(),
     refreshSeekStartSelectIfOpen,
     pruneActiveTagFilters: () => siteLayers.pruneActiveTagFilters(),
     onEscape() {
@@ -357,6 +358,8 @@ export function runApp(ctx = {}) {
         syncWarmPriorities: () => linksDomain?.syncWarmPriorities(),
         loadSingleSiteLinks: (slug) => linksDomain?.loadSingleSiteLinks(slug),
         loadSiteLinks: () => linksDomain?.loadSiteLinks(),
+        ensureSiteAccess: (site) => siteAccessDomain?.ensureSiteAccess(site),
+        refreshSiteAccessLayers: () => siteAccessDomain?.refreshLayers(),
         scheduleViewshedLoad: (site) => viewshedDomain?.scheduleViewshedLoad(site),
         viewshedVisible,
         removeDraftViewshed: (...args) => editPreviewDomain.removeDraftViewshed(...args),
@@ -545,6 +548,7 @@ export function runApp(ctx = {}) {
 
   map.on('moveend', () => entityChrome.onMapMoveEndForEntityPanel())
   map.on('moveend', () => linksDomain?.onMapMoveEndForWarmPriorities())
+  map.on('moveend', () => siteAccessDomain?.ensureAccessForVisibleSites())
 
   function bind(getDomain, names) {
     const api = {}
@@ -585,7 +589,16 @@ export function runApp(ctx = {}) {
       viewshedDomain.setViewshedVisible(slug, !viewshedDomain.isViewshedVisible(slug))
       mapChrome.scheduleSaveMapState()
     },
+    toggleAccessForSelected() {
+      const slug = store.ui.selectedSlug
+      if (!slug) return
+      siteAccessDomain.setAccessVisible(slug, !siteAccessDomain.isAccessVisible(slug))
+      mapChrome.scheduleSaveMapState()
+    },
     isViewshedVisible: (slug) => viewshedDomain.isViewshedVisible(slug),
+    isAccessVisible: (slug) => siteAccessDomain.isAccessVisible(slug),
+    ensureSiteAccess: (site) => siteAccessDomain?.ensureSiteAccess(site),
+    ingestSiteAccess: (...args) => siteAccessDomain?.ingestAccess(...args),
     copyCoordPair,
     getCreateCoordsLabel: () => placementDomain.getCreateCoordsLabel(),
     formatSiteHeight: (site) => formatSiteHeight(site, defaultTxHeightM),

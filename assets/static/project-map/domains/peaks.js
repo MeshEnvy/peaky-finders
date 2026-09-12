@@ -58,39 +58,6 @@ export function createPeaksDomain(opts) {
     }
   }
 
-  function flyToPeak(peak) {
-    if (!peak || !getMapReady()) return
-    const map = getMap()
-    const coords = []
-    const addCoord = (lon, lat) => {
-      if (Number.isFinite(lon) && Number.isFinite(lat)) coords.push([lon, lat])
-    }
-    addCoord(peak.lon, peak.lat)
-    addCoord(peak.road_lon, peak.road_lat)
-    addCoord(peak.paved_lon, peak.paved_lat)
-    const jeepProfile = peak.jeep?.profile
-    if (Array.isArray(jeepProfile)) {
-      for (const p of jeepProfile) addCoord(p.lon, p.lat)
-    }
-    const hikeProfile = peak.hike?.profile
-    if (Array.isArray(hikeProfile)) {
-      for (const p of hikeProfile) addCoord(p.lon, p.lat)
-    }
-    if (!coords.length) return
-    const lngs = coords.map((c) => c[0])
-    const lats = coords.map((c) => c[1])
-    const shortAccess =
-      (Number.isFinite(peak.hike_m) && peak.hike_m > 0 && peak.hike_m < 200) ||
-      (Number.isFinite(peak.jeep_m) && peak.jeep_m > 0 && peak.jeep_m < 500)
-    map.fitBounds(
-      [
-        [Math.min(...lngs), Math.min(...lats)],
-        [Math.max(...lngs), Math.max(...lats)],
-      ],
-      { padding: shortAccess ? 120 : 80, maxZoom: shortAccess ? 17 : 14, duration: 600 },
-    )
-  }
-
   async function loadPeaks() {
     if (!getMapReady()) return
     const map = getMap()
@@ -117,7 +84,6 @@ export function createPeaksDomain(opts) {
     if (panel) panel.hidden = false
     updatePeakHighlight(slug)
     if (getMapReady()) clearPeaksCursorPoint(getMap())
-    flyToPeak(peak)
     syncMapViewport?.()
     void enrichPeakAccess(peak)
   }
@@ -145,11 +111,11 @@ export function createPeaksDomain(opts) {
         jeep_m: access.jeep_m ?? store.peaks.list[idx].jeep_m,
         hike: access.hike ?? store.peaks.list[idx].hike,
         jeep: access.jeep ?? store.peaks.list[idx].jeep,
+        hike_difficulty: access.hike?.difficulty ?? store.peaks.list[idx].hike_difficulty,
+        jeep_difficulty: access.jeep?.difficulty ?? store.peaks.list[idx].jeep_difficulty,
+        access_difficulty: undefined,
       }
       store.peaks.list.splice(idx, 1, merged)
-      if (store.ui.selectedPeakSlug === peak.slug) {
-        flyToPeak(merged)
-      }
       refreshPeakLayers()
       updatePeakHighlight(store.ui.selectedPeakSlug)
     } catch (err) {

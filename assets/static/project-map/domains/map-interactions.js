@@ -2,6 +2,7 @@
 
 import {
   ALTERNATES_CANDIDATES_LAYER,
+  PEAKS_RING_CIRCLE,
   PEAKS_SYMBOL,
   SEEK_CANDIDATES_LAYER,
   SITES_CIRCLE,
@@ -152,17 +153,19 @@ export function createMapInteractionsDomain(ctx) {
       }
       syncMapCursor?.()
     })
-    map.on('mouseenter', PEAKS_SYMBOL, () => {
-      if (!map.getLayer(PEAKS_SYMBOL)) return
-      if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
-        map.getCanvas().style.cursor = 'crosshair'
-        return
-      }
-      map.getCanvas().style.cursor = 'pointer'
-    })
-    map.on('mouseleave', PEAKS_SYMBOL, () => {
-      syncMapCursor?.()
-    })
+    for (const peakLayer of [PEAKS_SYMBOL, PEAKS_RING_CIRCLE]) {
+      map.on('mouseenter', peakLayer, () => {
+        if (!map.getLayer(peakLayer)) return
+        if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
+          map.getCanvas().style.cursor = 'crosshair'
+          return
+        }
+        map.getCanvas().style.cursor = 'pointer'
+      })
+      map.on('mouseleave', peakLayer, () => {
+        syncMapCursor?.()
+      })
+    }
     for (const layerId of SITE_LAYER_IDS) {
       map.on('mouseenter', layerId, () => {
         if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
@@ -227,18 +230,6 @@ export function createMapInteractionsDomain(ctx) {
         }
       }
       if (trySelectAlternateAtPoint(ev.point)) return
-      if (map.getLayer(PEAKS_SYMBOL)) {
-        const peakFeats = map.queryRenderedFeatures(ev.point, { layers: [PEAKS_SYMBOL] })
-        if (peakFeats.length) {
-          const slug = peakFeats[0].properties?.slug
-          if (slug) {
-            ev.preventDefault()
-            if (store.ui.addPlacementMode) setAddPlacementMode(null)
-            selectPeak?.(slug)
-            return
-          }
-        }
-      }
       const feats = map.queryRenderedFeatures(ev.point, {
         layers: SITE_LAYER_IDS,
       })
@@ -250,6 +241,19 @@ export function createMapInteractionsDomain(ctx) {
           selectSite(slug)
         }
         return
+      }
+      const peakLayers = [PEAKS_SYMBOL, PEAKS_RING_CIRCLE].filter((id) => map.getLayer(id))
+      if (peakLayers.length) {
+        const peakFeats = map.queryRenderedFeatures(ev.point, { layers: peakLayers })
+        if (peakFeats.length) {
+          const slug = peakFeats[0].properties?.slug
+          if (slug) {
+            ev.preventDefault()
+            if (store.ui.addPlacementMode) setAddPlacementMode(null)
+            selectPeak?.(slug)
+            return
+          }
+        }
       }
       if (store.ui.addPlacementMode) {
         openCreatePanel(ev.lngLat.lat, ev.lngLat.lng)

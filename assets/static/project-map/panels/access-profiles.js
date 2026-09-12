@@ -70,7 +70,7 @@ export function downsampleProfile(profile, maxPoints = CHART_MAX_DRAW_POINTS) {
 /** @param {number} elevM */
 export function formatElevLabel(elevM) {
   if (!Number.isFinite(elevM)) return '—'
-  return `${Math.round(elevM * 3.28084).toLocaleString()} ft`
+  return `${Math.round(elevM).toLocaleString()} m`
 }
 
 /** @param {object[]} profile */
@@ -179,17 +179,16 @@ export function profilePointAtChartClick(event, chart) {
   return { lat: best.lat, lon: best.lon }
 }
 
+/** Horizontal access distance. Metric only. */
 export function formatAccessDist(m) {
   if (!Number.isFinite(m)) return '—'
   if (m >= 1000) return `${(m / 1000).toFixed(2)} km`
-  const yd = m * 1.09361
-  if (yd >= 1760) return `${(yd / 1760).toFixed(2)} mi`
-  return `${Math.round(yd)} yd`
+  return `${Math.round(m)} m`
 }
 
 export function formatGainLoss(m) {
-  if (!Number.isFinite(m) || m < 0.5) return '0 ft'
-  return `${Math.round(m * 3.28084)} ft`
+  if (!Number.isFinite(m) || m < 0.5) return '0 m'
+  return `${Math.round(m)} m`
 }
 
 export function formatGradePct(pct) {
@@ -205,6 +204,106 @@ export function difficultyClass(d) {
     extreme: 'peak-difficulty--extreme',
   }
   return dMap[String(d || '').toLowerCase()] || 'peak-difficulty--medium'
+}
+
+/** OSM rank used for the jeep badge. Keep in sync with `jeep_road_rank` in difficulty.rs. */
+function osmRoadRank(highway, tracktype) {
+  const hw = String(highway || '')
+  const tt = tracktype || ''
+  if (['motorway', 'trunk', 'primary', 'secondary', 'tertiary'].includes(hw)) return 0
+  if (hw === 'residential' || hw === 'unclassified') {
+    if (tt === 'grade5') return 3
+    if (tt === 'grade4' || tt === 'grade3') return 2
+    if (tt === 'grade1') return 0
+    return 1
+  }
+  if (hw === 'service') return 1
+  if (hw === 'track') {
+    if (tt === 'grade5') return 3
+    if (tt === 'grade4' || tt === 'grade3') return 2
+    return 1
+  }
+  return 1
+}
+
+/**
+ * Governing OSM class for the jeep badge (highway + tracktype + distance).
+ * Prefers serve-computed `osm_*` fields; falls back to `segments`.
+ * @param {object|null|undefined} jeep
+ */
+export function jeepOsmClass(jeep) {
+  if (!jeep) return null
+  if (jeep.osm_highway) {
+    return {
+      highway: String(jeep.osm_highway),
+      tracktype: jeep.osm_tracktype ? String(jeep.osm_tracktype) : '',
+      dist_m: Number(jeep.osm_class_m),
+    }
+  }
+  const raw = Array.isArray(jeep.segments) ? jeep.segments : []
+  if (!raw.length) return null
+  const segs = []
+  for (const s of raw) {
+    const dist = Math.max(Number(s.dist_m) || 0, 0)
+    if (!dist) continue
+    const last = segs[segs.length - 1]
+    const highway = s.highway || ''
+    const tracktype = s.tracktype || ''
+    if (last && last.highway === highway && last.tracktype === tracktype) {
+      last.dist_m += dist
+      continue
+    }
+    segs.push({ highway, tracktype, dist_m: dist })
+  }
+  if (!segs.length) return null
+  const total = segs.reduce((sum, s) => sum + s.dist_m, 0)
+  const minLen = Math.max(total * 0.02, 40)
+  const kept = segs.filter((s) => total < 80 || s.dist_m >= minLen)
+  if (!kept.length) return null
+  let worst = 0
+  for (const s of kept) worst = Math.max(worst, osmRoadRank(s.highway, s.tracktype))
+  const distByClass = new Map()
+  for (const s of kept) {
+    if (osmRoadRank(s.highway, s.tracktype) !== worst) continue
+    const key = `${s.highway || ''}\t${s.tracktype || ''}`
+    distByClass.set(key, (distByClass.get(key) || 0) + Math.max(Number(s.dist_m) || 0, 0))
+  }
+  let best = null
+  for (const [key, dist] of distByClass) {
+    if (!best || dist > best.dist_m) {
+      const [highway, tracktype] = key.split('\t')
+      best = { highway, tracktype, dist_m: dist }
+    }
+  }
+  return best
+}
+
+/** OSM tracktype / highway in plain language (wiki tracktype, jeep-operator voice). */
+export function osmRoadClassHint(highway, tracktype) {
+  const tt = String(tracktype || '').toLowerCase()
+  if (tt === 'grade1') return 'Solid surface. Paved or heavily packed. Fine for most vehicles.'
+  if (tt === 'grade2') return 'Mostly solid gravel or packed dirt. Occasional soft spots.'
+  if (tt === 'grade3') return 'Mix of hard and soft. Ruts and loose rock. High clearance helps.'
+  if (tt === 'grade4') return 'Mostly soft dirt or sand. Heavily rutted. Plan on 4WD.'
+  if (tt === 'grade5') return 'Soft and barely a road. Deep ruts or sand. Specialized 4WD only.'
+  const hw = String(highway || '').toLowerCase()
+  if (['motorway', 'trunk', 'primary', 'secondary', 'tertiary'].includes(hw)) {
+    return 'Paved highway.'
+  }
+  if (hw === 'residential') return 'Paved street.'
+  if (hw === 'unclassified') return 'Minor public road, often paved.'
+  if (hw === 'service') return 'Driveway or access road.'
+  if (hw === 'track') return 'Unpaved two-track. Roughness not tagged.'
+  return ''
+}
+
+/** @param {object|null|undefined} jeep */
+export function formatOsmRoadClass(jeep) {
+  const cls = jeepOsmClass(jeep)
+  if (!cls?.highway) return ''
+  const name = cls.tracktype ? `${cls.highway} ${cls.tracktype}` : cls.highway
+  if (!Number.isFinite(cls.dist_m) || cls.dist_m <= 0) return name
+  return `${name} (${formatAccessDist(cls.dist_m)})`
 }
 
 /**
@@ -237,10 +336,10 @@ export const AccessProfilesPanel = {
       const h = props.hike
       if (!h || !Number.isFinite(h.loss_m) || !Number.isFinite(h.gain_m)) return ''
       if (h.loss_m <= h.gain_m + 0.3) return ''
-      const netFt = Math.round((h.loss_m - h.gain_m) * 3.28084)
-      if (netFt < 1) return ''
+      const netM = Math.round(h.loss_m - h.gain_m)
+      if (netM < 1) return ''
       const dest = props.hikeEndLabel.toLowerCase()
-      return `Road pull-off is ${netFt} ft higher than the ${dest} on this bump.`
+      return `Road pull-off is ${netM} m higher than the ${dest} on this bump.`
     })
 
     /** @param {MouseEvent} event @param {object|null} chart */
@@ -250,10 +349,19 @@ export const AccessProfilesPanel = {
       emit('point-click', pt)
     }
 
+    const osmRoadClass = computed(() => formatOsmRoadClass(props.jeep))
+    const osmRoadHint = computed(() => {
+      const cls = jeepOsmClass(props.jeep)
+      if (!cls?.highway) return ''
+      return osmRoadClassHint(cls.highway, cls.tracktype)
+    })
+
     return {
       elevationChart,
       jeepElevationChart,
       netDownhillNote,
+      osmRoadClass,
+      osmRoadHint,
       onChartClick,
       formatAccessDist,
       formatGainLoss,
@@ -361,6 +469,11 @@ export const AccessProfilesPanel = {
             </div>
           </div>
           <div class="site-panel__facts">
+            <div v-if="osmRoadClass" class="site-panel__fact site-panel__fact--wide">
+              <span class="site-panel__label">Road class</span>
+              <p class="site-panel__value">{{ osmRoadClass }}</p>
+              <p v-if="osmRoadHint" class="site-panel__hint">{{ osmRoadHint }}</p>
+            </div>
             <div class="site-panel__fact">
               <span class="site-panel__label">Jeep distance</span>
               <p class="site-panel__value">{{ formatAccessDist(jeep.horiz_m) }}</p>
@@ -370,11 +483,11 @@ export const AccessProfilesPanel = {
               <p class="site-panel__value">{{ formatGainLoss(jeep.gain_m) }}</p>
             </div>
             <div class="site-panel__fact">
-              <span class="site-panel__label">Max grade</span>
+              <span class="site-panel__label">Max slope</span>
               <p class="site-panel__value">{{ formatGradePct(jeep.max_grade_pct) }}</p>
             </div>
             <div class="site-panel__fact">
-              <span class="site-panel__label">Avg grade</span>
+              <span class="site-panel__label">Avg slope</span>
               <p class="site-panel__value">{{ formatGradePct(jeep.avg_grade_pct) }}</p>
             </div>
           </div>

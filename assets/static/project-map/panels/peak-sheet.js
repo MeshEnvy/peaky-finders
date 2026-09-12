@@ -43,7 +43,7 @@ export function mountPeakSheet(store, appApi) {
         if (hikeName) return hikeName
         if (peak?.name) return peak.name
         if (Number.isFinite(peak?.elev_m)) {
-          return `${Math.round(peak.elev_m * 3.28084).toLocaleString()} ft peak`
+          return `${Math.round(peak.elev_m).toLocaleString()} m peak`
         }
         return peak?.slug || 'Peak'
       })

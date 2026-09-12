@@ -73,6 +73,7 @@ export function mountSiteSheet(store, appApi) {
           access.value = cached
           accessError.value = ''
           accessLoading.value = false
+          appApi.ensureSiteAccess?.(site)
           return
         }
         accessLoading.value = true
@@ -86,7 +87,9 @@ export function mountSiteSheet(store, appApi) {
             }),
           )
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-          access.value = await resp.json()
+          const row = await resp.json()
+          access.value = row
+          appApi.ingestSiteAccess?.(site.slug, row, site)
         } catch (err) {
           access.value = null
           accessError.value = String(err?.message || err)
@@ -280,6 +283,12 @@ export function mountSiteSheet(store, appApi) {
         appApi.toggleViewshedForSelected?.()
       }
 
+      function toggleAccess() {
+        const slug = store.ui.selectedSlug
+        if (!slug) return
+        appApi.toggleAccessForSelected?.()
+      }
+
       function copyCoords() {
         const site = selectedSite.value
         if (!site) return
@@ -310,6 +319,10 @@ export function mountSiteSheet(store, appApi) {
 
       const viewshedActive = computed(() =>
         store.ui.selectedSlug ? !!appApi.isViewshedVisible?.(store.ui.selectedSlug) : false
+      )
+
+      const accessActive = computed(() =>
+        store.ui.selectedSlug ? !!appApi.isAccessVisible?.(store.ui.selectedSlug) : false
       )
 
       const canDelete = computed(() => store.sites.list.length > 1)
@@ -399,6 +412,7 @@ export function mountSiteSheet(store, appApi) {
         accessJeep,
         onAccessPointClick,
         viewshedActive,
+        accessActive,
         canDelete,
         createCoordsLabel,
         heightLabel,
@@ -418,6 +432,7 @@ export function mountSiteSheet(store, appApi) {
         saveEdit,
         saveCreate,
         toggleViewshed,
+        toggleAccess,
         copyCoords,
         toggleEditTag,
         addEditTagFromInput,
@@ -486,6 +501,10 @@ export function mountSiteSheet(store, appApi) {
                 class="site-panel__footer-btn"
                 :class="{ 'site-panel__footer-btn--active': viewshedActive }"
                 @click="toggleViewshed">Viewshed</button>
+              <button type="button"
+                class="site-panel__footer-btn"
+                :class="{ 'site-panel__footer-btn--active': accessActive }"
+                @click="toggleAccess">Access</button>
               <button type="button"
                 class="site-panel__footer-btn"
                 :class="{ 'site-panel__footer-btn--active': alternatesForThisSite && !alternatesBusy }"

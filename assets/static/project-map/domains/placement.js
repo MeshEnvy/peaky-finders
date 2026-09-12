@@ -28,6 +28,8 @@ export function createPlacementDomain(ctx) {
     syncWarmPriorities,
     loadSingleSiteLinks,
     loadSiteLinks,
+    ensureSiteAccess,
+    refreshSiteAccessLayers,
     scheduleViewshedLoad,
     viewshedVisible,
     removeDraftViewshed,
@@ -234,6 +236,7 @@ export function createPlacementDomain(ctx) {
     raiseSiteLayers?.()
     syncWarmPriorities?.()
     void loadSingleSiteLinks?.(slug)
+    ensureSiteAccess?.(site)
   }
 
   function deselectSite() {
@@ -250,6 +253,7 @@ export function createPlacementDomain(ctx) {
     if (panel) panel.hidden = true
     syncMapViewport?.()
     updateSelectedLayer?.()
+    refreshSiteAccessLayers?.()
   }
 
   function applySavedSiteToMap(site, fallbackLat, fallbackLon) {

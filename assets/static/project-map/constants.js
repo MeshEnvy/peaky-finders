@@ -15,6 +15,7 @@ export const PEAKS_PAVED_SOURCE = 'eligible-peaks-paved'
 export const PEAKS_PAVED_CIRCLE = 'eligible-peaks-paved-circle'
 export const PEAKS_CURSOR_SOURCE = 'eligible-peaks-cursor'
 export const PEAKS_CURSOR_CIRCLE = 'eligible-peaks-cursor-circle'
+export const PEAKS_RING_CIRCLE = 'eligible-peaks-difficulty-ring'
 export const PEAKS_SYMBOL = 'eligible-peaks-symbol'
 export const PEAKS_ICON_ID = 'peaky-logo-pin'
 export const PEAKS_ICON_URL = '/favicon-96x96.png'
@@ -59,8 +60,15 @@ export const ALTERNATES_LINES_SOURCE = 'alternates-candidate-lines'
 export const ALTERNATES_LINES_LAYER = 'alternates-candidate-lines-line'
 export const ALTERNATES_LINES_LABELS_LAYER = 'alternates-candidate-lines-label'
 
-/** Top-of-stack paint order after a basemap or overlay change. */
+/** Top-of-stack paint order after a basemap or overlay change. Peaks stay under sites and RF. */
 export const SITE_STACK_RAISE_IDS = [
+  PEAKS_JEEP_LINE,
+  PEAKS_ACCESS_LINE,
+  PEAKS_PAVED_CIRCLE,
+  PEAKS_ROAD_CIRCLE,
+  PEAKS_RING_CIRCLE,
+  PEAKS_SYMBOL,
+  PEAKS_CURSOR_CIRCLE,
   DRAFT_LINKS_LAYER,
   DRAFT_LINKS_LABELS_LAYER,
   LINKS_LAYER,
@@ -86,12 +94,6 @@ export const SITE_STACK_RAISE_IDS = [
   SITES_ACCESS_LINE,
   SITES_PAVED_CIRCLE,
   SITES_PARK_CIRCLE,
-  PEAKS_JEEP_LINE,
-  PEAKS_ACCESS_LINE,
-  PEAKS_PAVED_CIRCLE,
-  PEAKS_ROAD_CIRCLE,
-  PEAKS_SYMBOL,
-  PEAKS_CURSOR_CIRCLE,
 ]
 export const SEEK_ANCILLARY_LINKS_DEBOUNCE_MS = 450
 export const SEEK_PLAN_SAVE_MS = 400
