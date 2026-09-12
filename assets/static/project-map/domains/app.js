@@ -5,6 +5,13 @@ import { loadMapState as loadMapStateFromStorage } from '../map/map-state.js'
 import { isMapTiltedView as isMapTiltedViewAt } from '../map/viewport.js'
 import { connectProjectEvents as openProjectEventsStream } from '../api/events.js'
 import { openWaDialog } from '../api/wa-dialog.js'
+import {
+  captureDeepLinkFromMap,
+  deepLinkHasCamera,
+  parseDeepLink,
+  readDeepLinkFromLocation,
+  writeDeepLink,
+} from '../api/deep-link.js'
 import { setSimulation } from '../stores/simulation.js'
 import { createSitesDomain } from './sites.js'
 import { createViewshedDomain } from './viewshed.js'
@@ -127,7 +134,7 @@ export function runApp(ctx = {}) {
     projectSlug: String(store.projectSlug || projectSlug || ''),
     getMap: () => map,
     getMapReady: () => store.ui.mapReady,
-    deselectSite: () => placementDomain?.deselectSite(),
+    deselectSite: (...args) => placementDomain?.deselectSite(...args),
     syncMapViewport: () => entityChrome?.syncMapViewport(),
     clearLinkSelection: () => linksDomain?.clearLinkSelection(),
   })
@@ -386,7 +393,7 @@ export function runApp(ctx = {}) {
         onCancelEdit: () => editPreviewDomain.endEditSession(),
         onCleanupEditSave: () => editPreviewDomain.cleanupEditSave(),
         onFinishEditSave: () => siteLayers.finishEditSaveUi(),
-        deselectPeak: () => peaksDomain?.deselectPeak(),
+        deselectPeak: (...args) => peaksDomain?.deselectPeak(...args),
         clearLinkSelection: () => linksDomain?.clearLinkSelection(),
       })
     }
@@ -559,13 +566,76 @@ export function runApp(ctx = {}) {
     })
   }
 
+  async function applyDeepLinkSelection(link, { replaceHistory = false } = {}) {
+    if (!link.site && !link.peak) return
+    store.ui.restoring = true
+    try {
+      await peaksDomain.loadPeaks()
+      if (link.peak && peaksDomain.getPeakBySlug(link.peak)) {
+        peaksDomain.selectPeak(link.peak, { syncDeepLink: false })
+      } else if (link.site && siteBySlug.get(link.site)) {
+        placementDomain.selectSite(link.site, { syncDeepLink: false })
+      }
+      if (replaceHistory) {
+        writeDeepLink(
+          captureDeepLinkFromMap(map, {
+            site: store.ui.selectedSlug || undefined,
+            peak: store.ui.selectedPeakSlug || undefined,
+          }),
+          { replace: true },
+        )
+      }
+    } finally {
+      store.ui.restoring = false
+    }
+  }
+
+  async function restoreDeepLinkFromHistory() {
+    const link = readDeepLinkFromLocation()
+    store.ui.restoring = true
+    try {
+      if (deepLinkHasCamera(link)) {
+        map.jumpTo({
+          center: link.center,
+          zoom: link.zoom,
+          bearing: link.bearing ?? 0,
+          pitch: link.pitch ?? 0,
+          duration: 0,
+        })
+      }
+      if (link.peak) {
+        if (!store.peaks.list.length) await peaksDomain.loadPeaks()
+        if (peaksDomain.getPeakBySlug(link.peak)) {
+          peaksDomain.selectPeak(link.peak, { syncDeepLink: false })
+        } else if (store.ui.selectedPeakSlug) {
+          peaksDomain.deselectPeak({ syncDeepLink: false })
+        }
+      } else if (link.site) {
+        if (siteBySlug.get(link.site)) {
+          placementDomain.selectSite(link.site, { syncDeepLink: false })
+        } else if (store.ui.selectedSlug) {
+          placementDomain.deselectSite({ syncDeepLink: false })
+        }
+      } else {
+        if (store.ui.selectedPeakSlug) peaksDomain.deselectPeak({ syncDeepLink: false })
+        else if (store.ui.selectedSlug) placementDomain.deselectSite({ syncDeepLink: false })
+      }
+    } finally {
+      store.ui.restoring = false
+    }
+  }
+
+  window.addEventListener('popstate', () => {
+    if (!store.ui.mapReady) return
+    void restoreDeepLinkFromHistory()
+  })
+
   map.on('load', () => {
     store.ui.mapReady = true
     entityChrome.syncMapViewport()
     map.resize()
     siteLayers.addSiteLayers()
     siteAccessDomain?.refreshLayers()
-    void peaksDomain.loadPeaks()
     mapInteractionsDomain.install()
     connectProjectEvents()
     landDomain.bumpLandPanel()
@@ -581,7 +651,13 @@ export function runApp(ctx = {}) {
     }
     void landDomain.refreshLandMapLayers()
     seekDomain.restoreSeekSessionIfAny()
-    store.ui.restoring = false
+    const bootLink = parseDeepLink()
+    if (bootLink.site || bootLink.peak) {
+      void applyDeepLinkSelection(bootLink, { replaceHistory: true })
+    } else {
+      void peaksDomain.loadPeaks()
+      store.ui.restoring = false
+    }
     map.once('idle', () => {
       void viewshedDomain.loadViewshedIndex()
       void linksDomain.loadSiteLinks()

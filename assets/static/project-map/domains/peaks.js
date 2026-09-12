@@ -7,6 +7,7 @@ import {
   PEAKS_SYMBOL,
 } from '../constants.js'
 import { ensurePeaksLayers, setPeaksLayerData, setPeaksCursorPoint, clearPeaksCursorPoint } from '../map/peaks-layers.js'
+import { captureDeepLinkFromMap, writeDeepLink } from '../api/deep-link.js'
 
 /**
  * @param {object} opts
@@ -24,6 +25,17 @@ export function createPeaksDomain(opts) {
 
   function peakPanelEl() {
     return document.getElementById('peak-panel')
+  }
+
+  function syncDeepLinkToUrl({ replace = false } = {}) {
+    if (store.ui.restoring || !getMapReady()) return
+    writeDeepLink(
+      captureDeepLinkFromMap(getMap(), {
+        site: store.ui.selectedSlug || undefined,
+        peak: store.ui.selectedPeakSlug || undefined,
+      }),
+      { replace },
+    )
   }
 
   function updatePeakHighlight(slug) {
@@ -77,11 +89,11 @@ export function createPeaksDomain(opts) {
     }
   }
 
-  function selectPeak(slug) {
+  function selectPeak(slug, { syncDeepLink = true } = {}) {
     const peak = store.peaks.list.find((p) => p.slug === slug)
     if (!peak) return
     clearLinkSelection?.()
-    deselectSite?.()
+    deselectSite?.({ syncDeepLink: false })
     store.ui.selectedPeakSlug = slug
     const panel = peakPanelEl()
     if (panel) panel.hidden = false
@@ -89,6 +101,7 @@ export function createPeaksDomain(opts) {
     if (getMapReady()) clearPeaksCursorPoint(getMap())
     syncMapViewport?.()
     void enrichPeakAccess(peak)
+    if (syncDeepLink) syncDeepLinkToUrl({ replace: false })
   }
 
   /** @param {object} peak */
@@ -131,13 +144,14 @@ export function createPeaksDomain(opts) {
     setPeaksLayerData(getMap(), store.peaks.list)
   }
 
-  function deselectPeak() {
+  function deselectPeak({ syncDeepLink = true } = {}) {
     store.ui.selectedPeakSlug = null
     const panel = peakPanelEl()
     if (panel) panel.hidden = true
     updatePeakHighlight(null)
     if (getMapReady()) clearPeaksCursorPoint(getMap())
     syncMapViewport?.()
+    if (syncDeepLink) syncDeepLinkToUrl({ replace: false })
   }
 
   function getPeakBySlug(slug) {

@@ -4,12 +4,16 @@ import { createRootStore, initSitesFromConfig, initLandFromConfig } from './stor
 import { runApp } from './domains/app.js'
 import { mountPanels } from './panels/mount.js'
 import { loadMapState } from './map/map-state.js'
+import { mergeDeepLinkIntoSavedMapState, parseDeepLink } from './api/deep-link.js'
 
 /** Boot Peaky map UI: Vue reactive store + domain app + panel mounts. */
 export function bootProjectMap() {
   const config = window.PEAKY_PROJECT || {}
   const projectSlug = String(config.slug || '')
-  const savedMapState = loadMapState(projectSlug)
+  const savedMapState = mergeDeepLinkIntoSavedMapState(
+    loadMapState(projectSlug),
+    parseDeepLink(),
+  )
 
   const store = createRootStore(config, savedMapState)
   initSitesFromConfig(store)

@@ -10,6 +10,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Added
+
+- **Map deep links** — selecting a site or catalog peak writes `?site=` / `?peak=` plus camera (`lat`, `lon`, `z`, optional `bearing`, `pitch`) to the address bar. Back, forward, refresh, and pasted URLs restore the pin and view. Basemap, land layers, and viewshed prefs stay in localStorage.
+
 ### Changed
 
 - **Hike paths avoid wasted elevation** — A* contours around bumps instead of climbing then descending. Park picker tries two more along-road samples per sector and ranks by gain, then loss. `ACCESS_ALGO_VERSION` → **8**. Re-open a peak/site sheet to re-warm leftover pins.

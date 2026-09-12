@@ -21,6 +21,7 @@ import {
   persistMapState as persistMapStateToStorage,
   captureMapState as captureMapStateShape,
 } from '../map/map-state.js'
+import { captureDeepLinkFromMap, writeDeepLink } from '../api/deep-link.js'
 import { installMapToolbar } from '../map/toolbar.js'
 import { kmToDegreeDeltas } from '../geo.js'
 import { raiseSeekLensLayers } from '../map/seek-layers.js'
@@ -268,6 +269,13 @@ export function createMapChromeDomain(ctx) {
     saveTimer = setTimeout(() => {
       saveTimer = null
       persistMapStateToStorage(MAP_STATE_KEY, captureMapState())
+      writeDeepLink(
+        captureDeepLinkFromMap(getMap(), {
+          site: store?.ui?.selectedSlug || undefined,
+          peak: store?.ui?.selectedPeakSlug || undefined,
+        }),
+        { replace: true },
+      )
     }, MAP_STATE_SAVE_MS)
   }
 

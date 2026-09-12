@@ -3,6 +3,7 @@
 import { formatCoord } from '../geo.js'
 import { DRAFT_MARKER_COLOR, DRAFT_VIEWSHED_SLUG } from '../constants.js'
 import { normalizeSiteFromApi, sitePassesTagFilter } from '../stores/sites.js'
+import { captureDeepLinkFromMap, writeDeepLink } from '../api/deep-link.js'
 
 /**
  * Create/edit draft marker, site sheet modes, select/deselect, save.
@@ -45,6 +46,17 @@ export function createPlacementDomain(ctx) {
 
   /** @type {maplibregl.Marker|null} */
   let draftMarker = null
+
+  function syncDeepLinkToUrl({ replace = false } = {}) {
+    if (store.ui.restoring || !getMapReady()) return
+    writeDeepLink(
+      captureDeepLinkFromMap(getMap(), {
+        site: store.ui.selectedSlug || undefined,
+        peak: store.ui.selectedPeakSlug || undefined,
+      }),
+      { replace },
+    )
+  }
 
   function mapShell() {
     return document.querySelector('.map-shell')
@@ -222,13 +234,13 @@ export function createPlacementDomain(ctx) {
     showPanelView()
   }
 
-  function selectSite(slug) {
+  function selectSite(slug, { syncDeepLink = true } = {}) {
     const site = getSiteBySlug?.(slug)
     if (!site) return
     if (isCreateMode()) cancelCreate()
     if (isEditMode()) cancelEdit()
     clearLinkSelection?.()
-    deselectPeak?.()
+    deselectPeak?.({ syncDeepLink: false })
     assignSelectedSlug(slug)
     const panel = sitePanelEl()
     if (panel) panel.hidden = false
@@ -239,9 +251,10 @@ export function createPlacementDomain(ctx) {
     syncWarmPriorities?.()
     void loadSingleSiteLinks?.(slug)
     ensureSiteAccess?.(site)
+    if (syncDeepLink) syncDeepLinkToUrl({ replace: false })
   }
 
-  function deselectSite() {
+  function deselectSite({ syncDeepLink = true } = {}) {
     if (isCreateMode()) {
       cancelCreate()
       return
@@ -256,6 +269,7 @@ export function createPlacementDomain(ctx) {
     syncMapViewport?.()
     updateSelectedLayer?.()
     refreshSiteAccessLayers?.()
+    if (syncDeepLink) syncDeepLinkToUrl({ replace: false })
   }
 
   function applySavedSiteToMap(site, fallbackLat, fallbackLon) {
