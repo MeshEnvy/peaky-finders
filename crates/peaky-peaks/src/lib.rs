@@ -4,8 +4,10 @@ mod access_warm;
 mod corridor;
 mod gnis;
 mod hike;
+mod hike_route;
 mod jeep;
 mod osm;
+mod park;
 mod run;
 mod universe;
 
@@ -15,9 +17,10 @@ pub use access_warm::{
 };
 pub use peaky_preset::{PLACE_ACCESS_ROAD_SEARCH_M, DEFAULT_MAX_JEEP_M as PLACE_ACCESS_MAX_JEEP_M};
 pub use hike::{
-    format_hike_report, grade_pct_to_deg, hike_difficulty, stored_peak_hike, HikeProfile,
-    HikeProfileDetailed, HikeSampleElev, profile_hike_detailed,
+    default_max_slope_deg, format_hike_report, grade_pct_to_deg, hike_difficulty, stored_peak_hike,
+    HikeProfile, HikeProfileDetailed, HikeSampleElev, profile_hike_detailed,
 };
+pub use hike_route::{profile_polyline_detailed, resolve_hike, route_hike_coords};
 pub use jeep::{profile_along_polyline, route_jeep_detailed, stored_peak_jeep, JeepProfileDetailed};
 pub use osm::{
     build_osm_routing, JeepRoadIndex, OsmRouting, OsmRoutingOpts, JEEP_HIGHWAY_TAGS,

@@ -8,12 +8,24 @@ use serde::Serialize;
 use peaky_preset::PeakJeepProfile;
 
 use crate::hike::{
-    grade_histogram, haversine_m, hike_difficulty, slope_deg_to_grade_pct, HikeProfilePoint,
-    HikeSampleElev, HikeSegment, GradeHistogramBucket,
+    grade_histogram, haversine_m, slope_deg_to_grade_pct, HikeProfilePoint, HikeSampleElev,
+    HikeSegment, GradeHistogramBucket,
 };
 use crate::osm::{JeepRoadGraph, PavedAnchorIndex};
 
 const SNAP_PARK_M: f64 = 250.0;
+
+fn jeep_difficulty_from_osm(segments: &[JeepRoadSegment]) -> &'static str {
+    let mapped: Vec<peaky_preset::PeakJeepRoadSegment> = segments
+        .iter()
+        .map(|s| peaky_preset::PeakJeepRoadSegment {
+            highway: s.highway.clone(),
+            tracktype: s.tracktype.clone(),
+            dist_m: s.dist_m,
+        })
+        .collect();
+    peaky_preset::jeep_difficulty(&mapped)
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct JeepRoadSegment {
@@ -127,6 +139,16 @@ pub fn route_jeep_detailed(
     if sources.is_empty() {
         return None;
     }
+    if sources.iter().any(|&(_, _, node)| node == dest) {
+        let (plat, plon) = graph.node_coords(dest);
+        return Some(JeepRouteResult {
+            paved_lat: plat,
+            paved_lon: plon,
+            coords: vec![(plat, plon)],
+            horiz_m: 0.0,
+            road_segments: vec![],
+        });
+    }
 
     let mut dist_cost = HashMap::<u32, f64>::new();
     let mut dist_horiz = HashMap::<u32, f64>::new();
@@ -215,8 +237,30 @@ pub fn profile_along_polyline<E: HikeSampleElev>(
     step_m: f64,
     road_segments: &[JeepRoadSegment],
 ) -> Option<JeepProfileDetailed> {
-    if coords.len() < 2 {
+    if coords.is_empty() {
         return None;
+    }
+    if coords.len() < 2 {
+        let (lat, lon) = coords[0];
+        let elev_m = elev.sample_elev_m(lat, lon);
+        return Some(JeepProfileDetailed {
+            jeep_m_3d: 0.0,
+            horiz_m: 0.0,
+            gain_m: 0.0,
+            loss_m: 0.0,
+            max_slope_deg: 0.0,
+            max_grade_pct: 0.0,
+            avg_grade_pct: 0.0,
+            difficulty: jeep_difficulty_from_osm(road_segments).to_string(),
+            profile: vec![HikeProfilePoint {
+                dist_m: 0.0,
+                elev_m,
+                lat,
+                lon,
+            }],
+            histogram: vec![],
+            road_segments: road_segments.to_vec(),
+        });
     }
     let step = step_m.max(10.0);
     let mut prev_lat = coords[0].0;
@@ -304,7 +348,7 @@ pub fn profile_along_polyline<E: HikeSampleElev>(
         max_slope_deg: max_slope,
         max_grade_pct,
         avg_grade_pct,
-        difficulty: hike_difficulty(max_grade_pct, avg_grade_pct).to_string(),
+        difficulty: jeep_difficulty_from_osm(road_segments).to_string(),
         profile,
         histogram,
         road_segments: road_segments.to_vec(),
@@ -360,7 +404,7 @@ pub fn stored_peak_jeep(detail: &JeepProfileDetailed) -> PeakJeepProfile {
 mod tests {
     use super::*;
     use crate::hike::HikeSampleElev;
-    use crate::osm::{GraphEdge, JeepRoadGraph, PavedAnchorIndex, PavedPoint};
+    use crate::osm::{GraphEdge, JeepRoadGraph, PavedAnchorIndex};
 
     struct FlatElev(f64);
 
@@ -424,6 +468,18 @@ mod tests {
     fn max_jeep_length_rejects_distant_paved() {
         let (graph, paved) = test_graph_easy_detour();
         assert!(route_jeep_detailed(&graph, &paved, 38.05, -117.0, 500.0).is_none());
+    }
+
+    #[test]
+    fn already_on_paved_is_zero_jeep() {
+        let (graph, paved) = test_graph_easy_detour();
+        let route = route_jeep_detailed(&graph, &paved, 38.0, -117.0, 5000.0).unwrap();
+        assert_eq!(route.horiz_m, 0.0);
+        assert!(route.road_segments.is_empty());
+        let flat = FlatElev(2000.0);
+        let detail = profile_along_polyline(&flat, &route.coords, 30.0, &route.road_segments).unwrap();
+        assert_eq!(detail.horiz_m, 0.0);
+        assert_eq!(detail.difficulty, "easy");
     }
 
     #[test]

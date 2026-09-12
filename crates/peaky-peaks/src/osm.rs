@@ -42,7 +42,10 @@ impl Default for OsmRoutingOpts {
         Self {
             road_sample_step_m: 40.0,
             jeep_highways: JEEP_HIGHWAY_TAGS.iter().map(|s| (*s).to_string()).collect(),
-            paved_highways: PAVED_HIGHWAY_TAGS.iter().map(|s| (*s).to_string()).collect(),
+            paved_highways: PAVED_HIGHWAY_TAGS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
         }
     }
 }
@@ -57,7 +60,8 @@ impl From<&peaky_preset::AccessMeta> for OsmRoutingOpts {
     }
 }
 
-const GEOFABRIK_NV_URL: &str = "https://download.geofabrik.de/north-america/us/nevada-latest.osm.pbf";
+const GEOFABRIK_NV_URL: &str =
+    "https://download.geofabrik.de/north-america/us/nevada-latest.osm.pbf";
 
 #[derive(Debug, Clone, Copy)]
 pub struct RoadPoint {
@@ -84,24 +88,32 @@ impl JeepRoadIndex {
         self.point_count == 0
     }
 
-    /// Nearest jeep-road sample within ``max_m`` (haversine).
-    pub fn nearest_within(&self, lat: f64, lon: f64, max_m: f64) -> Option<(f64, f64, f64)> {
-        if self.point_count == 0 {
-            return None;
-        }
+    fn envelope_for_radius(lat: f64, lon: f64, max_m: f64) -> AABB<[f64; 2]> {
         let deg = (max_m / 111_000.0).max(0.002);
-        let envelope = AABB::from_corners([lon - deg, lat - deg], [lon + deg, lat + deg]);
-        let mut best: Option<(f64, f64, f64)> = None;
+        AABB::from_corners([lon - deg, lat - deg], [lon + deg, lat + deg])
+    }
+
+    /// Jeep-road samples within ``max_m`` (haversine), unsorted.
+    pub fn points_within(&self, lat: f64, lon: f64, max_m: f64) -> Vec<(f64, f64, f64)> {
+        if self.point_count == 0 {
+            return Vec::new();
+        }
+        let envelope = Self::envelope_for_radius(lat, lon, max_m);
+        let mut out = Vec::new();
         for pt in self.tree.locate_in_envelope_intersecting(&envelope) {
             let d = haversine_m(lat, lon, pt.lat, pt.lon);
-            if d > max_m + 1.0 {
-                continue;
-            }
-            if best.map(|(_, _, bd)| d < bd).unwrap_or(true) {
-                best = Some((pt.lat, pt.lon, d));
+            if d <= max_m + 1.0 {
+                out.push((pt.lat, pt.lon, d));
             }
         }
-        best
+        out
+    }
+
+    /// Nearest jeep-road sample within ``max_m`` (haversine).
+    pub fn nearest_within(&self, lat: f64, lon: f64, max_m: f64) -> Option<(f64, f64, f64)> {
+        self.points_within(lat, lon, max_m)
+            .into_iter()
+            .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
     }
 }
 
@@ -246,7 +258,7 @@ pub struct PavedAnchorIndex {
 }
 
 impl PavedAnchorIndex {
-    pub fn from_nodes(graph: &JeepRoadGraph, nodes: &[(u32, f64, f64)]) -> Self {
+    pub fn from_nodes(_graph: &JeepRoadGraph, nodes: &[(u32, f64, f64)]) -> Self {
         let points: Vec<PavedPoint> = nodes
             .iter()
             .map(|&(idx, lat, lon)| PavedPoint {
@@ -258,6 +270,35 @@ impl PavedAnchorIndex {
         Self {
             tree: RTree::bulk_load(points),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_from_points(points: &[(f64, f64)]) -> Self {
+        let loaded: Vec<PavedPoint> = points
+            .iter()
+            .enumerate()
+            .map(|(i, &(lat, lon))| PavedPoint {
+                lat,
+                lon,
+                node_idx: i as u32,
+            })
+            .collect();
+        Self {
+            tree: RTree::bulk_load(loaded),
+        }
+    }
+
+    pub fn points_within(&self, lat: f64, lon: f64, max_m: f64) -> Vec<(f64, f64, f64)> {
+        self.sources_within(lat, lon, max_m)
+            .into_iter()
+            .map(|(plat, plon, _)| (plat, plon, haversine_m(lat, lon, plat, plon)))
+            .collect()
+    }
+
+    pub fn nearest_within(&self, lat: f64, lon: f64, max_m: f64) -> Option<(f64, f64, f64)> {
+        self.points_within(lat, lon, max_m)
+            .into_iter()
+            .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
     }
 
     pub fn sources_within(&self, lat: f64, lon: f64, max_m: f64) -> Vec<(f64, f64, u32)> {
@@ -439,7 +480,10 @@ fn sample_way(nodes: &[(f64, f64)], step_m: f64) -> Vec<RoadPoint> {
     if nodes.len() < 2 {
         return nodes
             .iter()
-            .map(|(lat, lon)| RoadPoint { lat: *lat, lon: *lon })
+            .map(|(lat, lon)| RoadPoint {
+                lat: *lat,
+                lon: *lon,
+            })
             .collect();
     }
     let mut out = Vec::new();
@@ -546,12 +590,8 @@ pub fn build_osm_routing(
                     for i in 0..coords.len() - 1 {
                         let (lat1, lon1) = coords[i];
                         let (lat2, lon2) = coords[i + 1];
-                        let a = graph.get_or_insert_node(
-                            osm_ids[i],
-                            lat1,
-                            lon1,
-                            &mut graph_node_map,
-                        );
+                        let a =
+                            graph.get_or_insert_node(osm_ids[i], lat1, lon1, &mut graph_node_map);
                         let b = graph.get_or_insert_node(
                             osm_ids[i + 1],
                             lat2,
@@ -620,7 +660,15 @@ pub fn build_jeep_road_index(
     east: f64,
     north: f64,
 ) -> Result<JeepRoadIndex> {
-    Ok(build_osm_routing(pbf_path, west, south, east, north, &OsmRoutingOpts::default())?.jeep_roads)
+    Ok(build_osm_routing(
+        pbf_path,
+        west,
+        south,
+        east,
+        north,
+        &OsmRoutingOpts::default(),
+    )?
+    .jeep_roads)
 }
 
 #[cfg(test)]
@@ -739,6 +787,7 @@ mod tests {
         assert!(hit.is_some());
         let (_, _, d) = hit.unwrap();
         assert!(d < 500.0);
+        assert_eq!(idx.points_within(38.0005, -117.0, 500.0).len(), 2);
     }
 
     #[test]
@@ -749,19 +798,23 @@ mod tests {
         let peak_lon = -117.0;
         let dist = haversine_m(38.0, -117.0, peak_lat, peak_lon);
         assert!(dist > DEFAULT_MAX_HIKE_M);
-        assert!(idx.nearest_within(peak_lat, peak_lon, DEFAULT_MAX_HIKE_M).is_none());
+        assert!(idx
+            .nearest_within(peak_lat, peak_lon, DEFAULT_MAX_HIKE_M)
+            .is_none());
     }
 
     #[test]
     fn distant_peak_has_no_road_within_half_mile() {
         use crate::hike::DEFAULT_MAX_HIKE_M;
         let idx = test_index_from_points(&[(38.0, -117.0)]);
-        assert!(idx.nearest_within(39.0, -117.0, DEFAULT_MAX_HIKE_M).is_none());
+        assert!(idx
+            .nearest_within(39.0, -117.0, DEFAULT_MAX_HIKE_M)
+            .is_none());
     }
 
     #[test]
     fn eip_like_site_at_road_passes_road_gate() {
-        use crate::hike::{profile_hike, profile_passes, DEFAULT_MAX_HIKE_M, HikeSampleElev};
+        use crate::hike::{profile_hike, profile_passes, HikeSampleElev, DEFAULT_MAX_HIKE_M};
 
         struct FlatElev(f64);
         impl HikeSampleElev for FlatElev {
@@ -779,6 +832,6 @@ mod tests {
         assert!(road_m < 100.0);
         let flat = FlatElev(2000.0);
         let profile = profile_hike(&flat, rlat, rlon, peak_lat, peak_lon, 30.0).unwrap();
-        assert!(profile_passes(&profile, DEFAULT_MAX_HIKE_M, 45.0));
+        assert!(profile_passes(&profile, 45.0));
     }
 }

@@ -127,18 +127,7 @@ pub fn slope_deg_to_grade_pct(deg: f64) -> f64 {
     deg.to_radians().tan() * 100.0
 }
 
-/// Overall hike difficulty from segment grades (easy / medium / difficult / extreme).
-pub fn hike_difficulty(max_grade_pct: f64, avg_grade_pct: f64) -> &'static str {
-    if max_grade_pct >= 25.0 || avg_grade_pct >= 12.0 {
-        "extreme"
-    } else if max_grade_pct >= 18.0 || avg_grade_pct >= 8.0 {
-        "difficult"
-    } else if max_grade_pct >= 10.0 || avg_grade_pct >= 5.0 {
-        "medium"
-    } else {
-        "easy"
-    }
-}
+pub use peaky_preset::hike_difficulty;
 
 pub(crate) fn grade_histogram(segments: &[HikeSegment]) -> Vec<GradeHistogramBucket> {
     let total: f64 = segments.iter().map(|s| s.dist_m).sum();
@@ -238,6 +227,89 @@ where
         }
     }
     best
+}
+
+/// Walk uphill on the DEM (8-neighbor, ``step_m``) to a land-eligible local maximum.
+///
+/// Stays inside ``radius_m`` of the seed. Use this for catalog placement: ring sampling
+/// can sit on a slope between crest cells.
+pub fn snap_to_dem_local_max_filtered<E, F>(
+    elev: &E,
+    seed_lat: f64,
+    seed_lon: f64,
+    radius_m: f64,
+    step_m: f64,
+    eligible: F,
+) -> Option<(f64, f64, f64)>
+where
+    E: HikeSampleElev,
+    F: Fn(f64, f64) -> bool,
+{
+    let step = step_m.max(10.0);
+    let sample = |lat: f64, lon: f64| -> Option<f64> {
+        if !eligible(lat, lon) {
+            return None;
+        }
+        if haversine_m(seed_lat, seed_lon, lat, lon) > radius_m + 1.0 {
+            return None;
+        }
+        let e = elev.sample_elev_m(lat, lon);
+        if e.is_finite() && e > 0.0 {
+            Some(e)
+        } else {
+            None
+        }
+    };
+
+    let (mut lat, mut lon, mut e) = if let Some(e0) = sample(seed_lat, seed_lon) {
+        (seed_lat, seed_lon, e0)
+    } else {
+        snap_to_local_summit_filtered(elev, seed_lat, seed_lon, radius_m, step, &eligible)?
+    };
+
+    let max_steps = ((radius_m / step).ceil() as usize)
+        .saturating_mul(4)
+        .max(16);
+    for _ in 0..max_steps {
+        let mut next: Option<(f64, f64, f64)> = None;
+        for i in 0..8 {
+            let bearing = 45.0 * i as f64;
+            let (nlat, nlon) = destination_point(lat, lon, bearing, step);
+            let Some(ne) = sample(nlat, nlon) else {
+                continue;
+            };
+            if ne > e + 1e-3 && next.map(|(_, _, be)| ne > be).unwrap_or(true) {
+                next = Some((nlat, nlon, ne));
+            }
+        }
+        match next {
+            Some(n) => {
+                lat = n.0;
+                lon = n.1;
+                e = n.2;
+            }
+            None => break,
+        }
+    }
+    Some((lat, lon, e))
+}
+
+/// Max drop from ``(lat, lon)`` to an 8-neighbor at ``step_m`` (SRTM-cell prominence proxy).
+pub fn neighbor_prominence_m<E: HikeSampleElev>(elev: &E, lat: f64, lon: f64, step_m: f64) -> f64 {
+    let z = elev.sample_elev_m(lat, lon);
+    if !z.is_finite() {
+        return 0.0;
+    }
+    let step = step_m.max(10.0);
+    let mut max_drop = 0.0_f64;
+    for i in 0..8 {
+        let (nlat, nlon) = destination_point(lat, lon, 45.0 * i as f64, step);
+        let nz = elev.sample_elev_m(nlat, nlon);
+        if nz.is_finite() && z > nz {
+            max_drop = max_drop.max(z - nz);
+        }
+    }
+    max_drop
 }
 
 pub fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -367,7 +439,7 @@ pub fn profile_hike_detailed<E: HikeSampleElev>(
         max_slope_deg: max_slope,
         max_grade_pct,
         avg_grade_pct,
-        difficulty: hike_difficulty(max_grade_pct, avg_grade_pct).to_string(),
+        difficulty: hike_difficulty(max_grade_pct, avg_grade_pct, horiz_total).to_string(),
         segments,
         profile,
         histogram,
@@ -382,10 +454,12 @@ pub fn profile_hike<E: HikeSampleElev>(
     peak_lon: f64,
     step_m: f64,
 ) -> Option<HikeProfile> {
-    profile_hike_detailed(elev, road_lat, road_lon, peak_lat, peak_lon, step_m).map(|d| HikeProfile {
-        hike_m_3d: d.hike_m_3d,
-        max_slope_deg: d.max_slope_deg,
-        n_samples: d.profile.len(),
+    profile_hike_detailed(elev, road_lat, road_lon, peak_lat, peak_lon, step_m).map(|d| {
+        HikeProfile {
+            hike_m_3d: d.hike_m_3d,
+            max_slope_deg: d.max_slope_deg,
+            n_samples: d.profile.len(),
+        }
     })
 }
 
@@ -421,12 +495,8 @@ pub fn format_hike_report(name: Option<&str>, slug: &str, detail: &HikeProfileDe
     out
 }
 
-pub fn profile_passes(
-    profile: &HikeProfile,
-    max_hike_m: f64,
-    max_slope_deg: f64,
-) -> bool {
-    profile.hike_m_3d <= max_hike_m + 1.0 && profile.max_slope_deg <= max_slope_deg + 0.5
+pub fn profile_passes(profile: &HikeProfile, max_slope_deg: f64) -> bool {
+    profile.max_slope_deg <= max_slope_deg + 0.5
 }
 
 #[cfg(test)]
@@ -466,17 +536,16 @@ mod tests {
         let ramp = SteepRamp { base_lat: 38.0 };
         let p = profile_hike(&ramp, 38.0, -117.0, 38.01, -117.0, 30.0).unwrap();
         assert!(p.max_slope_deg > 20.0);
-        assert!(!profile_passes(&p, DEFAULT_MAX_HIKE_M, 5.0));
+        assert!(!profile_passes(&p, 5.0));
     }
 
     #[test]
     fn calibrated_ceiling_accepts_profile_at_or_below() {
         let ramp = SteepRamp { base_lat: 38.0 };
         let p = profile_hike(&ramp, 38.0, -117.0, 38.003, -117.0, 30.0).unwrap();
-        assert!(p.hike_m_3d <= DEFAULT_MAX_HIKE_M);
         let ceiling = p.max_slope_deg;
-        assert!(profile_passes(&p, DEFAULT_MAX_HIKE_M, ceiling));
-        assert!(!profile_passes(&p, DEFAULT_MAX_HIKE_M, ceiling - 2.0));
+        assert!(profile_passes(&p, ceiling));
+        assert!(!profile_passes(&p, ceiling - 2.0));
     }
 
     #[test]
@@ -562,11 +631,87 @@ mod tests {
         assert!(haversine_m(38.0, -117.0, lat, -117.0) <= DEFAULT_SUMMIT_SNAP_M + 30.0);
     }
 
+    struct ConeBump {
+        peak_lat: f64,
+        peak_lon: f64,
+        peak_elev: f64,
+        drop_per_m: f64,
+    }
+
+    impl HikeSampleElev for ConeBump {
+        fn sample_elev_m(&self, lat: f64, lon: f64) -> f64 {
+            let d = haversine_m(lat, lon, self.peak_lat, self.peak_lon);
+            self.peak_elev - self.drop_per_m * d
+        }
+    }
+
     #[test]
-    fn long_hike_fails_half_mile_cap() {
+    fn hill_climb_reaches_crest_from_slope_seed() {
+        let cone = ConeBump {
+            peak_lat: 38.0,
+            peak_lon: -117.0,
+            peak_elev: 2200.0,
+            drop_per_m: 1.0,
+        };
+        let seed_lat = 38.0 + 0.0012;
+        let seed_lon = -117.0;
+        let (lat, lon, elev) = snap_to_dem_local_max_filtered(
+            &cone,
+            seed_lat,
+            seed_lon,
+            DEFAULT_SUMMIT_SNAP_M,
+            15.0,
+            |_, _| true,
+        )
+        .unwrap();
+        assert!((elev - 2200.0).abs() < 20.0);
+        assert!(haversine_m(lat, lon, cone.peak_lat, cone.peak_lon) < 25.0);
+        assert!(haversine_m(seed_lat, seed_lon, lat, lon) > 80.0);
+    }
+
+    #[test]
+    fn hill_climb_skips_ineligible_crest() {
+        let cone = ConeBump {
+            peak_lat: 38.0,
+            peak_lon: -117.0,
+            peak_elev: 2400.0,
+            drop_per_m: 1.0,
+        };
+        let seed_lat = 38.0 + 0.0012;
+        let seed_lon = -117.0;
+        let crest_ineligible =
+            |lat: f64, lon: f64| haversine_m(lat, lon, cone.peak_lat, cone.peak_lon) > 50.0;
+        let (lat, lon, _elev) = snap_to_dem_local_max_filtered(
+            &cone,
+            seed_lat,
+            seed_lon,
+            DEFAULT_SUMMIT_SNAP_M,
+            15.0,
+            crest_ineligible,
+        )
+        .unwrap();
+        assert!(haversine_m(lat, lon, cone.peak_lat, cone.peak_lon) > 45.0);
+        assert!(haversine_m(lat, lon, cone.peak_lat, cone.peak_lon) < 80.0);
+    }
+
+    #[test]
+    fn neighbor_prominence_rejects_playa_bump() {
+        let flat = FlatElev(902.8);
+        assert!(neighbor_prominence_m(&flat, 36.37, -115.36, 30.0) < 1.0);
+        let cone = ConeBump {
+            peak_lat: 38.0,
+            peak_lon: -117.0,
+            peak_elev: 2200.0,
+            drop_per_m: 1.0,
+        };
+        assert!(neighbor_prominence_m(&cone, 38.0, -117.0, 30.0) >= 20.0);
+    }
+
+    #[test]
+    fn long_chord_exceeds_proximity_only_cap() {
         let flat = FlatElev(2000.0);
         let p = profile_hike(&flat, 38.0, -117.0, 38.05, -117.0, 30.0).unwrap();
         assert!(p.hike_m_3d > DEFAULT_MAX_HIKE_M);
-        assert!(!profile_passes(&p, DEFAULT_MAX_HIKE_M, 90.0));
+        assert!(profile_passes(&p, 90.0));
     }
 }

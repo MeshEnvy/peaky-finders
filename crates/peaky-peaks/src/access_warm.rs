@@ -15,9 +15,10 @@ use peaky_preset::{
 };
 use splatter::Session;
 
-use crate::hike::{profile_hike_detailed, stored_peak_hike, HikeSampleElev};
+use crate::hike::{default_max_slope_deg, stored_peak_hike, HikeSampleElev};
 use crate::jeep::{profile_along_polyline, route_jeep_detailed, stored_peak_jeep};
 use crate::osm::{build_osm_routing, ensure_osm_pbf, OsmRouting, OsmRoutingOpts};
+use crate::park::{nearest_park_hike, select_park_and_hike};
 
 struct SessionElev<'a>(&'a Session);
 
@@ -40,12 +41,34 @@ pub fn compute_place_access(
     lon: f64,
 ) -> Option<PlaceAccess> {
     let elev = SessionElev(session);
-    let (road_lat, road_lon, _road_m) =
-        routing
-            .jeep_roads
-            .nearest_within(lat, lon, meta.place_road_search_m)?;
-    let hike_detail =
-        profile_hike_detailed(&elev, road_lat, road_lon, lat, lon, meta.profile_sample_m)?;
+    let park_search = meta.hike_path_max_m.min(meta.place_road_search_m);
+    let picked = select_park_and_hike(
+        &elev,
+        &routing.jeep_roads,
+        Some(&routing.paved),
+        lat,
+        lon,
+        park_search,
+        default_max_slope_deg(),
+        meta.hike_path_max_m,
+        meta.profile_sample_m,
+        false,
+    )
+    .or_else(|| {
+        nearest_park_hike(
+            &elev,
+            &routing.jeep_roads,
+            Some(&routing.paved),
+            lat,
+            lon,
+            meta.place_road_search_m,
+            default_max_slope_deg(),
+            meta.hike_path_max_m,
+            meta.profile_sample_m,
+            false,
+        )
+    })?;
+    let (road_lat, road_lon, hike_detail) = (picked.road_lat, picked.road_lon, picked.hike);
     let jeep_route = route_jeep_detailed(
         &routing.graph,
         &routing.paved,
@@ -96,9 +119,7 @@ pub fn warm_place_access(
     lat: f64,
     lon: f64,
 ) -> Result<Option<PlaceAccess>> {
-    let project_dir = config_path
-        .parent()
-        .context("config path has no parent")?;
+    let project_dir = config_path.parent().context("config path has no parent")?;
     let meta = ensure_access_meta(config_path)?;
     let opts = OsmRoutingOpts::from(&meta);
     // ~0.5° pad (~55 km) for jeep routing around the site.
@@ -116,9 +137,7 @@ pub fn warm_place_access_with_routing(
     lat: f64,
     lon: f64,
 ) -> Result<Option<PlaceAccess>> {
-    let project_dir = config_path
-        .parent()
-        .context("config path has no parent")?;
+    let project_dir = config_path.parent().context("config path has no parent")?;
     session
         .ensure_tiles_for_points(&[(lat, lon)], meta.place_road_search_m)
         .context("preload DEM for access warm")?;

@@ -924,6 +924,7 @@ fn tile_local_maxima_from_usable(
             }
             let z = tile.elevations[iy * n + ix];
             let mut is_peak = true;
+            let mut max_drop = 0.0_f64;
             for dy in -1i32..=1 {
                 for dx in -1i32..=1 {
                     if dy == 0 && dx == 0 {
@@ -934,16 +935,20 @@ fn tile_local_maxima_from_usable(
                     if !usable[ny][nx] {
                         continue;
                     }
-                    if tile.elevations[ny * n + nx] >= z {
+                    let nz = tile.elevations[ny * n + nx];
+                    if nz > z {
                         is_peak = false;
                         break;
+                    }
+                    if nz < z {
+                        max_drop = max_drop.max(f64::from(z - nz));
                     }
                 }
                 if !is_peak {
                     break;
                 }
             }
-            if !is_peak {
+            if !is_peak || max_drop < MIN_PEAK_PROMINENCE_M {
                 continue;
             }
             let lat = north - (iy as f64 + 0.5) * spacing;
@@ -1414,6 +1419,35 @@ mod tests {
         let peaks = tile_local_maxima(&tile, &land, None, false, "test-tile", None).expect("peaks");
         assert!(!peaks.is_empty());
         assert!(peaks.iter().any(|p| (p.elev_m - 2000.0).abs() < f64::EPSILON));
+    }
+
+    #[test]
+    fn playa_bump_below_prominence_is_rejected() {
+        let n = 5usize;
+        let mut elevations = vec![1000i16; n * n];
+        elevations[2 * n + 2] = 1001;
+        let tile = DemTile {
+            sw_lat: 36.0,
+            sw_lon: -115.0,
+            n,
+            elevations,
+        };
+        let poly: MultiPolygon = MultiPolygon(vec![Polygon::new(
+            geo::LineString(vec![
+                coord! { x: -116.0, y: 35.0 },
+                coord! { x: -114.0, y: 35.0 },
+                coord! { x: -114.0, y: 37.0 },
+                coord! { x: -116.0, y: 37.0 },
+                coord! { x: -116.0, y: 35.0 },
+            ]),
+            vec![],
+        )]);
+        let land = LandFilterIndex::from_multipolygon(&poly);
+        let peaks = tile_local_maxima(&tile, &land, None, false, "playa-tile", None).expect("peaks");
+        assert!(
+            peaks.is_empty(),
+            "1 m playa bump must not be a catalog peak, got {peaks:?}"
+        );
     }
 
     #[test]

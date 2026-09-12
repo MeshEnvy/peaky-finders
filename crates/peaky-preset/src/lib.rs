@@ -2,6 +2,7 @@
 
 pub mod access;
 pub mod compute_key;
+pub mod difficulty;
 pub mod home;
 pub mod init;
 pub mod io;
@@ -26,6 +27,10 @@ pub use access::{
     access_dir, access_meta_path, access_path, delete_access, ensure_access_meta,
     list_access_slugs, load_access, load_access_meta, upsert_access,
 };
+pub use difficulty::{
+    difficulty_label, hike_difficulty, jeep_class_reason, jeep_difficulty, jeep_road_rank,
+    worse_difficulty, JeepClassReason, HIKE_AVG_MIN_HORIZ_M,
+};
 pub use compute_key::{
     access_compute_key, peak_access_compute_key, peak_row_compute_key, place_access_compute_key,
     place_access_has_profiles, place_access_is_fresh, ACCESS_ALGO_VERSION, ACCESS_PROFILE_SAMPLE_M,
@@ -33,9 +38,12 @@ pub use compute_key::{
 };
 
 pub use peaks::{
-    clean_peaks_catalog, denied_slugs, delete_peak, list_peak_slugs, load_peak, load_peaks_catalog,
-    peaks_catalog_path, peaks_dir, place_slugs, preserve_denied_entries, upsert_peak,
-    upsert_peak_with_access, write_peaks_catalog,
+    build_peaks_list_json, clean_peaks_catalog, denied_slugs, delete_peak, invalidate_peaks_list_cache,
+    list_peak_slugs, load_peak, load_peak_thin, load_peaks_catalog, load_peaks_catalog_thin,
+    load_peaks_rules, peaks_catalog_path, peaks_dir, peaks_list_cache_path, peaks_list_fingerprint,
+    place_slugs, preserve_denied_entries, prune_orphan_access, read_peaks_list_disk_cache,
+    upsert_peak, upsert_peak_with_access, write_peaks_catalog, write_peaks_list_disk_cache,
+    PEAKS_LIST_CACHE_VERSION,
 };
 pub use io::{
     delete_land_source, import_land_source, insert_preset_site, land_source_id_for_path,
@@ -54,7 +62,7 @@ pub use model::{
     LandSidebar, LandSidebarFolder, LandSourceEntry, LandSourceRefresh, AccessMeta, PeakAccessRules,
     PeakCatalogEntry, PeakHikeGradeBucket, PeakHikeProfile, PeakHikeProfilePoint,
     PeakJeepProfile, PeakJeepProfilePoint, PeakJeepRoadSegment, PeaksCatalog, PlaceAccess,
-    DEFAULT_MAX_JEEP_M, DEFAULT_PLACE_ROAD_SEARCH_M,
+    DEFAULT_MAX_JEEP_M, DEFAULT_HIKE_PATH_MAX_M, DEFAULT_PLACE_ROAD_SEARCH_M,
     Preset, PresetResult, PresetValidationError, SeekConfig,
     SeekPlan, SeekPlanHop, SimulationConfig,
     SimulationMaxWorkers, SiteEntry, ViewshedPolygonStyle, DEFAULT_COVERAGE_MAX_WORKERS,

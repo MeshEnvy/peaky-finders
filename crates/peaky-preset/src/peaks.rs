@@ -8,7 +8,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
-use crate::access::{delete_access, load_access, load_access_meta, upsert_access};
+use crate::access::{
+    delete_access, list_access_slugs, load_access, load_access_meta, upsert_access,
+};
 use crate::model::{PeakAccessRules, PeakCatalogEntry, PeaksCatalog};
 use crate::project::ProjectLayout;
 use crate::yaml_io::{read_preset_document, write_preset_value};
@@ -74,7 +76,8 @@ pub fn list_peak_slugs(config_path: &Path) -> Result<Vec<String>> {
     Ok(slugs)
 }
 
-pub fn load_peak(config_path: &Path, slug: &str) -> Result<Option<PeakCatalogEntry>> {
+/// Parse `peaks/<slug>.yaml` only (no `access/` merge).
+pub fn load_peak_thin(config_path: &Path, slug: &str) -> Result<Option<PeakCatalogEntry>> {
     let path = ProjectLayout::from_config_path(config_path)?.peak_entry_path(slug);
     if !path.is_file() {
         return Ok(None);
@@ -82,8 +85,13 @@ pub fn load_peak(config_path: &Path, slug: &str) -> Result<Option<PeakCatalogEnt
     let doc = read_preset_document(&path)?;
     let entry: PeakCatalogEntry =
         serde_yaml::from_value(Value::Mapping(doc)).context("parse peak yaml")?;
-    // Peak files are thin; join access/ so in-memory catalog keeps hike/jeep paths.
-    let entry = entry.thin();
+    Ok(Some(entry.thin()))
+}
+
+pub fn load_peak(config_path: &Path, slug: &str) -> Result<Option<PeakCatalogEntry>> {
+    let Some(entry) = load_peak_thin(config_path, slug)? else {
+        return Ok(None);
+    };
     if let Some(access) = load_access(config_path, slug)? {
         return Ok(Some(entry.with_access(&access)));
     }
@@ -124,6 +132,11 @@ fn load_peaks_meta(config_path: &Path) -> Result<PeaksMeta> {
     serde_yaml::from_value(Value::Mapping(doc)).context("parse peaks/_meta.yaml")
 }
 
+/// Eligibility rules from `peaks/_meta.yaml` (one file; no catalog walk).
+pub fn load_peaks_rules(config_path: &Path) -> Result<PeakAccessRules> {
+    Ok(load_peaks_meta(config_path)?.rules)
+}
+
 /// Greenfield: ignore and delete leftover monolithic ``peaks.yaml`` (never migrate).
 fn scrap_monolith_peaks_yaml(config_path: &Path) -> Result<()> {
     let path = ProjectLayout::from_config_path(config_path)?.project_dir.join("peaks.yaml");
@@ -134,7 +147,10 @@ fn scrap_monolith_peaks_yaml(config_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn load_peaks_catalog(config_path: &Path) -> Result<PeaksCatalog> {
+fn load_peaks_catalog_with(
+    config_path: &Path,
+    loader: fn(&Path, &str) -> Result<Option<PeakCatalogEntry>>,
+) -> Result<PeaksCatalog> {
     scrap_monolith_peaks_yaml(config_path)?;
     let layout = ProjectLayout::from_config_path(config_path)?;
     if !layout.uses_sharded_peaks() {
@@ -143,7 +159,7 @@ pub fn load_peaks_catalog(config_path: &Path) -> Result<PeaksCatalog> {
     let meta = load_peaks_meta(config_path)?;
     let mut entries = HashMap::new();
     for slug in list_peak_slugs(config_path)? {
-        if let Some(entry) = load_peak(config_path, &slug)? {
+        if let Some(entry) = loader(config_path, &slug)? {
             entries.insert(slug, entry);
         }
     }
@@ -152,6 +168,133 @@ pub fn load_peaks_catalog(config_path: &Path) -> Result<PeaksCatalog> {
         rules: meta.rules,
         entries,
     })
+}
+
+/// Thin peak rows only (no access profile merge). Use for list APIs.
+pub fn load_peaks_catalog_thin(config_path: &Path) -> Result<PeaksCatalog> {
+    load_peaks_catalog_with(config_path, load_peak_thin)
+}
+
+pub fn load_peaks_catalog(config_path: &Path) -> Result<PeaksCatalog> {
+    load_peaks_catalog_with(config_path, load_peak)
+}
+
+fn listed_hike_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
+    match (entry.hike_m, entry.max_slope_deg) {
+        (Some(hike_m), Some(max_deg)) if hike_m < crate::difficulty::HIKE_AVG_MIN_HORIZ_M => {
+            let max_grade = max_deg.to_radians().tan() * 100.0;
+            Some(crate::difficulty::hike_difficulty(max_grade, 0.0, hike_m).to_string())
+        }
+        _ => entry.hike_difficulty.clone(),
+    }
+}
+
+/// List API payload: deny-filtered scalars, no hike/jeep blobs.
+pub fn build_peaks_list_json(catalog: &PeaksCatalog) -> serde_json::Value {
+    let mut peaks: Vec<serde_json::Value> = catalog
+        .entries
+        .iter()
+        .filter(|(_, entry)| !entry.deny.unwrap_or(false))
+        .map(|(slug, entry)| {
+            let hike_diff = listed_hike_difficulty(entry);
+            let jeep_diff = entry.jeep_difficulty.clone();
+            let access_diff = match (&hike_diff, &jeep_diff) {
+                (Some(h), Some(j)) => Some(crate::difficulty::worse_difficulty(h, j).to_string()),
+                (Some(h), None) => Some(h.clone()),
+                (None, Some(j)) => Some(j.clone()),
+                (None, None) => None,
+            };
+            serde_json::json!({
+                "slug": slug,
+                "name": entry.name,
+                "lat": entry.lat(),
+                "lon": entry.lon(),
+                "elev_m": entry.elev_m,
+                "source": entry.source,
+                "road_m": entry.road_m,
+                "road_lat": entry.road_loc.map(|loc| loc[0]),
+                "road_lon": entry.road_loc.map(|loc| loc[1]),
+                "hike_m": entry.hike_m,
+                "max_slope_deg": entry.max_slope_deg,
+                "paved_lat": entry.paved_loc.map(|loc| loc[0]),
+                "paved_lon": entry.paved_loc.map(|loc| loc[1]),
+                "jeep_m": entry.jeep_m,
+                "hike_difficulty": hike_diff,
+                "jeep_difficulty": jeep_diff,
+                "access_difficulty": access_diff,
+                "compute_key": entry.compute_key,
+            })
+        })
+        .collect();
+    peaks.sort_by(|a, b| {
+        a.get("slug")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .cmp(b.get("slug").and_then(|v| v.as_str()).unwrap_or(""))
+    });
+    serde_json::json!({
+        "generated_at": catalog.generated_at,
+        "rules": catalog.rules,
+        "peaks": peaks,
+    })
+}
+
+pub const PEAKS_LIST_CACHE_VERSION: u32 = 3;
+
+pub fn peaks_list_cache_path(config_path: &Path) -> std::path::PathBuf {
+    crate::paths::resolved_preset_cache_dir(config_path).join("peaks/list.json")
+}
+
+pub fn peaks_list_fingerprint(config_path: &Path) -> Result<String> {
+    let meta = load_peaks_meta(config_path)?;
+    let n = list_peak_slugs(config_path)?.len();
+    Ok(format!(
+        "{}:{}:{}",
+        meta.generated_at, n, PEAKS_LIST_CACHE_VERSION
+    ))
+}
+
+pub fn write_peaks_list_disk_cache(config_path: &Path, catalog: &PeaksCatalog) -> Result<()> {
+    let path = peaks_list_cache_path(config_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create peaks list cache dir: {}", parent.display()))?;
+    }
+    let fingerprint = format!(
+        "{}:{}:{}",
+        catalog.generated_at,
+        catalog.entries.len(),
+        PEAKS_LIST_CACHE_VERSION
+    );
+    let wire = serde_json::json!({
+        "fingerprint": fingerprint,
+        "payload": build_peaks_list_json(catalog),
+    });
+    let tmp = path.with_extension("json.tmp");
+    fs::write(
+        &tmp,
+        serde_json::to_vec(&wire).context("serialize peaks list cache")?,
+    )
+    .with_context(|| format!("write {}", tmp.display()))?;
+    fs::rename(&tmp, &path).with_context(|| format!("rename {}", path.display()))?;
+    Ok(())
+}
+
+pub fn read_peaks_list_disk_cache(
+    config_path: &Path,
+    fingerprint: &str,
+) -> Option<serde_json::Value> {
+    let path = peaks_list_cache_path(config_path);
+    let raw = fs::read_to_string(&path).ok()?;
+    let wire: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    if wire.get("fingerprint")?.as_str()? != fingerprint {
+        return None;
+    }
+    wire.get("payload").cloned()
+}
+
+pub fn invalidate_peaks_list_cache(config_path: &Path) {
+    let _ = fs::remove_file(peaks_list_cache_path(config_path));
 }
 
 /// Upsert one peak row + its access file (profiles extracted from the entry).
@@ -208,7 +351,7 @@ pub fn upsert_peak_with_access(
             peak_meta.rules.max_hike_m,
         ));
     }
-    upsert_peak(config_path, slug, entry)?;
+    upsert_peak(config_path, slug, &entry.with_access(&access))?;
     if access.jeep.is_some()
         || access.hike.is_some()
         || access.paved_loc.is_some()
@@ -284,6 +427,31 @@ pub fn denied_slugs(catalog: &PeaksCatalog) -> HashMap<String, PeakCatalogEntry>
         .collect()
 }
 
+/// Delete `access/<slug>.yaml` when slug is neither a peak nor a site.
+pub fn prune_orphan_access(config_path: &Path) -> Result<usize> {
+    let peak_slugs: HashSet<String> = list_peak_slugs(config_path)?.into_iter().collect();
+    let mut site_slugs = HashSet::new();
+    let layout = ProjectLayout::from_config_path(config_path)?;
+    if let Ok(merged) = crate::project::read_merged_document(&layout) {
+        if let Some(Value::Mapping(sites)) = merged.get(&yaml_key("sites")) {
+            for key in sites.keys() {
+                if let Some(s) = key.as_str() {
+                    site_slugs.insert(s.to_string());
+                }
+            }
+        }
+    }
+    let mut n = 0usize;
+    for slug in list_access_slugs(config_path)? {
+        if peak_slugs.contains(&slug) || site_slugs.contains(&slug) {
+            continue;
+        }
+        delete_access(config_path, &slug)?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 /// All place slugs that must stay unique: sites ∪ peaks.
 pub fn place_slugs(config_path: &Path) -> Result<HashSet<String>> {
     let mut out = HashSet::new();
@@ -330,6 +498,8 @@ mod tests {
                     paved_loc: Some([37.99, -117.02]),
                     jeep_m: Some(1500.0),
                     jeep: None,
+                    hike_difficulty: None,
+                    jeep_difficulty: None,
                     deny: None,
                 },
             )]),
@@ -404,6 +574,8 @@ peaks:
             paved_loc: Some([37.99, -117.02]),
             jeep_m: Some(1500.0),
             jeep: None,
+            hike_difficulty: None,
+            jeep_difficulty: None,
             deny: None,
         };
         upsert_peak_with_access(&config, "peak-test", &entry).unwrap();
@@ -447,6 +619,8 @@ peaks:
                 paved_loc: None,
                 jeep_m: None,
                 jeep: None,
+                hike_difficulty: None,
+                jeep_difficulty: None,
                 deny: Some(true),
             },
         );
@@ -471,6 +645,8 @@ peaks:
                 paved_loc: None,
                 jeep_m: None,
                 jeep: None,
+                hike_difficulty: None,
+                jeep_difficulty: None,
                 deny: None,
             },
         );
@@ -479,5 +655,126 @@ peaks:
         assert!(next.entries.contains_key("skip-ridge"));
         assert!(next.entries.contains_key("good-peak"));
         assert_eq!(next.entries["skip-ridge"].deny, Some(true));
+    }
+
+    #[test]
+    fn load_peak_thin_skips_access_profiles() {
+        use crate::model::{PeakHikeProfile, PeakHikeProfilePoint};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.yaml");
+        std::fs::write(&config, "simulation:\n  radius_km: 50\n").unwrap();
+        let entry = PeakCatalogEntry {
+            name: Some("Test".into()),
+            loc: [38.0, -117.0],
+            elev_m: Some(2100.0),
+            source: "dem".into(),
+            compute_key: None,
+            road_m: Some(120.0),
+            road_loc: Some([38.01, -117.0]),
+            hike_m: Some(80.0),
+            max_slope_deg: Some(12.0),
+            hike: Some(PeakHikeProfile {
+                hike_m_3d: 80.0,
+                horiz_m: 75.0,
+                gain_m: 10.0,
+                loss_m: 0.0,
+                max_slope_deg: 12.0,
+                max_grade_pct: 20.0,
+                avg_grade_pct: 5.0,
+                difficulty: "easy".into(),
+                profile: vec![PeakHikeProfilePoint {
+                    dist_m: 0.0,
+                    elev_m: 2000.0,
+                    lat: 38.01,
+                    lon: -117.0,
+                }],
+                histogram: vec![],
+            }),
+            paved_loc: None,
+            jeep_m: None,
+            jeep: None,
+            hike_difficulty: None,
+            jeep_difficulty: None,
+            deny: None,
+        };
+        upsert_peak_with_access(&config, "peak-test", &entry).unwrap();
+        let thin = load_peak_thin(&config, "peak-test").unwrap().unwrap();
+        assert!(thin.hike.is_none());
+        assert_eq!(thin.hike_difficulty.as_deref(), Some("difficult"));
+        let joined = load_peak(&config, "peak-test").unwrap().unwrap();
+        assert!(joined.hike.is_some());
+        let catalog = load_peaks_catalog_thin(&config).unwrap();
+        assert!(catalog.entries["peak-test"].hike.is_none());
+    }
+
+    #[test]
+    fn prune_orphan_access_keeps_site_and_peak() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.yaml");
+        std::fs::write(
+            &config,
+            "simulation:\n  radius_km: 50\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("sites.yaml"),
+            "sites:\n  foo:\n    name: Foo\n    loc: [38.0, -117.0]\n",
+        )
+        .unwrap();
+        let peak = PeakCatalogEntry {
+            name: Some("Peak".into()),
+            loc: [38.1, -117.1],
+            elev_m: Some(2000.0),
+            source: "dem".into(),
+            compute_key: None,
+            road_m: None,
+            road_loc: Some([38.1, -117.11]),
+            hike_m: Some(10.0),
+            max_slope_deg: Some(5.0),
+            hike: None,
+            paved_loc: None,
+            jeep_m: None,
+            jeep: None,
+            hike_difficulty: None,
+            jeep_difficulty: None,
+            deny: None,
+        };
+        upsert_peak_with_access(&config, "kept-peak", &peak).unwrap();
+        upsert_access(
+            &config,
+            "foo",
+            &crate::model::PlaceAccess {
+                compute_key: None,
+                paved_loc: None,
+                road_loc: Some([38.0, -117.01]),
+                jeep_m: None,
+                jeep: None,
+                hike_m: Some(20.0),
+                hike: None,
+                max_slope_deg: None,
+            },
+        )
+        .unwrap();
+        upsert_access(
+            &config,
+            "ghost",
+            &crate::model::PlaceAccess {
+                compute_key: None,
+                paved_loc: None,
+                road_loc: Some([39.0, -117.0]),
+                jeep_m: None,
+                jeep: None,
+                hike_m: None,
+                hike: None,
+                max_slope_deg: None,
+            },
+        )
+        .unwrap();
+        let n = prune_orphan_access(&config).unwrap();
+        assert_eq!(n, 1);
+        assert!(load_access(&config, "ghost").unwrap().is_none());
+        assert!(load_access(&config, "foo").unwrap().is_some());
+        assert!(load_access(&config, "kept-peak").unwrap().is_some());
     }
 }

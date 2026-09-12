@@ -224,6 +224,9 @@ pub const DEFAULT_ACCESS_PROFILE_SAMPLE_M: f64 = 30.0;
 /// Default OSM jeep-road sample spacing when indexing the PBF (meters).
 pub const DEFAULT_OSM_ROAD_SAMPLE_STEP_M: f64 = 40.0;
 
+/// Max 3D length for a grade-safe DEM hike path (1 mi). Crow-flies park→summit may be shorter.
+pub const DEFAULT_HIKE_PATH_MAX_M: f64 = 1609.0;
+
 impl Default for PeakAccessRules {
     fn default() -> Self {
         Self {
@@ -239,10 +242,10 @@ impl Default for PeakAccessRules {
 
 /// Bump when hike/jeep routing or DEM profile semantics change (forces recompute).
 /// Written into ``access/_meta.yaml`` as ``algo_version``.
-pub const ACCESS_ALGO_VERSION: u32 = 1;
+pub const ACCESS_ALGO_VERSION: u32 = 7;
 
 /// Bump when peak eligibility / summit snap / universe filter semantics change.
-pub const PEAK_ALGO_VERSION: u32 = 1;
+pub const PEAK_ALGO_VERSION: u32 = 5;
 
 /// Pathfinding settings in ``access/_meta.yaml`` (jeep/hike routing + algo stamp).
 ///
@@ -260,6 +263,13 @@ pub struct AccessMeta {
     pub paved_highways: Vec<String>,
     /// How far site/place warm searches for a jeep-class park point.
     pub place_road_search_m: f64,
+    /// Max 3D length for a grade-safe DEM hike path (may exceed crow-flies proximity).
+    #[serde(default = "default_hike_path_max_m")]
+    pub hike_path_max_m: f64,
+}
+
+fn default_hike_path_max_m() -> f64 {
+    DEFAULT_HIKE_PATH_MAX_M
 }
 
 impl Default for AccessMeta {
@@ -272,6 +282,7 @@ impl Default for AccessMeta {
             road_highways: default_jeep_highways(),
             paved_highways: default_paved_highways(),
             place_road_search_m: DEFAULT_PLACE_ROAD_SEARCH_M,
+            hike_path_max_m: DEFAULT_HIKE_PATH_MAX_M,
         }
     }
 }
@@ -410,6 +421,12 @@ pub struct PeakCatalogEntry {
     /// Full jeep profile — carried in-memory / via ``access/``; omitted from thin peak rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jeep: Option<PeakJeepProfile>,
+    /// Hike rating (grade). Stored on the thin row for map pin color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hike_difficulty: Option<String>,
+    /// Jeep rating (OSM road class). Stored on the thin row for map pin color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jeep_difficulty: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deny: Option<bool>,
 }
@@ -453,6 +470,17 @@ impl PeakCatalogEntry {
             paved_loc: self.paved_loc,
             jeep_m: self.jeep_m,
             jeep: None,
+            hike_difficulty: self.hike_difficulty.clone().or_else(|| {
+                self.hike.as_ref().map(|h| {
+                    crate::difficulty::hike_difficulty(h.max_grade_pct, h.avg_grade_pct, h.horiz_m)
+                        .to_string()
+                })
+            }),
+            jeep_difficulty: self.jeep_difficulty.clone().or_else(|| {
+                self.jeep
+                    .as_ref()
+                    .map(|j| crate::difficulty::jeep_difficulty(&j.segments).to_string())
+            }),
             deny: self.deny,
         }
     }
@@ -473,6 +501,19 @@ impl PeakCatalogEntry {
             paved_loc: access.paved_loc.or(self.paved_loc),
             jeep_m: access.jeep_m.or(self.jeep_m),
             jeep: access.jeep.clone().or_else(|| self.jeep.clone()),
+            hike_difficulty: access
+                .hike
+                .as_ref()
+                .map(|h| {
+                    crate::difficulty::hike_difficulty(h.max_grade_pct, h.avg_grade_pct, h.horiz_m)
+                        .to_string()
+                })
+                .or_else(|| self.hike_difficulty.clone()),
+            jeep_difficulty: access
+                .jeep
+                .as_ref()
+                .map(|j| crate::difficulty::jeep_difficulty(&j.segments).to_string())
+                .or_else(|| self.jeep_difficulty.clone()),
             deny: self.deny,
         }
     }

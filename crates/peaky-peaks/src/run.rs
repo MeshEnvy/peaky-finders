@@ -13,9 +13,10 @@ use peaky_geo::{
 use peaky_preset::LandLayerRole;
 use peaky_preset::{
     clean_peaks_catalog, ensure_access_meta, load_peaks_catalog, load_preset, peak_row_compute_key,
-    place_slugs, preserve_denied_entries, upsert_peak_with_access, write_peaks_catalog,
-    PeakAccessRules, PeakCatalogEntry, PeakHikeProfile, PeakJeepProfile, PeaksCatalog, Preset,
-    resolved_dem_fetch_max_workers, resolved_skadi_mirror_dir_for_project,
+    place_slugs, preserve_denied_entries, prune_orphan_access, resolved_dem_fetch_max_workers,
+    resolved_skadi_mirror_dir_for_project, upsert_peak_with_access, write_peaks_catalog,
+    write_peaks_list_disk_cache, PeakAccessRules, PeakCatalogEntry, PeakHikeProfile,
+    PeakJeepProfile, PeaksCatalog, Preset,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -31,12 +32,14 @@ use crate::corridor::{
 };
 use crate::gnis::load_gnis_candidates;
 use crate::hike::{
-    default_max_slope_deg, format_hike_report, haversine_m, profile_hike, profile_hike_detailed,
-    profile_passes, snap_to_local_summit_filtered, stored_peak_hike, HikeProfile, HikeSampleElev,
-    DEFAULT_MAX_HIKE_M, DEFAULT_MAX_SLOPE_GRADE_PCT, DEFAULT_SUMMIT_SNAP_M,
+    default_max_slope_deg, format_hike_report, haversine_m, neighbor_prominence_m, profile_hike,
+    profile_passes, snap_to_dem_local_max_filtered, stored_peak_hike, HikeProfile,
+    HikeProfileDetailed, HikeSampleElev, DEFAULT_MAX_HIKE_M, DEFAULT_MAX_SLOPE_GRADE_PCT,
+    DEFAULT_SUMMIT_SNAP_M,
 };
 use crate::jeep::{profile_along_polyline, route_jeep_detailed, stored_peak_jeep};
 use crate::osm::{build_osm_routing, ensure_osm_pbf, OsmRouting};
+use crate::park::select_park_and_hike;
 use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candidate, RawCandidate};
 
 const SITE_DEDUP_M: f64 = 300.0;
@@ -68,6 +71,7 @@ struct FilterPass {
     hike_m_3d: f64,
     max_slope_deg: f64,
     hike: PeakHikeProfile,
+    hike_detail: HikeProfileDetailed,
     paved_lat: f64,
     paved_lon: f64,
     jeep_m: f64,
@@ -147,17 +151,18 @@ fn filter_candidate(
     site_locs: &[(f64, f64)],
     rules: &PeakAccessRules,
     profile_sample_m: f64,
+    hike_path_max_m: f64,
 ) -> Result<FilterPass, FilterDrop> {
     if is_near_any_site(cand.lat, cand.lon, site_locs, SITE_DEDUP_M) {
         return Err(FilterDrop::SiteDedup);
     }
     let elev = SessionElev(session);
-    let Some((peak_lat, peak_lon, peak_elev)) = snap_to_local_summit_filtered(
+    let Some((peak_lat, peak_lon, peak_elev)) = snap_to_dem_local_max_filtered(
         &elev,
         cand.lat,
         cand.lon,
         DEFAULT_SUMMIT_SNAP_M,
-        30.0,
+        15.0,
         |lat, lon| land.contains(lon, lat),
     ) else {
         return Err(FilterDrop::Land);
@@ -165,35 +170,44 @@ fn filter_candidate(
     if !point_in_region(scan_region, peak_lat, peak_lon) {
         return Err(FilterDrop::Region);
     }
-    let Some((road_lat, road_lon, road_m)) = routing
+    if cand.source == "dem"
+        && neighbor_prominence_m(&elev, peak_lat, peak_lon, 30.0)
+            < splatter::peaks::MIN_PEAK_PROMINENCE_M
+    {
+        return Err(FilterDrop::Land);
+    }
+    let jeep_near = routing
         .jeep_roads
-        .nearest_within(peak_lat, peak_lon, rules.max_hike_m)
-    else {
+        .nearest_within(peak_lat, peak_lon, rules.max_hike_m);
+    let paved_near = routing
+        .paved
+        .nearest_within(peak_lat, peak_lon, rules.max_hike_m);
+    if jeep_near.is_none() && paved_near.is_none() {
         return Err(FilterDrop::Road);
-    };
-    let Some(detail) = profile_hike_detailed(
+    }
+    let Some(picked) = select_park_and_hike(
         &elev,
-        road_lat,
-        road_lon,
+        &routing.jeep_roads,
+        Some(&routing.paved),
         peak_lat,
         peak_lon,
+        hike_path_max_m,
+        rules.max_slope_deg,
+        hike_path_max_m,
         profile_sample_m,
+        true,
     ) else {
-        return Err(FilterDrop::Hike);
+        return Err(FilterDrop::Slope);
     };
+    let (road_lat, road_lon, road_m, detail) =
+        (picked.road_lat, picked.road_lon, picked.road_m, picked.hike);
     let profile = HikeProfile {
         hike_m_3d: detail.hike_m_3d,
         max_slope_deg: detail.max_slope_deg,
         n_samples: detail.profile.len(),
     };
-    if profile.hike_m_3d > rules.max_hike_m + 1.0 {
-        return Err(FilterDrop::Hike);
-    }
-    if profile.max_slope_deg > rules.max_slope_deg + 0.5 {
+    if !profile_passes(&profile, rules.max_slope_deg) {
         return Err(FilterDrop::Slope);
-    }
-    if !profile_passes(&profile, rules.max_hike_m, rules.max_slope_deg) {
-        return Err(FilterDrop::Hike);
     }
     let hike = stored_peak_hike(&detail);
     let jeep_route = route_jeep_detailed(
@@ -223,6 +237,7 @@ fn filter_candidate(
         hike_m_3d: profile.hike_m_3d,
         max_slope_deg: profile.max_slope_deg,
         hike,
+        hike_detail: detail,
         paved_lat: jeep_route.paved_lat,
         paved_lon: jeep_route.paved_lon,
         jeep_m: jeep_detail.horiz_m,
@@ -236,9 +251,7 @@ pub fn build_peaks_catalog(
 ) -> Result<PeaksBuildSummary> {
     let t0 = Instant::now();
     let preset = load_preset(preset_path).context("load preset")?;
-    let project_dir = preset_path
-        .parent()
-        .context("preset path has no parent")?;
+    let project_dir = preset_path.parent().context("preset path has no parent")?;
 
     let (bbox, scan_region) = resolve_scan(preset_path, &preset, &opts)?;
     match &scan_region {
@@ -271,12 +284,7 @@ pub fn build_peaks_catalog(
     let access_meta = ensure_access_meta(preset_path).context("access/_meta.yaml")?;
     let osm_opts = crate::osm::OsmRoutingOpts::from(&access_meta);
     let routing = Arc::new(build_osm_routing(
-        &pbf,
-        bbox.west,
-        bbox.south,
-        bbox.east,
-        bbox.north,
-        &osm_opts,
+        &pbf, bbox.west, bbox.south, bbox.east, bbox.north, &osm_opts,
     )?);
 
     let mirror = resolved_skadi_mirror_dir_for_project(project_dir);
@@ -292,8 +300,10 @@ pub fn build_peaks_catalog(
     rules.max_slope_deg = default_max_slope_deg();
     access_meta.apply_to_peak_rules(&mut rules);
     let profile_sample_m = access_meta.profile_sample_m;
+    let hike_path_max_m = access_meta.hike_path_max_m;
     info!(
         max_hike_m = rules.max_hike_m,
+        hike_path_max_m,
         max_slope_grade_pct = rules.max_slope_grade_pct,
         max_slope_deg = rules.max_slope_deg,
         max_jeep_m = rules.max_jeep_m,
@@ -303,27 +313,22 @@ pub fn build_peaks_catalog(
 
     let mut universe: Vec<RawCandidate> = Vec::new();
     let site_seeds = seed_candidates_from_sites(&preset);
-    info!(count = site_seeds.len(), "peaks: site seeds (eip/aw/installed)");
+    info!(
+        count = site_seeds.len(),
+        "peaks: site seeds (eip/aw/installed)"
+    );
     universe.extend(site_seeds.clone());
 
-    let gnis = load_gnis_candidates(
-        project_dir,
-        bbox.west,
-        bbox.south,
-        bbox.east,
-        bbox.north,
-    )?;
+    let gnis = load_gnis_candidates(project_dir, bbox.west, bbox.south, bbox.east, bbox.north)?;
     info!(count = gnis.len(), "peaks: GNIS candidates");
     universe.extend(gnis.clone());
 
     let mask_dir = eligible_land_dem_mask_dir(preset_path, &land_parts.digest);
-    let dem_peaks = load_dem_candidates(
-        &session,
-        land_index.clone(),
-        bbox,
-        &mask_dir,
-    )?;
-    info!(count = dem_peaks.len(), "peaks: DEM candidates on eligible land");
+    let dem_peaks = load_dem_candidates(&session, land_index.clone(), bbox, &mask_dir)?;
+    info!(
+        count = dem_peaks.len(),
+        "peaks: DEM candidates on eligible land"
+    );
     universe.extend(dem_peaks.clone());
 
     let pre_region = universe.len();
@@ -342,23 +347,21 @@ pub fn build_peaks_catalog(
     });
     info!(count = universe.len(), "peaks: universe after dedup");
 
-    let site_locs: Vec<(f64, f64)> = preset
-        .sites
-        .values()
-        .map(|s| (s.lat(), s.lon()))
-        .collect();
+    let site_locs: Vec<(f64, f64)> = preset.sites.values().map(|s| (s.lat(), s.lon())).collect();
 
     let previous = load_peaks_catalog(preset_path)?;
+    let full_aoi = is_full_aoi_scan(&opts);
+    let replace_catalog = opts.clean || full_aoi;
     let mut catalog = PeaksCatalog {
         generated_at: chrono_date(),
         rules: rules.clone(),
-        entries: if opts.clean {
+        entries: if replace_catalog {
             HashMap::new()
         } else {
             previous.entries.clone()
         },
     };
-    let denied = if opts.clean {
+    let denied = if replace_catalog {
         preserve_denied_entries(&mut catalog, &previous)
     } else {
         catalog
@@ -368,26 +371,32 @@ pub fn build_peaks_catalog(
             .count()
     };
     if opts.clean {
-        clean_peaks_catalog(preset_path, &catalog)
-            .context("clean peaks/access dirs")?;
+        clean_peaks_catalog(preset_path, &catalog).context("clean peaks/access dirs")?;
     }
     info!(
         clean = opts.clean,
+        full_aoi,
+        replace_catalog,
         prior_entries = previous.entries.len(),
         starting_entries = catalog.entries.len(),
         denied,
         "peaks: catalog merge mode"
     );
-    write_peaks_catalog(preset_path, &catalog).context("write peaks catalog (start)")?;
+    if !full_aoi || opts.clean {
+        write_peaks_catalog(preset_path, &catalog).context("write peaks catalog (start)")?;
+    }
 
     let max_slope_deg = rules.max_slope_deg;
 
     let (drops, deduped) = if let Some(limit) = opts.stop_after {
-        info!(limit, candidates = universe.len(), "peaks: stop-after serial filter");
+        info!(
+            limit,
+            candidates = universe.len(),
+            "peaks: stop-after serial filter"
+        );
         let mut drops = DropCounts::default();
         let mut kept_centroids: Vec<(f64, f64)> = Vec::new();
         let mut deduped = Vec::new();
-        let elev = SessionElev(session.as_ref());
         for (i, cand) in universe.iter().enumerate() {
             if deduped.len() >= limit {
                 break;
@@ -414,6 +423,7 @@ pub fn build_peaks_catalog(
                 &site_locs,
                 &rules,
                 profile_sample_m,
+                hike_path_max_m,
             ) {
                 Ok(pass) => {
                     if kept_centroids.iter().any(|(lat, lon)| {
@@ -429,17 +439,7 @@ pub fn build_peaks_catalog(
                         format_hike_report(
                             pass.cand.name.as_deref(),
                             slug_preview,
-                            &profile_hike_detailed(
-                                &elev,
-                                pass.road_lat,
-                                pass.road_lon,
-                                pass.peak_lat,
-                                pass.peak_lon,
-                                profile_sample_m,
-                            )
-                            .unwrap_or_else(|| {
-                                panic!("hike profile missing for {slug_preview}");
-                            }),
+                            &pass.hike_detail,
                         )
                     );
                     deduped.push(pass);
@@ -507,6 +507,7 @@ pub fn build_peaks_catalog(
                         site_locs.as_ref(),
                         rules.as_ref(),
                         profile_sample_m,
+                        hike_path_max_m,
                     ) {
                         Ok(pass) => Some(pass),
                         Err(FilterDrop::SiteDedup) => {
@@ -591,15 +592,15 @@ pub fn build_peaks_catalog(
         snapped.lat = pass.peak_lat;
         snapped.lon = pass.peak_lon;
         snapped.elev_m = elev_m;
-        let (slug, is_freshen) = match near_entry_slug(&catalog, pass.peak_lat, pass.peak_lon, CANDIDATE_DEDUP_M)
-        {
-            Some(existing) => (existing, true),
-            None => {
-                let slug = slug_for_candidate(&snapped, &existing_slugs);
-                existing_slugs.insert(slug.clone());
-                (slug, false)
-            }
-        };
+        let (slug, is_freshen) =
+            match near_entry_slug(&catalog, pass.peak_lat, pass.peak_lon, CANDIDATE_DEDUP_M) {
+                Some(existing) => (existing, true),
+                None => {
+                    let slug = slug_for_candidate(&snapped, &existing_slugs);
+                    existing_slugs.insert(slug.clone());
+                    (slug, false)
+                }
+            };
         let entry = PeakCatalogEntry {
             name: pass.cand.name.clone(),
             loc: [pass.peak_lat, pass.peak_lon],
@@ -619,6 +620,8 @@ pub fn build_peaks_catalog(
             paved_loc: Some([pass.paved_lat, pass.paved_lon]),
             jeep_m: Some((pass.jeep_m * 10.0).round() / 10.0),
             jeep: Some(pass.jeep),
+            hike_difficulty: None,
+            jeep_difficulty: None,
             deny: None,
         };
         catalog.entries.insert(slug.clone(), entry.clone());
@@ -641,8 +644,7 @@ pub fn build_peaks_catalog(
         }
     }
     for (slug, entry) in pending_write.drain(..) {
-        upsert_peak_with_access(preset_path, &slug, &entry)
-            .context("upsert peak+access")?;
+        upsert_peak_with_access(preset_path, &slug, &entry).context("upsert peak+access")?;
     }
 
     info!(
@@ -663,9 +665,18 @@ pub fn build_peaks_catalog(
     );
 
     write_peaks_catalog(preset_path, &catalog).context("write peaks catalog")?;
+    let pruned_access = prune_orphan_access(preset_path).context("prune orphan access")?;
+    if let Err(err) = write_peaks_list_disk_cache(preset_path, &catalog) {
+        info!(error = %err, "peaks: list cache prewarm failed");
+    }
     let output = peaky_preset::peaks_catalog_path(preset_path)?;
 
-    info!(path = %output.display(), entries = catalog.entries.len(), "peaks: wrote peaks/");
+    info!(
+        path = %output.display(),
+        entries = catalog.entries.len(),
+        pruned_access,
+        "peaks: wrote peaks/"
+    );
 
     Ok(PeaksBuildSummary {
         kept,
@@ -696,9 +707,10 @@ fn near_entry_slug(catalog: &PeaksCatalog, lat: f64, lon: f64, max_m: f64) -> Op
 }
 
 fn near_denied(catalog: &PeaksCatalog, lat: f64, lon: f64, max_m: f64) -> bool {
-    catalog.entries.values().any(|e| {
-        e.deny.unwrap_or(false) && haversine_m(lat, lon, e.lat(), e.lon()) <= max_m
-    })
+    catalog
+        .entries
+        .values()
+        .any(|e| e.deny.unwrap_or(false) && haversine_m(lat, lon, e.lat(), e.lon()) <= max_m)
 }
 
 #[cfg(test)]
@@ -744,7 +756,7 @@ mod tests {
         let profile = profile_hike(&ramp, rlat, rlon, peak_lat, peak_lon, 30.0).unwrap();
         let ceiling = default_max_slope_deg();
         assert!(profile.max_slope_deg > ceiling + 0.5);
-        assert!(!profile_passes(&profile, DEFAULT_MAX_HIKE_M, ceiling));
+        assert!(!profile_passes(&profile, ceiling));
     }
 
     #[test]
@@ -758,8 +770,15 @@ mod tests {
         assert!(road_m < 100.0);
         let flat = FlatElev(2000.0);
         let profile = profile_hike(&flat, rlat, rlon, peak_lat, peak_lon, 30.0).unwrap();
-        assert!(profile_passes(&profile, DEFAULT_MAX_HIKE_M, 45.0));
+        assert!(profile_passes(&profile, 45.0));
     }
+}
+
+fn is_full_aoi_scan(opts: &PeaksBuildOptions) -> bool {
+    opts.bbox.is_none()
+        && opts.polygon.is_none()
+        && opts.corridor.is_none()
+        && opts.stop_after.is_none()
 }
 
 fn load_dem_candidates(

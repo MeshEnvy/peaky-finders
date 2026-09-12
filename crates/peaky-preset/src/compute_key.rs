@@ -48,6 +48,7 @@ pub fn access_compute_key(
     max_jeep_m: f64,
     profile_sample_m: f64,
     road_sample_step_m: f64,
+    hike_path_max_m: f64,
     jeep_highways: &[String],
     paved_highways: &[String],
 ) -> String {
@@ -58,6 +59,7 @@ pub fn access_compute_key(
         round_m(max_jeep_m) as u64,
         round_m(profile_sample_m) as u64,
         round_m(road_sample_step_m) as u64,
+        round_m(hike_path_max_m) as u64,
         hash_str(&sorted_joined(jeep_highways)),
         hash_str(&sorted_joined(paved_highways)),
     ])
@@ -72,6 +74,7 @@ pub fn place_access_compute_key(meta: &AccessMeta) -> String {
         meta.max_jeep_m,
         meta.profile_sample_m,
         meta.road_sample_step_m,
+        meta.hike_path_max_m,
         &meta.road_highways,
         &meta.paved_highways,
     )
@@ -88,6 +91,7 @@ pub fn peak_access_compute_key(meta: &AccessMeta, road_search_m: f64) -> String 
         meta.max_jeep_m,
         meta.profile_sample_m,
         meta.road_sample_step_m,
+        meta.hike_path_max_m,
         &meta.road_highways,
         &meta.paved_highways,
     )
@@ -146,6 +150,14 @@ mod tests {
         let a = AccessMeta::default();
         let mut b = a.clone();
         b.place_road_search_m = 25_000.0;
+        assert_ne!(place_access_compute_key(&a), place_access_compute_key(&b));
+    }
+
+    #[test]
+    fn hike_path_max_moves_key() {
+        let a = AccessMeta::default();
+        let mut b = a.clone();
+        b.hike_path_max_m = 2000.0;
         assert_ne!(place_access_compute_key(&a), place_access_compute_key(&b));
     }
 
