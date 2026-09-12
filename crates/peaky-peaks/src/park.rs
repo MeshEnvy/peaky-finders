@@ -5,6 +5,8 @@ use crate::hike_route::resolve_hike;
 use crate::osm::{JeepRoadIndex, PavedAnchorIndex};
 
 const PARK_SECTORS: usize = 8;
+/// Extra along-road parks in the same sector (farther from dest than nearest).
+const PARK_ALONG_M: [f64; 2] = [250.0, 500.0];
 
 #[derive(Debug, Clone, Copy)]
 struct ParkCand {
@@ -37,30 +39,17 @@ fn park_candidates_scored(
     search_m: f64,
 ) -> Vec<ParkCand> {
     let pts = roads.points_within(dest_lat, dest_lon, search_m);
-    let mut best: [Option<ParkCand>; PARK_SECTORS] = [None; PARK_SECTORS];
+    let mut sectors: [Vec<ParkCand>; PARK_SECTORS] = Default::default();
     for (lat, lon, dist) in pts {
         let sector = bearing_sector(dest_lat, dest_lon, lat, lon);
-        match best[sector] {
-            None => {
-                best[sector] = Some(ParkCand {
-                    lat,
-                    lon,
-                    dist_m: dist,
-                    paved: false,
-                })
-            }
-            Some(cur) if dist < cur.dist_m => {
-                best[sector] = Some(ParkCand {
-                    lat,
-                    lon,
-                    dist_m: dist,
-                    paved: false,
-                })
-            }
-            _ => {}
-        }
+        sectors[sector].push(ParkCand {
+            lat,
+            lon,
+            dist_m: dist,
+            paved: false,
+        });
     }
-    let mut out: Vec<ParkCand> = best.into_iter().flatten().collect();
+    let mut out: Vec<ParkCand> = sectors.into_iter().flat_map(pick_sector_parks).collect();
     if let Some((lat, lon, dist)) =
         paved.and_then(|p| p.nearest_within(dest_lat, dest_lon, search_m))
     {
@@ -79,6 +68,31 @@ fn park_candidates_scored(
             .find(|c| (c.lat - lat).abs() < 1e-7 && (c.lon - lon).abs() < 1e-7)
         {
             c.paved = true;
+        }
+    }
+    out
+}
+
+fn pick_sector_parks(mut pts: Vec<ParkCand>) -> Vec<ParkCand> {
+    if pts.is_empty() {
+        return Vec::new();
+    }
+    pts.sort_by(|a, b| {
+        a.dist_m
+            .partial_cmp(&b.dist_m)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let nearest = pts[0].dist_m;
+    let mut out = vec![pts[0]];
+    for extra in PARK_ALONG_M {
+        let need = nearest + extra;
+        if let Some(p) = pts.iter().find(|p| p.dist_m >= need - 1.0) {
+            let dup = out
+                .iter()
+                .any(|o| (o.lat - p.lat).abs() < 1e-7 && (o.lon - p.lon).abs() < 1e-7);
+            if !dup {
+                out.push(*p);
+            }
         }
     }
     out
@@ -116,6 +130,12 @@ fn hike_better(
     }
     if (a.max_slope_deg - b.max_slope_deg).abs() > 0.5 {
         return a.max_slope_deg < b.max_slope_deg;
+    }
+    if (a.gain_m - b.gain_m).abs() > 2.0 {
+        return a.gain_m < b.gain_m;
+    }
+    if (a.loss_m - b.loss_m).abs() > 2.0 {
+        return a.loss_m < b.loss_m;
     }
     a.hike_m_3d < b.hike_m_3d
 }
@@ -324,6 +344,44 @@ mod tests {
             "should park on pavement, got {} {}",
             picked.road_lat,
             picked.road_lon
+        );
+    }
+
+    fn fake_hike(gain_m: f64, loss_m: f64, max_slope_deg: f64, hike_m_3d: f64) -> HikeProfileDetailed {
+        HikeProfileDetailed {
+            hike_m_3d,
+            horiz_m: hike_m_3d,
+            gain_m,
+            loss_m,
+            max_slope_deg,
+            max_grade_pct: max_slope_deg,
+            avg_grade_pct: 5.0,
+            difficulty: "medium".into(),
+            segments: vec![],
+            profile: vec![],
+            histogram: vec![],
+        }
+    }
+
+    #[test]
+    fn hike_better_prefers_lower_gain() {
+        let low = fake_hike(20.0, 2.0, 10.0, 800.0);
+        let high = fake_hike(50.0, 20.0, 10.0, 600.0);
+        assert!(hike_better(&low, false, &high, false));
+        assert!(!hike_better(&high, false, &low, false));
+    }
+
+    #[test]
+    fn sector_keeps_along_road_samples() {
+        let dest = (38.004, -117.0);
+        let near = crate::hike::destination_point(dest.0, dest.1, 180.0, 200.0);
+        let mid = crate::hike::destination_point(dest.0, dest.1, 185.0, 460.0);
+        let far = crate::hike::destination_point(dest.0, dest.1, 190.0, 720.0);
+        let roads = test_index_from_points(&[near, mid, far]);
+        let cands = park_candidates(&roads, None, dest.0, dest.1, 1609.0);
+        assert!(
+            cands.len() >= 3,
+            "expected nearest plus two along-road parks, got {cands:?}"
         );
     }
 }

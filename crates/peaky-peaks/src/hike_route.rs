@@ -11,6 +11,13 @@ use crate::hike::{
 const SEARCH_PAD_M: f64 = 500.0;
 /// Site display: if the 30% cap finds nothing, retry these before a chord.
 const RELAXED_SLOPE_DEGS: [f64; 4] = [21.8, 26.6, 31.0, 45.0];
+/// Naismith-ish: prefer contouring over climb-then-descend on a bump.
+const CLIMB_W: f64 = 4.0;
+const DESC_W: f64 = 8.0;
+
+fn hike_edge_cost(horiz: f64, vert: f64) -> f64 {
+    horiz + CLIMB_W * vert.max(0.0) + DESC_W * (-vert).max(0.0)
+}
 
 fn meters_to_deg(lat: f64, dist_m: f64) -> (f64, f64) {
     let lat_deg = dist_m / 111_320.0;
@@ -51,22 +58,9 @@ fn nearest_cell(
     )
 }
 
-fn segment_3d<E: HikeSampleElev>(
-    elev: &E,
-    lat1: f64,
-    lon1: f64,
-    lat2: f64,
-    lon2: f64,
-) -> Option<(f64, f64)> {
-    let horiz = haversine_m(lat1, lon1, lat2, lon2);
-    if horiz <= 0.5 {
-        return Some((0.0, 0.0));
-    }
-    let e1 = elev.sample_elev_m(lat1, lon1);
-    let e2 = elev.sample_elev_m(lat2, lon2);
-    let vert = e2 - e1;
-    let slope = vert.atan2(horiz).to_degrees().abs();
-    Some(((horiz * horiz + vert * vert).sqrt(), slope))
+struct HikeEdge {
+    len_3d: f64,
+    cost: f64,
 }
 
 fn segment_grade_ok<E: HikeSampleElev>(
@@ -77,12 +71,25 @@ fn segment_grade_ok<E: HikeSampleElev>(
     lon2: f64,
     max_slope_deg: f64,
     allow_steep: bool,
-) -> Option<f64> {
-    let (len_3d, slope) = segment_3d(elev, lat1, lon1, lat2, lon2)?;
+) -> Option<HikeEdge> {
+    let horiz = haversine_m(lat1, lon1, lat2, lon2);
+    if horiz <= 0.5 {
+        return Some(HikeEdge {
+            len_3d: 0.0,
+            cost: 0.0,
+        });
+    }
+    let e1 = elev.sample_elev_m(lat1, lon1);
+    let e2 = elev.sample_elev_m(lat2, lon2);
+    let vert = e2 - e1;
+    let slope = vert.atan2(horiz).to_degrees().abs();
     if !allow_steep && slope > max_slope_deg + 0.5 {
         return None;
     }
-    Some(len_3d)
+    Some(HikeEdge {
+        len_3d: (horiz * horiz + vert * vert).sqrt(),
+        cost: hike_edge_cost(horiz, vert),
+    })
 }
 
 /// 8-connected A* on a DEM grid; returns vertex coordinates park→dest.
@@ -123,6 +130,7 @@ pub fn route_hike_coords<E: HikeSampleElev>(
 
     let mut open = BinaryHeap::new();
     let mut g_score: HashMap<Node, f64> = HashMap::new();
+    let mut g_len: HashMap<Node, f64> = HashMap::new();
     let mut came_from: HashMap<Node, Node> = HashMap::new();
 
     let start_node = Node {
@@ -138,7 +146,12 @@ pub fn route_hike_coords<E: HikeSampleElev>(
     let (goal_lat, goal_lon) = cell_center(min_lat, min_lon, goal.0, goal.1, step_lat, step_lon);
     let h0 = haversine_m(start_lat, start_lon, goal_lat, goal_lon);
     g_score.insert(start_node, 0.0);
-    open.push(Reverse((OrderedFloat(0.0 + h0), OrderedFloat(0.0), start_node)));
+    g_len.insert(start_node, 0.0);
+    open.push(Reverse((
+        OrderedFloat(h0),
+        OrderedFloat(0.0),
+        start_node,
+    )));
 
     const NEIGHBORS: [(i32, i32); 8] = [
         (-1, -1),
@@ -151,7 +164,7 @@ pub fn route_hike_coords<E: HikeSampleElev>(
         (1, 1),
     ];
 
-    while let Some(Reverse((OrderedFloat(f), OrderedFloat(g), current))) = open.pop() {
+    while let Some(Reverse((OrderedFloat(_f), OrderedFloat(g), current))) = open.pop() {
         if current == goal_node {
             let mut path = Vec::new();
             let mut node = current;
@@ -179,7 +192,8 @@ pub fn route_hike_coords<E: HikeSampleElev>(
             return Some(path);
         }
 
-        if f > OrderedFloat(path_max_m + h0 + step_m).0 {
+        let cur_len = g_len.get(&current).copied().unwrap_or(g);
+        if cur_len + step_m > path_max_m + 1.0 {
             continue;
         }
 
@@ -201,7 +215,7 @@ pub fn route_hike_coords<E: HikeSampleElev>(
             let next = Node { row: nr, col: nc };
             let (n_lat, n_lon) =
                 cell_center(min_lat, min_lon, nr, nc, step_lat, step_lon);
-            let Some(edge_3d) = segment_grade_ok(
+            let Some(edge) = segment_grade_ok(
                 elev,
                 cur_lat,
                 cur_lon,
@@ -212,10 +226,11 @@ pub fn route_hike_coords<E: HikeSampleElev>(
             ) else {
                 continue;
             };
-            let tentative = g + edge_3d;
-            if tentative > path_max_m + 1.0 {
+            let tentative_len = cur_len + edge.len_3d;
+            if tentative_len > path_max_m + 1.0 {
                 continue;
             }
+            let tentative = g + edge.cost;
             let better = g_score
                 .get(&next)
                 .map(|prev| tentative < *prev - 1e-6)
@@ -225,6 +240,7 @@ pub fn route_hike_coords<E: HikeSampleElev>(
             }
             came_from.insert(next, current);
             g_score.insert(next, tentative);
+            g_len.insert(next, tentative_len);
             let h = haversine_m(n_lat, n_lon, goal_lat, goal_lon);
             open.push(Reverse((
                 OrderedFloat(tentative + h),
@@ -605,6 +621,83 @@ mod tests {
                 self.base
             }
         }
+    }
+
+    /// Gentle north-south bump on the chord; flat just off to the east.
+    struct BumpThenSaddle {
+        park_lat: f64,
+        park_lon: f64,
+        dest_lat: f64,
+        dest_lon: f64,
+        base: f64,
+        bump: f64,
+    }
+
+    impl HikeSampleElev for BumpThenSaddle {
+        fn sample_elev_m(&self, lat: f64, lon: f64) -> f64 {
+            let total = haversine_m(
+                self.park_lat,
+                self.park_lon,
+                self.dest_lat,
+                self.dest_lon,
+            );
+            if total <= 1.0 {
+                return self.base;
+            }
+            let d_park = haversine_m(lat, lon, self.park_lat, self.park_lon);
+            let d_dest = haversine_m(lat, lon, self.dest_lat, self.dest_lon);
+            let along_err = (d_park + d_dest - total).abs();
+            let t = d_park / total;
+            if along_err < 50.0 && (0.2..0.65).contains(&t) {
+                let mid = 0.42;
+                let half = 0.22;
+                let u = (1.0 - (t - mid).abs() / half).max(0.0);
+                return self.base + (self.bump - self.base) * u;
+            }
+            self.base
+        }
+    }
+
+    #[test]
+    fn bump_then_saddle_avoids_crest() {
+        let park_lat = 38.0;
+        let park_lon = -117.0;
+        let dest_lat = 38.006;
+        let dest_lon = -117.0;
+        let elev = BumpThenSaddle {
+            park_lat,
+            park_lon,
+            dest_lat,
+            dest_lon,
+            base: 1000.0,
+            bump: 1040.0,
+        };
+        let detail = resolve_hike(
+            &elev,
+            park_lat,
+            park_lon,
+            dest_lat,
+            dest_lon,
+            default_max_slope_deg(),
+            path_max_m(),
+            30.0,
+            true,
+        )
+        .expect("contour around the bump");
+        assert!(
+            detail.loss_m < 8.0,
+            "should not climb then descend the bump, loss {}",
+            detail.loss_m
+        );
+        let crest = detail
+            .profile
+            .iter()
+            .map(|p| p.elev_m)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            crest < 1030.0,
+            "path crested the bump at {crest} m"
+        );
     }
 
     #[test]

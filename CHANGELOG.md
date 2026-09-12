@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **Hike paths avoid wasted elevation** — A* contours around bumps instead of climbing then descending. Park picker tries two more along-road samples per sector and ranks by gain, then loss. `ACCESS_ALGO_VERSION` → **8**. Re-open a peak/site sheet to re-warm leftover pins.
 - **Catalog DEM peaks need 20 m prominence** — same 8-neighbor floor as hop-disc. Highway berms and playa ripples are not peaks. `PEAK_ALGO_VERSION` → **5**. Existing pins stay until you re-run `peaky peaks`.
 - **Park on pavement** — nearest paved highway competes with jeep-road sectors. Stay on pavement when the hike is comparable instead of detouring onto a grade-5 shoulder. `ACCESS_ALGO_VERSION` → **7**. Re-open a peak/site sheet to re-warm leftover pins.
 - **Access sheet is metric** — hike/jeep/road-class lengths and elevation (gain, profile, peak title) use m/km only. No yards, feet, or miles.
