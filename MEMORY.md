@@ -137,7 +137,7 @@ preset → CovRequest JSON (rf_json)
 
 | Area | State |
 |------|-------|
-| Project page at `/`, sites CRUD, KML import | Implemented (no project listing) |
+| Project page at `/`, sites CRUD, KML import | Implemented (no project listing). Site sheet **Elevation** is Skadi AMSL via `GET …/elev?lat=&lon=` (not YAML; `height_m` stays antenna AGL) |
 | Viewshed PNG on demand (`splatter::Session` + cache) | Implemented |
 | Home modem/environment catalogs | Implemented |
 | SSE `/events` | Implemented (hello + keepalive; publish on warm TBD) |
@@ -145,7 +145,7 @@ preset → CovRequest JSON (rf_json)
 | Goal seek (`/seek/candidates`, scan-progress, plan, convert-to-sites) | Implemented (P2P via `seek.rs` + `seek_path.rs` + `seek_repeater_link_margins`). Two generators, one ranker: **approach** (goal out of hop range) = local-max peaks in progress lens (hop disc ∩ closer to goal than start); **landing** (goal in hop range, start has no RF) = elevation-blind grid over start-disc ∩ goal-disc (RF lens), coarse then refine around completers, spatial diversify. Site candidates use the same progress lens from `from`. **Forward-path gate:** drop dead-end relays only when some candidate of *this hop* already has an RF path to the goal through preset sites ∪ scan peaks (`seek_path.rs` DP, strictly closer each hop). An unfinished corridor (goal many hops away, no connecting intermediates) keeps RF-viable first hops. Rank: completes goal → goal progress (non-completers) → extra P2P into start-hop-disc sites → weaker-leg margin → forward reach. Elevation is not a score. Convert seeds site-mesh pairs for new slugs and bypasses tag-filter on the whole path |
 | Site alternates (`/alternates`, `/alternates/scan-progress`) | Implemented — same peak candidate pool as goal seek (`peaks/` catalog in the shared N-anchor RF lens), plus preset sites in lens; mutual P2P to all linked peers; site sheet **Find alternates** + **Add as site** |
 | Land list + layer GeoJSON | Implemented (plus built-in eligible overlay GeoJSON, digest-cached) |
-| Skadi map tiles (`/api/dem/hillshade`, `/api/dem/terrarium`) | Implemented — PNG cache `<project>/.peaky/cache/skadi/.map_tiles/v3/`; render only when all required HGT on disk (503 until ready); hillshade uses padded HGT ring; **AOI HGT prefetch on project page load** (background); map tile prefetch capped (`PEAKY_DEM_MAP_QUEUE_CAP`, default 128) |
+| Skadi map tiles (`/api/dem/hillshade`, `/api/dem/terrarium`) + point elev (`GET …/elev`) | Implemented — PNG cache `<project>/.peaky/cache/skadi/.map_tiles/v3/`; render only when all required HGT on disk (503 until ready); hillshade uses padded HGT ring; **AOI HGT prefetch on project page load** (background); map tile prefetch capped (`PEAKY_DEM_MAP_QUEUE_CAP`, default 128). Point elev ensures the HGT tile then bilinear-samples AMSL |
 
 ## Ops (outside Peaky)
 

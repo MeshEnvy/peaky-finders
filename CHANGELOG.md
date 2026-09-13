@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **Site elevation** — the site sheet shows Skadi DEM AMSL next to antenna height (same source as peaks). The value updates when you move the pin in edit or create.
 - **`peaky map export`** — mosaics native splatter viewsheds into meshenvy.org GeoJSON + XYZ tiles (`splatter_v5`).
 - **Catalog peak RF preview** — clicking a catalog peak prefetches a viewshed raster and hop-range P2P draft links to booked sites (same placement preview APIs as seek/alternates). Deselect, close the sheet, or pick a site to clear; **Add as site** hands off to the real site mesh. Cold-cache warms paint on first click (SSE `_draft` → `_peak`).
 - **Map deep links** — selecting a site or catalog peak writes `?site=` / `?peak=` plus camera (`lat`, `lon`, `z`, optional `bearing`, `pitch`) to the address bar. Back, forward, refresh, and pasted URLs restore the pin and view. Basemap, land layers, and viewshed prefs stay in localStorage.

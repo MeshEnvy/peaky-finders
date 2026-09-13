@@ -20,6 +20,12 @@ export function formatAntennaHeightM(heightM) {
   return `${Number(heightM).toLocaleString(undefined, { maximumFractionDigits: 1 })} m`
 }
 
+/** @param {number} elevM */
+export function formatElevLabel(elevM) {
+  if (!Number.isFinite(elevM)) return '—'
+  return `${Math.round(elevM).toLocaleString()} m`
+}
+
 export function formatSiteHeight(site, defaultTxHeightM) {
   const explicit = formatAntennaHeightM(site.height_m)
   if (explicit) return explicit

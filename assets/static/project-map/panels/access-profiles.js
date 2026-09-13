@@ -1,6 +1,7 @@
 // @ts-check
 
 import { computed } from 'vue'
+import { formatElevLabel } from '../geo.js'
 
 /** Grade → fill color (flat → steep), onX-style elevation map. */
 const GRADE_COLORS = [
@@ -73,12 +74,6 @@ export function downsampleProfile(profile, maxPoints = CHART_MAX_DRAW_POINTS) {
   }
   out.push(profile[last])
   return out
-}
-
-/** @param {number} elevM */
-export function formatElevLabel(elevM) {
-  if (!Number.isFinite(elevM)) return '—'
-  return `${Math.round(elevM).toLocaleString()} m`
 }
 
 /** @param {object[]} profile */

@@ -1,8 +1,9 @@
 // @ts-check
 
 import { createApp, computed, ref, watch } from 'vue'
-import { formatCoord, normalizeTagInput } from '../geo.js'
+import { formatCoord, formatElevLabel, normalizeTagInput } from '../geo.js'
 import { allProjectTags, tagChipChoices, toggleTag } from '../stores/sites.js'
+import { apiFetch } from '../api/client.js'
 import * as apiUrls from '../api/urls.js'
 import { AccessProfilesPanel } from './access-profiles.js'
 
@@ -38,6 +39,10 @@ export function mountSiteSheet(store, appApi) {
       const access = ref(/** @type {object|null} */ (null))
       const accessLoading = ref(false)
       const accessError = ref('')
+      const elevM = ref(/** @type {number|null} */ (null))
+      const elevLoading = ref(false)
+      let elevAbort = /** @type {AbortController|null} */ (null)
+      let elevSeq = 0
 
       const projectTags = computed(() => allProjectTags(store))
       const editTagChoices = computed(() => tagChipChoices(projectTags.value, editTags.value))
@@ -333,6 +338,61 @@ export function mountSiteSheet(store, appApi) {
         return appApi.formatSiteHeight?.(site) || ''
       })
 
+      const elevLabel = computed(() => (elevLoading.value ? '…' : formatElevLabel(elevM.value)))
+      const hikeEndElevM = computed(() => (Number.isFinite(elevM.value) ? elevM.value : undefined))
+
+      function sheetCoords() {
+        if (store.ui.createMode) {
+          return [store.ui.createLat, store.ui.createLon]
+        }
+        if (store.ui.editMode) {
+          const site = selectedSite.value
+          return [store.ui.editLat ?? site?.lat, store.ui.editLon ?? site?.lon]
+        }
+        const site = selectedSite.value
+        return [site?.lat, site?.lon]
+      }
+
+      async function loadElev(lat, lon) {
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          elevM.value = null
+          elevLoading.value = false
+          return
+        }
+        const site = !store.ui.createMode && !store.ui.editMode ? selectedSite.value : null
+        if (site && Number.isFinite(Number(site.elev_m)) && site.lat === lat && site.lon === lon) {
+          elevM.value = Number(site.elev_m)
+          elevLoading.value = false
+          return
+        }
+        elevAbort?.abort()
+        elevAbort = new AbortController()
+        const seq = ++elevSeq
+        elevLoading.value = true
+        try {
+          const row = await apiFetch(apiUrls.placeElevApiUrl(store.projectSlug, lat, lon), {
+            signal: elevAbort.signal,
+          })
+          if (seq !== elevSeq) return
+          const next = Number(row?.elev_m)
+          elevM.value = Number.isFinite(next) ? next : null
+          if (site && site.lat === lat && site.lon === lon) site.elev_m = elevM.value
+        } catch (err) {
+          if (err?.name === 'AbortError' || seq !== elevSeq) return
+          elevM.value = null
+        } finally {
+          if (seq === elevSeq) elevLoading.value = false
+        }
+      }
+
+      watch(
+        () => [...sheetCoords(), store.ui.createMode, store.ui.editMode, store.ui.selectedSlug],
+        ([lat, lon]) => {
+          void loadElev(lat, lon)
+        },
+        { immediate: true },
+      )
+
       const peerLinks = computed(() => appApi.getSelectedSiteLinks?.() || [])
 
       const canFindAlternates = computed(() => peerLinks.value.length > 0)
@@ -416,6 +476,8 @@ export function mountSiteSheet(store, appApi) {
         canDelete,
         createCoordsLabel,
         heightLabel,
+        elevLabel,
+        hikeEndElevM,
         peerLinks,
         canFindAlternates,
         alternatesForThisSite,
@@ -464,6 +526,10 @@ export function mountSiteSheet(store, appApi) {
               </div>
             </div>
             <div class="site-panel__fact">
+              <span class="site-panel__label">Elevation</span>
+              <p class="site-panel__value">{{ elevLabel }}</p>
+            </div>
+            <div class="site-panel__fact">
               <span class="site-panel__label">Antenna height</span>
               <p class="site-panel__value">{{ heightLabel }}</p>
             </div>
@@ -479,6 +545,7 @@ export function mountSiteSheet(store, appApi) {
               :jeep="accessJeep"
               :loading="accessLoading"
               :error="accessError"
+              :hike-end-elev-m="hikeEndElevM"
               hike-end-label="Site"
               empty-text="No access route yet"
               @point-click="onAccessPointClick"
@@ -550,6 +617,10 @@ export function mountSiteSheet(store, appApi) {
             </div>
           </div>
           <div class="site-panel__section">
+            <span class="site-panel__label">Elevation</span>
+            <p class="site-panel__value">{{ elevLabel }}</p>
+          </div>
+          <div class="site-panel__section">
             <label class="site-panel__label" for="site-sheet-edit-height">Antenna height (m)</label>
             <input id="site-sheet-edit-height" v-model="editHeight" type="number" step="0.1" min="1" class="pf-mono">
           </div>
@@ -614,6 +685,10 @@ export function mountSiteSheet(store, appApi) {
           <div class="site-panel__section">
             <span class="site-panel__label">Coordinates</span>
             <p class="site-panel__value">{{ createCoordsLabel || 'Pick a location on the map' }}</p>
+          </div>
+          <div class="site-panel__section">
+            <span class="site-panel__label">Elevation</span>
+            <p class="site-panel__value">{{ createCoordsLabel ? elevLabel : '—' }}</p>
           </div>
           <wa-callout v-if="errorText" variant="danger">{{ errorText }}</wa-callout>
           <div class="site-panel__create-actions">

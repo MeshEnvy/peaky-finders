@@ -56,6 +56,7 @@ use crate::viewshed_sim::{parse_lat_lon_params, parse_viewshed_sim_params, sim_s
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(project_page))
+        .route("/api/p/{slug}/elev", get(crate::dem::place_elev))
         .route("/api/p/{slug}/sites", get(list_sites).post(add_site))
         .route("/api/p/{slug}/sites/prefetch", get(sites_prefetch))
         .route(

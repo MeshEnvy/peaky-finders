@@ -2,6 +2,7 @@
 
 mod alternates;
 mod api;
+mod dem;
 mod fortify;
 mod app;
 mod embed;

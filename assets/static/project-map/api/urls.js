@@ -21,6 +21,14 @@ export function warmPrioritiesApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/warm/priorities`
 }
 
+export function placeElevApiUrl(projectSlug, lat, lon) {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+  })
+  return `/api/p/${projectSlug}/elev?${params}`
+}
+
 export function sitesApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/sites`
 }
