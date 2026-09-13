@@ -3,10 +3,10 @@
 import {
   ALTERNATES_CANDIDATES_LAYER,
   FORTIFY_CANDIDATES_LAYER,
+  LINK_SOLVER_PEAKS_LAYER,
   LINKS_LAYER,
   PEAKS_RING_CIRCLE,
   PEAKS_SYMBOL,
-  SEEK_CANDIDATES_LAYER,
   SITES_CIRCLE,
   SITES_LABELS,
 } from '../constants.js'
@@ -29,7 +29,7 @@ function siteFeaturesAtPoint(map, point) {
 }
 
 /**
- * Map pointer routing: hover cursor, click/select, create, edit move, seek.
+ * Map pointer routing: hover cursor, click/select, create, edit move.
  * @param {object} ctx
  */
 export function createMapInteractionsDomain(ctx) {
@@ -37,11 +37,10 @@ export function createMapInteractionsDomain(ctx) {
     store,
     getMap,
     getMapReady,
-    getSeek,
+    getLinkSolver,
     getAlternates,
     getFortify,
     getLinks,
-    getSiteBySlug,
     syncMapCursor,
     setEditDraftCoords,
     onEditCoordsChanged,
@@ -60,8 +59,8 @@ export function createMapInteractionsDomain(ctx) {
   let longPressStart = null
   let installed = false
 
-  function seek() {
-    return getSeek?.()
+  function linkSolver() {
+    return getLinkSolver?.()
   }
 
   function alternates() {
@@ -74,6 +73,20 @@ export function createMapInteractionsDomain(ctx) {
 
   function links() {
     return getLinks?.()
+  }
+
+  function trySelectLinkSolverAtPoint(point) {
+    const map = getMap()
+    if (!store?.linkSolver?.panelOpen || !map.getLayer(LINK_SOLVER_PEAKS_LAYER)) {
+      return false
+    }
+    const feats = map.queryRenderedFeatures(point, {
+      layers: [LINK_SOLVER_PEAKS_LAYER],
+    })
+    if (!feats.length) return false
+    const routeId = store.linkSolver.selectedRouteId
+    if (routeId) linkSolver()?.selectRoute?.(routeId)
+    return true
   }
 
   function trySelectFortifyAtPoint(point) {
@@ -156,11 +169,10 @@ export function createMapInteractionsDomain(ctx) {
     installed = true
     const map = getMap()
     map.on('mousemove', (ev) => {
-      if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
+      if (store.ui.addPlacementMode || store.ui.editMode) {
         map.getCanvas().style.cursor = 'crosshair'
         return
       }
-      const seekDomain = seek()
       if (store?.fortify?.active && map.getLayer(FORTIFY_CANDIDATES_LAYER)) {
         const fortifyFeats = map.queryRenderedFeatures(ev.point, {
           layers: [FORTIFY_CANDIDATES_LAYER],
@@ -179,6 +191,15 @@ export function createMapInteractionsDomain(ctx) {
           return
         }
       }
+      if (store?.linkSolver?.panelOpen && map.getLayer(LINK_SOLVER_PEAKS_LAYER)) {
+        const hopFeats = map.queryRenderedFeatures(ev.point, {
+          layers: [LINK_SOLVER_PEAKS_LAYER],
+        })
+        if (hopFeats.length) {
+          map.getCanvas().style.cursor = 'pointer'
+          return
+        }
+      }
       if (siteFeaturesAtPoint(map, ev.point).length) {
         map.getCanvas().style.cursor = 'pointer'
         return
@@ -190,33 +211,12 @@ export function createMapInteractionsDomain(ctx) {
           return
         }
       }
-      if (seekDomain?.seekSessionActive()) {
-        if (map.getLayer(SEEK_CANDIDATES_LAYER)) {
-          const seekFeats = map.queryRenderedFeatures(ev.point, {
-            layers: [SEEK_CANDIDATES_LAYER],
-          })
-          if (seekFeats.length) {
-            map.getCanvas().style.cursor = 'pointer'
-            return
-          }
-        }
-        const siteFeats = map.queryRenderedFeatures(ev.point, {
-          layers: SITE_LAYER_IDS,
-        })
-        if (siteFeats.length) {
-          const slug = siteFeats[0].properties?.slug
-          if (slug && seekDomain.seekSiteCandidateSlugs().has(slug)) {
-            map.getCanvas().style.cursor = 'pointer'
-            return
-          }
-        }
-      }
       syncMapCursor?.()
     })
     for (const peakLayer of [PEAKS_SYMBOL, PEAKS_RING_CIRCLE]) {
       map.on('mouseenter', peakLayer, () => {
         if (!map.getLayer(peakLayer)) return
-        if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
+        if (store.ui.addPlacementMode || store.ui.editMode) {
           map.getCanvas().style.cursor = 'crosshair'
           return
         }
@@ -227,7 +227,7 @@ export function createMapInteractionsDomain(ctx) {
       })
     }
     map.on('mouseenter', LINKS_LAYER, () => {
-      if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
+      if (store.ui.addPlacementMode || store.ui.editMode) {
         map.getCanvas().style.cursor = 'crosshair'
         return
       }
@@ -238,7 +238,7 @@ export function createMapInteractionsDomain(ctx) {
     })
     for (const layerId of SITE_LAYER_IDS) {
       map.on('mouseenter', layerId, () => {
-        if (store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode) {
+        if (store.ui.addPlacementMode || store.ui.editMode) {
           map.getCanvas().style.cursor = 'crosshair'
           return
         }
@@ -259,46 +259,7 @@ export function createMapInteractionsDomain(ctx) {
         onEditCoordsChanged()
         return
       }
-      const seekDomain = seek()
-      if (store?.seek?.goalPlacementMode && store?.ui?.seekPanelOpen) {
-        seekDomain?.setSeekGoalAt(ev.lngLat.lat, ev.lngLat.lng)
-        return
-      }
-      if (seekDomain?.seekSessionActive()) {
-        if (map.getLayer(SEEK_CANDIDATES_LAYER)) {
-          const seekFeats = map.queryRenderedFeatures(ev.point, {
-            layers: [SEEK_CANDIDATES_LAYER],
-          })
-          if (seekFeats.length) {
-            const props = seekFeats[0].properties || {}
-            if (!props.is_goal) {
-              seekDomain.commitSeekCandidate(seekFeats[0])
-            }
-            return
-          }
-        }
-        const siteSeekFeats = map.queryRenderedFeatures(ev.point, {
-          layers: SITE_LAYER_IDS,
-        })
-        if (siteSeekFeats.length) {
-          const slug = siteSeekFeats[0].properties?.slug
-          if (slug && seekDomain.seekSiteCandidateSlugs().has(slug)) {
-            const site = getSiteBySlug(slug)
-            if (site) {
-              seekDomain.commitSeekCandidate({
-                geometry: { type: 'Point', coordinates: [site.lon, site.lat] },
-                properties: {
-                  is_site: true,
-                  site_slug: slug,
-                  site_name: site.name,
-                  elev_m: site.height_m ?? null,
-                },
-              })
-              return
-            }
-          }
-        }
-      }
+      if (trySelectLinkSolverAtPoint(ev.point)) return
       if (trySelectFortifyAtPoint(ev.point)) return
       if (trySelectAlternateAtPoint(ev.point)) return
       const siteFeats = siteFeaturesAtPoint(map, ev.point)

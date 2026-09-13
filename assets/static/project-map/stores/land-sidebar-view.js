@@ -138,14 +138,14 @@ export function landLayerRoleBadgeSpec(role) {
     return {
       label: 'Include',
       className: 'entity-panel__land-role-badge entity-panel__land-role-badge--include',
-      title: 'Eligible land for goal seek (include − exclude)',
+      title: 'Eligible land for RF planning (include − exclude)',
     }
   }
   if (normalized === 'exclude') {
     return {
       label: 'Exclude',
       className: 'entity-panel__land-role-badge entity-panel__land-role-badge--exclude',
-      title: 'Subtracted from include layers for goal seek',
+      title: 'Subtracted from include layers for RF planning',
     }
   }
   if (normalized === 'eligible') {

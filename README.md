@@ -2,15 +2,15 @@
 
 Peaky Finders is a next-generation mesh planning tool with a completely rewritten RF viewshed calculator. Building on prior art such as [SPLAT](https://www.qsl.net/kd2bd/splat.html), it uses modern CPU cores and is optimized for calculating LoRa mesh RF viewsheds.
 
-Peaky Finders features an innovative goal-seeking tool that intelligently finds repeater routes using only land you have marked as eligible. Out here in Nevada, that means feeding Peaky BLM and USFS overlays to keep repeaters on public land and off private property. We used Peaky Finders to plan a mesh network around the entire state, complete with fault tolerance and redundancy.
+Peaky Finders includes a link solver that finds multi-hop repeater routes through catalog peaks between two sites, using only land you have marked as eligible. Out here in Nevada, that means feeding Peaky BLM and USFS overlays to keep repeaters on public land and off private property. We used Peaky Finders to plan a mesh network around the entire state, complete with fault tolerance and redundancy.
 
 Everything lives in YAML. Peaky consumes GeoJSON and most shapefile sources natively. Contributions are welcome, especially if you have ideas for improving or tuning viewshed calculations. See [CONTRIBUTING.md](CONTRIBUTING.md) for build and development setup.
 
 ![3D terrain with RF viewshed overlay](docs/screenshots/3d-terrain-viewshed.jpg)
 
-![Land eligibility layers and goal seek](docs/screenshots/land-layers-goal-seek.jpg)
+![Land eligibility layers and link solver](docs/screenshots/land-layers-goal-seek.jpg)
 
-![Goal seek repeater route planning](docs/screenshots/goal-seek-route.jpg)
+![Link solver repeater route planning](docs/screenshots/goal-seek-route.jpg)
 
 ## Install
 
@@ -46,7 +46,7 @@ Skadi tiles and RF cache live under `<project>/.peaky/cache/`.
 
 | File | Contents |
 |------|----------|
-| `config.yaml` | RF presets, simulation, display, seek, links (required) |
+| `config.yaml` | RF presets, simulation, display, scan, links (required) |
 | `sites.yaml` | `sites:` map (optional split file) |
 | `land.yaml` | Eligible land layers (optional split file) |
 

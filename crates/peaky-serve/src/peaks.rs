@@ -7,8 +7,9 @@ use anyhow::{Context, Result};
 use peaky_peaks::{profile_along_polyline, resolve_hike, warm_place_access, HikeSampleElev};
 use crate::peaks_cache::cached_peaks_list;
 use peaky_preset::{
-    ensure_access_meta, load_access, load_peak, load_peaks_rules, peak_access_compute_key,
-    place_access_compute_key, place_access_is_fresh, PeakHikeProfile, PeakJeepProfile, PlaceAccess,
+    ensure_access_meta, load_access, load_peak, load_peaks_catalog, load_peaks_rules,
+    peak_access_compute_key, place_access_compute_key, place_access_is_fresh, PeakHikeProfile,
+    PeakJeepProfile, PlaceAccess,
 };
 use serde_json::{json, Value};
 use splatter::Session;
@@ -262,4 +263,25 @@ pub fn peak_jeep_payload(
         "jeep_m": access.as_ref().and_then(|a| a.jeep_m).or(entry.jeep_m),
         "jeep": jeep,
     }))
+}
+
+/// Load ``peaks/`` rows that pass ``keep(lat, lon)`` (deny rows omitted).
+pub fn catalog_peaks_filtered(
+    preset_path: &Path,
+    keep: impl Fn(f64, f64) -> bool,
+) -> Result<(Vec<(f64, f64, f64)>, usize), String> {
+    let catalog =
+        load_peaks_catalog(preset_path).map_err(|e| format!("load peaks catalog: {e}"))?;
+    let n_catalog = catalog.entries.len();
+    if n_catalog == 0 {
+        return Err("peaks catalog is empty; run peaky peaks to build peaks/".into());
+    }
+    let peaks = catalog
+        .entries
+        .values()
+        .filter(|entry| !entry.deny.unwrap_or(false))
+        .filter(|entry| keep(entry.lat(), entry.lon()))
+        .map(|entry| (entry.lon(), entry.lat(), entry.elev_m.unwrap_or(0.0)))
+        .collect();
+    Ok((peaks, n_catalog))
 }

@@ -497,7 +497,7 @@ impl<'a> SearchCtx<'a> {
         let rf_json = rf_json_for_preset(&preset)?;
         let rf_key = rf_digest(&preset)?;
         let hop_m = max_hop_range_m(&preset);
-        let bin_m = preset.seek.peak_bin_size_m;
+        let bin_m = preset.scan.peak_bin_size_m;
         let clip = LonLatBBox::from_tuple(corridor_bbox(waypoints, hop_m)).padded(0.05);
         ledger.search_step("loading eligible land polygon + spatial index…");
         let t0 = Instant::now();

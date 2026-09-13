@@ -17,15 +17,4 @@ export {
   computeBulkTagOps,
 } from './sites.js'
 export { setLinksPayload, bumpWarmPriorities } from './links.js'
-export {
-  setSeekState,
-  setSeekScanning,
-  setSeekPanelOpen,
-  setSeekGoalPlacementMode,
-  bumpSeekFetchEpoch,
-  beginSeekFetchEpoch,
-  abortSeekFetch,
-  invalidateSeekFetchEpoch,
-  isSeekFetchCurrent,
-} from './seek.js'
 export { setSimulation } from './simulation.js'

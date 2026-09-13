@@ -89,19 +89,13 @@ pub fn project_html(slug: &str, preset: &Preset, _preset_path: &Path) -> String 
             })
         })
         .collect();
-    let seek_plan = preset
-        .seek
-        .plan
-        .as_ref()
-        .map(|p| serde_json::to_value(p).unwrap_or_default());
     let peaky_config = serde_json::json!({
         "slug": slug,
         "sites": sites,
         "simulation": preset.simulation,
-        "seek": {
-            "peak_bin_size_m": preset.seek.peak_bin_size_m,
-            "max_candidates": preset.seek.max_candidates,
-            "plan": seek_plan,
+        "scan": {
+            "peak_bin_size_m": preset.scan.peak_bin_size_m,
+            "max_candidates": preset.scan.max_candidates,
         },
         "land": {
             "sources": land_sources,

@@ -6,8 +6,7 @@ import {
   FORTIFY_VIEWSHED_SLUG,
   PEAK_VIEWSHED_SLUG,
   DRAFT_VIEWSHED_SLUG,
-  SEEK_HOP_VIEWSHED_PREFIX,
-  SEEK_SCAN_PIN,
+  isPreviewViewshedSlug,
   SITES_CIRCLE,
   VIEWSHED_OVERLAY_BATCH,
 } from '../constants.js'
@@ -23,7 +22,6 @@ import {
   setViewshedLayerVisibility,
 } from '../map/viewshed-layers.js'
 import {
-  ensurePinLoadMarker,
   hideInactivePinMarkers,
   hidePinLoadMarker,
   initPinMarkers,
@@ -70,11 +68,8 @@ const OUTBOUND_LINKS_PARALLEL = 3
  * @param {() => void} [opts.onDraftViewshedLayerAdded]
  * @param {() => boolean} [opts.viewshedLoadingHasDraft]
  * @param {() => { lat: number, lon: number }|null} [opts.getDraftPlacement]
- * @param {() => Iterable<string>} [opts.getSeekHopViewshedSlugs]
- * @param {() => Map<string, { lat: number, lon: number }>} [opts.getSeekHopViewshedCoords]
- * @param {() => boolean} [opts.getSeekScanning]
- * @param {() => boolean} [opts.seekSessionActive]
- * @param {() => { lon: number, lat: number }|null} [opts.seekCurrentFrom]
+ * @param {() => Iterable<string>} [opts.getLinkSolverHopViewshedSlugs]
+ * @param {() => Map<string, { lat: number, lon: number }>} [opts.getLinkSolverHopViewshedCoords]
  * @param {() => Iterable<string>} [opts.getExtraOverlaySlugs]
  */
 export function createViewshedDomain(opts) {
@@ -101,11 +96,8 @@ export function createViewshedDomain(opts) {
     onDraftViewshedLayerAdded,
     viewshedLoadingHasDraft,
     getDraftPlacement,
-    getSeekHopViewshedSlugs,
-    getSeekHopViewshedCoords,
-    getSeekScanning,
-    seekSessionActive,
-    seekCurrentFrom,
+    getLinkSolverHopViewshedSlugs,
+    getLinkSolverHopViewshedCoords,
     getExtraOverlaySlugs,
   } = opts
 
@@ -253,8 +245,8 @@ export function createViewshedDomain(opts) {
       FORTIFY_VIEWSHED_SLUG,
       PEAK_VIEWSHED_SLUG,
     )
-    if (getSeekHopViewshedSlugs) {
-      for (const slug of getSeekHopViewshedSlugs()) slugs.push(slug)
+    if (getLinkSolverHopViewshedSlugs) {
+      for (const slug of getLinkSolverHopViewshedSlugs()) slugs.push(slug)
     }
     if (getExtraOverlaySlugs) {
       for (const slug of getExtraOverlaySlugs()) slugs.push(slug)
@@ -427,9 +419,9 @@ export function createViewshedDomain(opts) {
     if (data.slug !== DRAFT_VIEWSHED_SLUG || data.status !== 'ready') return false
     if (data.lat == null || data.lon == null) return false
     let routed = false
-    const seekHopCoords = getSeekHopViewshedCoords?.()
-    if (seekHopCoords) {
-      for (const [slug, coords] of seekHopCoords) {
+    const linkSolverHopCoords = getLinkSolverHopViewshedCoords?.()
+    if (linkSolverHopCoords) {
+      for (const [slug, coords] of linkSolverHopCoords) {
         if (!viewshedPendingEpoch.has(slug)) continue
         if (!coordsMatchDraftEvent(coords, data)) continue
         const epoch = viewshedPendingEpoch.get(slug)
@@ -503,23 +495,13 @@ export function createViewshedDomain(opts) {
           )
         }
       }
-      if (getSeekHopViewshedSlugs && getSeekHopViewshedCoords) {
-        for (const slug of getSeekHopViewshedSlugs()) {
+      if (getLinkSolverHopViewshedSlugs && getLinkSolverHopViewshedCoords) {
+        for (const slug of getLinkSolverHopViewshedSlugs()) {
           if (!viewshedLoading.has(slug)) continue
-          const coords = getSeekHopViewshedCoords().get(slug)
+          const coords = getLinkSolverHopViewshedCoords().get(slug)
           if (!coords || !coordsUsableForMarker(coords.lon, coords.lat)) continue
           active.add(slug)
           renderPinLoadOverlay(slug, coords.lon, coords.lat, progressFor(slug))
-        }
-      }
-      if (getSeekScanning?.() && seekSessionActive?.()) {
-        const from = seekCurrentFrom?.()
-        if (from && coordsUsableForMarker(from.lon, from.lat)) {
-          active.add(SEEK_SCAN_PIN)
-          const marker = ensurePinLoadMarker(SEEK_SCAN_PIN, 'spinner')
-          if (setMarkerLngLatSafe(marker, from.lon, from.lat)) {
-            marker.getElement().hidden = false
-          }
         }
       }
       hideInactivePinMarkers(active)

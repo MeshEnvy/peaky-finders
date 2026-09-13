@@ -89,82 +89,20 @@
     <wa-icon name="chevron-right" label=""></wa-icon>
   </button>
   <div id="map"></div>
-  <aside id="seek-panel" class="seek-panel" hidden aria-label="Goal seek">
-    <div class="seek-panel__header">
-      <h2 class="seek-panel__title">Goal seek</h2>
-      <wa-button id="seek-panel-close" appearance="plain" size="s" type="button" title="Close" aria-label="Close">
-        <wa-icon name="xmark" label="Close"></wa-icon>
-      </wa-button>
-    </div>
-    <div class="seek-panel__body">
-      <label class="seek-panel__field" for="seek-start-site">
-        <span class="site-panel__label">Start</span>
-        <select id="seek-start-site" class="pf-mono"></select>
-      </label>
-      <div class="seek-panel__field">
-        <span class="site-panel__label">Goal</span>
-        <div class="seek-panel__goal-row">
-          <p id="seek-goal-coords" class="seek-panel__goal-coords pf-mono pf-muted">Not set</p>
-          <wa-button
-            id="seek-set-goal-btn"
-            appearance="outlined"
-            size="s"
-            type="button"
-            title="Click map to set goal"
-            aria-label="Set goal on map"
-            aria-pressed="false"
-          >
-            <wa-icon name="crosshairs" label="Set goal"></wa-icon>
-          </wa-button>
-        </div>
-        <p class="seek-panel__hint pf-muted wa-caption">Set goal, then click the map to fix lat/lng</p>
-      </div>
-      <div class="seek-panel__actions">
-        <div class="seek-panel__history-actions">
-          <wa-button id="seek-undo-btn" appearance="plain" size="s" type="button" title="Undo hop" aria-label="Undo hop" disabled>
-            <wa-icon name="arrow-rotate-left" label="Undo hop"></wa-icon>
-          </wa-button>
-          <wa-button id="seek-redo-btn" appearance="plain" size="s" type="button" title="Redo hop" aria-label="Redo hop" disabled>
-            <wa-icon name="arrow-rotate-right" label="Redo hop"></wa-icon>
-          </wa-button>
-        </div>
-        <wa-button id="seek-reset-btn" appearance="outlined" size="s" type="button">Reset</wa-button>
-        <wa-button
-          id="seek-convert-sites-btn"
-          appearance="outlined"
-          size="s"
-          type="button"
-          title="Create preset sites from coordinate hops in the saved path"
-          disabled
-        >
-          Convert to sites
+  <aside id="link-solver-panel" class="link-solver-panel floating-panel" hidden aria-label="Link solver">
+    <div class="link-solver-panel__header floating-panel__header">
+      <wa-icon name="grip-vertical" class="floating-panel__drag-handle" label="Drag panel"></wa-icon>
+      <h2 class="link-solver-panel__title">Link solver</h2>
+      <div class="floating-panel__header-actions">
+        <wa-button class="link-solver-panel__collapse" appearance="plain" size="s" type="button" title="Collapse" aria-label="Collapse">
+          <wa-icon name="chevron-up" label="Collapse"></wa-icon>
         </wa-button>
-        <wa-button
-          id="seek-refresh-btn"
-          appearance="outlined"
-          size="s"
-          type="button"
-          title="Recalculate peak candidates for the current hop and map view"
-          hidden
-        >
-          Recalculate
+        <wa-button class="link-solver-panel__close" appearance="plain" size="s" type="button" title="Close" aria-label="Close">
+          <wa-icon name="xmark" label="Close"></wa-icon>
         </wa-button>
       </div>
-      <p id="seek-status" class="seek-panel__status pf-muted wa-caption"></p>
-      <div id="seek-progress" class="seek-panel__progress" hidden>
-        <div
-          id="seek-progress-track"
-          class="seek-panel__progress-track"
-          role="progressbar"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-valuenow="0"
-        >
-          <div id="seek-progress-bar" class="seek-panel__progress-bar seek-panel__progress-bar--indeterminate"></div>
-        </div>
-        <p id="seek-progress-detail" class="seek-panel__progress-detail pf-muted wa-caption"></p>
-      </div>
     </div>
+    <div class="link-solver-panel__body floating-panel__body"></div>
   </aside>
 
   <aside id="site-panel" class="site-panel" hidden>
@@ -636,26 +574,6 @@
   </div>
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
   <wa-button slot="footer" id="import-sites-save" variant="brand" size="s" type="button" disabled>Import</wa-button>
-</wa-dialog>
-<wa-dialog id="seek-convert-sites-modal" label="Convert path hops to sites" style="--width: 32rem" with-footer light-dismiss>
-  <wa-callout id="seek-convert-sites-error" variant="danger" hidden></wa-callout>
-  <div class="pf-form-grid">
-    <div class="pf-form-field pf-form-field--full">
-      <label for="seek-convert-name-prefix" class="pf-label">Name prefix</label>
-      <input id="seek-convert-name-prefix" type="text" autocomplete="off" placeholder="Relay" maxlength="64">
-      <p class="wa-caption pf-muted" id="seek-convert-hop-count">No coordinate hops in the saved path.</p>
-    </div>
-    <div class="pf-form-field pf-form-field--full">
-      <span class="pf-label" id="seek-convert-tags-label">Tags</span>
-      <div class="site-tags import-sites-tags" id="seek-convert-tags" role="group" aria-labelledby="seek-convert-tags-label"></div>
-      <form class="site-tag-add-form import-sites-tag-form" id="seek-convert-tag-form">
-        <input id="seek-convert-tag-input" type="text" list="seek-convert-tag-suggestions" placeholder="add tag" autocomplete="off" maxlength="32" aria-label="Add tag">
-        <datalist id="seek-convert-tag-suggestions"></datalist>
-      </form>
-    </div>
-  </div>
-  <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
-  <wa-button slot="footer" id="seek-convert-save" variant="brand" size="s" type="button" disabled>Convert</wa-button>
 </wa-dialog>
 <wa-dialog id="land-source-modal" label="Land source" class="land-source-modal" style="--width: 40rem" with-footer light-dismiss>
   <wa-callout id="land-source-error" variant="danger" hidden></wa-callout>

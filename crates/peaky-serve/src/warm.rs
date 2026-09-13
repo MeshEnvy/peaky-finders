@@ -799,7 +799,7 @@ impl WarmHub {
         }
     }
 
-    /// Interactive warm for coordinate draft viewsheds (seek hops, site placement).
+    /// Interactive warm for coordinate draft viewsheds (link solver hops, site placement).
     pub fn warm_coords_viewshed(
         &self,
         slug: &str,

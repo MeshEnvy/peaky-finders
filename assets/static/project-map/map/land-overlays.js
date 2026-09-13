@@ -11,7 +11,7 @@ export const LAND_OVERLAYS = [
     role: 'eligible',
     label: 'Eligible',
     summary: 'Include − exclude, clipped to AOI',
-    title: 'Land seek can use: (include − exclude) ∩ AOI',
+    title: 'RF scans can use: (include − exclude) ∩ AOI',
     color: '#10b981',
     opacity: 0.38,
   },

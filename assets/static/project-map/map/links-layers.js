@@ -7,9 +7,6 @@ import {
   DRAFT_LINKS_SOURCE,
   DRAFT_LINKS_LAYER,
   DRAFT_LINKS_LABELS_LAYER,
-  SEEK_ANCILLARY_LINES_SOURCE,
-  SEEK_ANCILLARY_LINES_LAYER,
-  SEEK_ANCILLARY_LINES_LABELS_LAYER,
   MAP_TEXT_FONT,
   SITES_CIRCLE,
 } from '../constants.js'
@@ -245,59 +242,3 @@ export function applyDraftLinksLayer(map, geojson, featureVisible, onRaiseLayers
   if (onRaiseLayers) onRaiseLayers()
 }
 
-/** @param {maplibregl.Map} map */
-export function removeSeekAncillaryLinksLayer(map) {
-  if (map.getLayer(SEEK_ANCILLARY_LINES_LABELS_LAYER)) {
-    map.removeLayer(SEEK_ANCILLARY_LINES_LABELS_LAYER)
-  }
-  if (map.getLayer(SEEK_ANCILLARY_LINES_LAYER)) map.removeLayer(SEEK_ANCILLARY_LINES_LAYER)
-  if (map.getSource(SEEK_ANCILLARY_LINES_SOURCE)) map.removeSource(SEEK_ANCILLARY_LINES_SOURCE)
-}
-
-/**
- * @param {maplibregl.Map} map
- * @param {import('geojson').FeatureCollection|null|undefined} geojson
- * @param {(feature: import('geojson').Feature) => boolean} [featureVisible]
- * @param {() => void} [onRaiseLayers]
- */
-export function applySeekAncillaryLinksLayer(map, geojson, featureVisible, onRaiseLayers) {
-  const features = visibleLinkFeatures(geojson, featureVisible)
-  if (!features.length) {
-    removeSeekAncillaryLinksLayer(map)
-    return
-  }
-  const labeled = linksGeoJsonWithLabels({ type: 'FeatureCollection', features })
-  if (map.getSource(SEEK_ANCILLARY_LINES_SOURCE)) {
-    map.getSource(SEEK_ANCILLARY_LINES_SOURCE).setData(labeled)
-    if (onRaiseLayers) onRaiseLayers()
-    return
-  }
-  map.addSource(SEEK_ANCILLARY_LINES_SOURCE, { type: 'geojson', data: labeled })
-  map.addLayer(
-    {
-      id: SEEK_ANCILLARY_LINES_LAYER,
-      type: 'line',
-      source: SEEK_ANCILLARY_LINES_SOURCE,
-      paint: {
-        'line-color': ['case', ['get', 'manual'], '#0d9488', '#4a6cf7'],
-        'line-width': 2.5,
-        'line-opacity': 0.75,
-      },
-      layout: {
-        'line-cap': 'round',
-        'line-join': 'round',
-        visibility: 'visible',
-      },
-    },
-    SITES_CIRCLE,
-  )
-  map.addLayer(
-    linkLabelsLayerSpec(
-      SEEK_ANCILLARY_LINES_LABELS_LAYER,
-      SEEK_ANCILLARY_LINES_SOURCE,
-      'visible',
-    ),
-    SITES_CIRCLE,
-  )
-  if (onRaiseLayers) onRaiseLayers()
-}

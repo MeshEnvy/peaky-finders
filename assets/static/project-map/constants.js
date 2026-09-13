@@ -37,22 +37,12 @@ export const LINKS_LABELS_LAYER = 'site-links-label'
 export const DRAFT_LINKS_SOURCE = 'draft-site-links'
 export const DRAFT_LINKS_LAYER = 'draft-site-links-line'
 export const DRAFT_LINKS_LABELS_LAYER = 'draft-site-links-label'
-export const SEEK_CANDIDATES_SOURCE = 'seek-candidates'
-export const SEEK_CANDIDATES_LAYER = 'seek-candidates-circle'
-export const SEEK_CANDIDATES_LABELS_LAYER = 'seek-candidates-label'
-export const SEEK_LINES_SOURCE = 'seek-candidate-lines'
-export const SEEK_LINES_LAYER = 'seek-candidate-lines-line'
-export const SEEK_LINES_LABELS_LAYER = 'seek-candidate-lines-label'
-export const SEEK_PATH_SOURCE = 'seek-path'
-export const SEEK_PATH_LAYER = 'seek-path-line'
-export const SEEK_GOAL_LINE_SOURCE = 'seek-goal-line'
-export const SEEK_GOAL_LINE_LAYER = 'seek-goal-line'
-export const SEEK_LENS_SOURCE = 'seek-progress-lens'
-export const SEEK_LENS_FILL_LAYER = 'seek-progress-lens-fill'
-export const SEEK_LENS_OUTLINE_LAYER = 'seek-progress-lens-outline'
-export const SEEK_ANCILLARY_LINES_SOURCE = 'seek-ancillary-lines'
-export const SEEK_ANCILLARY_LINES_LAYER = 'seek-ancillary-lines-line'
-export const SEEK_ANCILLARY_LINES_LABELS_LAYER = 'seek-ancillary-lines-label'
+export const LINK_SOLVER_PEAKS_SOURCE = 'link-solver-peaks'
+export const LINK_SOLVER_PEAKS_LAYER = 'link-solver-peaks-circle'
+export const LINK_SOLVER_LINES_SOURCE = 'link-solver-lines'
+export const LINK_SOLVER_LINES_LAYER = 'link-solver-lines-line'
+export const LINK_SOLVER_LINES_LABELS_LAYER = 'link-solver-lines-label'
+export const LINK_SOLVER_VIEWSHED_PREFIX = '_linksolver_'
 export const ALTERNATES_CANDIDATES_SOURCE = 'alternates-candidates'
 export const ALTERNATES_CANDIDATES_LAYER = 'alternates-candidates-circle'
 export const ALTERNATES_CANDIDATES_LABELS_LAYER = 'alternates-candidates-label'
@@ -87,33 +77,20 @@ export const SITE_STACK_RAISE_IDS = [
   FORTIFY_LINES_LABELS_LAYER,
   FORTIFY_CANDIDATES_LAYER,
   FORTIFY_CANDIDATES_LABELS_LAYER,
-  SEEK_ANCILLARY_LINES_LAYER,
-  SEEK_ANCILLARY_LINES_LABELS_LAYER,
-  SEEK_LINES_LAYER,
-  SEEK_LINES_LABELS_LAYER,
-  SEEK_PATH_LAYER,
-  SEEK_GOAL_LINE_LAYER,
-  SEEK_CANDIDATES_LAYER,
-  SEEK_CANDIDATES_LABELS_LAYER,
+  LINK_SOLVER_LINES_LAYER,
+  LINK_SOLVER_LINES_LABELS_LAYER,
+  LINK_SOLVER_PEAKS_LAYER,
   SITES_CIRCLE,
   SITES_LABELS,
   SITES_SELECTED,
-  SEEK_LENS_FILL_LAYER,
-  SEEK_LENS_OUTLINE_LAYER,
   SITES_JEEP_LINE,
   SITES_ACCESS_LINE,
   SITES_PAVED_CIRCLE,
   SITES_PARK_CIRCLE,
 ]
-export const SEEK_ANCILLARY_LINKS_DEBOUNCE_MS = 450
-export const SEEK_PLAN_SAVE_MS = 400
-export const SEEK_PEAK_BIN_MIN_M = 500
-export const SEEK_PEAK_BIN_MAX_M = 1500
-export const SEEK_PEAK_BINS_ACROSS_VIEWPORT = 20
-export const SEEK_SCAN_PIN = '__seek_scan__'
-export const SEEK_PROGRESS_POLL_MS = 400
-export const SEEK_GOAL_SAME_AS_START_M = 50
-export const SEEK_HOP_VIEWSHED_PREFIX = '_seek_hop_'
+export const PEAK_BIN_MIN_M = 500
+export const PEAK_BIN_MAX_M = 1500
+export const PEAK_BINS_ACROSS_VIEWPORT = 20
 
 export const LAND_DEFAULT_FILL_COLOR = '#4a6cf7'
 export const LAND_DEFAULT_FILL_OPACITY = 0.48
@@ -153,13 +130,17 @@ export function mapStateKey(projectSlug) {
 }
 
 /** @param {string} projectSlug */
-export function seekStateKey(projectSlug) {
-  return `peaky.seek.v1.${projectSlug}`
+export function linkSolverPanelPosKey(projectSlug) {
+  return `peaky.linkSolverPanelPos.${projectSlug}`
 }
 
-/** @param {string} projectSlug */
-export function seekRedoKey(projectSlug) {
-  return `peaky.seek.redo.v1.${projectSlug}`
+/** @param {string} slug */
+export function isPreviewViewshedSlug(slug) {
+  return (
+    slug === FORTIFY_VIEWSHED_SLUG ||
+    slug === ALTERNATE_VIEWSHED_SLUG ||
+    slug.startsWith(LINK_SOLVER_VIEWSHED_PREFIX)
+  )
 }
 
 /**

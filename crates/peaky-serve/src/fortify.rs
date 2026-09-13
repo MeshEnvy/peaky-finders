@@ -17,8 +17,8 @@ use crate::links::canonical_site_pair;
 use crate::rf::{
     default_repeater_tx_height_m, preset_to_request, resolved_site_tx_height_m, rf_json_for_preset,
 };
-use crate::seek_progress::SeekProgressHub;
-use crate::seek_rank::haversine_m;
+use crate::scan_progress::ScanProgressHub;
+use splatter::propagate::haversine_m;
 
 const ENDPOINT_EXCLUDE_M: f64 = 500.0;
 const SITE_PEAK_DEDUP_M: f64 = 500.0;
@@ -95,14 +95,14 @@ impl FortifyJobQueue {
 
 #[derive(Clone)]
 pub struct FortifyHub {
-    progress: SeekProgressHub,
+    progress: ScanProgressHub,
     queue: Arc<FortifyJobQueue>,
 }
 
 impl FortifyHub {
     pub fn new(session: Arc<Session>, verbose: bool) -> Self {
         let queue = Arc::new(FortifyJobQueue::new());
-        let progress = SeekProgressHub::default();
+        let progress = ScanProgressHub::default();
         for _ in 0..fortify_workers() {
             let queue = Arc::clone(&queue);
             let progress = progress.clone();
@@ -170,7 +170,7 @@ impl From<anyhow::Error> for FortifyRunError {
 fn run_fortify_job(
     session: &Arc<Session>,
     _verbose: bool,
-    progress: &SeekProgressHub,
+    progress: &ScanProgressHub,
     job: FortifyJob,
 ) {
     let key = job.progress_key.clone();
@@ -379,7 +379,7 @@ fn pair_mutual_margin(
 
 fn load_fortify_body(
     session: &Arc<Session>,
-    progress: &SeekProgressHub,
+    progress: &ScanProgressHub,
     req: &FortifyRequest,
     scan_gen: u64,
 ) -> Result<Value, FortifyRunError> {
@@ -393,8 +393,8 @@ fn load_fortify_body(
     };
 
     let preset = load_preset(&req.preset_path)?;
-    let seek_cfg = preset.seek.clone();
-    let cap = seek_cfg.max_candidates as usize;
+    let scan_cfg = preset.scan.clone();
+    let cap = scan_cfg.max_candidates as usize;
     let hop_m = hop_m_from_preset(&preset);
 
     let site_a = preset
@@ -774,7 +774,7 @@ sites:
     loc: [39.1, -119.0]
 simulation:
   radius_km: 50
-seek:
+scan:
   max_candidates: 10
 "#
         )

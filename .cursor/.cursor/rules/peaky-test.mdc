@@ -1,5 +1,5 @@
 ---
-description: Run v5 tests with cargo test; seek/RF paths must have timing budgets
+description: Run v5 tests with cargo test; link-solver/RF paths must have timing budgets
 alwaysApply: true
 ---
 
@@ -9,13 +9,13 @@ Rust tests run on the host with **`cargo test`** from the repo root (or `-p spla
 
 ## Do this
 
-- Run **`cargo test`** before marking seek, links, eligible-land, or splatter peak-scan work done.
-- Add **timing assertions** on interactive hot paths (seek trim, peak scan, eligible build on small fixtures). Budgets live in test modules (`SEEK_TRIM_BUDGET`, `PEAK_SCAN_BUDGET`, etc.).
-- Port v4 pytest coverage when touching the same behavior (`peaky-finders-v4/peaky_finders/tests/serve/test_seek_*.py`).
+- Run **`cargo test`** before marking link solver, links, eligible-land, or splatter peak-scan work done.
+- Add **timing assertions** on interactive hot paths (link solver scan, peak scan, eligible build on small fixtures). Budgets live in test modules (`PEAK_SCAN_BUDGET`, etc.).
+- Port v4 pytest coverage when touching the same behavior (link solver / fortify serve tests in `crates/peaky-serve/`).
 
 ## Avoid
 
-- Pipelines that boolean-intersect full-state eligible land during seek (use hop disc + viewport bbox; point-check sites/goals only).
+- Pipelines that boolean-intersect full-state eligible land during RF scans (use hop disc + viewport bbox; point-check sites only).
 - Silent multi-minute loops with no progress updates and no tests.
 
 ## Reference

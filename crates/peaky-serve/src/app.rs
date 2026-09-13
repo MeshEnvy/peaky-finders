@@ -17,7 +17,7 @@ use tower_http::trace::TraceLayer;
 use crate::api;
 use crate::alternates::AlternatesHub;
 use crate::fortify::FortifyHub;
-use crate::seek::SeekHub;
+use crate::link_solver::LinkSolverHub;
 use crate::state::AppState;
 use crate::static_files;
 use crate::warm::WarmHub;
@@ -80,7 +80,7 @@ pub async fn run_server(
         session: session.clone(),
         events: events.clone(),
         warm: WarmHub::new(session.clone(), events, verbose, coverage_workers),
-        seek: SeekHub::new(Arc::clone(&session), verbose),
+        link_solver: LinkSolverHub::new(Arc::clone(&session), verbose),
         alternates: AlternatesHub::new(Arc::clone(&session), verbose),
         fortify: FortifyHub::new(session, verbose),
         verbose,

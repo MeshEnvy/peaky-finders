@@ -5,7 +5,7 @@ import {
   FORTIFY_VIEWSHED_SLUG,
   DRAFT_VIEWSHED_SLUG,
   PEAK_VIEWSHED_SLUG,
-  SEEK_HOP_VIEWSHED_PREFIX,
+  isPreviewViewshedSlug,
   SITES_CIRCLE,
   SITES_LABELS,
   SITES_SELECTED,
@@ -40,11 +40,9 @@ export function createSiteLayersDomain(ctx) {
     siteHidden,
     tagFilterBypassSlugs,
     activeTagFilters,
-    getSeek,
     deselectSite,
     raiseSiteLayers,
     renderEntityPanel,
-    refreshSeekStartSelectIfOpen,
     scheduleSaveMapState,
     refreshFilteredLinks,
     removeViewshedLayer,
@@ -89,10 +87,8 @@ export function createSiteLayersDomain(ctx) {
   function isEphemeralViewshedSlug(slug) {
     return (
       slug === DRAFT_VIEWSHED_SLUG ||
-      slug === ALTERNATE_VIEWSHED_SLUG ||
-      slug === FORTIFY_VIEWSHED_SLUG ||
       slug === PEAK_VIEWSHED_SLUG ||
-      String(slug).startsWith(SEEK_HOP_VIEWSHED_PREFIX)
+      isPreviewViewshedSlug(slug)
     )
   }
 
@@ -101,7 +97,6 @@ export function createSiteLayersDomain(ctx) {
     if (siteHidden.has(slug)) return true
     const site = siteBySlug.get(slug)
     if (!site) return true
-    if (getSeek?.()?.isSiteInSeekPlan?.(slug)) return false
     if (tagFilterBypassSlugs.has(slug)) return false
     return !sitePassesTagFilter(site)
   }
@@ -232,7 +227,6 @@ export function createSiteLayersDomain(ctx) {
     renderEntityPanel?.()
     updateSelectedLayer()
     raiseSiteLayers?.()
-    refreshSeekStartSelectIfOpen?.()
     scheduleSaveMapState?.()
   }
 
@@ -251,7 +245,6 @@ export function createSiteLayersDomain(ctx) {
     pruneActiveTagFilters()
     addSiteLayers()
     renderEntityPanel?.()
-    refreshSeekStartSelectIfOpen?.()
   }
 
   function applySiteTagChange(slug) {

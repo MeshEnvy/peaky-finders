@@ -309,7 +309,7 @@ export function createLinksDomain(opts) {
     if (selectedSlug) renderSelectedPanel(getSiteBySlug(selectedSlug))
   }
 
-  function mergeConvertedSeekLinks(payload) {
+  function mergeSeededLinks(payload) {
     const created = Array.isArray(payload?.created_slugs)
       ? payload.created_slugs.filter(Boolean)
       : []
@@ -464,7 +464,7 @@ export function createLinksDomain(opts) {
     getPayload,
     applySiteLinksPayload,
     mergeSingleSiteLinks,
-    mergeConvertedSeekLinks,
+    mergeSeededLinks,
     loadSiteLinks,
     loadSingleSiteLinks,
     addSiteLinksLayer,

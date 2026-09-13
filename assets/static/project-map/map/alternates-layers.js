@@ -12,7 +12,7 @@ import {
   SITES_CIRCLE,
 } from '../constants.js'
 import { linkLabelsLayerSpec } from './links-layers.js'
-import { seekLinesGeoJsonWithLabels } from './seek-layers.js'
+import { rfLinesGeoJsonWithLabels } from './line-labels.js'
 
 /** @param {maplibregl.Map} map */
 export function removeAlternatesLayers(map) {
@@ -108,7 +108,7 @@ export function applyAlternatesLayers(map, payload, opts = {}) {
     return props.candidate_id === selectedId
   })
   if (lineFeatures.length) {
-    const labeled = seekLinesGeoJsonWithLabels({
+    const labeled = rfLinesGeoJsonWithLabels({
       type: 'FeatureCollection',
       features: lineFeatures,
     })

@@ -1,4 +1,4 @@
-//! In-memory goal-seek scan progress for client polling.
+//! In-memory async scan progress for client polling (fortify, alternates, link solver).
 
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -29,11 +29,11 @@ impl Default for Inner {
 }
 
 #[derive(Clone, Default)]
-pub struct SeekProgressHub {
+pub struct ScanProgressHub {
     inner: std::sync::Arc<Mutex<Inner>>,
 }
 
-impl SeekProgressHub {
+impl ScanProgressHub {
     pub fn begin(&self, slug: &str) -> u64 {
         let mut inner = self.inner.lock();
         let gen = inner.active_gen.get(slug).copied().unwrap_or(0) + 1;
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn generation_isolated_and_poll_returns_result() {
-        let hub = SeekProgressHub::default();
+        let hub = ScanProgressHub::default();
         let slug = "nevada";
         let gen_a = hub.begin(slug);
         hub.update(slug, gen_a, "peak_links", 2, 10, "a");
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn idle_when_no_scan() {
-        let hub = SeekProgressHub::default();
+        let hub = ScanProgressHub::default();
         let poll = hub.poll("x", "x");
         assert_eq!(poll["status"], "idle");
     }

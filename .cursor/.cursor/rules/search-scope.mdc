@@ -14,7 +14,8 @@ Peaky work lives in **`peaky_finders/`**. Enterprise routing: `ops/.cursor/rules
 | RF engine, coverage, links, DEM | `splatter/` | `Session::run`, propagate |
 | HTTP serve, warm queue, viewshed | `crates/peaky-serve/` | `warm.rs`, `viewshed.rs`, `api.rs` |
 | Preset YAML model, init | `crates/peaky-preset/` | `SimulationConfig`, `load_preset` |
-| `peaky find path` | `crates/peaky-finder/` | seek, route, search |
+| `peaky find path` | `crates/peaky-finder/` | route, search, chain |
+| Link solver API + UI | `crates/peaky-serve/src/link_solver.rs`, `assets/static/project-map/domains/link-solver.js` | scan, accept, like |
 | Geo / eligible land | `crates/peaky-geo/` | land fetch, polygonize |
 | CLI entry | `cmd/peaky/` | `serve`, `find` |
 | Static UI assets | `assets/` | `home-settings.js`, templates |

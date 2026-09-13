@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **Link solver** — map tool to find multi-hop peak routes between two preset sites. Floating panel, route list ranked by fewest hops then shortest distance, margin labels on legs, preview viewsheds, **More like this**, **Load more**, and **Accept** to create hop sites and seed mesh links. Replaces goal seek.
 - **Site elevation** — the site sheet shows Skadi DEM AMSL next to antenna height (same source as peaks). The value updates when you move the pin in edit or create.
 - **`peaky map export`** — mosaics native splatter viewsheds into meshenvy.org GeoJSON + XYZ tiles (`splatter_v5`).
 - **Catalog peak RF preview** — clicking a catalog peak prefetches a viewshed raster and hop-range P2P draft links to booked sites (same placement preview APIs as seek/alternates). Deselect, close the sheet, or pick a site to clear; **Add as site** hands off to the real site mesh. Cold-cache warms paint on first click (SSE `_draft` → `_peak`).
@@ -21,8 +22,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 - **Access paths on RF links** — selecting a link paints jeep/hike routes on both endpoints (site deselect no longer hides them).
 
+### Removed
+
+- **Goal seek** — start/goal hop planner, seek plan persistence, and `/seek/*` APIs. Use link solver for multi-hop planning between two booked sites.
+
 ### Changed
 
+- **Preset `scan:`** — renamed from `seek:`; caps peak candidates for link solver, Fortify, and alternates scans.
 - **Hike/jeep difficulty is runtime-derived** — pin rings, Fortify, and the access sheet recompute easy/medium/difficult/extreme from grade and OSM facts. Only facts persist on thin `peaks/` rows (`hike_gain_m`, grades, `jeep_highway`); `difficulty` / `hike_difficulty` / `jeep_difficulty` are not written to YAML. Re-run `peaky peaks` on affected rows to refresh fact scalars after an algo change.
 - **Paved snap uses interpolated samples** — paved anchors are densified every 40 m like jeep roads, so on-road snap reaches pads between sparse OSM vertices. `ACCESS_ALGO_VERSION` → **10**. Re-open a peak/site sheet to re-warm leftover pins.
 - **Four access modes** — jeep and hike are independent. Pad on pavement within 40 m → no jeep, no hike. On dirt → jeep only. Paved park with a walk → hike only. Dirt park → both. Stops inventing a dirt loop when the pin is already on the street. `ACCESS_ALGO_VERSION` → **9**. Re-open a peak/site sheet to re-warm leftover pins.

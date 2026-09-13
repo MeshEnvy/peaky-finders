@@ -8,7 +8,7 @@ function mapToolIcon(name, label) {
 }
 
 /**
- * Install basemap / seek / sites / opacity / settings controls into a MapLibre nav group.
+ * Install basemap / link solver / sites / opacity / settings controls into a MapLibre nav group.
  * @param {HTMLElement} navGroup
  * @param {{ viewshedOpacity?: number }} [opts]
  */
@@ -40,15 +40,15 @@ export function installMapToolbar(navGroup, { viewshedOpacity = VIEWSHED_OPACITY
   }
   basemapDropdown.insertBefore(basemapBtn, basemapDropdown.firstChild)
 
-  const seekBtn = document.createElement('button')
-  seekBtn.type = 'button'
-  seekBtn.id = 'map-tool-seek'
-  seekBtn.className = 'map-toolbar-tool'
-  seekBtn.setAttribute('aria-pressed', 'false')
-  seekBtn.setAttribute('aria-controls', 'seek-panel')
-  seekBtn.setAttribute('aria-label', 'Goal seek')
-  seekBtn.title = 'Goal seek'
-  seekBtn.innerHTML = mapToolIcon('route', 'Goal seek')
+  const linkSolverBtn = document.createElement('button')
+  linkSolverBtn.type = 'button'
+  linkSolverBtn.id = 'map-tool-link-solver'
+  linkSolverBtn.className = 'map-toolbar-tool'
+  linkSolverBtn.setAttribute('aria-pressed', 'false')
+  linkSolverBtn.setAttribute('aria-controls', 'link-solver-panel')
+  linkSolverBtn.setAttribute('aria-label', 'Link solver')
+  linkSolverBtn.title = 'Link solver'
+  linkSolverBtn.innerHTML = mapToolIcon('route', 'Link solver')
 
   const sitesBtn = document.createElement('button')
   sitesBtn.type = 'button'
@@ -104,13 +104,13 @@ export function installMapToolbar(navGroup, { viewshedOpacity = VIEWSHED_OPACITY
   opacityDropdown.appendChild(opacityBtn)
   opacityDropdown.appendChild(opacityMenu)
 
-  for (const el of [basemapDropdown, seekBtn, sitesBtn, opacityDropdown, settingsBtn]) {
+  for (const el of [basemapDropdown, linkSolverBtn, sitesBtn, opacityDropdown, settingsBtn]) {
     navGroup.appendChild(el)
   }
 
   return {
     mapBasemapMenu: basemapDropdown,
-    mapToolSeek: seekBtn,
+    mapToolLinkSolver: linkSolverBtn,
     mapToolSites: sitesBtn,
     viewshedOpacityInput: opacitySlider,
     mapToolSettings: settingsBtn,

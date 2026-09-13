@@ -7,8 +7,8 @@ use anyhow::{Context, Result};
 use serde_yaml::{Mapping, Value};
 
 use crate::model::{
-    drop_stale_seek_plan, validate_preset, validate_project_preset_document, LandLayerEntry,
-    LandSidebar, LandSourceEntry, LandSourceRefresh, Preset, PresetValidationError, SiteEntry,
+    validate_preset, validate_project_preset_document, LandLayerEntry, LandSidebar,
+    LandSourceEntry, LandSourceRefresh, Preset, PresetValidationError, SiteEntry,
 };
 use crate::project::{read_merged_document, write_merged_document, ProjectLayout};
 use crate::sites::normalize_site_tags;
@@ -29,7 +29,6 @@ pub fn parse_preset_dict(raw: Mapping) -> Result<Preset, PresetValidationError> 
     let value = Value::Mapping(raw);
     let mut preset: Preset = serde_yaml::from_value(value)
         .map_err(|e| PresetValidationError::Message(e.to_string()))?;
-    drop_stale_seek_plan(&mut preset);
     validate_preset(&preset)?;
     Ok(preset)
 }
@@ -196,54 +195,7 @@ pub fn remove_preset_site(path: &Path, slug: &str) -> Result<()> {
     sites
         .remove(&Value::from(slug))
         .with_context(|| format!("site not found: {slug}"))?;
-    write_sites_document(&layout, &doc)?;
-    drop_seek_plan_if_references_site(path, slug)
-}
-
-fn seek_plan_yaml_references_site(plan: &Value, slug: &str) -> bool {
-    let Some(map) = plan.as_mapping() else {
-        return false;
-    };
-    if map.get(&Value::from("start")).and_then(Value::as_str) == Some(slug) {
-        return true;
-    }
-    let Some(hops) = map.get(&Value::from("hops")).and_then(Value::as_sequence) else {
-        return false;
-    };
-    hops.iter().any(|hop| {
-        hop.as_mapping()
-            .and_then(|row| row.get(&Value::from("site")))
-            .and_then(Value::as_str)
-            == Some(slug)
-    })
-}
-
-fn drop_seek_plan_if_references_site(path: &Path, slug: &str) -> Result<()> {
-    let mut raw = load_preset_raw(path)?;
-    let Some(map) = raw.as_mapping_mut() else {
-        return Ok(());
-    };
-    let Some(seek) = map.get(&Value::from("seek")) else {
-        return Ok(());
-    };
-    let Some(seek_map) = seek.as_mapping() else {
-        return Ok(());
-    };
-    let Some(plan) = seek_map.get(&Value::from("plan")) else {
-        return Ok(());
-    };
-    if !seek_plan_yaml_references_site(plan, slug) {
-        return Ok(());
-    }
-    if let Some(seek) = map.get_mut(&Value::from("seek")) {
-        if let Some(seek_map) = seek.as_mapping_mut() {
-            seek_map.remove(&Value::from("plan"));
-            if seek_map.is_empty() {
-                map.remove(&Value::from("seek"));
-            }
-        }
-    }
-    write_preset_document(path, map)
+    write_sites_document(&layout, &doc)
 }
 
 fn unique_land_source_id(base: &str, existing: &HashSet<String>) -> String {
@@ -450,55 +402,6 @@ mod tests {
         assert!(sites_text.contains("second:"));
         let preset = load_preset(&config_path).unwrap();
         assert!(preset.sites.contains_key("second"));
-    }
-
-    #[test]
-    fn parse_preset_dict_drops_seek_plan_with_unknown_hop() {
-        let raw: Mapping = serde_yaml::from_str(
-            r#"
-sites:
-  alpha:
-    name: Alpha
-    loc: [39.0, -119.0]
-seek:
-  plan:
-    start: alpha
-    goal: [40.0, -118.0]
-    hops:
-      - site: alpha
-      - site: relaya1
-simulation:
-  radius_km: 50
-"#,
-        )
-        .unwrap();
-        let preset = parse_preset_dict(raw).unwrap();
-        assert!(preset.seek.plan.is_none());
-        assert!(preset.sites.contains_key("alpha"));
-    }
-
-    #[test]
-    fn remove_preset_site_drops_seek_plan_that_named_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.yaml");
-        fs::write(
-            &config_path,
-            "seek:\n  plan:\n    start: first\n    goal: [40.0, -118.0]\n    hops:\n      - site: first\n      - site: second\n",
-        )
-        .unwrap();
-        fs::write(
-            dir.path().join("sites.yaml"),
-            "sites:\n  first:\n    name: First\n    loc: [1.0, 2.0]\n    tags: []\n  second:\n    name: Second\n    loc: [3.0, 4.0]\n    tags: []\n",
-        )
-        .unwrap();
-
-        remove_preset_site(&config_path, "second").unwrap();
-
-        let preset = load_preset(&config_path).unwrap();
-        assert!(!preset.sites.contains_key("second"));
-        assert!(preset.seek.plan.is_none());
-        let config_text = fs::read_to_string(&config_path).unwrap();
-        assert!(!config_text.contains("plan:"));
     }
 
     #[test]

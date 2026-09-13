@@ -45,10 +45,9 @@ use crate::viewshed::{
     coords_viewshed_overlay_if_ready, ensure_viewshed_png, read_coords_viewshed_png_if_ready,
 };
 use crate::alternates::parse_alternates_request;
-use crate::seek::parse_seek_request;
-use crate::seek_plan::{
-    clear_seek_plan, convert_seek_plan_locs_to_sites, load_seek_plan_payload, patch_seek_plan,
-    SeekPlanError,
+use crate::link_solver::{
+    accept_link_solver_route, link_solver_progress_key, parse_link_solver_request,
+    routes_like_from_json, LinkSolverError,
 };
 use crate::viewshed_index::{build_viewshed_index, site_viewshed_overlay_if_ready, viewshed_cache_png_api_path};
 use crate::viewshed_sim::{parse_lat_lon_params, parse_viewshed_sim_params, sim_status_from_err};
@@ -134,16 +133,10 @@ pub fn router() -> Router<AppState> {
             get(land_layer_geojson),
         )
         .route("/api/p/{slug}/simulation", get(project_simulation))
-        .route("/api/p/{slug}/seek/candidates", get(seek_candidates))
-        .route("/api/p/{slug}/seek/scan-progress", get(seek_progress))
-        .route(
-            "/api/p/{slug}/seek/plan",
-            get(get_seek_plan).patch(patch_seek_plan_handler).delete(clear_seek_plan_handler),
-        )
-        .route(
-            "/api/p/{slug}/seek/plan/convert-to-sites",
-            post(convert_seek_plan),
-        )
+        .route("/api/p/{slug}/link-solver", get(link_solver_scan))
+        .route("/api/p/{slug}/link-solver/scan-progress", get(link_solver_progress))
+        .route("/api/p/{slug}/link-solver/like", get(link_solver_like))
+        .route("/api/p/{slug}/link-solver/accept", post(link_solver_accept))
         .route("/api/p/{slug}/alternates", get(alternates_scan))
         .route("/api/p/{slug}/alternates/scan-progress", get(alternates_progress))
         .route("/api/p/{slug}/fortify", get(fortify_scan))
@@ -1073,21 +1066,24 @@ async fn project_simulation(State(state): State<AppState>,
         .map_err(|_| StatusCode::NOT_FOUND)
 }
 
-async fn seek_candidates(
+async fn link_solver_scan(
     State(state): State<AppState>,
     Path(_slug): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     if !state.preset_path().is_file() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": state.slug.clone(), "error": "not found" }))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "slug": state.slug.clone(), "error": "not found" })),
+        ));
     }
-    let request = parse_seek_request(&state.slug, state.preset_path(), &q).map_err(|e| {
+    let request = parse_link_solver_request(state.preset_path(), &q).map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
         )
     })?;
-    let gen = state.seek.enqueue(request, state.verbose).map_err(|e| {
+    let gen = state.link_solver.enqueue(request).map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
@@ -1095,12 +1091,159 @@ async fn seek_candidates(
     })?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({ "project": state.slug.clone(), "status": "pending", "gen": gen })),
+        Json(json!({
+            "project": state.slug.clone(),
+            "status": "pending",
+            "gen": gen,
+        })),
     ))
 }
 
-async fn seek_progress(State(state): State<AppState>, Path(_slug): Path<String>) -> Json<Value> {
-    Json(state.seek.poll(&state.slug))
+async fn link_solver_progress(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Json<Value> {
+    let slug_a = q.get("a").map(String::as_str).unwrap_or("").trim();
+    let slug_b = q.get("b").map(String::as_str).unwrap_or("").trim();
+    let key = if slug_a.is_empty() || slug_b.is_empty() {
+        String::new()
+    } else {
+        link_solver_progress_key(slug_a, slug_b)
+    };
+    if key.is_empty() {
+        return Json(json!({
+            "project": state.slug,
+            "status": "idle",
+            "progress": Value::Null,
+        }));
+    }
+    Json(state.link_solver.poll(&key, &state.slug))
+}
+
+async fn link_solver_like(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let slug_a = q.get("a").map(String::as_str).unwrap_or("").trim();
+    let slug_b = q.get("b").map(String::as_str).unwrap_or("").trim();
+    let route_id = q.get("route_id").map(String::as_str).unwrap_or("").trim();
+    if slug_a.is_empty() || slug_b.is_empty() || route_id.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "a, b, and route_id are required" })),
+        ));
+    }
+    let key = link_solver_progress_key(slug_a, slug_b);
+    let poll = state.link_solver.poll(&key, &state.slug);
+    let routes = poll
+        .get("result")
+        .and_then(|r| r.get("routes"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let like = routes_like_from_json(&routes, route_id);
+    Ok(Json(json!({
+        "project": state.slug,
+        "routes": like,
+    })))
+}
+
+#[derive(Deserialize)]
+struct LinkSolverAcceptBody {
+    a: String,
+    b: String,
+    route_id: String,
+    hops: Vec<LinkSolverAcceptHop>,
+}
+
+#[derive(Deserialize)]
+struct LinkSolverAcceptHop {
+    peak_slug: String,
+    lat: f64,
+    lon: f64,
+    name: Option<String>,
+}
+
+async fn link_solver_accept(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Json(body): Json<LinkSolverAcceptBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let path = state.preset_path();
+    if !path.is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "slug": state.slug.clone(), "error": "not found" })),
+        ));
+    }
+    let body_value = json!({
+        "a": body.a,
+        "b": body.b,
+        "route_id": body.route_id,
+        "hops": body.hops.iter().map(|h| json!({
+            "peak_slug": h.peak_slug,
+            "lat": h.lat,
+            "lon": h.lon,
+            "name": h.name,
+        })).collect::<Vec<_>>(),
+    });
+    let mut result = accept_link_solver_route(&path, state.session.as_ref(), body_value).map_err(
+        |e| match e {
+            LinkSolverError(msg) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "slug": state.slug.clone(), "error": msg })),
+            ),
+        },
+    )?;
+    invalidate_project_site_links_cache(&path);
+    let created_slugs: Vec<String> = result
+        .get("created")
+        .and_then(|v| v.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|v| v.get("slug").and_then(|s| s.as_str()).map(str::to_string))
+                .collect()
+        })
+        .or_else(|| {
+            result.get("created_slugs").and_then(|v| v.as_array()).map(|rows| {
+                rows.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    if !created_slugs.is_empty() {
+        let session = state.session.clone();
+        let path_for_links = path.clone();
+        let created_for_links = created_slugs.clone();
+        if let Ok(Ok(links)) = tokio::task::spawn_blocking(move || {
+            let preset = load_preset(&path_for_links)?;
+            compute_links_for_slugs(session, &preset, &created_for_links)
+        })
+        .await
+        {
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert(
+                    "links".to_string(),
+                    links.get("links").cloned().unwrap_or(json!([])),
+                );
+                obj.insert(
+                    "geojson".to_string(),
+                    links.get("geojson").cloned().unwrap_or_else(|| {
+                        json!({ "type": "FeatureCollection", "features": [] })
+                    }),
+                );
+            }
+        }
+    }
+    state.warm.start_links_warm(&state.slug, path);
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("slug".to_string(), json!(state.slug));
+        obj.insert("project".to_string(), json!(state.slug));
+    }
+    Ok(Json(result))
 }
 
 async fn alternates_scan(
@@ -1255,119 +1398,6 @@ async fn alternates_progress(
         }));
     }
     Json(state.alternates.poll(&key, &state.slug))
-}
-
-async fn get_seek_plan(State(state): State<AppState>,
-    Path(_slug): Path<String>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let path = state.preset_path();
-    if !path.is_file() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": state.slug.clone(), "error": "not found" }))));
-    }
-    let plan = load_seek_plan_payload(&path).map_err(|e| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": state.slug.clone(), "error": e.to_string() })),
-        )
-    })?;
-    Ok(Json(json!({ "project": state.slug.clone(), "plan": plan })))
-}
-
-async fn patch_seek_plan_handler(State(state): State<AppState>,
-    
-    Path(_slug): Path<String>,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let path = state.preset_path();
-    if !path.is_file() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": state.slug.clone(), "error": "not found" }))));
-    }
-    let plan = patch_seek_plan(&path, &body).map_err(|e| match e {
-        SeekPlanError(msg) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": state.slug.clone(), "error": msg })),
-        ),
-    })?;
-    Ok(Json(json!({ "project": state.slug.clone(), "plan": plan })))
-}
-
-async fn clear_seek_plan_handler(State(state): State<AppState>,
-    Path(_slug): Path<String>) -> Result<StatusCode, (StatusCode, Json<Value>)> {
-    let path = state.preset_path();
-    if !path.is_file() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": state.slug.clone(), "error": "not found" }))));
-    }
-    clear_seek_plan(&path).map_err(|e| match e {
-        SeekPlanError(msg) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": state.slug.clone(), "error": msg })),
-        ),
-    })?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-#[derive(Deserialize)]
-struct ConvertSeekPlanBody {
-    name_prefix: String,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-async fn convert_seek_plan(State(state): State<AppState>,
-    
-    Path(_slug): Path<String>,
-    Json(body): Json<ConvertSeekPlanBody>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let path = state.preset_path();
-    if !path.is_file() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "slug": state.slug.clone(), "error": "not found" }))));
-    }
-    let result = convert_seek_plan_locs_to_sites(&path, &body.name_prefix, &body.tags).map_err(|e| match e {
-        SeekPlanError(msg) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": state.slug.clone(), "error": msg })),
-        ),
-    })?;
-    invalidate_project_site_links_cache(&path);
-    let created_slugs: Vec<String> = result
-        .get("created_slugs")
-        .and_then(|v| v.as_array())
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    let mut payload = result;
-    if !created_slugs.is_empty() {
-        let session = state.session.clone();
-        let path_for_links = path.clone();
-        let created_for_links = created_slugs.clone();
-        if let Ok(Ok(links)) = tokio::task::spawn_blocking(move || {
-            let preset = load_preset(&path_for_links)?;
-            compute_links_for_slugs(session, &preset, &created_for_links)
-        })
-        .await
-        {
-            if let Some(obj) = payload.as_object_mut() {
-                obj.insert(
-                    "links".to_string(),
-                    links.get("links").cloned().unwrap_or(json!([])),
-                );
-                obj.insert(
-                    "geojson".to_string(),
-                    links.get("geojson").cloned().unwrap_or_else(|| {
-                        json!({ "type": "FeatureCollection", "features": [] })
-                    }),
-                );
-            }
-        }
-    }
-    state.warm.start_links_warm(&state.slug, path);
-    if let Some(obj) = payload.as_object_mut() {
-        obj.insert("slug".to_string(), json!(state.slug));
-        obj.insert("project".to_string(), json!(state.slug));
-    }
-    Ok(Json(payload))
 }
 
 async fn home_modems(State(state): State<AppState>) -> Json<Value> {

@@ -7,7 +7,7 @@ use splatter::Session;
 use tokio::sync::Semaphore;
 
 use crate::events::ServeEventHub;
-use crate::seek::SeekHub;
+use crate::link_solver::LinkSolverHub;
 use crate::warm::WarmHub;
 
 /// Cap concurrent Skadi map-tile renders so pan/zoom cannot starve the server.
@@ -18,7 +18,7 @@ pub struct AppState {
     pub session: Arc<Session>,
     pub events: ServeEventHub,
     pub warm: WarmHub,
-    pub seek: SeekHub,
+    pub link_solver: LinkSolverHub,
     pub alternates: crate::alternates::AlternatesHub,
     pub fortify: crate::fortify::FortifyHub,
     pub verbose: bool,

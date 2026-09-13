@@ -127,36 +127,17 @@ pub fn resolved_viewshed_polygon_style(display: &DisplayConfig) -> ViewshedPolyg
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeekPlanHop {
-    pub site: Option<String>,
-    pub loc: Option<[f64; 2]>,
-    pub height_m: Option<f64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeekPlan {
-    pub start: String,
-    pub goal: [f64; 2],
-    #[serde(default)]
-    pub complete: bool,
-    #[serde(default)]
-    pub hops: Vec<SeekPlanHop>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct SeekConfig {
+pub struct ScanConfig {
     pub peak_bin_size_m: f64,
     pub max_candidates: u32,
-    pub plan: Option<SeekPlan>,
 }
 
-impl Default for SeekConfig {
+impl Default for ScanConfig {
     fn default() -> Self {
         Self {
             peak_bin_size_m: 1500.0,
             max_candidates: 48,
-            plan: None,
         }
     }
 }
@@ -761,7 +742,7 @@ pub struct Preset {
     #[serde(default)]
     pub land: LandConfig,
     #[serde(default)]
-    pub seek: SeekConfig,
+    pub scan: ScanConfig,
 }
 
 impl Default for Preset {
@@ -774,7 +755,7 @@ impl Default for Preset {
             sites: HashMap::new(),
             links: Vec::new(),
             land: LandConfig::default(),
-            seek: SeekConfig::default(),
+            scan: ScanConfig::default(),
         }
     }
 }
@@ -892,59 +873,7 @@ pub fn validate_preset(preset: &Preset) -> PresetResult<()> {
         }
     }
 
-    if let Some(plan) = &preset.seek.plan {
-        if plan.hops.is_empty() {
-            return Err(err("seek.plan.hops must contain at least one hop"));
-        }
-        for (idx, hop) in plan.hops.iter().enumerate() {
-            if hop.site.is_some() && hop.loc.is_some() {
-                return Err(err(format!(
-                    "seek.plan.hops[{idx}] must have either site or loc, not both"
-                )));
-            }
-            if hop.site.is_none() && hop.loc.is_none() {
-                return Err(err(format!(
-                    "seek.plan.hops[{idx}] must have site or loc"
-                )));
-            }
-        }
-        if let Some(site) = seek_plan_unknown_site(plan, &preset.sites) {
-            return Err(err(format!(
-                "seek.plan references unknown site {site:?}"
-            )));
-        }
-    }
-
     Ok(())
-}
-
-pub fn seek_plan_unknown_site<'a>(
-    plan: &'a SeekPlan,
-    sites: &HashMap<String, SiteEntry>,
-) -> Option<&'a str> {
-    if !sites.contains_key(&plan.start) {
-        return Some(plan.start.as_str());
-    }
-    for hop in &plan.hops {
-        if let Some(site) = &hop.site {
-            if !sites.contains_key(site) {
-                return Some(site.as_str());
-            }
-        }
-    }
-    None
-}
-
-/// Drop a seek plan that names a site that is gone. Load must not fail for that.
-pub fn drop_stale_seek_plan(preset: &mut Preset) -> bool {
-    let Some(plan) = &preset.seek.plan else {
-        return false;
-    };
-    if plan.hops.is_empty() || seek_plan_unknown_site(plan, &preset.sites).is_some() {
-        preset.seek.plan = None;
-        return true;
-    }
-    false
 }
 
 fn env_worker_override(var: &str) -> Option<u32> {
@@ -986,57 +915,4 @@ mod tests {
         assert!(err.to_string().contains("viewshed_quality"));
     }
 
-    fn test_site(name: &str) -> SiteEntry {
-        SiteEntry {
-            name: name.into(),
-            loc: [39.0, -119.0],
-            height_m: None,
-            description: None,
-            tags: vec![],
-            node: None,
-        }
-    }
-
-    #[test]
-    fn drop_stale_seek_plan_clears_unknown_hop() {
-        let mut preset = Preset::default();
-        preset.sites.insert("alpha".into(), test_site("Alpha"));
-        preset.seek.plan = Some(SeekPlan {
-            start: "alpha".into(),
-            goal: [40.0, -118.0],
-            complete: false,
-            hops: vec![
-                SeekPlanHop {
-                    site: Some("alpha".into()),
-                    loc: None,
-                    height_m: None,
-                },
-                SeekPlanHop {
-                    site: Some("relaya1".into()),
-                    loc: None,
-                    height_m: None,
-                },
-            ],
-        });
-        assert!(drop_stale_seek_plan(&mut preset));
-        assert!(preset.seek.plan.is_none());
-    }
-
-    #[test]
-    fn validate_preset_rejects_unknown_seek_site() {
-        let mut preset = Preset::default();
-        preset.sites.insert("alpha".into(), test_site("Alpha"));
-        preset.seek.plan = Some(SeekPlan {
-            start: "alpha".into(),
-            goal: [40.0, -118.0],
-            complete: false,
-            hops: vec![SeekPlanHop {
-                site: Some("relaya1".into()),
-                loc: None,
-                height_m: None,
-            }],
-        });
-        let err = validate_preset(&preset).unwrap_err();
-        assert!(err.to_string().contains("unknown site"));
-    }
 }

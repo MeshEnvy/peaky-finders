@@ -17,7 +17,7 @@ import { createSitesDomain } from './sites.js'
 import { createViewshedDomain } from './viewshed.js'
 import { createLinksDomain } from './links.js'
 import { createLandDomain } from './land.js'
-import { createSeekDomain } from './seek.js'
+import { createLinkSolverDomain } from './link-solver.js'
 import { createAlternatesDomain } from './alternates.js'
 import { createFortifyDomain } from './fortify.js'
 import { createSiteModalsDomain } from './site-modals.js'
@@ -48,8 +48,8 @@ export function runApp(ctx = {}) {
   let projectEventsConn = null
   /** @type {ReturnType<typeof createLandDomain>|null} */
   let landDomain = null
-  /** @type {ReturnType<typeof createSeekDomain>|null} */
-  let seekDomain = null
+  /** @type {ReturnType<typeof createLinkSolverDomain>|null} */
+  let linkSolverDomain = null
   /** @type {ReturnType<typeof createAlternatesDomain>|null} */
   let alternatesDomain = null
   /** @type {ReturnType<typeof createFortifyDomain>|null} */
@@ -114,19 +114,11 @@ export function runApp(ctx = {}) {
   function syncMapCursor() {
     if (!store.ui.mapReady) return
     map.getCanvas().style.cursor =
-      store.ui.addPlacementMode || store.ui.editMode || store?.seek?.goalPlacementMode
-        ? 'crosshair'
-        : ''
+      store.ui.addPlacementMode || store.ui.editMode ? 'crosshair' : ''
   }
 
   function isMapTiltedView(mapInstance = map) {
     return isMapTiltedViewAt(mapInstance, store.ui.mapReady)
-  }
-
-  function refreshSeekStartSelectIfOpen() {
-    if (store?.ui?.seekPanelOpen || store?.seek?.panelOpen) {
-      seekDomain?.populateSeekStartSelect?.()
-    }
   }
 
   peaksDomain = createPeaksDomain({
@@ -161,10 +153,8 @@ export function runApp(ctx = {}) {
     siteHidden,
     tagFilterBypassSlugs,
     activeTagFilters,
-    getSeek: () => seekDomain,
     deselectSite: (...args) => placementDomain?.deselectSite(...args),
     raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
-    refreshSeekStartSelectIfOpen,
     scheduleSaveMapState: () => mapChrome?.scheduleSaveMapState(),
     refreshFilteredLinks: () => linksDomain?.refreshFilteredLinks(),
     removeViewshedLayer: (slug) => viewshedDomain?.removeViewshedLayer(slug),
@@ -239,12 +229,10 @@ export function runApp(ctx = {}) {
       onDraftViewshedLayerAdded: () => editPreviewDomain?.onDraftViewshedReady(),
       viewshedLoadingHasDraft: () => viewshedLoading.has(DRAFT_VIEWSHED_SLUG),
       getDraftPlacement: () => editPreviewDomain?.getDraftPlacement() ?? null,
-      getSeekHopViewshedSlugs: () => seekDomain?.getSeekHopCoordViewshedSlugs?.() ?? [],
-      getSeekHopViewshedCoords: () =>
-        seekDomain?.getSeekHopCoordViewshedCoords?.() ?? new Map(),
-      getSeekScanning: () => store?.seek?.scanning,
-      seekSessionActive: () => seekDomain?.seekSessionActive?.() ?? false,
-      seekCurrentFrom: () => seekDomain?.seekCurrentFrom?.() ?? null,
+      getLinkSolverHopViewshedSlugs: () =>
+        linkSolverDomain?.getLinkSolverHopViewshedSlugs?.() ?? [],
+      getLinkSolverHopViewshedCoords: () =>
+        linkSolverDomain?.getLinkSolverHopViewshedCoords?.() ?? new Map(),
     })
   }
 
@@ -298,25 +286,18 @@ export function runApp(ctx = {}) {
       editPreviewDomain?.refreshFilteredDraftLinks()
     },
     updatePinOverlays: () => viewshedDomain?.updatePinOverlays(),
-    getSeek: () => seekDomain,
     ensureViewshedsForNewlyVisibleSites: () =>
       viewshedDomain?.ensureViewshedsForNewlyVisibleSites(),
     ensureAccessForVisibleSites: () =>
       siteAccessDomain?.ensureAccessForVisibleSites(),
-    refreshSeekStartSelectIfOpen,
     pruneActiveTagFilters: () => siteLayers.pruneActiveTagFilters(),
     onEscape() {
       if (store.ui.createMode) {
         placementDomain.cancelCreate()
         return
       }
-      if (store?.ui?.seekPanelOpen && store?.seek?.running) {
-        seekDomain.resetSeekRun()
-        seekDomain.toggleSeekPanel(false)
-        return
-      }
-      if (store?.ui?.seekPanelOpen) {
-        seekDomain.toggleSeekPanel(false)
+      if (store?.linkSolver?.panelOpen) {
+        linkSolverDomain?.toggleLinkSolverPanel(false)
         return
       }
       if (store?.fortify?.active) {
@@ -364,7 +345,6 @@ export function runApp(ctx = {}) {
           ),
         isViewshedVisible: (slug) => viewshedDomain.isViewshedVisible(slug),
         placeDraftMarker: (lat, lon) => placementDomain?.placeDraftMarker(lat, lon),
-        seekSiteSlugNear: (lat, lon) => seekDomain?.seekSiteSlugNear?.(lat, lon) ?? null,
         isSiteMapHidden: (slug) => siteLayers.isSiteMapHidden(slug),
       })
     }
@@ -422,45 +402,29 @@ export function runApp(ctx = {}) {
       landDomain.installLandSourceEditor()
       landDomain.installChrome()
     }
-    if (!seekDomain) {
-      seekDomain = createSeekDomain({
+    if (!linkSolverDomain) {
+      linkSolverDomain = createLinkSolverDomain({
         store,
         projectSlug,
-        config,
         getMap: () => map,
         getMapReady: () => store.ui.mapReady,
-        getSites: () => sites,
-        siteBySlug,
-        simDefaults,
-        scheduleSaveMapState: () => mapChrome.scheduleSaveMapState(),
-        raiseSiteLayers: () => mapChrome.raiseSiteLayers(),
-        isSiteMapHidden: (slug) => siteLayers.isSiteMapHidden(slug),
-        sitePassesTagFilter: (site) => siteLayers.sitePassesTagFilter(site),
-        tagFilterBypassSlugs,
-        refreshFilteredLinks: () => linksDomain?.refreshFilteredLinks(),
-        applySiteLayerFilters: () => siteLayers.applySiteLayerFilters(),
-        warmDraftViewshedForSeek: (...args) =>
-          editPreviewDomain.warmDraftViewshedForSeek(...args),
-        loadSingleSiteLinks: (slug) => linksDomain?.loadSingleSiteLinks(slug),
-        mapShell,
-        mapToolSeek: toolbar.mapToolSeek,
-        seekPanel: document.getElementById('seek-panel'),
-        syncMapCursor,
-        updatePinOverlays: () => viewshedDomain?.updatePinOverlays(),
-        selectSite: (...args) => placementDomain.selectSite(...args),
-        fetchOutboundLinksParallel: (slugs) =>
-          viewshedDomain?.fetchOutboundLinksParallel(slugs),
-        registerSiteFromApi: (site) => siteLayers.registerSite(site),
-        mergeConvertedSeekLinks: (payload) => linksDomain?.mergeConvertedSeekLinks(payload),
-        bypassSiteTagFilter: (slug) => siteLayers.bypassSiteTagFilter(slug),
         clearAlternates: () => alternatesDomain?.clearAlternates(),
-        getViewshed: () => viewshedDomain,
-        ensureSiteLinksForSlug: (slug) => linksDomain?.ensureSiteLinksForSlug(slug),
-        linkedPeersForSite: (slug) => linksDomain?.linkedPeersForSite(slug) || [],
+        clearFortify: () => fortifyDomain?.clearFortify(),
+        registerSiteFromApi: (site) => siteLayers.registerSite(site),
+        mergeSeededLinks: (payload) => linksDomain?.mergeSeededLinks(payload),
+        loadSingleSiteLinks: (slug) => linksDomain?.loadSingleSiteLinks(slug),
+        loadSiteLinks: () => linksDomain?.loadSiteLinks(),
+        raiseSiteLayers: () => mapChrome.raiseSiteLayers(),
+        getSiteBySlug: (slug) => siteBySlug.get(slug),
         findSiteLinkFeature: (a, b) => linksDomain?.findSiteLinkFeature(a, b),
+        selectSite: (...args) => placementDomain.selectSite(...args),
+        getViewshed: () => viewshedDomain,
+        mapToolLinkSolver: toolbar.mapToolLinkSolver,
+        linkSolverPanel: document.getElementById('link-solver-panel'),
+        updatePinOverlays: () => viewshedDomain?.updatePinOverlays(),
       })
-      seekDomain.initFromBoot()
-      seekDomain.install()
+      linkSolverDomain.install()
+      if (store.ui.mapReady) linkSolverDomain.installMapHandlers(map)
     }
     if (!alternatesDomain) {
       alternatesDomain = createAlternatesDomain({
@@ -468,7 +432,7 @@ export function runApp(ctx = {}) {
         projectSlug,
         getMap: () => map,
         getMapReady: () => store.ui.mapReady,
-        resetSeekRun: () => seekDomain?.resetSeekRun(),
+        clearLinkSolver: () => linkSolverDomain?.clearLinkSolver(),
         sitesDomain,
         applySavedSiteToMap: (...args) => placementDomain?.applySavedSiteToMap(...args),
         loadSingleSiteLinks: (slug) => linksDomain?.loadSingleSiteLinks(slug),
@@ -488,6 +452,7 @@ export function runApp(ctx = {}) {
         getMap: () => map,
         getMapReady: () => store.ui.mapReady,
         clearAlternates: () => alternatesDomain?.clearAlternates(),
+        clearLinkSolver: () => linkSolverDomain?.clearLinkSolver(),
         sitesDomain,
         applySavedSiteToMap: (...args) => placementDomain?.applySavedSiteToMap(...args),
         loadSingleSiteLinks: (slug) => linksDomain?.loadSingleSiteLinks(slug),
@@ -522,7 +487,7 @@ export function runApp(ctx = {}) {
         store,
         getMap: () => map,
         getMapReady: () => store.ui.mapReady,
-        getSeek: () => seekDomain,
+        getLinkSolver: () => linkSolverDomain,
         getAlternates: () => alternatesDomain,
         getFortify: () => fortifyDomain,
         getLinks: () => linksDomain,
@@ -567,7 +532,9 @@ export function runApp(ctx = {}) {
   function reloadViewshedsForSimChange() {
     viewshedDomain?.reloadViewshedsForSimChange(() => {
       editPreviewDomain?.reloadDraftIfNeeded()
-      if (seekDomain?.seekSessionActive()) seekDomain.syncSeekHopViewsheds()
+      if (store.linkSolver?.selectedRouteId) {
+        linkSolverDomain?.syncLinkSolverHopViewsheds?.()
+      }
     })
   }
 
@@ -655,7 +622,6 @@ export function runApp(ctx = {}) {
       mapChrome.fitSites()
     }
     void landDomain.refreshLandMapLayers()
-    seekDomain.restoreSeekSessionIfAny()
     const bootLink = parseDeepLink()
     if (bootLink.site || bootLink.peak) {
       void applyDeepLinkSelection(bootLink, { replaceHistory: true })
@@ -793,23 +759,50 @@ export function runApp(ctx = {}) {
       ensureDomains()
       return landDomain.openLandFolderModal('create')
     },
-    ...bind(() => seekDomain, [
-      'toggleSeekPanel',
-      'startSeekRun',
-      'resetSeekRun',
-      'setSeekGoalAt',
-      'setSeekGoalPlacementMode',
-      'refreshSeekCandidates',
-      'undoSeekHop',
-      'redoSeekHop',
-      'closeSeekConvertModal',
-      'convertSeekPathToSites',
-      'seekConvertHopSummary',
-      'onSeekStartChange',
+    ...bind(() => linkSolverDomain, [
+      'toggleLinkSolverPanel',
+      'clearLinkSolver',
+      'solve',
+      'selectRoute',
+      'loadMore',
+      'moreLikeThis',
+      'acceptSelectedRoute',
+      'displayRoutes',
+      'peakAccessBySlug',
+      'checkAlreadyLinked',
     ]),
-    openConvertModal: (...args) => {
+    solveLinkPair: (a, b) => {
       ensureDomains()
-      return seekDomain.openSeekConvertModal(...args)
+      return linkSolverDomain.solve(a, b)
+    },
+    selectLinkSolverRoute: (routeId) => {
+      ensureDomains()
+      return linkSolverDomain.selectRoute(routeId)
+    },
+    moreLikeLinkSolverRoute: (routeId) => {
+      ensureDomains()
+      return linkSolverDomain.moreLikeThis(routeId)
+    },
+    loadMoreLinkSolverRoutes: () => {
+      ensureDomains()
+      return linkSolverDomain.loadMore()
+    },
+    acceptLinkSolverRoute: () => {
+      ensureDomains()
+      return linkSolverDomain.acceptSelectedRoute()
+    },
+    displayLinkSolverRoutes: () => {
+      ensureDomains()
+      return linkSolverDomain.displayRoutes()
+    },
+    linkSolverPeakAccess: () => {
+      ensureDomains()
+      return linkSolverDomain.peakAccessBySlug()
+    },
+    checkLinkSolverAlreadyLinked: () => {
+      ensureDomains()
+      const { a, b } = store.linkSolver
+      return linkSolverDomain.checkAlreadyLinked(a, b)
     },
     ...bind(() => alternatesDomain, [
       'findAlternatesForSite',

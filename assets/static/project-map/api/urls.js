@@ -175,20 +175,24 @@ export function viewshedIndexUrl(projectSlug, params) {
   return `/api/p/${projectSlug}/viewsheds/index?${params}`
 }
 
-export function seekPlanUrl(projectSlug) {
-  return `/api/p/${projectSlug}/seek/plan`
+export function linkSolverScanUrl(projectSlug, slugA, slugB, minRoutes) {
+  const params = new URLSearchParams({ a: slugA, b: slugB })
+  if (minRoutes != null) params.set('min_routes', String(minRoutes))
+  return `/api/p/${projectSlug}/link-solver?${params}`
 }
 
-export function seekScanProgressUrl(projectSlug) {
-  return `/api/p/${projectSlug}/seek/scan-progress`
+export function linkSolverScanProgressUrl(projectSlug, slugA, slugB) {
+  const params = new URLSearchParams({ a: slugA, b: slugB })
+  return `/api/p/${projectSlug}/link-solver/scan-progress?${params}`
 }
 
-export function seekPlanConvertToSitesUrl(projectSlug) {
-  return `/api/p/${projectSlug}/seek/plan/convert-to-sites`
+export function linkSolverLikeUrl(projectSlug, slugA, slugB, routeId) {
+  const params = new URLSearchParams({ a: slugA, b: slugB, route_id: routeId })
+  return `/api/p/${projectSlug}/link-solver/like?${params}`
 }
 
-export function seekCandidatesUrl(projectSlug, params) {
-  return `/api/p/${projectSlug}/seek/candidates?${params}`
+export function linkSolverAcceptUrl(projectSlug) {
+  return `/api/p/${projectSlug}/link-solver/accept`
 }
 
 export function alternatesScanUrl(projectSlug, siteSlug, anchorSlugs = []) {

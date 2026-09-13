@@ -26,11 +26,9 @@ export function createEntityChromeDomain(ctx) {
     applyViewshedVisibilityForSite,
     refreshFilteredLinks,
     updatePinOverlays,
-    getSeek,
     renderEntityPanel,
     ensureViewshedsForNewlyVisibleSites,
     ensureAccessForVisibleSites,
-    refreshSeekStartSelectIfOpen,
     pruneActiveTagFilters,
     onEscape,
   } = ctx
@@ -95,7 +93,6 @@ export function createEntityChromeDomain(ctx) {
       applyViewshedVisibilityForSite?.(site.slug)
     }
     refreshFilteredLinks?.()
-    if (getSeek?.()?.seekSessionActive?.()) getSeek().refreshSeekAncillaryLinksDisplay()
     renderEntityPanel?.()
   }
 
@@ -108,7 +105,6 @@ export function createEntityChromeDomain(ctx) {
     applyEntityVisibility()
     ensureViewshedsForNewlyVisibleSites?.()
     ensureAccessForVisibleSites?.()
-    refreshSeekStartSelectIfOpen?.()
     scheduleSaveMapState?.()
   }
 
@@ -117,7 +113,6 @@ export function createEntityChromeDomain(ctx) {
     applyEntityVisibility()
     ensureViewshedsForNewlyVisibleSites?.()
     ensureAccessForVisibleSites?.()
-    refreshSeekStartSelectIfOpen?.()
     scheduleSaveMapState?.()
   }
 
@@ -133,9 +128,9 @@ export function createEntityChromeDomain(ctx) {
   }
 
   function onMapMoveEndForEntityPanel() {
-    if (!store?.ui?.filterByViewport) return
+    if (!store?.ui?.filterByViewport && !store?.linkSolver?.panelOpen) return
     bumpViewportEpoch()
-    renderEntityPanel?.()
+    if (store?.ui?.filterByViewport) renderEntityPanel?.()
   }
 
   function install() {

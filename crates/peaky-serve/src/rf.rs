@@ -207,6 +207,12 @@ pub fn resolved_site_tx_height_m(preset: &Preset, site: &SiteEntry) -> f64 {
     default_repeater_tx_height_m(preset)
 }
 
+pub fn default_candidate_tx_height(preset: &Preset, lat: f64, lon: f64) -> f64 {
+    preset_to_request(preset, lat, lon, None)
+        .map(|req| req.tx_height.max(1.0))
+        .unwrap_or_else(|_| default_repeater_tx_height_m(preset).max(1.0))
+}
+
 pub fn preset_to_request(
     preset: &Preset,
     lat: f64,

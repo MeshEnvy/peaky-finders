@@ -1,7 +1,7 @@
 import {
-  SEEK_PEAK_BIN_MIN_M,
-  SEEK_PEAK_BIN_MAX_M,
-  SEEK_PEAK_BINS_ACROSS_VIEWPORT,
+  PEAK_BIN_MIN_M,
+  PEAK_BIN_MAX_M,
+  PEAK_BINS_ACROSS_VIEWPORT,
 } from './constants.js'
 
 export function compareHuman(left, right) {
@@ -89,14 +89,14 @@ export function padMapBounds(bounds, minSpanM) {
   }
 }
 
-export function seekPeakBinSizeMForBounds(bounds) {
+export function peakBinSizeMForBounds(bounds) {
   const centerLat = (bounds.getNorth() + bounds.getSouth()) / 2
   const lngSpan = Math.abs(bounds.getEast() - bounds.getWest())
   const metersPerDegLng = 111320 * Math.cos((centerLat * Math.PI) / 180)
   const viewportWidthM = lngSpan * metersPerDegLng
-  const raw = viewportWidthM / SEEK_PEAK_BINS_ACROSS_VIEWPORT
+  const raw = viewportWidthM / PEAK_BINS_ACROSS_VIEWPORT
   return Math.round(
-    Math.max(SEEK_PEAK_BIN_MIN_M, Math.min(SEEK_PEAK_BIN_MAX_M, raw)),
+    Math.max(PEAK_BIN_MIN_M, Math.min(PEAK_BIN_MAX_M, raw)),
   )
 }
 
@@ -124,28 +124,6 @@ export function bearingDeg(lat1, lon1, lat2, lon2) {
   return (toDeg(Math.atan2(y, x)) + 360) % 360
 }
 
-export function progressLensHalfAngleDeg(hopM, goalDistM) {
-  if (goalDistM <= 1 || hopM >= 2 * goalDistM) return 180
-  return (Math.acos(Math.min(1, Math.max(0, hopM / (2 * goalDistM)))) * 180) / Math.PI
-}
-
-function signedBearingDelta(fromDeg, toDeg) {
-  let d = (toDeg - fromDeg) % 360
-  if (d > 180) d -= 360
-  else if (d < -180) d += 360
-  return d
-}
-
-function appendBearingArc(ring, centerLat, centerLon, radiusM, fromBearing, toBearing, steps) {
-  const delta = signedBearingDelta(fromBearing, toBearing)
-  for (let i = 1; i <= steps; i += 1) {
-    const t = i / steps
-    const bearing = fromBearing + delta * t
-    const [lat, lon] = destinationPointLatLon(centerLat, centerLon, bearing, radiusM)
-    ring.push([lon, lat])
-  }
-}
-
 export function destinationPointLatLon(lat, lon, bearingDegVal, distanceM) {
   const r = 6371000
   const brng = (bearingDegVal * Math.PI) / 180
@@ -163,63 +141,6 @@ export function destinationPointLatLon(lat, lon, bearingDegVal, distanceM) {
       Math.cos(ang) - Math.sin(lat1) * Math.sin(lat2),
     )
   return [(lat2 * 180) / Math.PI, (lon2 * 180) / Math.PI]
-}
-
-export function buildSeekLensFeature(from, goal, hopRadiusM) {
-  const goalDist = haversineMeters(from.lat, from.lon, goal.lat, goal.lon)
-  const goalBearing = bearingDeg(from.lat, from.lon, goal.lat, goal.lon)
-  const half = progressLensHalfAngleDeg(hopRadiusM, goalDist)
-  const steps = 32
-  const ring = [[from.lon, from.lat]]
-  for (let i = 0; i <= steps; i += 1) {
-    const t = i / steps
-    const bearing = goalBearing - half + t * (2 * half)
-    const [lat, lon] = destinationPointLatLon(from.lat, from.lon, bearing, hopRadiusM)
-    ring.push([lon, lat])
-  }
-  const [plusLat, plusLon] = destinationPointLatLon(
-    from.lat,
-    from.lon,
-    goalBearing + half,
-    hopRadiusM,
-  )
-  const [minusLat, minusLon] = destinationPointLatLon(
-    from.lat,
-    from.lon,
-    goalBearing - half,
-    hopRadiusM,
-  )
-  const bPlus = bearingDeg(goal.lat, goal.lon, plusLat, plusLon)
-  const bMinus = bearingDeg(goal.lat, goal.lon, minusLat, minusLon)
-  const bNear = bearingDeg(goal.lat, goal.lon, from.lat, from.lon)
-  appendBearingArc(ring, goal.lat, goal.lon, goalDist, bPlus, bNear, steps)
-  appendBearingArc(ring, goal.lat, goal.lon, goalDist, bNear, bMinus, steps)
-  ring.push([from.lon, from.lat])
-  return {
-    type: 'Feature',
-    geometry: { type: 'Polygon', coordinates: [ring] },
-    properties: { kind: 'seek-lens' },
-  }
-}
-
-export function buildSeekGoalLineFeature(from, goal) {
-  const distanceKm =
-    haversineMeters(from.lat, from.lon, goal.lat, goal.lon) / 1000
-  return {
-    type: 'Feature',
-    geometry: {
-      type: 'LineString',
-      coordinates: [
-        [from.lon, from.lat],
-        [goal.lon, goal.lat],
-      ],
-    },
-    properties: {
-      distance_km: Math.round(distanceKm * 10) / 10,
-      bearing_deg: Math.round(bearingDeg(from.lat, from.lon, goal.lat, goal.lon)),
-      kind: 'goal',
-    },
-  }
 }
 
 export function formatCoord(n) {

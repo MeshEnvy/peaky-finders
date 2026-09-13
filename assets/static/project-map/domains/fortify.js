@@ -20,6 +20,7 @@ function sleepMs(ms) {
  *   getMap: () => import('maplibregl').Map | null,
  *   getMapReady: () => boolean,
  *   clearAlternates?: () => void,
+ *   clearLinkSolver?: () => void,
  *   sitesDomain?: { createSite: (body: Record<string, unknown>) => Promise<{ site?: object }> },
  *   applySavedSiteToMap?: (site: object, lat: number, lon: number) => void,
  *   loadSingleSiteLinks?: (slug: string) => Promise<void>,
@@ -40,6 +41,7 @@ export function createFortifyDomain(ctx) {
     getMap,
     getMapReady,
     clearAlternates,
+    clearLinkSolver,
     sitesDomain,
     applySavedSiteToMap,
     loadSingleSiteLinks,
@@ -304,6 +306,7 @@ export function createFortifyDomain(ctx) {
   async function fortifyLink(linkA, linkB) {
     if (!linkA || !linkB || linkA === linkB) return
     clearAlternates?.()
+    clearLinkSolver?.()
     const epoch = bumpFetchEpoch()
     store.fortify.active = true
     store.fortify.linkA = linkA

@@ -3,8 +3,6 @@
 import { reactive } from 'vue'
 import {
   mapStateKey,
-  seekStateKey,
-  seekRedoKey,
   viewshedRadiusBounds,
   VIEWSHED_OPACITY_DEFAULT,
 } from '../constants.js'
@@ -71,14 +69,11 @@ export function createRootStore(config, savedMapState) {
       editLat: null,
       editLon: null,
       addPlacementMode: null,
-      seekPanelOpen: false,
     },
     mapState: {
       saveTimer: null,
       keys: {
         map: mapStateKey(projectSlug),
-        seek: seekStateKey(projectSlug),
-        seekRedo: seekRedoKey(projectSlug),
       },
       saved: savedMapState,
     },
@@ -152,35 +147,21 @@ export function createRootStore(config, savedMapState) {
         previewHidden: true,
       },
     },
-    seek: {
-      running: false,
-      scanning: false,
-      goalPlacementMode: false,
+    linkSolver: {
       panelOpen: false,
-      pendingGoalLat: null,
-      pendingGoalLon: null,
-      startSlug: '',
-      state: null,
+      collapsed: false,
+      pos: null,
+      a: null,
+      b: null,
+      alreadyLinked: false,
+      scanning: false,
       statusText: '',
-      fetchEpoch: 0,
-      fetchAbort: null,
-      progress: {
-        visible: false,
-        phase: '',
-        done: 0,
-        total: 0,
-        detail: '',
-        pct: null,
-        indeterminate: true,
-      },
-      convertModal: {
-        open: false,
-        namePrefix: 'Relay',
-        tags: [],
-        tagInput: '',
-        error: '',
-        saving: false,
-      },
+      payload: null,
+      minRoutes: 5,
+      selectedRouteId: null,
+      likeOf: null,
+      likeRoutes: [],
+      accepting: false,
     },
     alternates: {
       active: false,
@@ -202,7 +183,7 @@ export function createRootStore(config, savedMapState) {
     },
     config: {
       ...config,
-      seek: config.seek || {},
+      scan: config.scan || {},
       land: config.land || {},
     },
   })

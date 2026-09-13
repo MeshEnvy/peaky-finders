@@ -19,7 +19,7 @@ function sleepMs(ms) {
  *   projectSlug: string,
  *   getMap: () => import('maplibregl').Map | null,
  *   getMapReady: () => boolean,
- *   resetSeekRun?: () => void,
+ *   clearLinkSolver?: () => void,
  *   sitesDomain?: { createSite: (body: Record<string, unknown>) => Promise<{ site?: object }> },
  *   applySavedSiteToMap?: (site: object, lat: number, lon: number) => void,
  *   loadSingleSiteLinks?: (slug: string) => Promise<void>,
@@ -37,7 +37,7 @@ export function createAlternatesDomain(ctx) {
     projectSlug,
     getMap,
     getMapReady,
-    resetSeekRun,
+    clearLinkSolver,
     clearFortify,
     sitesDomain,
     applySavedSiteToMap,
@@ -247,7 +247,7 @@ export function createAlternatesDomain(ctx) {
       return
     }
 
-    resetSeekRun?.()
+    clearLinkSolver?.()
     clearFortify?.()
     bumpFetchEpoch()
     const epoch = fetchEpoch

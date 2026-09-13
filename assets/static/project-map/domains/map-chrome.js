@@ -24,7 +24,6 @@ import {
 import { captureDeepLinkFromMap, writeDeepLink } from '../api/deep-link.js'
 import { installMapToolbar } from '../map/toolbar.js'
 import { kmToDegreeDeltas } from '../geo.js'
-import { raiseSeekLensLayers } from '../map/seek-layers.js'
 
 /**
  * Create the MapLibre map, nav control, and toolbar.
@@ -130,7 +129,6 @@ export function createMapChromeDomain(ctx) {
         }
       }
     }
-    raiseSeekLensLayers(map)
   }
 
   function showTerrainOverlays() {

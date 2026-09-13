@@ -35,10 +35,10 @@ const OVERLAY_COLORS = ['#c4a035', '#228b22', '#4a90d9', '#8e44ad', '#e67e22', '
 const AGENCY_FIELDS = new Set(['ABBR', 'ADMIN', 'SMA_ID', 'PROPERTY_STATUS', 'NAME'])
 
 const PURPOSE_OPTIONS = [
-  { value: 'eligible', label: 'Eligible land', title: 'Adds to public land for site seek' },
+  { value: 'eligible', label: 'Eligible land', title: 'Adds to public land for link planning' },
   { value: 'blocked', label: 'Blocked land', title: 'Subtracts from eligible land' },
   { value: 'boundary', label: 'Project boundary', title: 'Clips other layers to this AOI' },
-  { value: 'overlay', label: 'Map overlay', title: 'Visual only, does not affect seek' },
+  { value: 'overlay', label: 'Map overlay', title: 'Visual only, does not affect RF scans' },
 ]
 
 /**

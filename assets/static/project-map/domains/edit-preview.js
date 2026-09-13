@@ -30,7 +30,6 @@ export function createEditPreviewDomain(ctx) {
     ensureViewshedLoadedForSlug,
     isViewshedVisible,
     placeDraftMarker,
-    seekSiteSlugNear,
     isSiteMapHidden,
   } = ctx
 
@@ -391,37 +390,6 @@ export function createEditPreviewDomain(ctx) {
     editSnapshot = null
   }
 
-  async function warmDraftViewshedForSeek(lat, lon, signal) {
-    const siteSlug = seekSiteSlugNear?.(lat, lon) ?? null
-    if (siteSlug) {
-      viewshedVisible.set(DRAFT_VIEWSHED_SLUG, false)
-      vs()?.removeViewshedLayer?.(DRAFT_VIEWSHED_SLUG)
-      viewshedVisible.set(siteSlug, true)
-      ensureViewshedLoadedForSlug?.(siteSlug)
-      const map = getMap()
-      return Boolean(map?.getLayer(viewshedLayerId(siteSlug)))
-    }
-    viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true)
-    if (await tryLoadDraftViewshedFromCache(lat, lon)) return true
-    try {
-      const url = vs()?.viewshedPrefetchWarmUrl?.(lat, lon)
-      if (!url) return false
-      const resp = await fetch(url, { method: 'POST', signal })
-      if (!resp.ok) return false
-      const overlay = await resp.json().catch(() => null)
-      if (overlay?.status === 'ready' && overlay.url && overlay.coordinates) {
-        vs()?.handleViewshedReady?.(
-          { ...overlay, slug: DRAFT_VIEWSHED_SLUG },
-          vs()?.getViewshedLoadEpoch?.()
-        )
-        return true
-      }
-    } catch (err) {
-      if (err?.name === 'AbortError') throw err
-    }
-    return false
-  }
-
   return {
     getDraftPlacement,
     getEditSnapshot,
@@ -441,7 +409,6 @@ export function createEditPreviewDomain(ctx) {
     cleanupEditSave,
     onEditCoordsChanged,
     refreshFilteredDraftLinks,
-    warmDraftViewshedForSeek,
     isDraftViewshedLoading: () => draftViewshedLoading,
   }
 }
