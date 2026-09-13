@@ -1,6 +1,8 @@
 //! Access difficulty labels (easy / medium / difficult / extreme).
 
-use crate::model::{PeakCatalogEntry, PeakHikeProfile, PeakJeepProfile, PeakJeepRoadSegment};
+use crate::model::{
+    PeakCatalogEntry, PeakHikeProfile, PeakJeepProfile, PeakJeepRoadSegment, PlaceAccess,
+};
 
 pub fn difficulty_rank(label: &str) -> u8 {
     match label {
@@ -201,9 +203,6 @@ pub fn derived_hike_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
             hike_difficulty(h.max_grade_pct, h.avg_grade_pct, h.horiz_m, h.gain_m).to_string(),
         );
     }
-    if entry.hike_difficulty.is_some() {
-        return entry.hike_difficulty.clone();
-    }
     if let (Some(hike_m), Some(max_deg)) = (entry.hike_m, entry.max_slope_deg) {
         let max_grade = max_deg.to_radians().tan() * 100.0;
         return Some(hike_difficulty(max_grade, 0.0, hike_m, 0.0).to_string());
@@ -220,7 +219,17 @@ pub fn derived_jeep_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
     if let Some(j) = entry.jeep.as_ref() {
         return Some(jeep_difficulty(&j.segments).to_string());
     }
-    entry.jeep_difficulty.clone()
+    None
+}
+
+/// Clear runtime-only difficulty labels before persisting access YAML.
+pub fn strip_access_difficulty_labels(access: &mut PlaceAccess) {
+    if let Some(ref mut h) = access.hike {
+        h.difficulty.clear();
+    }
+    if let Some(ref mut j) = access.jeep {
+        j.difficulty.clear();
+    }
 }
 
 #[cfg(test)]
@@ -346,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn derived_hike_falls_back_to_stored_label_without_facts() {
+    fn derived_hike_legacy_slope_fallback_without_facts() {
         let entry = PeakCatalogEntry {
             name: None,
             loc: [38.0, -117.0],
@@ -355,22 +364,22 @@ mod tests {
             compute_key: None,
             road_m: None,
             road_loc: None,
-            hike_m: None,
+            hike_m: Some(200.0),
             hike_gain_m: None,
             hike_avg_grade_pct: None,
             hike_max_grade_pct: None,
-            max_slope_deg: None,
+            max_slope_deg: Some(16.0),
             hike: None,
             paved_loc: None,
             jeep_m: None,
             jeep_highway: None,
             jeep_tracktype: None,
             jeep: None,
-            hike_difficulty: Some("difficult".into()),
+            hike_difficulty: None,
             jeep_difficulty: None,
             deny: None,
         };
-        assert_eq!(derived_hike_difficulty(&entry).as_deref(), Some("difficult"));
+        assert_eq!(derived_hike_difficulty(&entry).as_deref(), Some("medium"));
     }
 
     #[test]
@@ -395,7 +404,7 @@ mod tests {
             jeep_tracktype: Some("grade4".into()),
             jeep: None,
             hike_difficulty: None,
-            jeep_difficulty: Some("easy".into()),
+            jeep_difficulty: None,
             deny: None,
         };
         assert_eq!(derived_jeep_difficulty(&entry).as_deref(), Some("difficult"));

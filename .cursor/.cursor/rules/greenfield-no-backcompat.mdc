@@ -26,6 +26,7 @@ This repo is **greenfield**. **Optimize for the cleanest present design** — no
 - "Keep the old path working too" / gradual deprecation periods.
 - Supporting legacy preset formats (e.g. `.json`), old YAML keys, or removed CLI entry points.
 - Compat layers "for safety" — greenfield means **break and fix forward**.
+- **One-off book maintenance in Rust** — bulk YAML rewrite, key strip, backfill from sibling dirs, etc. Use a **throwaway Python (or shell) script** in the session; do not add CLI flags or library APIs that exist only to migrate on-disk preset data. Rebuilding `peaky` is expensive; ship the **read/write contract**, not migrators.
 
 ## When in doubt
 

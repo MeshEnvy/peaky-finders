@@ -325,7 +325,8 @@ pub struct PeakHikeProfile {
     pub max_slope_deg: f64,
     pub max_grade_pct: f64,
     pub avg_grade_pct: f64,
-    /// ``easy`` | ``medium`` | ``difficult`` | ``extreme``
+    /// Runtime-only label; derived at serve. Not written to YAML.
+    #[serde(default, skip_serializing)]
     pub difficulty: String,
     pub profile: Vec<PeakHikeProfilePoint>,
     pub histogram: Vec<PeakHikeGradeBucket>,
@@ -359,6 +360,8 @@ pub struct PeakJeepProfile {
     pub max_slope_deg: f64,
     pub max_grade_pct: f64,
     pub avg_grade_pct: f64,
+    /// Runtime-only label; derived at serve. Not written to YAML.
+    #[serde(default, skip_serializing)]
     pub difficulty: String,
     pub profile: Vec<PeakJeepProfilePoint>,
     pub histogram: Vec<PeakHikeGradeBucket>,
@@ -433,11 +436,11 @@ pub struct PeakCatalogEntry {
     /// Full jeep profile — carried in-memory / via ``access/``; omitted from thin peak rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jeep: Option<PeakJeepProfile>,
-    /// Hike rating (grade). Stored on the thin row for map pin color.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Runtime-only hike rating; use ``derived_hike_difficulty``. Not written to YAML.
+    #[serde(default, skip_serializing)]
     pub hike_difficulty: Option<String>,
-    /// Jeep rating (OSM road class). Stored on the thin row for map pin color.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Runtime-only jeep rating; use ``derived_jeep_difficulty``. Not written to YAML.
+    #[serde(default, skip_serializing)]
     pub jeep_difficulty: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deny: Option<bool>,
@@ -487,8 +490,8 @@ impl PeakCatalogEntry {
             jeep_highway: self.jeep_highway.clone(),
             jeep_tracktype: self.jeep_tracktype.clone(),
             jeep: None,
-            hike_difficulty: self.hike_difficulty.clone(),
-            jeep_difficulty: self.jeep_difficulty.clone(),
+            hike_difficulty: None,
+            jeep_difficulty: None,
             deny: self.deny,
         };
         if let Some(ref h) = self.hike {
@@ -496,12 +499,6 @@ impl PeakCatalogEntry {
         }
         if let Some(ref j) = self.jeep {
             crate::difficulty::copy_jeep_facts_from_profile(&mut out, j);
-        }
-        if let Some(d) = crate::difficulty::derived_hike_difficulty(&out) {
-            out.hike_difficulty = Some(d);
-        }
-        if let Some(d) = crate::difficulty::derived_jeep_difficulty(&out) {
-            out.jeep_difficulty = Some(d);
         }
         out
     }
@@ -527,8 +524,8 @@ impl PeakCatalogEntry {
             jeep_highway: self.jeep_highway.clone(),
             jeep_tracktype: self.jeep_tracktype.clone(),
             jeep: access.jeep.clone().or_else(|| self.jeep.clone()),
-            hike_difficulty: self.hike_difficulty.clone(),
-            jeep_difficulty: self.jeep_difficulty.clone(),
+            hike_difficulty: None,
+            jeep_difficulty: None,
             deny: self.deny,
         };
         if let Some(ref h) = access.hike {
@@ -540,12 +537,6 @@ impl PeakCatalogEntry {
             crate::difficulty::copy_jeep_facts_from_profile(&mut out, j);
         } else if let Some(ref j) = self.jeep {
             crate::difficulty::copy_jeep_facts_from_profile(&mut out, j);
-        }
-        if let Some(d) = crate::difficulty::derived_hike_difficulty(&out) {
-            out.hike_difficulty = Some(d);
-        }
-        if let Some(d) = crate::difficulty::derived_jeep_difficulty(&out) {
-            out.jeep_difficulty = Some(d);
         }
         out
     }

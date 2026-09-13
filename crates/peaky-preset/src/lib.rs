@@ -46,8 +46,8 @@ pub use peaks::{
     list_peak_slugs, load_peak, load_peak_thin, load_peaks_catalog, load_peaks_catalog_thin,
     load_peaks_rules, peaks_catalog_path, peaks_dir, peaks_list_cache_path, peaks_list_fingerprint,
     place_slugs, preserve_denied_entries, prune_orphan_access, read_peaks_list_disk_cache,
-    relabel_peak_facts_from_access, upsert_peak, upsert_peak_with_access, write_peaks_catalog,
-    write_peaks_list_disk_cache, RelabelSummary, PEAKS_LIST_CACHE_VERSION,
+    upsert_peak, upsert_peak_with_access, write_peaks_catalog, write_peaks_list_disk_cache,
+    PEAKS_LIST_CACHE_VERSION,
 };
 pub use io::{
     delete_land_source, import_land_source, insert_preset_site, land_source_id_for_path,

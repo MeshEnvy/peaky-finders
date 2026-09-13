@@ -71,7 +71,9 @@ pub fn upsert_access(config_path: &Path, slug: &str, access: &PlaceAccess) -> Re
     fs::create_dir_all(layout.access_dir())
         .with_context(|| format!("create access dir: {}", layout.access_dir().display()))?;
     let path = layout.access_entry_path(slug);
-    let value = serde_yaml::to_value(access).context("serialize access")?;
+    let mut disk = access.clone();
+    crate::difficulty::strip_access_difficulty_labels(&mut disk);
+    let value = serde_yaml::to_value(&disk).context("serialize access")?;
     write_preset_value(&path, value)
 }
 
@@ -150,7 +152,9 @@ mod tests {
         upsert_access(&config, "spencer-peak", &access).unwrap();
         let loaded = load_access(&config, "spencer-peak").unwrap().unwrap();
         assert_eq!(loaded.jeep_m, Some(1200.0));
-        assert_eq!(loaded.hike.as_ref().unwrap().difficulty, "medium");
+        assert_eq!(loaded.hike.as_ref().unwrap().difficulty, "");
+        let raw = std::fs::read_to_string(access_path(&config, "spencer-peak").unwrap()).unwrap();
+        assert!(!raw.contains("difficulty:"));
         assert_eq!(list_access_slugs(&config).unwrap(), vec!["spencer-peak"]);
     }
 

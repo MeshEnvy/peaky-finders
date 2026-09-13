@@ -38,3 +38,13 @@ Image default: `peaky serve /project`. Skadi cache persists in the project mount
 ## v4 reference
 
 Python serve and batch logic live in `peaky-finders-v4/`. Port behavior from there; do not import or depend on v4 at runtime.
+
+## One-off preset book maintenance
+
+Do **not** add Rust CLI flags or `peaky-preset` APIs for bulk YAML surgery (strip stale keys, copy scalars between `access/` and `peaks/`, relabel rows). That is session work:
+
+1. Write a **temporary Python script** (PyYAML or ruamel-yaml) against the project book.
+2. Run it once, verify with `rg`/spot checks, delete the script.
+3. Do **not** commit the script unless the operator asks to keep it in the leaf repo.
+
+Ship the ongoing read/write behavior in Rust (`skip_serializing`, derive-at-read). Migrations are throwaway, not product surface.

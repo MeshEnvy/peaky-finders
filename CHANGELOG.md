@@ -23,7 +23,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
-- **Hike/jeep difficulty is runtime-derived** — pin rings, Fortify, and the access sheet all recompute easy/medium/difficult/extreme from stored grade and OSM facts. Thin `peaks/` rows cache fact scalars (`hike_gain_m`, grades, `jeep_highway`); stale `hike_difficulty` labels are ignored when facts exist. Run `peaky peaks --relabel` on an existing book to refresh pins without pathfinding or `--corridor`.
+- **Hike/jeep difficulty is runtime-derived** — pin rings, Fortify, and the access sheet recompute easy/medium/difficult/extreme from grade and OSM facts. Only facts persist on thin `peaks/` rows (`hike_gain_m`, grades, `jeep_highway`); `difficulty` / `hike_difficulty` / `jeep_difficulty` are not written to YAML. Re-run `peaky peaks` on affected rows to refresh fact scalars after an algo change.
 - **Paved snap uses interpolated samples** — paved anchors are densified every 40 m like jeep roads, so on-road snap reaches pads between sparse OSM vertices. `ACCESS_ALGO_VERSION` → **10**. Re-open a peak/site sheet to re-warm leftover pins.
 - **Four access modes** — jeep and hike are independent. Pad on pavement within 40 m → no jeep, no hike. On dirt → jeep only. Paved park with a walk → hike only. Dirt park → both. Stops inventing a dirt loop when the pin is already on the street. `ACCESS_ALGO_VERSION` → **9**. Re-open a peak/site sheet to re-warm leftover pins.
 - **Hike paths avoid wasted elevation** — A* contours around bumps instead of climbing then descending. Park picker tries two more along-road samples per sector and ranks by gain, then loss. `ACCESS_ALGO_VERSION` → **8**. Re-open a peak/site sheet to re-warm leftover pins.

@@ -85,9 +85,6 @@ enum Commands {
         /// Wipe peaks/ + access/ and rebuild from this scan only (default: merge/freshen)
         #[arg(long)]
         clean: bool,
-        /// Copy hike/jeep fact scalars from access/ onto peaks/ (no pathfinding)
-        #[arg(long, conflicts_with_all = ["bbox", "polygon", "corridor", "corridor_sites", "stop_after", "clean", "force"])]
-        relabel: bool,
     },
     /// Export tag-filtered sites as KML points (onX field clipboard)
     Export {
@@ -250,7 +247,6 @@ async fn main() -> Result<()> {
             verbose,
             stop_after,
             clean,
-            relabel,
         } => {
             peaks::run(
                 project,
@@ -263,7 +259,6 @@ async fn main() -> Result<()> {
                 verbose,
                 stop_after,
                 clean,
-                relabel,
             )?;
         }
         Commands::Export {
