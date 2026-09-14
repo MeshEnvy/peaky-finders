@@ -25,6 +25,7 @@ use crate::rf::{
     default_candidate_tx_height, resolved_site_tx_height_m, rf_json_for_preset,
 };
 use crate::scan_progress::ScanProgressHub;
+use crate::html::site_api_row;
 use crate::sites::{create_site_from_peak, SiteCreateError};
 use splatter::propagate::haversine_m;
 
@@ -1376,13 +1377,11 @@ pub fn accept_link_solver_route(
             tags.clone(),
             &hop.peak_slug,
         )?;
-        created.push(json!({
-            "slug": slug,
-            "name": entry.name,
-            "lat": entry.loc[0],
-            "lon": entry.loc[1],
-            "preferred_slug": hop.peak_slug,
-        }));
+        let mut row = site_api_row(&slug, &entry);
+        if let Some(obj) = row.as_object_mut() {
+            obj.insert("preferred_slug".into(), json!(hop.peak_slug));
+        }
+        created.push(row);
         path_slugs.push(slug);
     }
     path_slugs.push(body.b.clone());

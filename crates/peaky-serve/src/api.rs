@@ -262,7 +262,9 @@ struct PatchSiteBody {
     lat: Option<f64>,
     lon: Option<f64>,
     tags: Option<Vec<String>>,
-    height_m: Option<f64>,
+    /// Outer None = field omitted; inner None = clear height on disk.
+    #[serde(default)]
+    height_m: Option<Option<f64>>,
 }
 
 async fn patch_site(State(state): State<AppState>,
@@ -287,7 +289,7 @@ async fn patch_site(State(state): State<AppState>,
             _ => None,
         },
         body.tags.as_deref(),
-        body.height_m.map(Some),
+        body.height_m,
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let preset = load_preset(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

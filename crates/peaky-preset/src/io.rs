@@ -405,6 +405,29 @@ mod tests {
     }
 
     #[test]
+    fn patch_preset_site_clears_height_when_some_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+
+        let mut site = Mapping::new();
+        site.insert(Value::from("name"), Value::from("Tower"));
+        site.insert(
+            Value::from("loc"),
+            Value::Sequence(vec![Value::from(1.0), Value::from(2.0)]),
+        );
+        site.insert(Value::from("height_m"), Value::from(12.0));
+        let mut sites = Mapping::new();
+        sites.insert(Value::from("tower"), Value::Mapping(site));
+        let mut root = Mapping::new();
+        root.insert(Value::from("sites"), Value::Mapping(sites));
+        write_preset_document(&path, &root).unwrap();
+
+        patch_preset_site(&path, "tower", None, None, None, Some(None)).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("height_m: null") || !text.contains("height_m: 12"));
+    }
+
+    #[test]
     fn patch_preset_site_only_changes_target_site() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
