@@ -20,6 +20,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Fortify / link solver / alternates catalog load** — RF scans use cached thin ``peaks/`` rows only (no per-scan ``access/`` merge). First load ~1s; repeat scans are instant until peaks change.
 - **Access paths on RF links** — selecting a link paints jeep/hike routes on both endpoints (site deselect no longer hides them).
 
 ### Removed

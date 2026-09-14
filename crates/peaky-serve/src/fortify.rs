@@ -8,7 +8,9 @@ use std::thread;
 use std::time::Instant;
 
 use anyhow::Result;
-use peaky_preset::{load_peaks_catalog, load_preset, worse_difficulty, PeakCatalogEntry, Preset};
+use peaky_preset::{load_preset, worse_difficulty, PeakCatalogEntry, Preset};
+
+use crate::peaks_cache::cached_peaks_catalog_thin;
 use serde_json::{json, Value};
 use splatter::Session;
 
@@ -453,7 +455,7 @@ fn load_fortify_body(
     ensure_active()?;
     progress.update(key, scan_gen, "catalog", 0, 0, "Loading peaks catalog…");
 
-    let catalog = load_peaks_catalog(&req.preset_path)
+    let catalog = cached_peaks_catalog_thin(&req.preset_path)
         .map_err(|e| FortifyRunError::User(format!("load peaks catalog: {e}"), 422))?;
     let n_catalog_peaks = catalog.entries.len();
     if n_catalog_peaks == 0 {

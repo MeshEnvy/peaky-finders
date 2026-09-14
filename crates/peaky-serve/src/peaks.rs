@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use peaky_peaks::{profile_along_polyline, resolve_hike, warm_place_access, HikeSampleElev};
 use crate::peaks_cache::cached_peaks_list;
 use peaky_preset::{
-    ensure_access_meta, load_access, load_peak, load_peaks_catalog, load_peaks_rules,
+    ensure_access_meta, load_access, load_peak, load_peaks_rules,
     peak_access_compute_key, place_access_compute_key, place_access_is_fresh, PeakHikeProfile,
     PeakJeepProfile, PlaceAccess,
 };
@@ -270,8 +270,8 @@ pub fn catalog_peaks_filtered(
     preset_path: &Path,
     keep: impl Fn(f64, f64) -> bool,
 ) -> Result<(Vec<(f64, f64, f64)>, usize), String> {
-    let catalog =
-        load_peaks_catalog(preset_path).map_err(|e| format!("load peaks catalog: {e}"))?;
+    let catalog = crate::peaks_cache::cached_peaks_catalog_thin(preset_path)
+        .map_err(|e| format!("load peaks catalog: {e}"))?;
     let n_catalog = catalog.entries.len();
     if n_catalog == 0 {
         return Err("peaks catalog is empty; run peaky peaks to build peaks/".into());

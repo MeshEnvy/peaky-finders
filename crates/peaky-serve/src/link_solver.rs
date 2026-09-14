@@ -11,9 +11,10 @@ use std::time::Instant;
 
 use anyhow::Result;
 use peaky_preset::{
-    load_peaks_catalog, load_preset, resolved_preset_cache_dir, worse_difficulty, PeakCatalogEntry,
-    Preset, SiteEntry,
+    load_preset, resolved_preset_cache_dir, worse_difficulty, PeakCatalogEntry, Preset, SiteEntry,
 };
+
+use crate::peaks_cache::cached_peaks_catalog_thin;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use splatter::Session;
@@ -1060,7 +1061,7 @@ fn load_link_solver_body(
     ensure_active()?;
     progress.update(key, scan_gen, "catalog", 0, 0, "Loading peaks catalog…");
 
-    let catalog = load_peaks_catalog(&req.preset_path)
+    let catalog = cached_peaks_catalog_thin(&req.preset_path)
         .map_err(|e| LinkSolverRunError::User(format!("load peaks catalog: {e}"), 422))?;
     let n_catalog = catalog.entries.len();
 
@@ -1361,7 +1362,7 @@ pub fn accept_link_solver_route(
     let mut created = Vec::new();
     let mut path_slugs = vec![body.a.clone()];
     for (i, hop) in body.hops.iter().enumerate() {
-        let catalog_name = load_peaks_catalog(preset_path)
+        let catalog_name = cached_peaks_catalog_thin(preset_path)
             .ok()
             .and_then(|c| c.entries.get(&hop.peak_slug).and_then(|e| e.name.clone()));
         let name = hop.name.clone().or(catalog_name).unwrap_or_else(|| {
