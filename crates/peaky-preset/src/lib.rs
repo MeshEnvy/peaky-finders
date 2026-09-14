@@ -1,12 +1,14 @@
 //! Peaky preset YAML schema, I/O, and path resolution.
 
 pub mod access;
+pub mod board_sim;
 pub mod compute_key;
 pub mod difficulty;
 pub mod home;
 pub mod init;
 pub mod io;
 pub mod model;
+pub mod nodes_board;
 pub mod paths;
 pub mod peaks;
 pub mod project;
@@ -58,20 +60,25 @@ pub use io::{
     remove_preset_site, save_preset, write_preset_document,
 };
 pub use yaml_io::read_preset_document;
+pub use board_sim::{
+    board_viewshed_radius_km, normalize_board_id, site_viewshed_radius_km,
+    validate_board_radius_km, validate_board_sim_configs,
+};
 pub use model::{
     default_viewshed_polygon_style, resolved_coverage_max_workers,
     resolved_dem_fetch_max_workers,
     resolved_viewshed_polygon_style, slugify_files_segment, validate_preset,
-    validate_project_preset_document, CoverageProvider, DisplayConfig, LandAttributeFilter,
-    LandConfig, LandDownloadKind, LandLayerEntry, LandLayerRole, LandLayerStyle, LandLayerStyleValue,
-    LandSidebar, LandSidebarFolder, LandSourceEntry, LandSourceRefresh, AccessMeta, PeakAccessRules,
-    PeakCatalogEntry, PeakHikeGradeBucket, PeakHikeProfile, PeakHikeProfilePoint,
-    PeakJeepProfile, PeakJeepProfilePoint, PeakJeepRoadSegment, PeaksCatalog, PlaceAccess,
-    DEFAULT_MAX_JEEP_M, DEFAULT_HIKE_PATH_MAX_M, DEFAULT_PLACE_ROAD_SEARCH_M,
-    Preset, PresetResult, PresetValidationError, ScanConfig, SimulationConfig,
-    SimulationMaxWorkers, SiteEntry, ViewshedPolygonStyle, DEFAULT_COVERAGE_MAX_WORKERS,
-    DEFAULT_DEM_MAX_WORKERS,
+    validate_project_preset_document, BoardSimConfig, CoverageProvider, DisplayConfig,
+    LandAttributeFilter, LandConfig, LandDownloadKind, LandLayerEntry, LandLayerRole,
+    LandLayerStyle, LandLayerStyleValue, LandSidebar, LandSidebarFolder, LandSourceEntry,
+    LandSourceRefresh, AccessMeta, PeakAccessRules, PeakCatalogEntry, PeakHikeGradeBucket,
+    PeakHikeProfile, PeakHikeProfilePoint, PeakJeepProfile, PeakJeepProfilePoint,
+    PeakJeepRoadSegment, PeaksCatalog, PlaceAccess, DEFAULT_MAX_JEEP_M, DEFAULT_HIKE_PATH_MAX_M,
+    DEFAULT_PLACE_ROAD_SEARCH_M, Preset, PresetResult, PresetValidationError, ScanConfig,
+    SimulationConfig, SimulationMaxWorkers, SiteEntry, ViewshedPolygonStyle,
+    DEFAULT_COVERAGE_MAX_WORKERS, DEFAULT_DEM_MAX_WORKERS,
 };
+pub use nodes_board::{load_nodes_board_index, load_nodes_board_index_from_path, NodesBoardIndex};
 pub use viewshed_quality::{
     dem_native_raster_dimension, effective_radius_m, effective_target_raster_dimension,
     effective_viewshed_quality, preset_radius_km, preset_radius_m, raster_upgrade_ladder,

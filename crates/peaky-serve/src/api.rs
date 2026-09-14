@@ -493,7 +493,13 @@ async fn viewshed_png(
 ) -> Result<Response, StatusCode> {
     let path = state.preset_path();
     let project_slug = state.slug.clone();
-    let png = ensure_viewshed_png(state.session.clone(), &path, &site_slug, state.verbose)
+    let png = ensure_viewshed_png(
+        state.session.clone(),
+        &path,
+        &site_slug,
+        state.board_index.as_ref(),
+        state.verbose,
+    )
         .await
         .map_err(|e| {
             tracing::error!("viewshed {project_slug}/{site_slug}: {e:#}");
@@ -536,12 +542,30 @@ async fn viewshed_meta(State(state): State<AppState>,
     let site = preset.sites.get(&site_slug).ok_or(StatusCode::NOT_FOUND)?;
     let sim = parse_viewshed_sim_params(&params).map_err(sim_status_from_err)?;
     if let Ok(Some(overlay)) =
-        site_viewshed_overlay_if_ready(&state.slug, &path, &site_slug, site, &preset, Some(&sim))
+        site_viewshed_overlay_if_ready(
+            &state.slug,
+            &path,
+            &site_slug,
+            site,
+            &preset,
+            Some(&sim),
+            Some(state.board_index.as_ref()),
+        )
     {
         return Ok(Json(overlay));
     }
-    let target_raster = crate::viewshed_sim::effective_target_raster_for_preset(&preset, Some(&sim));
-    let digest = crate::viewshed::viewshed_digest_for_raster(&preset, site, target_raster)
+    let target_raster = crate::viewshed_sim::effective_target_raster_for_site(
+        &preset,
+        site,
+        Some(state.board_index.as_ref()),
+        Some(&sim),
+    );
+    let digest = crate::viewshed::viewshed_digest_for_raster(
+        &preset,
+        site,
+        target_raster,
+        Some(state.board_index.as_ref()),
+    )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(json!({
         "slug": site_slug,
@@ -556,7 +580,12 @@ async fn viewshed_index(State(state): State<AppState>,
     Path(_slug): Path<String>) -> Result<Json<Value>, StatusCode> {
     let path = state.preset_path();
     let preset = load_preset(&path).map_err(|_| StatusCode::NOT_FOUND)?;
-    build_viewshed_index(&state.slug, &path, &preset)
+    build_viewshed_index(
+        &state.slug,
+        &path,
+        &preset,
+        Some(state.board_index.as_ref()),
+    )
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }

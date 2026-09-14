@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use anyhow::{bail, Context, Result};
 use peaky_preset::{
     effective_target_raster_dimension, environment_catalog_from_preset, modem_catalog_from_preset,
-    Preset, SiteEntry,
+    preset_radius_km, site_viewshed_radius_km, NodesBoardIndex, Preset, SiteEntry,
 };
 use serde_yaml::Mapping;
 use splatter::CovRequest;
@@ -219,7 +219,7 @@ pub fn preset_to_request(
     lon: f64,
     site: Option<&SiteEntry>,
 ) -> Result<CovRequest> {
-    preset_to_request_with_sim(preset, lat, lon, site, None)
+    preset_to_request_with_sim(preset, lat, lon, site, None, None)
 }
 
 pub fn preset_to_request_with_sim(
@@ -228,8 +228,10 @@ pub fn preset_to_request_with_sim(
     lon: f64,
     site: Option<&SiteEntry>,
     sim: Option<&ViewshedSimOverrides>,
+    board_index: Option<&NodesBoardIndex>,
 ) -> Result<CovRequest> {
-    let mut req = preset_to_request_inner(preset, lat, lon, site)?;
+    let mut req = preset_to_request_inner(preset, lat, lon, site, board_index)?;
+    let site_radius_km = site.map(|s| site_viewshed_radius_km(preset, s, board_index));
     if let Some(sim) = sim {
         if let Some(radius_km) = sim.radius_km {
             req.radius = radius_km * 1000.0;
@@ -237,11 +239,13 @@ pub fn preset_to_request_with_sim(
         if let Some(raster_dimension) = sim.raster_dimension {
             req.raster_dimension = raster_dimension;
         } else {
+            let radius_for_raster = sim.radius_km.or(site_radius_km);
             req.raster_dimension =
-                effective_target_raster_dimension(preset, sim.radius_km, sim.quality);
+                effective_target_raster_dimension(preset, radius_for_raster, sim.quality);
         }
     } else {
-        req.raster_dimension = effective_target_raster_dimension(preset, None, None);
+        req.raster_dimension =
+            effective_target_raster_dimension(preset, site_radius_km, None);
     }
     Ok(req)
 }
@@ -251,6 +255,7 @@ fn preset_to_request_inner(
     lat: f64,
     lon: f64,
     site: Option<&SiteEntry>,
+    board_index: Option<&NodesBoardIndex>,
 ) -> Result<CovRequest> {
     let env = resolved_environment(preset)?;
     let mut modem_map = resolved_modem(preset)?;
@@ -283,11 +288,9 @@ fn preset_to_request_inner(
     let decode = modem_decode_threshold_dbm(&modem_map)?;
     let rel = reliability_margin_db(situation, time_pct);
 
-    let radius_km = match &preset.simulation.radius_km {
-        serde_yaml::Value::Number(n) => n.as_f64().unwrap_or(50.0),
-        serde_yaml::Value::String(s) => s.parse().unwrap_or(50.0),
-        _ => 50.0,
-    };
+    let radius_km = site
+        .map(|s| site_viewshed_radius_km(preset, s, board_index))
+        .unwrap_or_else(|| preset_radius_km(preset));
 
     let tx_height = site
         .map(|s| resolved_site_tx_height_m(preset, s))
@@ -329,7 +332,7 @@ fn preset_to_request_inner(
         colormap: preset.display.colormap.clone(),
         min_dbm: preset.display.min_dbm,
         max_dbm: preset.display.max_dbm,
-        raster_dimension: effective_target_raster_dimension(preset, None, None),
+        raster_dimension: effective_target_raster_dimension(preset, Some(radius_km), None),
         modem: LoRaModemParams {
             spreading_factor: mapping_get(&modem_map, "spreading_factor")
                 .and_then(|v| v.as_i64())

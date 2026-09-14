@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use peaky_preset::NodesBoardIndex;
 use splatter::Session;
 use tokio::sync::Semaphore;
 
@@ -23,6 +24,8 @@ pub struct AppState {
     pub fortify: crate::fortify::FortifyHub,
     pub verbose: bool,
     pub dem_tile_render: Arc<Semaphore>,
+    /// ``nodes.yaml`` board ids for per-board viewshed radius (optional file).
+    pub board_index: Arc<NodesBoardIndex>,
     /// Directory that contains `config.yaml`.
     pub project_dir: PathBuf,
     /// Display / cache key (directory name).

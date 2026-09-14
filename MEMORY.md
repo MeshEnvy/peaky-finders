@@ -55,6 +55,8 @@ Paths: CLI takes a project dir (or `config.yaml`). Optional slug fallback: `$PEA
 
 **Viewshed quality:** `simulation.viewshed_quality` (1–5, default 3). Q1 = 128 px always; Q5 = DEM-native for radius (`ceil(radius_m / 30)`, clamp 128–4096); Q2–4 = evenly spaced rungs on the doubling ladder 128→Q5. Resolved pixel count is in cache digests (not stored in YAML). Changing quality or radius invalidates viewshed cache entries.
 
+**Per-board viewshed radius:** `simulation.boards.<board>.radius_km` (optional). Serve and `peaky map export` join `sites.*.node` → `nodes.yaml` `board` for **site viewshed rasters only**; hop/P2P link math stays on project `simulation.radius_km`. `t096` is an alias of `heltec-t096`. Missing `nodes.yaml` or unbound sites use project radius.
+
 **Viewshed warm:** Progressive ladder (128→target px) per site. Always-on stderr: `[peaky] viewshed {slug} [1/N] generating 128px…` / `done (Ns)` / `progressive warm complete`. Cache hits are `--verbose` only. Map pins show a bar + label (`2/5 · 256px`) under each loading site from SSE `ladder_step`/`ladder_total`/`raster_dimension`. Pins spin only while a load is in flight; a cached overlay is republished on viewport bump; target PNG without a manifest is regenerated. **Access** is independent of viewshed warm: select a site (or pin **Access**) then `GET …/access/{slug}?warm=1`. Viewport `ensureAccessForVisibleSites` only warms the selected site and pinned slugs.
 
 ## Site export (`peaky export` + map Export)

@@ -5,14 +5,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use peaky_geo::polygonize::{fraction_to_lat_lon, LatLonBox};
-use peaky_preset::{resolved_viewshed_root, Preset, SiteEntry};
+use peaky_preset::{preset_radius_km, resolved_viewshed_root, NodesBoardIndex, Preset, SiteEntry};
 use serde_json::{json, Value};
 
 use crate::rf::{preset_to_request, viewshed_workspace_digest};
 use crate::viewshed::viewshed_digest_for_raster;
 use crate::viewshed_sim::{
-    effective_target_raster_for_preset, effective_viewshed_quality_for_preset,
-    raster_upgrade_ladder, ViewshedSimOverrides, MIN_SERVE_RASTER_DIMENSION,
+    effective_target_raster_for_site,
+    effective_viewshed_quality_for_preset, raster_upgrade_ladder, ViewshedSimOverrides,
+    MIN_SERVE_RASTER_DIMENSION,
 };
 
 pub fn viewshed_cache_png_api_path(project_slug: &str, digest: &str) -> String {
@@ -65,8 +66,9 @@ fn site_index_entry(
     preset: &Preset,
     viewshed_root: &Path,
     target_raster: u32,
+    board_index: Option<&NodesBoardIndex>,
 ) -> Result<Value> {
-    let target_digest = viewshed_digest_for_raster(preset, site, target_raster)?;
+    let target_digest = viewshed_digest_for_raster(preset, site, target_raster, board_index)?;
     let target_workdir = viewshed_root.join(&target_digest);
     let target_png = target_workdir.join("splat.png");
     if target_png.is_file() && splat_png_is_valid_fast(&target_png) {
@@ -83,7 +85,7 @@ fn site_index_entry(
 
     let ladder = raster_upgrade_ladder(MIN_SERVE_RASTER_DIMENSION, target_raster);
     for raster in ladder.iter().rev().copied().skip(1) {
-        let digest = viewshed_digest_for_raster(preset, site, raster)?;
+        let digest = viewshed_digest_for_raster(preset, site, raster, board_index)?;
         let workdir = viewshed_root.join(&digest);
         let png = workdir.join("splat.png");
         if png.is_file() && splat_png_is_valid_fast(&png) {
@@ -138,32 +140,39 @@ fn overlay_index_entry(
     }))
 }
 
-pub fn build_viewshed_index(project_slug: &str, preset_path: &Path, preset: &Preset) -> Result<Value> {
+pub fn build_viewshed_index(
+    project_slug: &str,
+    preset_path: &Path,
+    preset: &Preset,
+    board_index: Option<&NodesBoardIndex>,
+) -> Result<Value> {
     let viewshed_root = resolved_viewshed_root(preset_path);
-    let target_raster = effective_target_raster_for_preset(preset, None);
     let mut entries = serde_json::Map::new();
     let mut ready_count = 0usize;
     for (slug, site) in preset.sites.iter() {
-        let row = site_index_entry(project_slug, slug, site, preset, &viewshed_root, target_raster)?;
+        let target_raster = effective_target_raster_for_site(preset, site, board_index, None);
+        let row = site_index_entry(
+            project_slug,
+            slug,
+            site,
+            preset,
+            &viewshed_root,
+            target_raster,
+            board_index,
+        )?;
         if row.get("ready").and_then(|v| v.as_bool()) == Some(true) {
             ready_count += 1;
         }
         entries.insert(slug.clone(), row);
     }
-    let radius_km = match &preset.simulation.radius_km {
-        serde_yaml::Value::Number(n) => n.as_f64().unwrap_or(50.0),
-        serde_yaml::Value::String(s) => s.parse().unwrap_or(50.0),
-        _ => 50.0,
-    };
     Ok(json!({
         "project": project_slug,
         "sites": Value::Object(entries),
         "ready_count": ready_count,
         "total": preset.sites.len(),
         "sim": {
-            "radius_km": radius_km,
+            "radius_km": preset_radius_km(preset),
             "viewshed_quality": effective_viewshed_quality_for_preset(preset, None),
-            "raster_dimension": target_raster,
         },
     }))
 }
@@ -175,9 +184,10 @@ pub fn site_viewshed_overlay_if_ready(
     site: &SiteEntry,
     preset: &Preset,
     sim: Option<&ViewshedSimOverrides>,
+    board_index: Option<&NodesBoardIndex>,
 ) -> Result<Option<Value>> {
     let viewshed_root = resolved_viewshed_root(preset_path);
-    let target_raster = effective_target_raster_for_preset(preset, sim);
+    let target_raster = effective_target_raster_for_site(preset, site, board_index, sim);
     let row = site_index_entry(
         project_slug,
         site_slug,
@@ -185,6 +195,7 @@ pub fn site_viewshed_overlay_if_ready(
         preset,
         &viewshed_root,
         target_raster,
+        board_index,
     )?;
     if row.get("ready").and_then(|v| v.as_bool()) != Some(true) {
         return Ok(None);
@@ -212,7 +223,12 @@ pub fn viewshed_overlay_from_workdir(
     site: &SiteEntry,
     workdir: &Path,
 ) -> Result<Option<Value>> {
-    let digest = viewshed_workspace_digest(&preset_to_request(preset, site.loc[0], site.loc[1], Some(site))?)?;
+    let digest = viewshed_workspace_digest(&preset_to_request(
+        preset,
+        site.loc[0],
+        site.loc[1],
+        Some(site),
+    )?)?;
     let png = workdir.join("splat.png");
     if !png.is_file() || !splat_png_is_valid_fast(&png) {
         return Ok(None);

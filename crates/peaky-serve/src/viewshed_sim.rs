@@ -4,8 +4,9 @@ use std::collections::HashMap;
 
 use axum::http::StatusCode;
 use peaky_preset::{
-    effective_target_raster_dimension, effective_viewshed_quality, Preset,
-    VIEWSHED_QUALITY_MAX, VIEWSHED_QUALITY_MIN, VIEWSHED_RASTER_MAX, VIEWSHED_RASTER_MIN,
+    effective_target_raster_dimension, effective_viewshed_quality, site_viewshed_radius_km,
+    NodesBoardIndex, Preset, SiteEntry, VIEWSHED_QUALITY_MAX, VIEWSHED_QUALITY_MIN,
+    VIEWSHED_RASTER_MAX, VIEWSHED_RASTER_MIN,
 };
 
 pub use peaky_preset::raster_upgrade_ladder;
@@ -100,6 +101,25 @@ pub fn effective_target_raster_for_preset(preset: &Preset, sim: Option<&Viewshed
         }
     }
     let radius_km = sim.and_then(|s| s.radius_km);
+    let quality = sim.and_then(|s| s.quality);
+    effective_target_raster_dimension(preset, radius_km, quality)
+}
+
+pub fn effective_target_raster_for_site(
+    preset: &Preset,
+    site: &SiteEntry,
+    board_index: Option<&NodesBoardIndex>,
+    sim: Option<&ViewshedSimOverrides>,
+) -> u32 {
+    if let Some(sim) = sim {
+        if let Some(px) = sim.raster_dimension {
+            return px.clamp(MIN_SERVE_RASTER_DIMENSION, MAX_SERVE_RASTER_DIMENSION);
+        }
+    }
+    let site_radius_km = site_viewshed_radius_km(preset, site, board_index);
+    let radius_km = sim
+        .and_then(|s| s.radius_km)
+        .or(Some(site_radius_km));
     let quality = sim.and_then(|s| s.quality);
     effective_target_raster_dimension(preset, radius_km, quality)
 }

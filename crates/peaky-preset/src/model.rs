@@ -47,11 +47,24 @@ impl Default for SimulationMaxWorkers {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct BoardSimConfig {
+    pub radius_km: Option<f64>,
+}
+
+impl Default for BoardSimConfig {
+    fn default() -> Self {
+        Self { radius_km: None }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SimulationConfig {
     pub provider: CoverageProvider,
     pub radius_km: serde_yaml::Value,
     pub viewshed_quality: u8,
     pub max_workers: SimulationMaxWorkers,
+    pub boards: HashMap<String, BoardSimConfig>,
     pub modem: Option<serde_yaml::Value>,
     pub environment: Option<serde_yaml::Value>,
     pub transmitter: HashMap<String, serde_yaml::Value>,
@@ -65,6 +78,7 @@ impl Default for SimulationConfig {
             radius_km: serde_yaml::Value::Number(serde_yaml::Number::from(50)),
             viewshed_quality: 3,
             max_workers: SimulationMaxWorkers::default(),
+            boards: HashMap::new(),
             modem: None,
             environment: None,
             transmitter: HashMap::new(),
@@ -855,6 +869,7 @@ pub fn validate_preset(preset: &Preset) -> PresetResult<()> {
     }
 
     crate::viewshed_quality::validate_viewshed_quality(preset.simulation.viewshed_quality)?;
+    crate::board_sim::validate_board_sim_configs(&preset.simulation.boards)?;
 
     let mut seen_links: HashSet<[String; 2]> = HashSet::new();
     for pair in &preset.links {

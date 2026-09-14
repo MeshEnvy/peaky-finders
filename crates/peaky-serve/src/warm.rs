@@ -13,7 +13,8 @@ use peaky_peaks::{
     load_routing_for_points, warm_place_access_with_routing, OsmRouting, OsmRoutingOpts,
 };
 use peaky_preset::{
-    ensure_access_meta, load_access, load_preset, resolved_viewshed_root, Preset, SiteEntry,
+    ensure_access_meta, load_access, load_preset, resolved_viewshed_root, NodesBoardIndex, Preset,
+    SiteEntry,
 };
 use serde_json::{json, Value};
 use splatter::{propagate::required_tile_names_for_points, PRIORITY_DEM_BACKGROUND, PRIORITY_DEM_VIEWPORT, Session};
@@ -213,6 +214,7 @@ pub struct WarmHub {
     workers_started: Arc<AtomicBool>,
     /// Project-wide OSM routing graph (lazy; shared across site access warms).
     osm_routing: Arc<Mutex<Option<Arc<OsmRouting>>>>,
+    board_index: Arc<NodesBoardIndex>,
 }
 
 impl WarmHub {
@@ -221,6 +223,7 @@ impl WarmHub {
         events: ServeEventHub,
         verbose: bool,
         coverage_workers: usize,
+        board_index: Arc<NodesBoardIndex>,
     ) -> Self {
         Self {
             session,
@@ -230,6 +233,7 @@ impl WarmHub {
             projects: Arc::new(Mutex::new(HashMap::new())),
             workers_started: Arc::new(AtomicBool::new(false)),
             osm_routing: Arc::new(Mutex::new(None)),
+            board_index,
         }
     }
 
@@ -274,8 +278,13 @@ impl WarmHub {
         warm
     }
 
-    fn site_coverage_key(_preset_path: &PathBuf, preset: &Preset, site: &SiteEntry) -> Result<String> {
-        target_viewshed_digest_for_site(preset, site)
+    fn site_coverage_key(
+        &self,
+        _preset_path: &PathBuf,
+        preset: &Preset,
+        site: &SiteEntry,
+    ) -> Result<String> {
+        target_viewshed_digest_for_site(preset, site, Some(self.board_index.as_ref()))
     }
 
     fn site_coverage_exists(preset_path: &PathBuf, key: &str) -> bool {
@@ -382,6 +391,7 @@ impl WarmHub {
             &site,
             &preset,
             None,
+            Some(hub.board_index.as_ref()),
         ) {
             Ok(Some(overlay)) => !Self::overlay_is_at_target(&overlay),
             _ => true,
@@ -395,6 +405,7 @@ impl WarmHub {
                 &preset,
                 &site_slug,
                 &site,
+                Some(hub.board_index.as_ref()),
                 hub.verbose,
                 |overlay| hub.publish_viewshed(&slug, overlay),
             ) {
@@ -550,7 +561,7 @@ impl WarmHub {
         site: &SiteEntry,
         priority: i32,
     ) -> bool {
-        let key = match Self::site_coverage_key(&warm.preset_path, preset, site) {
+        let key = match self.site_coverage_key(&warm.preset_path, preset, site) {
             Ok(k) => k,
             Err(_) => return false,
         };
@@ -562,6 +573,7 @@ impl WarmHub {
             site,
             preset,
             None,
+            Some(self.board_index.as_ref()),
         ) {
             if Self::overlay_is_at_target(&overlay) {
                 viewshed_needed = false;
@@ -683,7 +695,7 @@ impl WarmHub {
                 continue;
             };
             self.prefetch_dem_for_sites(&preset, std::slice::from_ref(site_slug), priority.min(PRIORITY_DEM_VIEWPORT));
-            let key = Self::site_coverage_key(&preset_path, &preset, site)?;
+            let key = self.site_coverage_key(&preset_path, &preset, site)?;
             if let Ok(Some(overlay)) = site_viewshed_overlay_if_ready(
                 slug,
                 &preset_path,
@@ -691,6 +703,7 @@ impl WarmHub {
                 site,
                 &preset,
                 None,
+                Some(self.board_index.as_ref()),
             ) {
                 self.publish_viewshed(slug, overlay.clone());
                 if Self::overlay_is_at_target(&overlay) {
@@ -748,7 +761,7 @@ impl WarmHub {
         sim: &ViewshedSimOverrides,
     ) -> Result<String> {
         let site = preview_site_at(lat, lon).map_err(|e| anyhow::anyhow!(e.0))?;
-        let req = preset_to_request_with_sim(preset, lat, lon, Some(&site), Some(sim))?;
+        let req = preset_to_request_with_sim(preset, lat, lon, Some(&site), Some(sim), None)?;
         Ok(viewshed_workspace_digest(&req)?)
     }
 

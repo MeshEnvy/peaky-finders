@@ -577,6 +577,8 @@ impl<'a> SearchCtx<'a> {
                 hub.publish("viewshed", overlay);
             };
             let sim = ViewshedSimOverrides::default();
+            let project_dir = preset_path.parent().unwrap_or(&preset_path);
+            let board_index = peaky_preset::load_nodes_board_index(project_dir);
             let result = if let Some(ref site) = site_entry {
                 ensure_viewshed_progressive_for_site_blocking(
                     session,
@@ -585,6 +587,7 @@ impl<'a> SearchCtx<'a> {
                     &preset,
                     &slug,
                     site,
+                    Some(&board_index),
                     false,
                     rewrite,
                 )

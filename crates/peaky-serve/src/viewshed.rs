@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
-use peaky_preset::{load_preset, resolved_viewshed_root, Preset, SiteEntry};
+use peaky_preset::{load_preset, resolved_viewshed_root, NodesBoardIndex, Preset, SiteEntry};
 use serde_json::Value;
 use splatter::Session;
 use tokio::task::spawn_blocking;
@@ -17,8 +17,8 @@ use crate::viewshed_index::{
 };
 use crate::viewshed_log::{viewshed_progress_log, viewshed_progress_log_verbose};
 use crate::viewshed_sim::{
-    effective_target_raster_for_preset, raster_upgrade_ladder, ViewshedSimOverrides,
-    MIN_SERVE_RASTER_DIMENSION,
+    effective_target_raster_for_preset, effective_target_raster_for_site, raster_upgrade_ladder,
+    ViewshedSimOverrides, MIN_SERVE_RASTER_DIMENSION,
 };
 
 pub const DRAFT_VIEWSHED_SLUG: &str = "_draft";
@@ -49,8 +49,16 @@ pub fn resolve_viewshed_workdir(
     preset: &Preset,
     site: &SiteEntry,
     sim: Option<&ViewshedSimOverrides>,
+    board_index: Option<&NodesBoardIndex>,
 ) -> Result<PathBuf> {
-    let req = preset_to_request_with_sim(preset, site.loc[0], site.loc[1], Some(site), sim)?;
+    let req = preset_to_request_with_sim(
+        preset,
+        site.loc[0],
+        site.loc[1],
+        Some(site),
+        sim,
+        board_index,
+    )?;
     let digest = viewshed_workspace_digest(&req)?;
     Ok(resolved_viewshed_root(preset_path).join(digest))
 }
@@ -59,6 +67,7 @@ pub async fn ensure_viewshed_png(
     session: Arc<Session>,
     preset_path: &Path,
     site_slug: &str,
+    board_index: &NodesBoardIndex,
     verbose: bool,
 ) -> Result<PathBuf> {
     let preset = load_preset(preset_path)?;
@@ -66,7 +75,16 @@ pub async fn ensure_viewshed_png(
         .sites
         .get(site_slug)
         .with_context(|| format!("unknown site {site_slug}"))?;
-    ensure_viewshed_for_site(session, preset_path, &preset, site_slug, site, verbose).await
+    ensure_viewshed_for_site(
+        session,
+        preset_path,
+        &preset,
+        site_slug,
+        site,
+        board_index,
+        verbose,
+    )
+    .await
 }
 
 pub async fn ensure_viewshed_for_site(
@@ -75,14 +93,24 @@ pub async fn ensure_viewshed_for_site(
     preset: &Preset,
     site_slug: &str,
     site: &SiteEntry,
+    board_index: &NodesBoardIndex,
     verbose: bool,
 ) -> Result<PathBuf> {
     let preset_path = preset_path.to_path_buf();
     let site_slug = site_slug.to_string();
     let site = site.clone();
     let preset = preset.clone();
+    let board_index = board_index.clone();
     spawn_blocking(move || {
-        ensure_viewshed_for_site_blocking(session, &preset_path, &preset, &site_slug, &site, verbose)
+        ensure_viewshed_for_site_blocking(
+            session,
+            &preset_path,
+            &preset,
+            &site_slug,
+            &site,
+            Some(&board_index),
+            verbose,
+        )
     })
     .await
     .context("join coverage task")?
@@ -94,6 +122,7 @@ pub fn ensure_viewshed_for_site_blocking(
     preset: &Preset,
     site_slug: &str,
     site: &SiteEntry,
+    board_index: Option<&NodesBoardIndex>,
     verbose: bool,
 ) -> Result<PathBuf> {
     ensure_viewshed_blocking(
@@ -104,13 +133,25 @@ pub fn ensure_viewshed_for_site_blocking(
         site.loc[1],
         Some(site),
         None,
+        board_index,
         verbose,
         site_slug,
     )
 }
 
-pub fn target_viewshed_digest_for_site(preset: &Preset, site: &SiteEntry) -> Result<String> {
-    let req = preset_to_request_with_sim(preset, site.loc[0], site.loc[1], Some(site), None)?;
+pub fn target_viewshed_digest_for_site(
+    preset: &Preset,
+    site: &SiteEntry,
+    board_index: Option<&NodesBoardIndex>,
+) -> Result<String> {
+    let req = preset_to_request_with_sim(
+        preset,
+        site.loc[0],
+        site.loc[1],
+        Some(site),
+        None,
+        board_index,
+    )?;
     viewshed_workspace_digest(&req)
 }
 
@@ -119,24 +160,33 @@ pub fn viewshed_workdir_for_raster(
     preset: &Preset,
     site: &SiteEntry,
     raster_dimension: u32,
+    board_index: Option<&NodesBoardIndex>,
 ) -> Result<PathBuf> {
     let sim = ViewshedSimOverrides {
         raster_dimension: Some(raster_dimension),
         ..Default::default()
     };
-    resolve_viewshed_workdir(preset_path, preset, site, Some(&sim))
+    resolve_viewshed_workdir(preset_path, preset, site, Some(&sim), board_index)
 }
 
 pub fn viewshed_digest_for_raster(
     preset: &Preset,
     site: &SiteEntry,
     raster_dimension: u32,
+    board_index: Option<&NodesBoardIndex>,
 ) -> Result<String> {
     let sim = ViewshedSimOverrides {
         raster_dimension: Some(raster_dimension),
         ..Default::default()
     };
-    let req = preset_to_request_with_sim(preset, site.loc[0], site.loc[1], Some(site), Some(&sim))?;
+    let req = preset_to_request_with_sim(
+        preset,
+        site.loc[0],
+        site.loc[1],
+        Some(site),
+        Some(&sim),
+        board_index,
+    )?;
     viewshed_workspace_digest(&req)
 }
 
@@ -187,13 +237,14 @@ pub fn ensure_viewshed_progressive_for_site_blocking<F>(
     preset: &Preset,
     site_slug: &str,
     site: &SiteEntry,
+    board_index: Option<&NodesBoardIndex>,
     verbose: bool,
     mut publish: F,
 ) -> Result<()>
 where
     F: FnMut(Value),
 {
-    let target = effective_target_raster_for_preset(preset, None);
+    let target = effective_target_raster_for_site(preset, site, board_index, None);
     let ladder = raster_upgrade_ladder(MIN_SERVE_RASTER_DIMENSION, target);
     let ladder_total = ladder.len() as u32;
     viewshed_progress_log_verbose(
@@ -209,7 +260,7 @@ where
             raster_dimension: Some(raster),
             ..Default::default()
         };
-        let digest = viewshed_digest_for_raster(preset, site, raster)?;
+        let digest = viewshed_digest_for_raster(preset, site, raster, board_index)?;
         let workdir = resolved_viewshed_root(preset_path).join(&digest);
         let png = workdir.join("splat.png");
         if !png.is_file() {
@@ -225,6 +276,7 @@ where
                 site.loc[1],
                 Some(site),
                 Some(&sim),
+                board_index,
                 verbose,
                 site_slug,
             )?;
@@ -291,7 +343,14 @@ where
             raster_dimension: Some(raster),
             ..Default::default()
         };
-        let req = preset_to_request_with_sim(preset, lat, lon, Some(&site), Some(&step_sim))?;
+        let req = preset_to_request_with_sim(
+            preset,
+            lat,
+            lon,
+            Some(&site),
+            Some(&step_sim),
+            None,
+        )?;
         let digest = viewshed_workspace_digest(&req)?;
         let workdir = resolved_viewshed_root(preset_path).join(&digest);
         let png = workdir.join("splat.png");
@@ -308,6 +367,7 @@ where
                 lon,
                 Some(&site),
                 Some(&step_sim),
+                None,
                 verbose,
                 label,
             )?;
@@ -361,6 +421,7 @@ pub fn ensure_coords_viewshed_blocking(
         lon,
         None,
         sim,
+        None,
         verbose,
         DRAFT_VIEWSHED_SLUG,
     )
@@ -374,10 +435,11 @@ fn ensure_viewshed_blocking(
     lon: f64,
     site: Option<&SiteEntry>,
     sim: Option<&ViewshedSimOverrides>,
+    board_index: Option<&NodesBoardIndex>,
     verbose: bool,
     label: &str,
 ) -> Result<PathBuf> {
-    let req = preset_to_request_with_sim(preset, lat, lon, site, sim)?;
+    let req = preset_to_request_with_sim(preset, lat, lon, site, sim, board_index)?;
     let digest = viewshed_workspace_digest(&req)?;
     let workdir = resolved_viewshed_root(preset_path).join(&digest);
     let png = workdir.join("splat.png");
@@ -405,8 +467,19 @@ fn ensure_viewshed_blocking(
     Ok(png)
 }
 
-pub fn viewshed_digest_for_site(preset: &Preset, site: &SiteEntry) -> Result<String> {
-    let req = preset_to_request_with_sim(preset, site.loc[0], site.loc[1], Some(site), None)?;
+pub fn viewshed_digest_for_site(
+    preset: &Preset,
+    site: &SiteEntry,
+    board_index: Option<&NodesBoardIndex>,
+) -> Result<String> {
+    let req = preset_to_request_with_sim(
+        preset,
+        site.loc[0],
+        site.loc[1],
+        Some(site),
+        None,
+        board_index,
+    )?;
     viewshed_workspace_digest(&req)
 }
 
@@ -428,7 +501,14 @@ pub fn coords_viewshed_overlay_if_ready(
             raster_dimension: Some(raster),
             ..Default::default()
         };
-        let req = preset_to_request_with_sim(preset, lat, lon, Some(&site), Some(&step_sim))?;
+        let req = preset_to_request_with_sim(
+            preset,
+            lat,
+            lon,
+            Some(&site),
+            Some(&step_sim),
+            None,
+        )?;
         let digest = viewshed_workspace_digest(&req)?;
         let workdir = viewshed_root.join(&digest);
         let png = workdir.join("splat.png");
@@ -463,7 +543,7 @@ pub fn read_coords_viewshed_png_if_ready(
     sim: Option<&ViewshedSimOverrides>,
 ) -> Result<Option<PathBuf>> {
     let site = preview_site_at(lat, lon).map_err(|e| anyhow::anyhow!(e.0))?;
-    let workdir = resolve_viewshed_workdir(preset_path, preset, &site, sim)?;
+    let workdir = resolve_viewshed_workdir(preset_path, preset, &site, sim, None)?;
     let png = workdir.join("splat.png");
     if png.is_file() {
         Ok(Some(png))
