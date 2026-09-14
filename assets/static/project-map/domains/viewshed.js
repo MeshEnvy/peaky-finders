@@ -504,6 +504,18 @@ export function createViewshedDomain(opts) {
           renderPinLoadOverlay(slug, coords.lon, coords.lat, progressFor(slug))
         }
       }
+      const fortifyCoords = store?.viewshed?.pendingCoords?.get(FORTIFY_VIEWSHED_SLUG)
+      if (viewshedLoading.has(FORTIFY_VIEWSHED_SLUG) && fortifyCoords) {
+        if (coordsUsableForMarker(fortifyCoords.lon, fortifyCoords.lat)) {
+          active.add(FORTIFY_VIEWSHED_SLUG)
+          renderPinLoadOverlay(
+            FORTIFY_VIEWSHED_SLUG,
+            fortifyCoords.lon,
+            fortifyCoords.lat,
+            progressFor(FORTIFY_VIEWSHED_SLUG),
+          )
+        }
+      }
       hideInactivePinMarkers(active)
     } catch (_) {
       /* MapLibre can throw during resize; never block site save/UI */

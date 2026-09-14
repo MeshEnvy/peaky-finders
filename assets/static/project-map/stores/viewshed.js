@@ -102,6 +102,7 @@ export function isViewshedVisible(store, slug) {
  */
 export function clearViewshedLoadingState(store, slug) {
   store.viewshed.pendingEpoch.delete(slug)
+  clearPendingCoords(store, slug)
   store.viewshed.loading.delete(slug)
   clearPinProgress(store, slug)
 }

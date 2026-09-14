@@ -3,11 +3,12 @@
 import * as apiUrls from '../api/urls.js'
 import { FORTIFY_CANDIDATES_LAYER, FORTIFY_VIEWSHED_SLUG, viewshedLayerId } from '../constants.js'
 import { applyFortifyLayers, removeFortifyLayers } from '../map/fortify-layers.js'
-import { setPendingCoords } from '../stores/viewshed.js'
+import { clearPendingEpoch, setPendingCoords } from '../stores/viewshed.js'
 
 const PROGRESS_POLL_MS = 250
 const PROGRESS_IDLE_GRACE_MS = 3000
 const PROGRESS_TIMEOUT_MS = 120_000
+const VIEWSHED_POLL_MS = 400
 
 function sleepMs(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -91,7 +92,7 @@ export function createFortifyDomain(ctx) {
 
   function cancelFortifyViewshedLoad() {
     fortifyViewshedGen += 1
-    store.viewshed.pendingEpoch.delete(FORTIFY_VIEWSHED_SLUG)
+    clearPendingEpoch(store, FORTIFY_VIEWSHED_SLUG)
     store.viewshed.loading.delete(FORTIFY_VIEWSHED_SLUG)
     vs()?.clearViewshedLoadingState?.(FORTIFY_VIEWSHED_SLUG)
   }
@@ -126,6 +127,24 @@ export function createFortifyDomain(ctx) {
     vs()?.updatePinOverlays?.()
   }
 
+  async function pollFortifyViewshedReady(lat, lon, gen, epoch, vsDomain) {
+    const deadline = Date.now() + PROGRESS_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      if (fortifyViewshedGen !== gen) return
+      if (store.viewshed.pendingEpoch.get(FORTIFY_VIEWSHED_SLUG) !== epoch) return
+      if (await vsDomain.tryLoadCoordViewshedFromCache?.(FORTIFY_VIEWSHED_SLUG, lat, lon)) {
+        vsDomain.raiseViewshedLayers?.()
+        vsDomain.updatePinOverlays?.()
+        return
+      }
+      await sleepMs(VIEWSHED_POLL_MS)
+    }
+    if (fortifyViewshedGen === gen && store.viewshed.pendingEpoch.get(FORTIFY_VIEWSHED_SLUG) === epoch) {
+      cancelFortifyViewshedLoad()
+      vsDomain.updatePinOverlays?.()
+    }
+  }
+
   async function loadFortifyCoordViewshed(lat, lon) {
     const vsDomain = vs()
     if (!vsDomain) return
@@ -156,6 +175,8 @@ export function createFortifyDomain(ctx) {
       if (ready && ready.status === 'ready') {
         vsDomain.handleViewshedReady({ ...ready, slug: FORTIFY_VIEWSHED_SLUG }, epoch)
         vsDomain.raiseViewshedLayers?.()
+      } else {
+        void pollFortifyViewshedReady(lat, lon, gen, epoch, vsDomain)
       }
     } catch (_) {
       if (fortifyViewshedGen === gen) {
@@ -169,7 +190,7 @@ export function createFortifyDomain(ctx) {
     if (!peakSlug || !siteAccessDomain) return
     store.fortify.accessSlug = peakSlug
     const cached = store.access?.bySlug?.[peakSlug]
-    if (cached?.hike || cached?.jeep) {
+    if (siteAccessDomain.accessHasRouteProfiles?.(cached)) {
       siteAccessDomain.refreshLayers()
       return
     }

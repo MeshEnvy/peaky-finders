@@ -107,11 +107,18 @@ export function createSiteAccessDomain(opts) {
    * Fetch access for a site (cache-first GET; warm=1 so server computes if missing).
    * @param {object} site
    */
-  function accessRowLoaded(row) {
+  function accessHasRouteProfiles(row) {
+    if (!row) return false
+    const hikeProfile = row.hike?.profile
+    const jeepProfile = row.jeep?.profile
     return (
-      row &&
-      (Number.isFinite(row.hike_m) || Number.isFinite(row.jeep_m))
+      (Array.isArray(hikeProfile) && hikeProfile.length >= 2) ||
+      (Array.isArray(jeepProfile) && jeepProfile.length >= 2)
     )
+  }
+
+  function accessRowLoaded(row) {
+    return accessHasRouteProfiles(row)
   }
 
   function ensureSiteAccess(site) {
@@ -181,6 +188,7 @@ export function createSiteAccessDomain(opts) {
     handleAccessEvent,
     refreshLayers,
     ingestAccess,
+    accessHasRouteProfiles,
     siteAccessShowing,
     isAccessVisible,
     setAccessVisible,
