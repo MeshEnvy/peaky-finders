@@ -5,14 +5,18 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result};
-use peaky_preset::{resolved_preset_cache_dir, Preset, SiteEntry};
+use peaky_preset::{resolved_preset_cache_dir, BoardViewshedResolver, Preset, SiteEntry};
 use serde_json::{json, Value};
 use splatter::{propagate::LinkStrength, Session};
 
-use crate::rf::{max_hop_range_m, pair_within_hop_range, resolved_site_tx_height_m, rf_json_for_preset};
+use crate::rf::{
+    draft_hop_radius_m, load_board_viewshed, max_hop_range_m, pair_hop_range_km,
+    pair_within_hop_range_coords_to_site, pair_within_hop_range_sites, resolved_site_tx_height_m,
+    rf_json_for_preset, site_hop_radius_km,
+};
 
 /// Bumps when link computation semantics change; invalidates prior mesh caches.
-const LINKS_MODEL: &str = "p2p-v5";
+const LINKS_MODEL: &str = "p2p-v6";
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -41,7 +45,8 @@ pub fn manual_link_pairs(preset: &Preset) -> HashSet<LinkPair> {
         .collect()
 }
 
-pub fn links_input_fingerprint(preset: &Preset) -> Result<String> {
+pub fn links_input_fingerprint(preset_path: &Path, preset: &Preset) -> Result<String> {
+    let boards = load_board_viewshed(preset_path);
     let radius_km = match &preset.simulation.radius_km {
         serde_yaml::Value::Number(n) => n.as_f64().unwrap_or(50.0),
         serde_yaml::Value::String(s) => s.parse::<f64>().unwrap_or(50.0),
@@ -61,6 +66,7 @@ pub fn links_input_fingerprint(preset: &Preset) -> Result<String> {
                 (site.loc[0] * 1e7).round() / 1e7,
                 (site.loc[1] * 1e7).round() / 1e7,
                 (resolved_site_tx_height_m(preset, site) * 1000.0).round() / 1000.0,
+                site_hop_radius_km(preset, site, Some(&boards)),
             ])
         })
         .collect();
@@ -170,6 +176,7 @@ pub fn invalidate_project_site_links_cache(preset_path: &Path) {
 /// P2P links from each slug to in-range sites (same stack as the site mesh).
 pub fn compute_links_for_slugs(
     session: Arc<Session>,
+    preset_path: &Path,
     preset: &Preset,
     slugs: &[String],
 ) -> Result<Value> {
@@ -181,7 +188,7 @@ pub fn compute_links_for_slugs(
         if !preset.sites.contains_key(slug) {
             continue;
         }
-        let payload = compute_single_site_links_p2p(Arc::clone(&session), preset, slug)?;
+        let payload = compute_single_site_links_p2p(Arc::clone(&session), preset_path, preset, slug)?;
         if let Some(rows) = payload.get("links").and_then(|v| v.as_array()) {
             for row in rows {
                 let a = row.get("a").and_then(|v| v.as_str()).unwrap_or("");
@@ -257,7 +264,7 @@ pub fn store_project_site_links_cache(
     if feature_count == 0 && linked_count == 0 {
         return Ok(());
     }
-    let fingerprint = links_input_fingerprint(preset)?;
+    let fingerprint = links_input_fingerprint(preset_path, preset)?;
     let key = project_cache_key(preset_path);
     if let Ok(mut cache) = LINKS_PAYLOAD_CACHE.lock() {
         cache.insert(key, (fingerprint.clone(), payload.clone()));
@@ -267,7 +274,7 @@ pub fn store_project_site_links_cache(
 }
 
 fn cached_project_site_links(preset_path: &Path, preset: &Preset) -> Result<Option<Value>> {
-    let fingerprint = links_input_fingerprint(preset)?;
+    let fingerprint = links_input_fingerprint(preset_path, preset)?;
     let key = project_cache_key(preset_path);
     if let Ok(cache) = LINKS_PAYLOAD_CACHE.lock() {
         if let Some((fp, payload)) = cache.get(&key) {
@@ -334,6 +341,8 @@ fn site_mesh_pair_strengths(
 }
 
 fn line_feature(
+    preset: &Preset,
+    boards: Option<&BoardViewshedResolver>,
     slug_a: &str,
     slug_b: &str,
     site_a: &SiteEntry,
@@ -348,6 +357,7 @@ fn line_feature(
     let lon_b = site_b.loc[1];
     let distance_km =
         (splatter::propagate::haversine_m(lat_a, lon_a, lat_b, lon_b) / 1000.0 * 10.0).round() / 10.0;
+    let hop_range_km = pair_hop_range_km(preset, site_a, site_b, boards);
     json!({
         "type": "Feature",
         "geometry": {
@@ -360,11 +370,12 @@ fn line_feature(
             "manual": manual,
             "strength": strength,
             "distance_km": distance_km,
+            "hop_range_km": hop_range_km,
         },
     })
 }
 
-fn manual_only_payload(preset: &Preset) -> Value {
+fn manual_only_payload(preset: &Preset, boards: &BoardViewshedResolver) -> Value {
     let manual_pairs = manual_link_pairs(preset);
     let mut records = Vec::new();
     let mut features = Vec::new();
@@ -376,6 +387,8 @@ fn manual_only_payload(preset: &Preset) -> Value {
         }
         records.push(link_record(&a, &b, true, true, "strong"));
         features.push(line_feature(
+            preset,
+            Some(boards),
             &a,
             &b,
             site_a.unwrap(),
@@ -412,9 +425,11 @@ fn ensure_dem_for_site_links(session: &Session, preset: &Preset) -> Result<()> {
 
 pub fn compute_project_site_links_p2p(
     session: Arc<Session>,
+    preset_path: &Path,
     preset: &Preset,
     analysis_complete: bool,
 ) -> Result<Value> {
+    let boards = load_board_viewshed(preset_path);
     ensure_dem_for_site_links(session.as_ref(), preset)?;
     let manual_pairs = manual_link_pairs(preset);
     let slug_list: Vec<&String> = preset.sites.keys().collect();
@@ -431,13 +446,7 @@ pub fn compute_project_site_links_p2p(
             }
             let site_a = &preset.sites[slug_a];
             let site_b = &preset.sites[slug_b];
-            if !pair_within_hop_range(
-                preset,
-                site_a.loc[0],
-                site_a.loc[1],
-                site_b.loc[0],
-                site_b.loc[1],
-            ) {
+            if !pair_within_hop_range_sites(preset, site_a, site_b, Some(&boards)) {
                 continue;
             }
             rf_pair_slugs.push(key);
@@ -458,7 +467,14 @@ pub fn compute_project_site_links_p2p(
         let Some(site_b) = preset.sites.get(&slug_b) else { continue };
         records.push(link_record(&slug_a, &slug_b, true, true, "strong"));
         features.push(line_feature(
-            &slug_a, &slug_b, site_a, site_b, true, "strong",
+            preset,
+            Some(&boards),
+            &slug_a,
+            &slug_b,
+            site_a,
+            site_b,
+            true,
+            "strong",
         ));
     }
 
@@ -471,7 +487,14 @@ pub fn compute_project_site_links_p2p(
         let site_b = &preset.sites[&slug_b];
         records.push(link_record(&slug_a, &slug_b, true, false, label));
         features.push(line_feature(
-            &slug_a, &slug_b, site_a, site_b, false, label,
+            preset,
+            Some(&boards),
+            &slug_a,
+            &slug_b,
+            site_a,
+            site_b,
+            false,
+            label,
         ));
     }
 
@@ -499,7 +522,7 @@ pub fn load_single_site_links(
     if let Some(mesh) = cached_project_site_links(preset_path, preset)? {
         return Ok(slice_site_links_from_mesh(&mesh, site_slug));
     }
-    compute_single_site_links_p2p(session, preset, site_slug)
+    compute_single_site_links_p2p(session, preset_path, preset, site_slug)
 }
 
 pub fn slice_site_links_from_mesh(mesh: &Value, site_slug: &str) -> Value {
@@ -547,9 +570,11 @@ pub fn slice_site_links_from_mesh(mesh: &Value, site_slug: &str) -> Value {
 
 pub fn compute_single_site_links_p2p(
     session: Arc<Session>,
+    preset_path: &Path,
     preset: &Preset,
     site_slug: &str,
 ) -> Result<Value> {
+    let boards = load_board_viewshed(preset_path);
     let slug = site_slug.trim();
     let center = preset
         .sites
@@ -562,8 +587,6 @@ pub fn compute_single_site_links_p2p(
         )
         .context("ensure dem tiles for single-site links")?;
     let manual_pairs = manual_link_pairs(preset);
-    let lat_c = center.loc[0];
-    let lon_c = center.loc[1];
 
     let mut rf_slugs = Vec::new();
     let mut records = Vec::new();
@@ -574,14 +597,21 @@ pub fn compute_single_site_links_p2p(
             continue;
         }
         let pair = canonical_site_pair(slug, other_slug);
-        let lat_o = other.loc[0];
-        let lon_o = other.loc[1];
         if manual_pairs.contains(&pair) {
             records.push(link_record(slug, other_slug, true, true, "strong"));
-            features.push(line_feature(slug, other_slug, center, other, true, "strong"));
+            features.push(line_feature(
+                preset,
+                Some(&boards),
+                slug,
+                other_slug,
+                center,
+                other,
+                true,
+                "strong",
+            ));
             continue;
         }
-        if !pair_within_hop_range(preset, lat_c, lon_c, lat_o, lon_o) {
+        if !pair_within_hop_range_sites(preset, center, other, Some(&boards)) {
             continue;
         }
         rf_slugs.push(other_slug.clone());
@@ -601,7 +631,16 @@ pub fn compute_single_site_links_p2p(
             let label = strength_label(strength);
             let other = &preset.sites[&other_slug];
             records.push(link_record(slug, &other_slug, true, false, label));
-            features.push(line_feature(slug, &other_slug, center, other, false, label));
+            features.push(line_feature(
+                preset,
+                Some(&boards),
+                slug,
+                &other_slug,
+                center,
+                other,
+                false,
+                label,
+            ));
         }
     }
 
@@ -628,7 +667,7 @@ pub fn load_project_site_links(
     if let Some(cached) = cached_project_site_links(preset_path, preset)? {
         return Ok(cached);
     }
-    Ok(manual_only_payload(preset))
+    Ok(manual_only_payload(preset, &load_board_viewshed(preset_path)))
 }
 
 pub fn warm_project_site_links(
@@ -639,7 +678,7 @@ pub fn warm_project_site_links(
     if let Some(cached) = cached_project_site_links(preset_path, preset)? {
         return Ok(cached);
     }
-    let payload = compute_project_site_links_p2p(session, preset, true)?;
+    let payload = compute_project_site_links_p2p(session, preset_path, preset, true)?;
     store_project_site_links_cache(preset_path, preset, &payload)?;
     Ok(payload)
 }
@@ -662,8 +701,9 @@ pub fn load_coords_site_links(
 
     let exclude = exclude_site_slug.unwrap_or("").trim();
     let manual_pairs = manual_link_pairs(preset);
+    let boards = load_board_viewshed(preset_path);
     let draft_h = crate::rf::default_repeater_tx_height_m(preset);
-    let mut candidates: Vec<(String, f64, f64, f64)> = Vec::new();
+    let mut candidates: Vec<(String, f64, f64, f64, f64)> = Vec::new();
 
     for (slug, site) in preset.sites.iter() {
         if !exclude.is_empty() && slug.as_str() == exclude {
@@ -671,14 +711,16 @@ pub fn load_coords_site_links(
         }
         let site_lat = site.loc[0];
         let site_lon = site.loc[1];
-        if !pair_within_hop_range(preset, lat, lon, site_lat, site_lon) {
+        if !pair_within_hop_range_coords_to_site(preset, lat, lon, site, Some(&boards)) {
             continue;
         }
+        let hop_range_km = draft_hop_radius_m(preset, site, Some(&boards)) / 1000.0;
         candidates.push((
             slug.clone(),
             site_lat,
             site_lon,
             resolved_site_tx_height_m(preset, site),
+            hop_range_km,
         ));
     }
 
@@ -686,11 +728,10 @@ pub fn load_coords_site_links(
         return Ok(Vec::new());
     }
 
-    let _ = preset_path;
     session
         .ensure_tiles_for_points(
             &std::iter::once((lat, lon))
-                .chain(candidates.iter().map(|(_, slat, slon, _)| (*slat, *slon)))
+                .chain(candidates.iter().map(|(_, slat, slon, _, _)| (*slat, *slon)))
                 .collect::<Vec<_>>(),
             max_hop_range_m(preset),
         )
@@ -699,14 +740,16 @@ pub fn load_coords_site_links(
     let rf_json = rf_json_for_preset(preset).map_err(|e| LinksError(e.to_string()))?;
     let endpoints: Vec<(f64, f64, f64)> = candidates
         .iter()
-        .map(|(_, slat, slon, tx_h)| (*slat, *slon, *tx_h))
+        .map(|(_, slat, slon, tx_h, _)| (*slat, *slon, *tx_h))
         .collect();
     let viable = session
         .seek_repeater_link_batch(lat, lon, draft_h, &endpoints, &rf_json)
         .map_err(|e| LinksError(format!("coords link batch: {e:#}")))?;
 
     let mut records = Vec::new();
-    for ((slug, site_lat, site_lon, _), linked) in candidates.into_iter().zip(viable.into_iter()) {
+    for ((slug, site_lat, site_lon, _, hop_range_km), linked) in
+        candidates.into_iter().zip(viable.into_iter())
+    {
         if manual_pairs.contains(&canonical_site_pair("__draft__", &slug)) {
             continue;
         }
@@ -720,6 +763,7 @@ pub fn load_coords_site_links(
             "linked": true,
             "manual": false,
             "distance_km": distance_km,
+            "hop_range_km": hop_range_km,
         }));
     }
 
@@ -740,7 +784,9 @@ pub fn load_coords_site_links(
 
 pub fn site_pair_link_detail(
     session: &Session,
+    preset_path: &Path,
     preset: &Preset,
+    boards: Option<&BoardViewshedResolver>,
     slug_a: &str,
     slug_b: &str,
 ) -> Result<Value, LinksError> {
@@ -753,6 +799,10 @@ pub fn site_pair_link_detail(
         .sites
         .get(&b)
         .ok_or_else(|| LinksError(format!("unknown site {b}")))?;
+    let boards = boards
+        .cloned()
+        .or_else(|| Some(load_board_viewshed(preset_path)));
+    let hop_range_km = pair_hop_range_km(preset, site_a, site_b, boards.as_ref());
     let rf_json = rf_json_for_preset(preset).map_err(|e| LinksError(e.to_string()))?;
     let lat_a = site_a.loc[0];
     let lon_a = site_a.loc[1];
@@ -762,19 +812,30 @@ pub fn site_pair_link_detail(
     let tx_b = resolved_site_tx_height_m(preset, site_b).max(1.0);
     let distance_km =
         (splatter::propagate::haversine_m(lat_a, lon_a, lat_b, lon_b) / 1000.0 * 10.0).round() / 10.0;
-    let strengths = session
-        .site_mesh_pair_strengths(
-            &[(lat_a, lon_a, tx_a, lat_b, lon_b, tx_b)],
-            &rf_json,
-        )
-        .map_err(|e| LinksError(e.to_string()))?;
+    let in_hop_range = pair_within_hop_range_sites(preset, site_a, site_b, boards.as_ref());
+    let strengths = if in_hop_range {
+        session
+            .site_mesh_pair_strengths(
+                &[(lat_a, lon_a, tx_a, lat_b, lon_b, tx_b)],
+                &rf_json,
+            )
+            .map_err(|e| LinksError(e.to_string()))?
+    } else {
+        vec![None]
+    };
     let strength = strengths.first().copied().flatten();
     let linked = strength.is_some();
     let strength_str = strength.map(strength_label).unwrap_or("none");
-    let margins = session
-        .seek_repeater_link_margins(lat_a, lon_a, tx_a, &[(lat_b, lon_b, tx_b)], &rf_json)
-        .map_err(|e| LinksError(e.to_string()))?;
-    let margin_db = margins.first().copied().flatten();
+    let margin_db = if in_hop_range {
+        session
+            .seek_repeater_link_margins(lat_a, lon_a, tx_a, &[(lat_b, lon_b, tx_b)], &rf_json)
+            .map_err(|e| LinksError(e.to_string()))?
+            .first()
+            .copied()
+            .flatten()
+    } else {
+        None
+    };
     Ok(json!({
         "a": a,
         "b": b,
@@ -782,6 +843,7 @@ pub fn site_pair_link_detail(
         "strength": strength_str,
         "margin_db": margin_db.map(|m| (m * 10.0).round() / 10.0),
         "distance_km": distance_km,
+        "hop_range_km": hop_range_km,
     }))
 }
 

@@ -25,11 +25,19 @@ pub fn solve_route(
     session: Arc<Session>,
     registry: &mut CandidateRegistry,
     waypoints: &[Waypoint],
+    allow_tags: &[String],
     cache: &FinderCache,
     ledger: &CacheLedger,
 ) -> Result<SolveResult> {
-    let (path_indices, segment_count) =
-        search_route(preset_path, session.clone(), registry, waypoints, cache, ledger)?;
+    let (path_indices, segment_count) = search_route(
+        preset_path,
+        session.clone(),
+        registry,
+        waypoints,
+        allow_tags,
+        cache,
+        ledger,
+    )?;
     let viewshed_popcount = path_viewshed_gain(
         preset_path,
         session.as_ref(),

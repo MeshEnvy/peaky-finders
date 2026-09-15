@@ -360,20 +360,255 @@ pub fn rf_json_for_preset(preset: &Preset) -> Result<String> {
 }
 
 pub fn max_hop_range_m(preset: &Preset) -> f64 {
-    let radius_km = match &preset.simulation.radius_km {
-        serde_yaml::Value::Number(n) => n.as_f64().unwrap_or(50.0),
-        serde_yaml::Value::String(s) => s.parse::<f64>().unwrap_or(50.0),
-        _ => 50.0,
-    };
-    radius_km * 1000.0
+    preset_radius_km(preset) * 1000.0
 }
 
-pub fn pair_within_hop_range(
+/// Per-site hop radius (same as viewshed): board override when staked, else project default.
+pub fn site_hop_radius_km(
     preset: &Preset,
-    lat_a: f64,
-    lon_a: f64,
-    lat_b: f64,
-    lon_b: f64,
+    site: &SiteEntry,
+    boards: Option<&BoardViewshedResolver>,
+) -> f64 {
+    site_viewshed_radius_km(preset, site, boards)
+}
+
+pub fn site_hop_radius_m(
+    preset: &Preset,
+    site: &SiteEntry,
+    boards: Option<&BoardViewshedResolver>,
+) -> f64 {
+    site_hop_radius_km(preset, site, boards) * 1000.0
+}
+
+/// Draft / unbound placement: min(project hop, staked peer board cap).
+pub fn draft_hop_radius_m(
+    preset: &Preset,
+    site: &SiteEntry,
+    boards: Option<&BoardViewshedResolver>,
+) -> f64 {
+    preset_radius_km(preset)
+        .min(site_hop_radius_km(preset, site, boards))
+        * 1000.0
+}
+
+pub fn pair_hop_range_km(
+    preset: &Preset,
+    site_a: &SiteEntry,
+    site_b: &SiteEntry,
+    boards: Option<&BoardViewshedResolver>,
+) -> f64 {
+    site_hop_radius_km(preset, site_a, boards)
+        .min(site_hop_radius_km(preset, site_b, boards))
+}
+
+pub fn pair_hop_range_m(
+    preset: &Preset,
+    site_a: &SiteEntry,
+    site_b: &SiteEntry,
+    boards: Option<&BoardViewshedResolver>,
+) -> f64 {
+    pair_hop_range_km(preset, site_a, site_b, boards) * 1000.0
+}
+
+pub fn pair_within_hop_range_sites(
+    preset: &Preset,
+    site_a: &SiteEntry,
+    site_b: &SiteEntry,
+    boards: Option<&BoardViewshedResolver>,
 ) -> bool {
-    splatter::propagate::haversine_m(lat_a, lon_a, lat_b, lon_b) <= max_hop_range_m(preset)
+    splatter::propagate::haversine_m(
+        site_a.loc[0],
+        site_a.loc[1],
+        site_b.loc[0],
+        site_b.loc[1],
+    ) <= pair_hop_range_m(preset, site_a, site_b, boards)
+}
+
+pub fn pair_within_hop_range_coords_to_site(
+    preset: &Preset,
+    lat: f64,
+    lon: f64,
+    site: &SiteEntry,
+    boards: Option<&BoardViewshedResolver>,
+) -> bool {
+    splatter::propagate::haversine_m(lat, lon, site.loc[0], site.loc[1])
+        <= draft_hop_radius_m(preset, site, boards)
+}
+
+/// Smallest hop among sites matching ``allow_tags``; project ceiling when none match.
+pub fn min_booked_hop_range_m(
+    preset: &Preset,
+    allow_tags: &[String],
+    boards: Option<&BoardViewshedResolver>,
+) -> f64 {
+    use std::collections::HashSet;
+    let allow: HashSet<&str> = allow_tags.iter().map(String::as_str).collect();
+    let mut min_km = preset_radius_km(preset);
+    let mut found = false;
+    for site in preset.sites.values() {
+        if !site.tags.iter().any(|t| allow.contains(t.as_str())) {
+            continue;
+        }
+        found = true;
+        min_km = min_km.min(site_hop_radius_km(preset, site, boards));
+    }
+    if found {
+        min_km * 1000.0
+    } else {
+        max_hop_range_m(preset)
+    }
+}
+
+pub fn load_board_viewshed(preset_path: &std::path::Path) -> BoardViewshedResolver {
+    let project_dir = preset_path
+        .parent()
+        .filter(|p| p.is_dir())
+        .unwrap_or(preset_path);
+    BoardViewshedResolver::load(project_dir).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod hop_range_tests {
+    use super::*;
+    use peaky_preset::{BoardViewshedResolver, SiteEntry};
+
+    fn t096_preset() -> Preset {
+        let mut preset = Preset::default();
+        preset.simulation.radius_km = serde_yaml::Value::from(72.0);
+        preset
+    }
+
+    fn t096_boards(dir: &tempfile::TempDir) -> BoardViewshedResolver {
+        std::fs::write(
+            dir.path().join("boards.yaml"),
+            "boards:\n  heltec-t096:\n    radius_km: 50\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("nodes.yaml"),
+            "nodes:\n  me0048:\n    board: heltec-t096\n",
+        )
+        .unwrap();
+        BoardViewshedResolver::load(dir.path()).unwrap()
+    }
+
+    fn t096_site() -> SiteEntry {
+        SiteEntry {
+            name: "T096".into(),
+            loc: [36.87, -116.68],
+            height_m: None,
+            description: None,
+            tags: vec![],
+            node: Some("me0048".into()),
+        }
+    }
+
+    fn rak_site() -> SiteEntry {
+        SiteEntry {
+            name: "RAK".into(),
+            loc: [39.0, -119.0],
+            height_m: None,
+            description: None,
+            tags: vec![],
+            node: Some("me0001".into()),
+        }
+    }
+
+    #[test]
+    fn t096_pair_715km_out_of_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let preset = t096_preset();
+        let boards = t096_boards(&dir);
+        let a = SiteEntry {
+            loc: [36.87133, -116.683758],
+            ..t096_site()
+        };
+        let b = SiteEntry {
+            loc: [36.46147, -116.06689],
+            ..t096_site()
+        };
+        assert!(!pair_within_hop_range_sites(
+            &preset,
+            &a,
+            &b,
+            Some(&boards)
+        ));
+    }
+
+    #[test]
+    fn t096_pair_46km_in_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let preset = t096_preset();
+        let boards = t096_boards(&dir);
+        let a = SiteEntry {
+            loc: [36.87133, -116.683758],
+            ..t096_site()
+        };
+        let b = SiteEntry {
+            loc: [36.74388, -116.45068],
+            ..t096_site()
+        };
+        assert!(pair_within_hop_range_sites(
+            &preset,
+            &a,
+            &b,
+            Some(&boards)
+        ));
+    }
+
+    #[test]
+    fn t096_rak_60km_out_of_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let preset = t096_preset();
+        let boards = t096_boards(&dir);
+        let a = t096_site();
+        let b = rak_site();
+        let dist = splatter::propagate::haversine_m(a.loc[0], a.loc[1], b.loc[0], b.loc[1]);
+        if dist <= 60_000.0 {
+            return;
+        }
+        let b_near = SiteEntry {
+            loc: [a.loc[0] + 0.45, a.loc[1] + 0.45],
+            ..rak_site()
+        };
+        assert!(!pair_within_hop_range_sites(
+            &preset,
+            &a,
+            &b_near,
+            Some(&boards)
+        ));
+    }
+
+    #[test]
+    fn rak_pair_60km_in_range() {
+        let preset = t096_preset();
+        let a = rak_site();
+        let b = SiteEntry {
+            loc: [a.loc[0] + 0.54, a.loc[1]],
+            ..rak_site()
+        };
+        let dist = splatter::propagate::haversine_m(a.loc[0], a.loc[1], b.loc[0], b.loc[1]);
+        assert!(
+            (55_000.0..=65_000.0).contains(&dist),
+            "fixture dist {dist} m should be ~60 km"
+        );
+        assert!(pair_within_hop_range_sites(&preset, &a, &b, None));
+    }
+
+    #[test]
+    fn draft_to_t096_60km_out_of_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let preset = t096_preset();
+        let boards = t096_boards(&dir);
+        let site = t096_site();
+        let lat = site.loc[0] + 0.54;
+        let lon = site.loc[1];
+        assert!(!pair_within_hop_range_coords_to_site(
+            &preset,
+            lat,
+            lon,
+            &site,
+            Some(&boards)
+        ));
+    }
 }

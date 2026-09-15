@@ -143,6 +143,7 @@ pub fn run_find_path(
             session.clone(),
             &mut registry,
             &route.waypoints,
+            &job.allow_tags,
             &cache,
             &ledger,
         )?;

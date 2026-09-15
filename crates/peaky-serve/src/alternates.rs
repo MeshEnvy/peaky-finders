@@ -16,7 +16,8 @@ use splatter::Session;
 
 use crate::links::load_single_site_links;
 use crate::rf::{
-    default_repeater_tx_height_m, preset_to_request, resolved_site_tx_height_m, rf_json_for_preset,
+    default_repeater_tx_height_m, load_board_viewshed, max_hop_range_m, preset_to_request,
+    resolved_site_tx_height_m, rf_json_for_preset, site_hop_radius_m,
 };
 use crate::geo::bearing_deg;
 use crate::peaks::catalog_peaks_filtered;
@@ -242,13 +243,8 @@ pub fn parse_alternates_request(
     })
 }
 
-fn hop_m_from_preset(preset: &Preset) -> f64 {
-    match &preset.simulation.radius_km {
-        serde_yaml::Value::Number(n) => n.as_f64().unwrap_or(50.0) * 1000.0,
-        serde_yaml::Value::String(s) => s.parse::<f64>().unwrap_or(50.0) * 1000.0,
-        _ => 50_000.0,
-    }
-}
+/// Hop disc anchor: ``(lat, lon, hop_m)``.
+pub type HopDiscAnchor = (f64, f64, f64);
 
 fn destination_point(lat: f64, lon: f64, bearing_deg: f64, distance_m: f64) -> (f64, f64) {
     let r = 6_371_000.0;
@@ -292,25 +288,24 @@ fn bbox_intersection(
     )
 }
 
-/// Intersection bbox of hop discs around each anchor.
-pub fn multi_disc_lens_bbox(anchors: &[(f64, f64)], hop_m: f64) -> (f64, f64, f64, f64) {
-    let mut bbox = hop_disc_bbox(anchors[0].0, anchors[0].1, hop_m);
-    for &(lat, lon) in anchors.iter().skip(1) {
+/// Intersection bbox of hop discs around each anchor (per-anchor radius).
+pub fn multi_disc_lens_bbox(anchors: &[HopDiscAnchor]) -> (f64, f64, f64, f64) {
+    let mut bbox = hop_disc_bbox(anchors[0].0, anchors[0].1, anchors[0].2);
+    for &(lat, lon, hop_m) in anchors.iter().skip(1) {
         bbox = bbox_intersection(bbox, hop_disc_bbox(lat, lon, hop_m));
     }
     bbox
 }
 
-pub fn inside_all_discs(lat: f64, lon: f64, anchors: &[(f64, f64)], hop_m: f64) -> bool {
+pub fn inside_all_discs(lat: f64, lon: f64, anchors: &[HopDiscAnchor]) -> bool {
     anchors
         .iter()
-        .all(|&(alat, alon)| haversine_m(lat, lon, alat, alon) <= hop_m + 1.0)
+        .all(|&(alat, alon, hop_m)| haversine_m(lat, lon, alat, alon) <= hop_m + 1.0)
 }
 
 pub fn grid_points_in_lens(
     scan_bbox: (f64, f64, f64, f64),
-    anchors: &[(f64, f64)],
-    hop_m: f64,
+    anchors: &[HopDiscAnchor],
     step_m: f64,
 ) -> Vec<(f64, f64)> {
     let (west, south, east, north) = scan_bbox;
@@ -325,7 +320,7 @@ pub fn grid_points_in_lens(
     while lat <= north + 1e-9 {
         let mut lon = west;
         while lon <= east + 1e-9 {
-            if inside_all_discs(lat, lon, anchors, hop_m) {
+            if inside_all_discs(lat, lon, anchors) {
                 out.push((lat, lon));
             }
             lon += lon_step;
@@ -430,11 +425,11 @@ fn margins_to_all_anchors(
 
 fn count_mesh_links(
     session: &Session,
-    mesh: &[(f64, f64, f64)],
+    mesh: &[(f64, f64, f64, f64)],
     candidate_lat: f64,
     candidate_lon: f64,
     candidate_tx_h: f64,
-    hop_m: f64,
+    candidate_hop_m: f64,
     rf_json: &str,
 ) -> Result<u32, AlternatesRunError> {
     if mesh.is_empty() {
@@ -443,14 +438,18 @@ fn count_mesh_links(
     let candidate = [(candidate_lat, candidate_lon, candidate_tx_h)];
     let points: Vec<(f64, f64)> = mesh
         .iter()
-        .map(|(lat, lon, _)| (*lat, *lon))
+        .map(|(lat, lon, _, _)| (*lat, *lon))
         .chain(std::iter::once((candidate_lat, candidate_lon)))
         .collect();
     session
-        .ensure_tiles_for_points(&points, hop_m)
+        .ensure_tiles_for_points(&points, candidate_hop_m)
         .map_err(|e| AlternatesRunError::User(e.to_string(), 503))?;
     let mut count = 0u32;
-    for &(site_lat, site_lon, site_h) in mesh {
+    for &(site_lat, site_lon, site_h, site_hop_m) in mesh {
+        let pair_hop = site_hop_m.min(candidate_hop_m);
+        if haversine_m(site_lat, site_lon, candidate_lat, candidate_lon) > pair_hop + 1.0 {
+            continue;
+        }
         let ok = session
             .seek_repeater_link_batch(site_lat, site_lon, site_h, &candidate, rf_json)
             .map_err(|e| AlternatesRunError::User(e.to_string(), 503))?;
@@ -463,11 +462,11 @@ fn count_mesh_links(
 
 fn local_mesh_sites(
     preset: &Preset,
-    hop_m: f64,
+    boards: &peaky_preset::BoardViewshedResolver,
     exclude_slugs: &HashSet<String>,
-    lens_anchors: &[(f64, f64)],
-) -> Vec<(f64, f64, f64)> {
-    let mut rows: Vec<(f64, f64, f64)> = preset
+    lens_anchors: &[HopDiscAnchor],
+) -> Vec<(f64, f64, f64, f64)> {
+    let mut rows: Vec<(f64, f64, f64, f64)> = preset
         .sites
         .iter()
         .filter_map(|(slug, site)| {
@@ -476,11 +475,12 @@ fn local_mesh_sites(
             }
             let lat = site.loc[0];
             let lon = site.loc[1];
-            if !inside_all_discs(lat, lon, lens_anchors, hop_m) {
+            if !inside_all_discs(lat, lon, lens_anchors) {
                 return None;
             }
             let h = resolved_site_tx_height_m(preset, site);
-            Some((lat, lon, h))
+            let hop_m = site_hop_radius_m(preset, site, Some(boards));
+            Some((lat, lon, h, hop_m))
         })
         .collect();
     rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -507,7 +507,8 @@ fn load_alternates_body(
     let preset = load_preset(&req.preset_path)?;
     let scan_cfg = preset.scan.clone();
     let cap = scan_cfg.max_candidates as usize;
-    let hop_m = hop_m_from_preset(&preset);
+    let boards = load_board_viewshed(&req.preset_path);
+    let candidate_hop_m = max_hop_range_m(&preset);
 
     let subject = preset
         .sites
@@ -568,8 +569,18 @@ fn load_alternates_body(
             tx_h: resolved_site_tx_height_m(&preset, site).max(1.0),
         });
     }
-    let lens_anchors: Vec<(f64, f64)> = anchors.iter().map(|a| (a.lat, a.lon)).collect();
-    let scan_bbox = multi_disc_lens_bbox(&lens_anchors, hop_m);
+    let lens_anchors: Vec<HopDiscAnchor> = anchors
+        .iter()
+        .map(|a| {
+            let site = preset.sites.get(&a.slug).expect("anchor site");
+            (
+                a.lat,
+                a.lon,
+                site_hop_radius_m(&preset, site, Some(&boards)),
+            )
+        })
+        .collect();
+    let scan_bbox = multi_disc_lens_bbox(&lens_anchors);
     if scan_bbox.0 >= scan_bbox.2 || scan_bbox.1 >= scan_bbox.3 {
         return Err(AlternatesRunError::User(
             "those neighbors do not share a one-hop lens".into(),
@@ -601,14 +612,14 @@ fn load_alternates_body(
     for slug in &peer_slugs {
         exclude_slugs.insert(slug.clone());
     }
-    let mesh = local_mesh_sites(&preset, hop_m, &exclude_slugs, &lens_anchors);
+    let mesh = local_mesh_sites(&preset, &boards, &exclude_slugs, &lens_anchors);
 
     ensure_active()?;
     progress.update(key, scan_gen, "catalog", 0, 0, "Loading peaks catalog…");
 
     let (mut peaks, n_catalog_peaks) =
         catalog_peaks_filtered(&req.preset_path, |lat, lon| {
-            inside_all_discs(lat, lon, &lens_anchors, hop_m)
+            inside_all_discs(lat, lon, &lens_anchors)
                 && haversine_m(lat, lon, subject_lat, subject_lon) > SUBJECT_EXCLUDE_M
         })
         .map_err(|e| AlternatesRunError::User(e, 422))?;
@@ -647,10 +658,10 @@ fn load_alternates_body(
         let points: Vec<(f64, f64)> = chunk
             .iter()
             .map(|(lon, lat, _)| (*lat, *lon))
-            .chain(lens_anchors.iter().copied())
+            .chain(lens_anchors.iter().map(|(lat, lon, _)| (*lat, *lon)))
             .collect();
         session
-            .ensure_tiles_for_points(&points, hop_m)
+            .ensure_tiles_for_points(&points, candidate_hop_m)
             .map_err(|e| AlternatesRunError::User(e.to_string(), 503))?;
         for (lon, lat, elev) in chunk {
             let tx_h = default_candidate_tx_height(&preset, *lat, *lon);
@@ -658,7 +669,15 @@ fn load_alternates_body(
             let Some(min_margin) = margin else {
                 continue;
             };
-            let mesh_links = count_mesh_links(session, &mesh, *lat, *lon, tx_h, hop_m, &rf_json)?;
+            let mesh_links = count_mesh_links(
+                session,
+                &mesh,
+                *lat,
+                *lon,
+                tx_h,
+                candidate_hop_m,
+                &rf_json,
+            )?;
             viable.push((*lon, *lat, *elev, min_margin, mesh_links));
         }
     }
@@ -704,7 +723,7 @@ fn load_alternates_body(
         if haversine_m(lat, lon, subject_lat, subject_lon) <= SUBJECT_EXCLUDE_M {
             continue;
         }
-        if !inside_all_discs(lat, lon, &lens_anchors, hop_m) {
+        if !inside_all_discs(lat, lon, &lens_anchors) {
             continue;
         }
         if !land_index.contains(lon, lat) {
@@ -715,7 +734,15 @@ fn load_alternates_body(
         if margin.is_none() {
             continue;
         }
-        let mesh_links = count_mesh_links(session, &mesh, lat, lon, tx_h, hop_m, &rf_json)?;
+        let mesh_links = count_mesh_links(
+            session,
+            &mesh,
+            lat,
+            lon,
+            tx_h,
+            site_hop_radius_m(&preset, site, Some(&boards)),
+            &rf_json,
+        )?;
         site_candidates.push(PeakCandidate {
             lon,
             lat,
@@ -819,7 +846,10 @@ fn load_alternates_body(
             "site_candidate_slugs": site_candidate_slugs,
             "anchor_slugs": peer_slugs,
             "eligible_digest": eligible_digest,
-            "hop_range_km": hop_m / 1000.0,
+            "hop_range_km": lens_anchors
+                .iter()
+                .map(|(_, _, hop_m)| hop_m / 1000.0)
+                .fold(f64::INFINITY, f64::min),
             "n_catalog_peaks": n_catalog_peaks,
             "scan_ms": scan_t0.elapsed().as_millis(),
         },
@@ -839,11 +869,11 @@ mod tests {
         let hop_m = 72_000.0;
         let hub_lat = 39.799379;
         let hub_lon = -119.184290;
-        let anchors = [(from_lat, from_lon), (goal_lat, goal_lon)];
-        let bbox = multi_disc_lens_bbox(&anchors, hop_m);
+        let anchors = [(from_lat, from_lon, hop_m), (goal_lat, goal_lon, hop_m)];
+        let bbox = multi_disc_lens_bbox(&anchors);
         assert!(bbox.0 < bbox.2 && bbox.1 < bbox.3);
-        assert!(inside_all_discs(hub_lat, hub_lon, &anchors, hop_m));
-        let locs = grid_points_in_lens(bbox, &anchors, hop_m, LANDING_COARSE_M);
+        assert!(inside_all_discs(hub_lat, hub_lon, &anchors));
+        let locs = grid_points_in_lens(bbox, &anchors, LANDING_COARSE_M);
         assert!(
             locs.iter()
                 .any(|(lat, lon)| haversine_m(*lat, *lon, hub_lat, hub_lon) <= LANDING_COARSE_M),
@@ -854,9 +884,31 @@ mod tests {
     #[test]
     fn multi_disc_lens_empty_for_far_anchors() {
         let hop_m = 10_000.0;
-        let anchors = [(39.0, -119.0), (41.0, -117.0)];
-        let bbox = multi_disc_lens_bbox(&anchors, hop_m);
+        let anchors = [(39.0, -119.0, hop_m), (41.0, -117.0, hop_m)];
+        let bbox = multi_disc_lens_bbox(&anchors);
         assert!(bbox.0 >= bbox.2 || bbox.1 >= bbox.3);
+    }
+
+    #[test]
+    fn two_t096_discs_exclude_bare_schader_mid_gap() {
+        let hop_m = 50_000.0;
+        let bare = (36.87133, -116.683758);
+        let schader = (36.46147, -116.06689);
+        let ab = haversine_m(bare.0, bare.1, schader.0, schader.1);
+        assert!(ab > 70_000.0);
+        let t_out = 55_000.0 / ab;
+        let out = (
+            bare.0 + t_out * (schader.0 - bare.0),
+            bare.1 + t_out * (schader.1 - bare.1),
+        );
+        let t_in = 25_000.0 / ab;
+        let inside = (
+            bare.0 + t_in * (schader.0 - bare.0),
+            bare.1 + t_in * (schader.1 - bare.1),
+        );
+        let anchors = [(bare.0, bare.1, hop_m), (schader.0, schader.1, hop_m)];
+        assert!(!inside_all_discs(out.0, out.1, &anchors));
+        assert!(inside_all_discs(inside.0, inside.1, &anchors));
     }
 
     #[test]

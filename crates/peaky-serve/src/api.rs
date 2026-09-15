@@ -1255,7 +1255,7 @@ async fn link_solver_accept(
         let created_for_links = created_slugs.clone();
         if let Ok(Ok(links)) = tokio::task::spawn_blocking(move || {
             let preset = load_preset(&path_for_links)?;
-            compute_links_for_slugs(session, &preset, &created_for_links)
+            compute_links_for_slugs(session, &path_for_links, &preset, &created_for_links)
         })
         .await
         {
@@ -1340,7 +1340,15 @@ async fn link_pair_detail(
             Json(json!({ "slug": state.slug.clone(), "error": e.to_string() })),
         )
     })?;
-    let detail = site_pair_link_detail(&state.session, &preset, slug_a, slug_b).map_err(|e| {
+    let detail = site_pair_link_detail(
+        &state.session,
+        &state.preset_path(),
+        &preset,
+        Some(state.board_viewshed.as_ref()),
+        slug_a,
+        slug_b,
+    )
+    .map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({ "slug": state.slug.clone(), "error": e.0 })),

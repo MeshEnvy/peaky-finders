@@ -14,7 +14,8 @@ use crate::peaks_cache::cached_peaks_catalog_thin;
 use serde_json::{json, Value};
 use splatter::Session;
 
-use crate::alternates::{inside_all_discs, multi_disc_lens_bbox};
+use crate::alternates::{inside_all_discs, multi_disc_lens_bbox, HopDiscAnchor};
+use crate::rf::{load_board_viewshed, max_hop_range_m, site_hop_radius_m};
 use crate::links::canonical_site_pair;
 use crate::rf::{
     default_repeater_tx_height_m, preset_to_request, resolved_site_tx_height_m, rf_json_for_preset,
@@ -228,14 +229,6 @@ pub fn parse_fortify_request(
     })
 }
 
-fn hop_m_from_preset(preset: &Preset) -> f64 {
-    match &preset.simulation.radius_km {
-        serde_yaml::Value::Number(n) => n.as_f64().unwrap_or(50.0) * 1000.0,
-        serde_yaml::Value::String(s) => s.parse::<f64>().unwrap_or(50.0) * 1000.0,
-        _ => 50_000.0,
-    }
-}
-
 /// Along-track fraction on the A–B geodesic (AC / AB). None if C is off-corridor.
 pub fn along_track_fraction(
     a_lat: f64,
@@ -399,7 +392,8 @@ fn load_fortify_body(
     let preset = load_preset(&req.preset_path)?;
     let scan_cfg = preset.scan.clone();
     let cap = scan_cfg.max_candidates as usize;
-    let hop_m = hop_m_from_preset(&preset);
+    let boards = load_board_viewshed(&req.preset_path);
+    let project_hop_m = max_hop_range_m(&preset);
 
     let site_a = preset
         .sites
@@ -425,8 +419,13 @@ fn load_fortify_body(
         tx_h: resolved_site_tx_height_m(&preset, site_b).max(1.0),
     };
 
-    let anchors = [(endpoint_a.lat, endpoint_a.lon), (endpoint_b.lat, endpoint_b.lon)];
-    let scan_bbox = multi_disc_lens_bbox(&anchors, hop_m);
+    let hop_a = site_hop_radius_m(&preset, site_a, Some(&boards));
+    let hop_b = site_hop_radius_m(&preset, site_b, Some(&boards));
+    let anchors: [HopDiscAnchor; 2] = [
+        (endpoint_a.lat, endpoint_a.lon, hop_a),
+        (endpoint_b.lat, endpoint_b.lon, hop_b),
+    ];
+    let scan_bbox = multi_disc_lens_bbox(&anchors);
     if scan_bbox.0 >= scan_bbox.2 || scan_bbox.1 >= scan_bbox.3 {
         return Err(FortifyRunError::User(
             "those sites do not share a one-hop lens".into(),
@@ -475,7 +474,7 @@ fn load_fortify_body(
         .filter_map(|(slug, entry)| {
             let lat = entry.lat();
             let lon = entry.lon();
-            if !inside_all_discs(lat, lon, &anchors, hop_m) {
+            if !inside_all_discs(lat, lon, &anchors) {
                 return None;
             }
             if haversine_m(lat, lon, endpoint_a.lat, endpoint_a.lon) <= ENDPOINT_EXCLUDE_M {
@@ -550,10 +549,10 @@ fn load_fortify_body(
         let points: Vec<(f64, f64)> = chunk
             .iter()
             .map(|p| (p.lat, p.lon))
-            .chain(anchors.iter().copied())
+            .chain(anchors.iter().map(|(lat, lon, _)| (*lat, *lon)))
             .collect();
         session
-            .ensure_tiles_for_points(&points, hop_m)
+            .ensure_tiles_for_points(&points, project_hop_m)
             .map_err(|e| FortifyRunError::User(e.to_string(), 503))?;
 
         for peak in chunk {
@@ -695,7 +694,7 @@ fn load_fortify_body(
         "lines": { "type": "FeatureCollection", "features": line_features },
         "meta": {
             "n_candidates": candidates.len(),
-            "hop_range_km": hop_m / 1000.0,
+            "hop_range_km": hop_a.min(hop_b) / 1000.0,
             "n_catalog_peaks": n_catalog_peaks,
             "scan_ms": scan_t0.elapsed().as_millis(),
         },

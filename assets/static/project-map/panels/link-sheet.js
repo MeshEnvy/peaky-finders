@@ -84,7 +84,12 @@ export function mountLinkSheet(store, appApi) {
         return null
       })
 
-      const hopKm = computed(() => store.simulation?.radiusKm ?? null)
+      const hopKm = computed(() => {
+        const props = meshFeature.value?.properties || {}
+        if (props.hop_range_km != null) return Number(props.hop_range_km)
+        if (pairDetail.value?.hop_range_km != null) return Number(pairDetail.value.hop_range_km)
+        return store.simulation?.radiusKm ?? null
+      })
 
       const fortifyBusy = computed(() => !!store.fortify?.scanning)
       const fortifyActive = computed(() => !!store.fortify?.active)

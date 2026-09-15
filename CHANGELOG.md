@@ -22,6 +22,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Per-board hop radius on links** — optional ``boards.yaml`` ``radius_km`` now gates computed mesh, draft, fortify, alternates, link solver, and finder hops (pair min of endpoint board radii). Manual ``links:`` rows unchanged. Link sheet shows per-pair ``hop_range_km``.
 - **Site tag filters on load** — restored tag chips (union/intersect) now hide non-matching sites on the map immediately after refresh, not only after re-clicking a chip.
 - **Link solver hop preview** — clicking a route hop shows viewshed and jeep/hike access (cache-first load). Route legs show distance labels on the map.
 - **Fortify / link solver / alternates catalog load** — RF scans use cached thin ``peaks/`` rows only (no per-scan ``access/`` merge). First load ~1s; repeat scans are instant until peaks change.
@@ -33,7 +34,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
-- **Per-board viewshed radius** — optional project ``boards.yaml`` ``boards.<id>.radius_km`` caps site viewshed extent when the staked unit's ``nodes.yaml`` board matches (e.g. Heltec T096 at 50 km while project hop radius stays 72 km). Hop/P2P link math unchanged. ``simulation.boards`` removed; move board params to ``boards.yaml``.
+- **Per-board viewshed radius** — optional project ``boards.yaml`` ``boards.<id>.radius_km`` caps site viewshed extent when the staked unit's ``nodes.yaml`` board matches (e.g. Heltec T096 at 50 km). ``simulation.boards`` removed; move board params to ``boards.yaml``.
 - **Preset `scan:`** — renamed from `seek:`; caps peak candidates for link solver, Fortify, and alternates scans.
 - **Hike/jeep difficulty is runtime-derived** — pin rings, Fortify, and the access sheet recompute easy/medium/difficult/extreme from grade and OSM facts. Only facts persist on thin `peaks/` rows (`hike_gain_m`, grades, `jeep_highway`); `difficulty` / `hike_difficulty` / `jeep_difficulty` are not written to YAML. Re-run `peaky peaks` on affected rows to refresh fact scalars after an algo change.
 - **Paved snap uses interpolated samples** — paved anchors are densified every 40 m like jeep roads, so on-road snap reaches pads between sparse OSM vertices. `ACCESS_ALGO_VERSION` → **10**. Re-open a peak/site sheet to re-warm leftover pins.

@@ -22,7 +22,8 @@ use splatter::Session;
 use crate::geo::bearing_deg;
 use crate::links::{canonical_site_pair, load_project_site_links, site_pair_link_detail};
 use crate::rf::{
-    default_candidate_tx_height, resolved_site_tx_height_m, rf_json_for_preset,
+    default_candidate_tx_height, load_board_viewshed, max_hop_range_m, pair_hop_range_m,
+    resolved_site_tx_height_m, rf_json_for_preset, site_hop_radius_m,
 };
 use crate::scan_progress::ScanProgressHub;
 use crate::html::site_api_row;
@@ -267,7 +268,7 @@ pub fn pair_linked_with_session(
     if !mesh_empty {
         return Ok(false);
     }
-    let detail = site_pair_link_detail(session, preset, slug_a, slug_b)
+    let detail = site_pair_link_detail(session, preset_path, preset, None, slug_a, slug_b)
         .map_err(|e| LinkSolverError(e.0))?;
     Ok(detail.get("margin_db").and_then(|v| v.as_f64()).is_some())
 }
@@ -309,14 +310,6 @@ fn run_link_solver_job(
         Err(LinkSolverRunError::Internal(msg)) => {
             progress.finish(&key, gen, "error", None, Some(&msg), Some(500));
         }
-    }
-}
-
-fn hop_m_from_preset(preset: &Preset) -> f64 {
-    match &preset.simulation.radius_km {
-        serde_yaml::Value::Number(n) => n.as_f64().unwrap_or(50.0) * 1000.0,
-        serde_yaml::Value::String(s) => s.parse::<f64>().unwrap_or(50.0) * 1000.0,
-        _ => 50_000.0,
     }
 }
 
@@ -376,6 +369,7 @@ struct GraphNode {
     lat: f64,
     lon: f64,
     tx_h: f64,
+    hop_m: f64,
     elev_m: f64,
     hike_difficulty: Option<String>,
     jeep_difficulty: Option<String>,
@@ -752,14 +746,13 @@ fn build_route(
     })
 }
 
-fn within_hop(from: &GraphNode, to: &GraphNode, hop_m: f64) -> bool {
-    haversine_m(from.lat, from.lon, to.lat, to.lon) <= hop_m + 1.0
+fn within_hop(from: &GraphNode, to: &GraphNode) -> bool {
+    haversine_m(from.lat, from.lon, to.lat, to.lon) <= from.hop_m.min(to.hop_m) + 1.0
 }
 
 fn expand_layer(
     oracle: &mut dyn EdgeOracle,
     nodes: &[GraphNode],
-    hop_m: f64,
     current: &HashMap<usize, Vec<Vec<usize>>>,
     max_paths: usize,
     admissible_peaks: Option<&HashSet<usize>>,
@@ -782,7 +775,7 @@ fn expand_layer(
                         }
                     }
                 }
-                if !within_hop(from, to, hop_m) {
+                if !within_hop(from, to) {
                     continue;
                 }
                 candidates.push(to_idx);
@@ -837,7 +830,6 @@ fn find_paths_for_l(
         let layer = expand_layer(
             oracle,
             nodes,
-            hop_m,
             &prev,
             MAX_PATHS_PER_L,
             admissible_peaks,
@@ -847,7 +839,6 @@ fn find_paths_for_l(
         let layer = expand_layer(
             oracle,
             nodes,
-            hop_m,
             &prev,
             MAX_PATHS_PER_L,
             admissible_peaks,
@@ -1033,7 +1024,8 @@ fn load_link_solver_body(
         ));
     }
 
-    let hop_m = hop_m_from_preset(&preset);
+    let boards = load_board_viewshed(&req.preset_path);
+    let project_hop_m = max_hop_range_m(&preset);
     let site_a = preset
         .sites
         .get(&req.slug_a)
@@ -1048,7 +1040,8 @@ fn load_link_solver_body(
     let b_lat = site_b.loc[0];
     let b_lon = site_b.loc[1];
     let dist_ab_m = haversine_m(a_lat, a_lon, b_lat, b_lon);
-    let l0 = l0_hops(dist_ab_m, hop_m);
+    let pair_hop_m = pair_hop_range_m(&preset, site_a, site_b, Some(&boards));
+    let l0 = l0_hops(dist_ab_m, pair_hop_m);
     let max_l = max_hops_for_l0(l0);
 
     let rf_json =
@@ -1056,7 +1049,7 @@ fn load_link_solver_body(
 
     ensure_active()?;
     progress.update(key, scan_gen, "dem", 0, 0, "Loading Skadi DEM…");
-    let pad = hop_m * max_l as f64;
+    let pad = project_hop_m * max_l as f64;
     session
         .ensure_tiles_for_points(&[(a_lat, a_lon), (b_lat, b_lon)], pad)
         .map_err(|e| LinkSolverRunError::User(e.to_string(), 503))?;
@@ -1100,6 +1093,7 @@ fn load_link_solver_body(
             lat,
             lon,
             tx_h: default_candidate_tx_height(&preset, lat, lon),
+            hop_m: project_hop_m,
             elev_m: entry.elev_m.unwrap_or(0.0),
             hike_difficulty,
             jeep_difficulty,
@@ -1117,6 +1111,7 @@ fn load_link_solver_body(
             lat: a_lat,
             lon: a_lon,
             tx_h: resolved_site_tx_height_m(&preset, site_a).max(1.0),
+            hop_m: site_hop_radius_m(&preset, site_a, Some(&boards)),
             elev_m: 0.0,
             hike_difficulty: None,
             jeep_difficulty: None,
@@ -1131,6 +1126,7 @@ fn load_link_solver_body(
             lat: b_lat,
             lon: b_lon,
             tx_h: resolved_site_tx_height_m(&preset, site_b).max(1.0),
+            hop_m: site_hop_radius_m(&preset, site_b, Some(&boards)),
             elev_m: 0.0,
             hike_difficulty: None,
             jeep_difficulty: None,
@@ -1171,11 +1167,11 @@ fn load_link_solver_body(
         let admissible: HashSet<usize> = (2..nodes.len())
             .filter(|&idx| {
                 let n = &nodes[idx];
-                ellipse_admissible(a_lat, a_lon, b_lat, b_lon, n.lat, n.lon, l, hop_m)
+                ellipse_admissible(a_lat, a_lon, b_lat, b_lon, n.lat, n.lon, l, pair_hop_m)
             })
             .collect();
 
-        let paths = find_paths_for_l(&mut oracle, &nodes, hop_m, l, Some(&admissible))
+        let paths = find_paths_for_l(&mut oracle, &nodes, pair_hop_m, l, Some(&admissible))
             .map_err(|e| LinkSolverRunError::User(e, 503))?;
 
         let mut ranked = paths;
@@ -1328,7 +1324,7 @@ fn load_link_solver_body(
             "cache_hits": cache_hits,
             "scan_ms": scan_t0.elapsed().as_millis(),
             "n_routes": diverse.len(),
-            "hop_range_km": hop_m / 1000.0,
+            "hop_range_km": pair_hop_m / 1000.0,
         },
     }))
 }
@@ -1462,6 +1458,30 @@ mod tests {
     }
 
     #[test]
+    fn within_hop_uses_per_node_min() {
+        let mk = |hop_m: f64, lat: f64| GraphNode {
+            role: NodeRole::Peak,
+            slug: "x".into(),
+            name: "X".into(),
+            lat,
+            lon: -119.0,
+            tx_h: 2.0,
+            hop_m,
+            elev_m: 0.0,
+            hike_difficulty: None,
+            jeep_difficulty: None,
+            access_difficulty: None,
+            hike_m: None,
+            jeep_m: None,
+        };
+        let a = mk(50_000.0, 39.0);
+        let b = mk(72_000.0, 39.35);
+        assert!(within_hop(&a, &b));
+        let c = mk(72_000.0, 39.55);
+        assert!(!within_hop(&a, &c));
+    }
+
+    #[test]
     fn synthetic_oracle_finds_two_hop_paths_without_cycles() {
         let hop_m = 40_000.0;
         let nodes = vec![
@@ -1472,6 +1492,7 @@ mod tests {
                 lat: 39.0,
                 lon: -119.0,
                 tx_h: 2.0,
+                hop_m: 40_000.0,
                 elev_m: 0.0,
                 hike_difficulty: None,
                 jeep_difficulty: None,
@@ -1486,6 +1507,7 @@ mod tests {
                 lat: 39.15,
                 lon: -119.0,
                 tx_h: 2.0,
+                hop_m: 40_000.0,
                 elev_m: 0.0,
                 hike_difficulty: None,
                 jeep_difficulty: None,
@@ -1500,6 +1522,7 @@ mod tests {
                 lat: 39.05,
                 lon: -119.0,
                 tx_h: 2.0,
+                hop_m: 40_000.0,
                 elev_m: 100.0,
                 hike_difficulty: None,
                 jeep_difficulty: None,
@@ -1514,6 +1537,7 @@ mod tests {
                 lat: 39.1,
                 lon: -119.0,
                 tx_h: 2.0,
+                hop_m: 40_000.0,
                 elev_m: 100.0,
                 hike_difficulty: None,
                 jeep_difficulty: None,

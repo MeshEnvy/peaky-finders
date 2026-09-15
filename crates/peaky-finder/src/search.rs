@@ -8,8 +8,11 @@ use std::time::Instant;
 use anyhow::{bail, Result};
 use geo::{Geometry, MultiPolygon};
 use peaky_geo::{eligible_land_dem_mask_dir, load_or_build_eligible_land_filter, LonLatBBox};
-use peaky_preset::{load_preset, Preset, SiteEntry};
-use peaky_serve::rf::{max_hop_range_m, rf_json_for_preset};
+use peaky_preset::{load_preset, BoardViewshedResolver, Preset, SiteEntry};
+use peaky_serve::rf::{
+    load_board_viewshed, max_hop_range_m, min_booked_hop_range_m, rf_json_for_preset,
+    site_hop_radius_m,
+};
 use peaky_serve::viewshed::{
     ensure_viewshed_progressive_for_coords_blocking, ensure_viewshed_progressive_for_site_blocking,
 };
@@ -473,8 +476,10 @@ struct SearchCtx<'a> {
     cache: &'a FinderCache,
     ledger: &'a CacheLedger,
     preset: Preset,
+    boards: BoardViewshedResolver,
     rf_json: String,
     rf_key: String,
+    project_hop_m: f64,
     hop_m: f64,
     bin_m: f64,
     land_index: LandFilterIndex,
@@ -492,11 +497,18 @@ impl<'a> SearchCtx<'a> {
         cache: &'a FinderCache,
         ledger: &'a CacheLedger,
         waypoints: &[Waypoint],
+        allow_tags: &[String],
     ) -> Result<Self> {
         let preset = load_preset(preset_path)?;
+        let boards = load_board_viewshed(preset_path);
         let rf_json = rf_json_for_preset(&preset)?;
         let rf_key = rf_digest(&preset)?;
-        let hop_m = max_hop_range_m(&preset);
+        let project_hop_m = max_hop_range_m(&preset);
+        let hop_m = if allow_tags.is_empty() {
+            project_hop_m
+        } else {
+            min_booked_hop_range_m(&preset, allow_tags, Some(&boards))
+        };
         let bin_m = preset.scan.peak_bin_size_m;
         let clip = LonLatBBox::from_tuple(corridor_bbox(waypoints, hop_m)).padded(0.05);
         ledger.search_step("loading eligible land polygon + spatial index…");
@@ -519,8 +531,10 @@ impl<'a> SearchCtx<'a> {
             cache,
             ledger,
             preset,
+            boards,
             rf_json,
             rf_key,
+            project_hop_m,
             hop_m,
             bin_m,
             land_index,
@@ -538,6 +552,16 @@ impl<'a> SearchCtx<'a> {
         cand.slug
             .as_ref()
             .and_then(|slug| self.preset.sites.get(slug).cloned())
+    }
+
+    fn candidate_hop_m(&self, cand: &Candidate) -> f64 {
+        self.preset_site_entry(cand)
+            .map(|site| site_hop_radius_m(&self.preset, &site, Some(&self.boards)))
+            .unwrap_or(self.project_hop_m)
+    }
+
+    fn pair_hop_m(&self, a: &Candidate, b: &Candidate) -> f64 {
+        self.candidate_hop_m(a).min(self.candidate_hop_m(b))
     }
 
     fn schedule_viewshed_warm(&self, idx: usize) {
@@ -877,6 +901,9 @@ impl<'a> SearchCtx<'a> {
     fn mutual_link(&self, a_idx: usize, b_idx: usize) -> Result<bool> {
         let a = self.registry.get(a_idx).unwrap();
         let b = self.registry.get(b_idx).unwrap();
+        if haversine_m(a.lat, a.lon, b.lat, b.lon) > self.pair_hop_m(a, b) + 1.0 {
+            return Ok(false);
+        }
         let tx_a = site_tx_height(&self.preset, a);
         let tx_b = site_tx_height(&self.preset, b);
         let pair_key = digest_hex(&[
@@ -1053,11 +1080,12 @@ impl<'a> SearchCtx<'a> {
         link_failed: &HashSet<(usize, usize)>,
     ) -> Result<Option<usize>> {
         let pa = self.registry.get(pa_idx).unwrap().clone();
+        let pa_hop_m = self.candidate_hop_m(&pa);
         let pa_label = pa.slug.as_deref().unwrap_or(&pa.id).to_string();
         let mut relay_idxs = Vec::new();
-        let mut band_outer = self.hop_m;
+        let mut band_outer = pa_hop_m;
         for &frac in HOP_RING_FRACS {
-            let min_m = self.hop_m * frac;
+            let min_m = pa_hop_m * frac;
             let max_m = band_outer;
             band_outer = min_m;
             if max_m <= min_m + 1.0 {
@@ -1161,9 +1189,9 @@ impl<'a> SearchCtx<'a> {
             lat: wp.lat + 0.01,
             lon: wp.lon,
         };
-        let mut band_outer = self.hop_m;
+        let mut band_outer = self.project_hop_m;
         for &frac in HOP_RING_FRACS {
-            let min_m = self.hop_m * frac;
+            let min_m = self.project_hop_m * frac;
             let max_m = band_outer;
             band_outer = min_m;
             if max_m <= min_m + 1.0 {
@@ -1407,12 +1435,14 @@ pub fn search_route(
     session: Arc<Session>,
     registry: &mut CandidateRegistry,
     waypoints: &[Waypoint],
+    allow_tags: &[String],
     cache: &FinderCache,
     ledger: &CacheLedger,
 ) -> Result<(Vec<usize>, usize)> {
     ledger.phase_start("search");
     ledger.search_step("initializing solver…");
-    let mut ctx = SearchCtx::new(preset_path, session, registry, cache, ledger, waypoints)?;
+    let mut ctx =
+        SearchCtx::new(preset_path, session, registry, cache, ledger, waypoints, allow_tags)?;
     let overview = gap_overview_cached(
         cache,
         waypoints,
