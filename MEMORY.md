@@ -71,7 +71,7 @@ peaky export <project> --tag reno-vegas [--exclude-tag optional] [-o out.kml]
 
 Loads merged preset, keeps sites whose tags match any `--tag` (OR), drops any with `--exclude-tag`, sorts north→south. Default output `{first-tag}.kml`.
 
-**Map UI** — Sites panel **Export** (beside Import): downloads KML for sites **currently visible on the map** in the viewport (respects tag/hide filters; ignores sidebar “In view” checkbox). Filename `{project}-viewport.kml`. Same placemark shape as CLI.
+**Map UI** — Sites sidebar lists all scoped sites (viewport when **In view** is on); tag chips drive map visibility via `sites.hidden`, not list filtering. Per-site eye toggles set `manualHidden`; tag sync fills in the rest. Peaks tab has the same **In view** checkbox (shared `filterByViewport`; Land tab unchanged). **Export** (beside Import): KML for map-visible sites in the viewport (respects hide state; ignores sidebar In view). Filename `{project}-viewport.kml`.
 
 Both write KML 2.2 Point placemarks: name `{site.name} ({slug})`, description with slug/tags/node. Staked coords are copied manually from onX into the book after the trip (no auto write-back).
 

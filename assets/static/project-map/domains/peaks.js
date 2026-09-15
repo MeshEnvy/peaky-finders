@@ -13,7 +13,12 @@ import {
   removeDraftLinksLayer,
 } from '../map/links-layers.js'
 import { ensurePeaksLayers, setPeaksLayerData, setPeaksCursorPoint, clearPeaksCursorPoint } from '../map/peaks-layers.js'
-import { hiddenPeakSlugs, isPeakMapVisible, visiblePeaksForMap } from '../stores/peaks.js'
+import {
+  hiddenPeakSlugs,
+  isPeakMapVisible,
+  sidebarPeaks,
+  visiblePeaksForMap,
+} from '../stores/peaks.js'
 import { setPendingCoords } from '../stores/viewshed.js'
 
 /**
@@ -305,23 +310,42 @@ export function createPeaksDomain(opts) {
     applyPeakVisibilityChange(value)
   }
 
+  function listedPeaks() {
+    return sidebarPeaks(store, {
+      map: getMap(),
+      mapReady: getMapReady(),
+    })
+  }
+
   function showAllPeaks() {
-    if (!store.peaks.hidden.size) return
-    store.peaks.hidden.clear()
+    const listed = listedPeaks()
+    let changed = false
+    for (const peak of listed) {
+      if (!peak?.slug || !store.peaks.hidden.has(peak.slug)) continue
+      store.peaks.hidden.delete(peak.slug)
+      changed = true
+    }
+    if (!changed) return
     refreshPeakLayers()
     bumpPeaksPanel()
     scheduleSaveMapState?.()
   }
 
   function hideAllPeaks() {
+    const listed = listedPeaks()
     let changed = false
-    for (const peak of store.peaks.list) {
+    for (const peak of listed) {
       if (!peak?.slug || store.peaks.hidden.has(peak.slug)) continue
       store.peaks.hidden.add(peak.slug)
       changed = true
     }
     if (!changed) return
-    if (store.ui.selectedPeakSlug) deselectPeak({ syncDeepLink: true })
+    if (
+      store.ui.selectedPeakSlug &&
+      listed.some((peak) => peak.slug === store.ui.selectedPeakSlug)
+    ) {
+      deselectPeak({ syncDeepLink: true })
+    }
     refreshPeakLayers()
     bumpPeaksPanel()
     scheduleSaveMapState?.()

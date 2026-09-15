@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **Site tag visibility** — tag chips hide non-matching sites on the map but keep them in the sidebar; per-site eye toggles match the peaks panel. **In view** on the Peaks tab scopes the peaks list (same flag as Sites; Land unchanged).
 - **Peaks entity tab** — Sites | Peaks | Land sidebar lists the catalog with show/hide per peak, show in view, and show all / hide all. Hidden peaks drop off the map and are omitted from Fortify and link solver scans.
 - **Link solver** — map tool to find multi-hop peak routes between two preset sites. Floating panel, route list ranked by fewest hops then shortest distance, margin labels on legs, preview viewsheds, **More like this**, **Load more**, and **Accept** to create hop sites and seed mesh links. Replaces goal seek.
 - **Site elevation** — the site sheet shows Skadi DEM AMSL next to antenna height (same source as peaks). The value updates when you move the pin in edit or create.
@@ -21,6 +22,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Site tag filters on load** — restored tag chips (union/intersect) now hide non-matching sites on the map immediately after refresh, not only after re-clicking a chip.
 - **Link solver hop preview** — clicking a route hop shows viewshed and jeep/hike access (cache-first load). Route legs show distance labels on the map.
 - **Fortify / link solver / alternates catalog load** — RF scans use cached thin ``peaks/`` rows only (no per-scan ``access/`` merge). First load ~1s; repeat scans are instant until peaks change.
 - **Access paths on RF links** — selecting a link paints jeep/hike routes on both endpoints (site deselect no longer hides them).

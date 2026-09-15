@@ -1,7 +1,13 @@
 // @ts-check
 
 import { createApp, computed, watch } from 'vue'
-import { hiddenPeakSlugs, isPeakMapVisible, sortedPeaksList } from '../stores/peaks.js'
+import {
+  hiddenPeakSlugs,
+  isPeakMapVisible,
+  sidebarPeaks,
+  viewportPeaks,
+} from '../stores/peaks.js'
+import { mountViewportFilterCheckbox } from './viewport-filter.js'
 
 /**
  * Vue peaks sidebar for #entity-panel-peaks-list.
@@ -10,6 +16,7 @@ import { hiddenPeakSlugs, isPeakMapVisible, sortedPeaksList } from '../stores/pe
  */
 export function mountPeaksPanel(store, appApi) {
   const countEl = document.getElementById('entity-panel-peaks-count')
+  const filterVisibleEl = document.getElementById('entity-panel-filter-visible-peaks')
   const listEl = document.getElementById('entity-panel-peaks-list')
   if (!listEl) return null
 
@@ -18,13 +25,30 @@ export function mountPeaksPanel(store, appApi) {
   mountPoint.className = 'peaks-panel-vue-root'
   listEl.appendChild(mountPoint)
 
+  const mapOpts = () => ({
+    map: appApi.getMap?.(),
+    mapReady: store.ui.mapReady,
+    epoch: store.ui.viewportEpoch,
+  })
+
+  mountViewportFilterCheckbox(filterVisibleEl, store, () => {
+    appApi.onViewportFilterChange?.()
+  })
+
   const app = createApp({
     setup() {
       const revision = computed(() => store.peaks.panelRevision)
 
       const peaks = computed(() => {
         revision.value
-        return sortedPeaksList(store)
+        void store.ui.viewportEpoch
+        return sidebarPeaks(store, mapOpts())
+      })
+
+      const scopedPeaks = computed(() => {
+        revision.value
+        void store.ui.viewportEpoch
+        return viewportPeaks(store, mapOpts())
       })
 
       const visibleCount = computed(() => {
@@ -33,13 +57,13 @@ export function mountPeaksPanel(store, appApi) {
       })
 
       watch(
-        [peaks, visibleCount],
+        [peaks, visibleCount, scopedPeaks],
         () => {
           if (!countEl) return
           const total = peaks.value.length
           const shown = visibleCount.value
           if (!total) {
-            countEl.textContent = ''
+            countEl.textContent = store.peaks.list.length ? 'No peaks in view.' : ''
             return
           }
           if (shown < total) {
@@ -68,14 +92,6 @@ export function mountPeaksPanel(store, appApi) {
         appApi.selectPeak?.(slug)
       }
 
-      function showAll() {
-        appApi.showAllPeaks?.()
-      }
-
-      function hideAll() {
-        appApi.hideAllPeaks?.()
-      }
-
       return {
         store,
         peaks,
@@ -83,13 +99,13 @@ export function mountPeaksPanel(store, appApi) {
         toggleVisible,
         showInView,
         selectPeak,
-        showAll,
-        hideAll,
       }
     },
     template: `
       <div class="entity-panel__list-items">
-        <div v-if="!peaks.length" class="entity-panel__empty">No peaks in catalog yet.</div>
+        <div v-if="!peaks.length" class="entity-panel__empty">
+          {{ store.peaks.list.length ? 'No peaks in view.' : 'No peaks in catalog yet.' }}
+        </div>
         <div
           v-for="peak in peaks"
           :key="peak.slug"

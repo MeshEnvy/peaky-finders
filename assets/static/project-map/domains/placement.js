@@ -2,7 +2,7 @@
 
 import { formatCoord } from '../geo.js'
 import { DRAFT_MARKER_COLOR, DRAFT_VIEWSHED_SLUG } from '../constants.js'
-import { normalizeSiteFromApi, sitePassesTagFilter } from '../stores/sites.js'
+import { normalizeSiteFromApi } from '../stores/sites.js'
 import { captureDeepLinkFromMap, writeDeepLink } from '../api/deep-link.js'
 
 /**
@@ -334,7 +334,6 @@ export function createPlacementDomain(ctx) {
     showPanelView()
     onFinishEditSave?.()
     void loadSiteLinks?.()
-    if (!sitePassesTagFilter(site, store)) deselectSite()
   }
 
   async function deleteSelectedSite() {

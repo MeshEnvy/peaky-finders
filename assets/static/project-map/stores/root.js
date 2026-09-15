@@ -6,7 +6,7 @@ import {
   viewshedRadiusBounds,
   VIEWSHED_OPACITY_DEFAULT,
 } from '../constants.js'
-import { normalizeSiteFromApi } from './sites.js'
+import { normalizeSiteFromApi, syncTagFilterVisibility } from './sites.js'
 
 export { normalizeSiteFromApi } from './sites.js'
 
@@ -33,7 +33,7 @@ export function createRootStore(config, savedMapState) {
     sites: {
       list: [],
       hidden: new Set(),
-      tagFilterBypass: new Set(),
+      manualHidden: new Set(),
       revision: 0,
     },
     peaks: {
@@ -204,9 +204,19 @@ export function createRootStore(config, savedMapState) {
       store.access.visible.set(slug, visible !== false)
     }
   }
-  if (savedMapState?.hiddenSites && Array.isArray(savedMapState.hiddenSites)) {
-    for (const slug of savedMapState.hiddenSites) store.sites.hidden.add(String(slug))
+  if (
+    savedMapState?.manualHiddenSites &&
+    Array.isArray(savedMapState.manualHiddenSites)
+  ) {
+    for (const slug of savedMapState.manualHiddenSites) {
+      store.sites.manualHidden.add(String(slug))
+    }
+  } else if (savedMapState?.hiddenSites && Array.isArray(savedMapState.hiddenSites)) {
+    for (const slug of savedMapState.hiddenSites) {
+      store.sites.manualHidden.add(String(slug))
+    }
   }
+  syncTagFilterVisibility(store)
   if (savedMapState?.hiddenPeaks && Array.isArray(savedMapState.hiddenPeaks)) {
     for (const slug of savedMapState.hiddenPeaks) store.peaks.hidden.add(String(slug))
   }
@@ -241,6 +251,7 @@ export function createRootStore(config, savedMapState) {
 export function initSitesFromConfig(store) {
   const raw = /** @type {unknown[]} */ (store.config.sites || [])
   store.sites.list = raw.map(normalizeSiteFromApi).filter(Boolean)
+  syncTagFilterVisibility(store)
 }
 
 /** @param {ReturnType<typeof createRootStore>} store */

@@ -13,6 +13,11 @@ import {
   writeDeepLink,
 } from '../api/deep-link.js'
 import { setSimulation } from '../stores/simulation.js'
+import {
+  sidebarSites,
+  syncTagFilterVisibility,
+  toggleSiteManualHidden,
+} from '../stores/sites.js'
 import { createSitesDomain } from './sites.js'
 import { createViewshedDomain } from './viewshed.js'
 import { createLinksDomain } from './links.js'
@@ -84,7 +89,6 @@ export function runApp(ctx = {}) {
   const siteBySlug = new Map(sites.map((s) => [s.slug, s]))
   const siteHidden = store.sites.hidden
   const activeTagFilters = store.ui.tagFilters
-  const tagFilterBypassSlugs = store.sites.tagFilterBypass
   const landVisible = store.land.visible
   const landSourceBatchVisible = store.land.sourceBatchVisible
   const landLabelsVisible = store.land.labelsVisible
@@ -152,7 +156,6 @@ export function runApp(ctx = {}) {
     getSites: () => sites,
     siteBySlug,
     siteHidden,
-    tagFilterBypassSlugs,
     activeTagFilters,
     deselectSite: (...args) => placementDomain?.deselectSite(...args),
     raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
@@ -619,6 +622,7 @@ export function runApp(ctx = {}) {
     connectProjectEvents()
     landDomain.bumpLandPanel()
     entityChrome.setEntityTab(store.ui.entityPanelTab)
+    syncTagFilterVisibility(store)
     entityChrome.applyEntityVisibility()
     mapChrome.syncBasemapMenu()
     mapChrome.setBasemap(mapChrome.getBasemapKey())
@@ -670,6 +674,43 @@ export function runApp(ctx = {}) {
     togglePeakMapVisible: (...args) => peaksDomain.togglePeakMapVisible(...args),
     showAllPeaks: () => peaksDomain.showAllPeaks(),
     hideAllPeaks: () => peaksDomain.hideAllPeaks(),
+    toggleSiteMapVisible(slug) {
+      toggleSiteManualHidden(store, slug)
+      entityChrome.applyEntityVisibility()
+      mapChrome.scheduleSaveMapState()
+    },
+    showAllSites() {
+      const listed = sidebarSites(store, {
+        map,
+        mapReady: store.ui.mapReady,
+      })
+      let changed = false
+      for (const site of listed) {
+        if (!site?.slug || !store.sites.manualHidden.has(site.slug)) continue
+        store.sites.manualHidden.delete(site.slug)
+        changed = true
+      }
+      if (!changed) return
+      syncTagFilterVisibility(store)
+      entityChrome.applyEntityVisibility()
+      mapChrome.scheduleSaveMapState()
+    },
+    hideAllSites() {
+      const listed = sidebarSites(store, {
+        map,
+        mapReady: store.ui.mapReady,
+      })
+      let changed = false
+      for (const site of listed) {
+        if (!site?.slug || store.sites.manualHidden.has(site.slug)) continue
+        store.sites.manualHidden.add(site.slug)
+        changed = true
+      }
+      if (!changed) return
+      syncTagFilterVisibility(store)
+      entityChrome.applyEntityVisibility()
+      mapChrome.scheduleSaveMapState()
+    },
     showPeakInView: (...args) => peaksDomain.showPeakInView(...args),
     renderPeaksPanel: () => peaksDomain.bumpPeaksPanel(),
     deselectLink: (...args) => linksDomain?.deselectLink(...args),

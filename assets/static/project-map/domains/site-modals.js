@@ -7,7 +7,7 @@ import {
   bulkTagInitialCounts,
   computeBulkTagOps,
   sidebarSites,
-  sitePassesTagFilter,
+  syncTagFilterVisibility,
   toggleTag,
 } from '../stores/sites.js'
 import {
@@ -57,8 +57,9 @@ export function createSiteModalsDomain(ctx) {
     const filters = store.ui.tagFilters
     const scopeParts = []
     if (filters?.size) {
-      const mode = store.ui.tagFilterMode === 'or' ? 'matching any selected tag' : 'matching all selected tags'
-      scopeParts.push(filters.size < 2 ? 'matching selected tags' : mode)
+      const mode =
+        store.ui.tagFilterMode === 'or' ? 'with any selected tag' : 'with all selected tags'
+      scopeParts.push(filters.size < 2 ? 'with selected tags' : mode)
     }
     if (store.ui.filterByViewport) scopeParts.push('in the current map view')
     const scope = scopeParts.length ? ` ${scopeParts.join(' and ')}` : ''
@@ -139,11 +140,7 @@ export function createSiteModalsDomain(ctx) {
       for (const site of updated) {
         applySiteRowUpdate?.(site, { refreshGeoJson: false })
       }
-      const selected = store.ui.selectedSlug
-      if (selected) {
-        const row = updated.find((site) => site.slug === selected)
-        if (row && !sitePassesTagFilter(row, store)) deselectSite?.()
-      }
+      syncTagFilterVisibility(store)
       applyEntityVisibility?.()
       renderEntityPanel?.()
       scheduleSaveMapState?.()
@@ -487,6 +484,7 @@ export function createSiteModalsDomain(ctx) {
         store.ui.tagFilters.clear()
         store.ui.tagFilters.add(firstTag)
       }
+      syncTagFilterVisibility(store)
       applyEntityVisibility?.()
       renderEntityPanel?.()
       const map = getMap?.()

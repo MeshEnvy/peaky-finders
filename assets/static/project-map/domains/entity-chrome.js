@@ -1,5 +1,7 @@
 // @ts-check
 
+import { syncTagFilterVisibility } from '../stores/sites.js'
+
 /**
  * Entity sidebar chrome: open/close, Sites/Land tabs, tag-filter apply.
  * @param {object} ctx
@@ -98,24 +100,26 @@ export function createEntityChromeDomain(ctx) {
     renderEntityPanel?.()
   }
 
-  function toggleTagFilter(tag) {
-    const value = String(tag || '').trim()
-    if (!value) return
-    if (activeTagFilters.has(value)) activeTagFilters.delete(value)
-    else activeTagFilters.add(value)
-    pruneActiveTagFilters?.()
+  function applyTagFilterVisibility() {
+    syncTagFilterVisibility(store)
     applyEntityVisibility()
     ensureViewshedsForNewlyVisibleSites?.()
     ensureAccessForVisibleSites?.()
     scheduleSaveMapState?.()
   }
 
+  function toggleTagFilter(tag) {
+    const value = String(tag || '').trim()
+    if (!value) return
+    if (activeTagFilters.has(value)) activeTagFilters.delete(value)
+    else activeTagFilters.add(value)
+    pruneActiveTagFilters?.()
+    applyTagFilterVisibility()
+  }
+
   function onTagFilterChange() {
     pruneActiveTagFilters?.()
-    applyEntityVisibility()
-    ensureViewshedsForNewlyVisibleSites?.()
-    ensureAccessForVisibleSites?.()
-    scheduleSaveMapState?.()
+    applyTagFilterVisibility()
   }
 
   function bumpViewportEpoch() {

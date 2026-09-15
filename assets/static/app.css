@@ -2567,19 +2567,24 @@ button.entity-panel__row--selected:focus-visible,
   opacity: 0.45;
 }
 
-.entity-panel__row--peak {
+.entity-panel__row--peak,
+.entity-panel__row--site {
   justify-content: space-between;
   cursor: default;
 }
 
 .entity-panel__row--peak:hover,
 .entity-panel__row--peak:focus,
-.entity-panel__row--peak:focus-visible {
+.entity-panel__row--peak:focus-visible,
+.entity-panel__row--site:hover,
+.entity-panel__row--site:focus,
+.entity-panel__row--site:focus-visible {
   background: transparent;
   color: var(--wa-color-text-normal);
 }
 
-.entity-panel__main--peak {
+.entity-panel__main--peak,
+.entity-panel__main--site {
   appearance: none;
   -webkit-appearance: none;
   flex: 1 1 auto;
@@ -2595,11 +2600,14 @@ button.entity-panel__row--selected:focus-visible,
 }
 
 .entity-panel__main--peak:hover,
-.entity-panel__main--peak:focus-visible {
+.entity-panel__main--peak:focus-visible,
+.entity-panel__main--site:hover,
+.entity-panel__main--site:focus-visible {
   outline: none;
 }
 
-.entity-panel__controls--peak {
+.entity-panel__controls--peak,
+.entity-panel__controls--site {
   display: flex;
   align-items: center;
   gap: 0.25rem;

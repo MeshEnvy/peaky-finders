@@ -15,7 +15,7 @@ import {
   normalizeSiteFromApi,
   registerSite as registerSiteInStore,
   unregisterSite as unregisterSiteInStore,
-  sitePassesTagFilter as sitePassesTagFilterStore,
+  syncTagFilterVisibility,
   allProjectTags as allProjectTagsFromStore,
 } from '../stores/sites.js'
 import {
@@ -27,7 +27,7 @@ import { downloadSitesKml } from '../kml-export.js'
 import { coordVisibleInMapViewport as coordVisibleInMapViewportAt } from '../map/viewport.js'
 
 /**
- * Site GeoJSON layers, tag/hide filters, and in-memory site registry.
+ * Site GeoJSON layers, hide filters, and in-memory site registry.
  * @param {object} ctx
  */
 export function createSiteLayersDomain(ctx) {
@@ -38,7 +38,6 @@ export function createSiteLayersDomain(ctx) {
     getSites,
     siteBySlug,
     siteHidden,
-    tagFilterBypassSlugs,
     activeTagFilters,
     deselectSite,
     raiseSiteLayers,
@@ -75,15 +74,6 @@ export function createSiteLayersDomain(ctx) {
     return null
   }
 
-  function sitePassesTagFilter(site) {
-    return sitePassesTagFilterStore(site, {
-      ui: {
-        tagFilters: activeTagFilters,
-        tagFilterMode: store?.ui?.tagFilterMode ?? 'and',
-      },
-    })
-  }
-
   function isEphemeralViewshedSlug(slug) {
     return (
       slug === DRAFT_VIEWSHED_SLUG ||
@@ -96,9 +86,7 @@ export function createSiteLayersDomain(ctx) {
     if (isEphemeralViewshedSlug(slug)) return siteHidden.has(slug)
     if (siteHidden.has(slug)) return true
     const site = siteBySlug.get(slug)
-    if (!site) return true
-    if (tagFilterBypassSlugs.has(slug)) return false
-    return !sitePassesTagFilter(site)
+    return !site
   }
 
   function siteVisibilityFilter() {
@@ -167,18 +155,6 @@ export function createSiteLayersDomain(ctx) {
     }
   }
 
-  function bypassSiteTagFilter(slug) {
-    if (!slug) return
-    siteHidden.delete(slug)
-    tagFilterBypassSlugs.add(slug)
-  }
-
-  function ensureSiteVisibleAfterAdd(site) {
-    if (!site?.slug) return
-    siteHidden.delete(site.slug)
-    if (!sitePassesTagFilter(site)) tagFilterBypassSlugs.add(site.slug)
-  }
-
   function filterSiteLinksGeoJson(geojson) {
     if (!geojson || !geojson.features) return geojson
     const features = geojson.features.filter((feature) => {
@@ -201,6 +177,7 @@ export function createSiteLayersDomain(ctx) {
     if (ix >= 0) list[ix] = row
     else list.push(row)
     siteBySlug.set(row.slug, row)
+    if (store) registerSiteInStore(store, row)
     const map = getMap()
     if (refreshGeoJson && map?.getSource(SITES_SOURCE)) {
       setSitesSourceData(map, sitesGeoJson())
@@ -220,8 +197,7 @@ export function createSiteLayersDomain(ctx) {
     if (ix >= 0) list[ix] = row
     else list.push(row)
     siteBySlug.set(row.slug, row)
-    ensureSiteVisibleAfterAdd(row)
-    if (store) registerSiteInStore(store, row, { revealIfFiltered: true })
+    if (store) registerSiteInStore(store, row)
     addSiteLayers()
     applyEntityVisibility?.()
     renderEntityPanel?.()
@@ -236,7 +212,7 @@ export function createSiteLayersDomain(ctx) {
     if (idx >= 0) list.splice(idx, 1)
     siteBySlug.delete(slug)
     siteHidden.delete(slug)
-    tagFilterBypassSlugs.delete(slug)
+    store?.sites?.manualHidden?.delete?.(slug)
     store?.viewshed?.visible?.delete?.(slug)
     removeViewshedLayer?.(slug)
     purgeSiteLinksForSlug?.(slug)
@@ -248,11 +224,8 @@ export function createSiteLayersDomain(ctx) {
   }
 
   function applySiteTagChange(slug) {
-    if (!siteBySlug.get(slug)) {
-      tagFilterBypassSlugs.delete(slug)
-      return
-    }
-    tagFilterBypassSlugs.delete(slug)
+    if (!siteBySlug.get(slug)) return
+    if (store) syncTagFilterVisibility(store)
     applyEntityVisibility?.()
     renderEntityPanel?.()
   }
@@ -288,7 +261,6 @@ export function createSiteLayersDomain(ctx) {
   return {
     sitesGeoJson,
     combineLayerFilters,
-    sitePassesTagFilter,
     isEphemeralViewshedSlug,
     isSiteMapHidden,
     siteVisibilityFilter,
@@ -298,8 +270,6 @@ export function createSiteLayersDomain(ctx) {
     siteVisibleInMap,
     allProjectTags,
     pruneActiveTagFilters,
-    bypassSiteTagFilter,
-    ensureSiteVisibleAfterAdd,
     filterSiteLinksGeoJson,
     applySiteRowUpdate,
     registerSite,

@@ -76,13 +76,49 @@ export function tagChipChoices(projectTags, selected = []) {
 }
 
 /**
- * Upsert sites into the store list. New sites that miss the active tag filter
- * stay visible (bypass). Updates drop bypass so filters apply immediately.
+ * Rebuild sites.hidden from manualHidden plus active tag filters.
+ * @param {object} store
+ */
+export function syncTagFilterVisibility(store) {
+  if (!store?.sites) return
+  const manual = store.sites.manualHidden
+  const hidden = new Set()
+  const hasTags = !!store.ui?.tagFilters?.size
+  for (const site of store.sites.list || []) {
+    const slug = site.slug
+    if (manual.has(slug)) {
+      hidden.add(slug)
+      continue
+    }
+    if (hasTags && !sitePassesTagFilter(site, store)) {
+      hidden.add(slug)
+    }
+  }
+  store.sites.hidden.clear()
+  for (const slug of hidden) store.sites.hidden.add(slug)
+  store.sites.revision = (store.sites.revision || 0) + 1
+}
+
+/** @param {object} store @param {string} slug */
+export function isSiteMapVisible(store, slug) {
+  return !store.sites.hidden.has(slug)
+}
+
+/** @param {object} store @param {string} slug */
+export function toggleSiteManualHidden(store, slug) {
+  const value = String(slug || '').trim()
+  if (!value || !store?.sites) return
+  if (store.sites.manualHidden.has(value)) store.sites.manualHidden.delete(value)
+  else store.sites.manualHidden.add(value)
+  syncTagFilterVisibility(store)
+}
+
+/**
+ * Upsert sites into the store list.
  * @param {object} store
  * @param {unknown[]} sites
- * @param {{ revealIfFiltered?: boolean }} [opts]
  */
-export function registerSites(store, sites, { revealIfFiltered } = {}) {
+export function registerSites(store, sites) {
   const rows = []
   for (const site of sites || []) {
     const row = normalizeSiteFromApi(site)
@@ -91,20 +127,12 @@ export function registerSites(store, sites, { revealIfFiltered } = {}) {
   }
   if (!rows.length || !store?.sites) return rows
   const list = store.sites.list
-  const existing = new Set(list.map((site) => site.slug))
   for (const row of rows) {
     const ix = list.findIndex((site) => site.slug === row.slug)
     if (ix >= 0) list[ix] = row
     else list.push(row)
-    store.sites.hidden?.delete?.(row.slug)
-    const reveal = revealIfFiltered ?? !existing.has(row.slug)
-    if (reveal && !sitePassesTagFilter(row, store)) {
-      store.sites.tagFilterBypass?.add?.(row.slug)
-    } else {
-      store.sites.tagFilterBypass?.delete?.(row.slug)
-    }
   }
-  store.sites.revision = (store.sites.revision || 0) + 1
+  syncTagFilterVisibility(store)
   return rows
 }
 
@@ -112,10 +140,9 @@ export function registerSites(store, sites, { revealIfFiltered } = {}) {
  * Upsert a site into the store list. Returns normalized row or null.
  * @param {object} store
  * @param {unknown} site
- * @param {{ revealIfFiltered?: boolean }} [opts]
  */
-export function registerSite(store, site, opts) {
-  return registerSites(store, [site], opts)[0] || null
+export function registerSite(store, site) {
+  return registerSites(store, [site])[0] || null
 }
 
 /**
@@ -128,7 +155,7 @@ export function unregisterSite(store, slug) {
   const idx = store.sites.list.findIndex((s) => s.slug === slug)
   if (idx >= 0) store.sites.list.splice(idx, 1)
   store.sites.hidden?.delete?.(slug)
-  store.sites.tagFilterBypass?.delete?.(slug)
+  store.sites.manualHidden?.delete?.(slug)
   if (store.ui?.selectedSlug === slug) store.ui.selectedSlug = null
   store.sites.revision = (store.sites.revision || 0) + 1
 }
@@ -179,19 +206,13 @@ export function tagFilteredSites(store) {
 }
 
 /**
- * Sidebar-visible sites: In view first, then tag filter, hidden/bypass.
+ * Sidebar site rows: viewport scope when In view is on; always lists all scoped sites.
  * @param {object} store
  * @param {{ map?: object, mapReady?: boolean }} [opts]
  */
 export function sidebarSites(store, opts = {}) {
   void store.sites?.revision
-  const list = viewportSites(store, opts).filter((site) => {
-    if (store.sites.hidden.has(site.slug) && !store.sites.tagFilterBypass.has(site.slug)) {
-      return false
-    }
-    return sitePassesTagFilter(site, store)
-  })
-  return [...list].sort((a, b) => compareHuman(a.name, b.name))
+  return [...viewportSites(store, opts)].sort((a, b) => compareHuman(a.name, b.name))
 }
 
 /**

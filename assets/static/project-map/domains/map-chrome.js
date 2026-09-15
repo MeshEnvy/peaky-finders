@@ -247,6 +247,7 @@ export function createMapChromeDomain(ctx) {
       showLinks: showSiteLinks,
       viewshedOpacity,
       hiddenSites: [...siteHidden],
+      manualHiddenSites: store?.sites?.manualHidden ? [...store.sites.manualHidden] : [],
       tagFilters: [...activeTagFilters].sort((a, b) => a.localeCompare(b)),
       tagFilterMode: store?.ui?.tagFilterMode ?? 'and',
       filterByViewport: !!store?.ui?.filterByViewport,

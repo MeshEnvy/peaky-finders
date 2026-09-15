@@ -4,8 +4,10 @@ import { createApp, computed, watch } from 'vue'
 import {
   sidebarSites as sidebarSitesFromStore,
   sidebarTags as sidebarTagsFromStore,
+  isSiteMapVisible,
   viewportSites as viewportSitesFromStore,
 } from '../stores/sites.js'
+import { mountViewportFilterCheckbox } from './viewport-filter.js'
 
 /**
  * @param {object} store
@@ -13,7 +15,7 @@ import {
  */
 export function mountSitesPanel(store, appApi) {
   const countEl = document.getElementById('entity-panel-sites-count')
-  const filterVisibleEl = document.getElementById('entity-panel-filter-visible')
+  const filterVisibleEl = document.getElementById('entity-panel-filter-visible-sites')
   const tagFiltersEl = document.getElementById('entity-panel-tag-filters')
   const listEl = document.getElementById('entity-panel-sites-list')
   if (!tagFiltersEl || !listEl) return null
@@ -47,6 +49,10 @@ export function mountSitesPanel(store, appApi) {
     epoch: store.ui.viewportEpoch,
   })
 
+  mountViewportFilterCheckbox(filterVisibleEl, store, () => {
+    appApi.onViewportFilterChange?.()
+  })
+
   const app = createApp({
     setup() {
       const allTags = computed(() => sidebarTagsFromStore(store, mapOpts()))
@@ -55,23 +61,28 @@ export function mountSitesPanel(store, appApi) {
 
       const sidebarSites = computed(() => sidebarSitesFromStore(store, mapOpts()))
 
+      const visibleCount = computed(() => {
+        void store.sites.revision
+        return sidebarSites.value.filter((site) => isSiteMapVisible(store, site.slug)).length
+      })
+
       watch(
-        [sidebarSites, scopedSites, () => store.ui.tagFilters.size],
+        [sidebarSites, visibleCount, scopedSites],
         () => {
           if (!countEl) return
-          const universe = scopedSites.value.length
-          const shown = sidebarSites.value.length
-          if (!universe && !shown) {
-            countEl.textContent = store.sites.list.length ? 'No matching sites.' : ''
+          const total = sidebarSites.value.length
+          const shown = visibleCount.value
+          if (!total) {
+            countEl.textContent = store.sites.list.length ? 'No sites in view.' : ''
             return
           }
-          if (shown < universe) {
-            countEl.textContent = `${shown} of ${universe}`
+          if (shown < total) {
+            countEl.textContent = `${shown} of ${total} visible`
           } else {
-            countEl.textContent = `${shown} site${shown === 1 ? '' : 's'}`
+            countEl.textContent = `${total} site${total === 1 ? '' : 's'}`
           }
         },
-        { immediate: true }
+        { immediate: true },
       )
 
       function toggleTagFilter(tag) {
@@ -123,31 +134,58 @@ export function mountSitesPanel(store, appApi) {
     setup() {
       const sidebarSites = computed(() => sidebarSitesFromStore(store, mapOpts()))
 
-      return { store, sidebarSites, selectSite: (slug) => appApi.selectSite?.(slug) }
+      function siteVisible(slug) {
+        void store.sites.revision
+        return isSiteMapVisible(store, slug)
+      }
+
+      function toggleVisible(slug) {
+        appApi.toggleSiteMapVisible?.(slug)
+      }
+
+      function selectSite(slug) {
+        appApi.selectSite?.(slug)
+      }
+
+      return { store, sidebarSites, siteVisible, toggleVisible, selectSite }
     },
     template: `
       <div class="entity-panel__list-items">
         <div v-if="!sidebarSites.length" class="entity-panel__empty">
-          {{ store.sites.list.length ? 'No matching sites.' : 'No sites yet.' }}
+          {{ store.sites.list.length ? 'No sites in view.' : 'No sites yet.' }}
         </div>
-        <button v-for="site in sidebarSites" :key="site.slug" type="button"
-          class="entity-panel__row"
-          :class="{ 'entity-panel__row--selected': store.ui.selectedSlug === site.slug }"
-          @click="selectSite(site.slug)">
-          <span class="entity-panel__name">{{ site.name }}</span>
-        </button>
+        <div
+          v-for="site in sidebarSites"
+          :key="site.slug"
+          class="entity-panel__row entity-panel__row--site"
+          :class="{
+            'entity-panel__row--hidden': !siteVisible(site.slug),
+            'entity-panel__row--selected': store.ui.selectedSlug === site.slug,
+          }"
+        >
+          <button type="button" class="entity-panel__main entity-panel__main--site" @click="selectSite(site.slug)">
+            <span class="entity-panel__name">{{ site.name }}</span>
+          </button>
+          <div class="entity-panel__controls entity-panel__controls--site">
+            <button
+              type="button"
+              class="entity-panel__action"
+              :class="{ 'entity-panel__action--active': siteVisible(site.slug) }"
+              :title="siteVisible(site.slug) ? 'Hide site on map' : 'Show site on map'"
+              :aria-label="siteVisible(site.slug) ? 'Hide site on map' : 'Show site on map'"
+              @click.stop="toggleVisible(site.slug)"
+            >
+              <wa-icon
+                :name="siteVisible(site.slug) ? 'eye' : 'eye-slash'"
+                :label="siteVisible(site.slug) ? 'Hide site on map' : 'Show site on map'"
+              ></wa-icon>
+            </button>
+          </div>
+        </div>
       </div>
     `,
   })
   listApp.mount(listMount)
-
-  if (filterVisibleEl) {
-    filterVisibleEl.checked = store.ui.filterByViewport
-    filterVisibleEl.addEventListener('change', () => {
-      store.ui.filterByViewport = filterVisibleEl.checked
-      appApi.onViewportFilterChange?.()
-    })
-  }
 
   const bulkTagBtn = document.getElementById('entity-panel-bulk-tag')
   const addSiteBtn = document.getElementById('entity-panel-add-site')
