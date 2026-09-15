@@ -103,6 +103,19 @@ pub fn insert_preset_site(path: &Path, slug: &str, entry: &SiteEntry) -> Result<
 }
 
 /// Patch fields on one site entry in place (preserves key order elsewhere in the file).
+/// Load one site from ``sites.yaml`` (or merged preset) without validating links/config.
+pub fn load_site_entry(path: &Path, slug: &str) -> Result<SiteEntry> {
+    let (_, doc) = read_sites_document_root(path)?;
+    let sites = doc
+        .get(&Value::from("sites"))
+        .and_then(|v| v.as_mapping())
+        .context("sites must be a mapping")?;
+    let site_val = sites
+        .get(&Value::from(slug))
+        .with_context(|| format!("site not found: {slug}"))?;
+    serde_yaml::from_value(site_val.clone()).with_context(|| format!("parse sites.{slug}"))
+}
+
 pub fn patch_preset_site(
     path: &Path,
     slug: &str,

@@ -12,10 +12,11 @@ use axum::{
     Json, Router,
 };
 use peaky_geo::{parse_kml_point_placemarks, parse_kmz_point_placemarks};
+use anyhow::Context as _;
 use peaky_preset::{
-    insert_preset_site, load_preset, load_preset_raw, patch_preset_site, patch_preset_sites_tags,
-    place_slugs, preset_site_slugs, remove_preset_site, unique_place_slug, unique_site_slug,
-    validate_coords, LandSidebar, SiteEntry,
+    insert_preset_site, load_preset, load_preset_raw, load_site_entry, patch_preset_site,
+    patch_preset_sites_tags, place_slugs, preset_site_slugs, remove_preset_site,
+    unique_place_slug, unique_site_slug, validate_coords, LandSidebar, SiteEntry,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -273,10 +274,8 @@ async fn patch_site(State(state): State<AppState>,
     Json(body): Json<PatchSiteBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let path = state.preset_path();
-    let preset = load_preset(&path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
-    if !preset.sites.contains_key(&site_slug) {
-        return Err((StatusCode::NOT_FOUND, "site not found".to_string()));
-    }
+    load_site_entry(&path, &site_slug)
+        .map_err(|_| (StatusCode::NOT_FOUND, "site not found".to_string()))?;
     if let (Some(lat), Some(lon)) = (body.lat, body.lon) {
         validate_coords(lat, lon).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     }
@@ -292,12 +291,9 @@ async fn patch_site(State(state): State<AppState>,
         body.height_m,
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let preset = load_preset(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let site = preset
-        .sites
-        .get(&site_slug)
-        .ok_or((StatusCode::NOT_FOUND, "site not found".to_string()))?;
-    Ok(Json(json!({ "site": site_api_row(&site_slug, site) })))
+    let site = load_site_entry(&path, &site_slug)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "site": site_api_row(&site_slug, &site) })))
 }
 
 async fn delete_site(State(state): State<AppState>,
@@ -340,19 +336,27 @@ async fn bulk_tags(State(state): State<AppState>,
         ));
     }
     let path = state.preset_path();
-    let preset = load_preset(&path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+    let raw = load_preset_raw(&path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+    let site_slugs = preset_site_slugs(
+        raw.as_mapping()
+            .context("preset root must be mapping")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
+    );
     let targets: Vec<String> = body
         .slugs
         .iter()
-        .filter(|s| preset.sites.contains_key(*s))
+        .filter(|s| site_slugs.contains(*s))
         .cloned()
         .collect();
     patch_preset_sites_tags(&path, &targets, &body.add_tags, &body.remove_tags)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let updated = load_preset(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let site_rows: Vec<_> = targets
         .iter()
-        .filter_map(|s| updated.sites.get(s).map(|site| site_api_row(s, site)))
+        .filter_map(|s| {
+            load_site_entry(&path, s)
+                .ok()
+                .map(|site| site_api_row(s, &site))
+        })
         .collect();
     Ok(Json(json!({
         "slug": state.slug.clone(),

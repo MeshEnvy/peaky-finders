@@ -54,7 +54,8 @@ pub use peaks::{
 };
 pub use io::{
     delete_land_source, import_land_source, insert_preset_site, land_source_id_for_path,
-    load_preset, load_preset_raw, parse_preset_dict, patch_land_sidebar, patch_land_source,
+    load_preset, load_preset_raw, load_site_entry, parse_preset_dict, patch_land_sidebar,
+    patch_land_source,
     patch_land_source_last_updated,
     patch_preset_site, patch_preset_site_tags, patch_preset_sites_tags, preset_site_slugs,
     remove_preset_site, save_preset, write_preset_document,
