@@ -33,6 +33,10 @@ impl ProjectLayout {
         self.project_dir.join("land.yaml")
     }
 
+    pub fn boards_path(&self) -> PathBuf {
+        self.project_dir.join("boards.yaml")
+    }
+
     pub fn peaks_dir(&self) -> PathBuf {
         self.project_dir.join("peaks")
     }

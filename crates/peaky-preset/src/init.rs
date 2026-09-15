@@ -71,7 +71,6 @@ pub fn default_meshcore_preset() -> Preset {
             radius_km: Value::from(50),
             viewshed_quality: 3,
             max_workers: SimulationMaxWorkers::default(),
-            boards: HashMap::new(),
             modem: Some(Value::String("meshcore-us".into())),
             environment: Some(Value::String("meshcore-open".into())),
             transmitter,

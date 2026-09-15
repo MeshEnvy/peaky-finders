@@ -29,7 +29,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
-- **Per-board viewshed radius** — ``simulation.boards.<board>.radius_km`` caps site viewshed extent when the staked unit's ``nodes.yaml`` board matches (e.g. Heltec T096 at 50 km while project hop radius stays 72 km). Hop/P2P link math unchanged.
+- **Per-board viewshed radius** — optional project ``boards.yaml`` ``boards.<id>.radius_km`` caps site viewshed extent when the staked unit's ``nodes.yaml`` board matches (e.g. Heltec T096 at 50 km while project hop radius stays 72 km). Hop/P2P link math unchanged. ``simulation.boards`` removed; move board params to ``boards.yaml``.
 - **Preset `scan:`** — renamed from `seek:`; caps peak candidates for link solver, Fortify, and alternates scans.
 - **Hike/jeep difficulty is runtime-derived** — pin rings, Fortify, and the access sheet recompute easy/medium/difficult/extreme from grade and OSM facts. Only facts persist on thin `peaks/` rows (`hike_gain_m`, grades, `jeep_highway`); `difficulty` / `hike_difficulty` / `jeep_difficulty` are not written to YAML. Re-run `peaky peaks` on affected rows to refresh fact scalars after an algo change.
 - **Paved snap uses interpolated samples** — paved anchors are densified every 40 m like jeep roads, so on-road snap reaches pads between sparse OSM vertices. `ACCESS_ALGO_VERSION` → **10**. Re-open a peak/site sheet to re-warm leftover pins.

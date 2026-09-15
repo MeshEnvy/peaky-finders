@@ -578,7 +578,8 @@ impl<'a> SearchCtx<'a> {
             };
             let sim = ViewshedSimOverrides::default();
             let project_dir = preset_path.parent().unwrap_or(&preset_path);
-            let board_index = peaky_preset::load_nodes_board_index(project_dir);
+            let board_viewshed = peaky_preset::BoardViewshedResolver::load(project_dir)
+                .map_err(|e| format!("boards.yaml: {e}"))?;
             let result = if let Some(ref site) = site_entry {
                 ensure_viewshed_progressive_for_site_blocking(
                     session,
@@ -587,7 +588,7 @@ impl<'a> SearchCtx<'a> {
                     &preset,
                     &slug,
                     site,
-                    Some(&board_index),
+                    Some(&board_viewshed),
                     false,
                     rewrite,
                 )

@@ -1,7 +1,7 @@
 //! Peaky preset YAML schema, I/O, and path resolution.
 
 pub mod access;
-pub mod board_sim;
+pub mod boards;
 pub mod compute_key;
 pub mod difficulty;
 pub mod home;
@@ -60,15 +60,16 @@ pub use io::{
     remove_preset_site, save_preset, write_preset_document,
 };
 pub use yaml_io::read_preset_document;
-pub use board_sim::{
-    board_viewshed_radius_km, normalize_board_id, site_viewshed_radius_km,
-    validate_board_radius_km, validate_board_sim_configs,
+pub use boards::{
+    board_viewshed_radius_km, load_boards_catalog, load_boards_catalog_from_path,
+    reject_legacy_simulation_boards, site_viewshed_radius_km, validate_board_radius_km,
+    validate_boards_catalog, BoardConfig, BoardViewshedResolver, BoardsCatalog,
 };
 pub use model::{
     default_viewshed_polygon_style, resolved_coverage_max_workers,
     resolved_dem_fetch_max_workers,
     resolved_viewshed_polygon_style, slugify_files_segment, validate_preset,
-    validate_project_preset_document, BoardSimConfig, CoverageProvider, DisplayConfig,
+    validate_project_preset_document, CoverageProvider, DisplayConfig,
     LandAttributeFilter, LandConfig, LandDownloadKind, LandLayerEntry, LandLayerRole,
     LandLayerStyle, LandLayerStyleValue, LandSidebar, LandSidebarFolder, LandSourceEntry,
     LandSourceRefresh, AccessMeta, PeakAccessRules, PeakCatalogEntry, PeakHikeGradeBucket,

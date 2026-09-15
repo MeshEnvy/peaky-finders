@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use peaky_preset::{
-    load_nodes_board_index, load_preset, resolved_coverage_max_workers, resolved_dem_fetch_max_workers,
-    resolved_skadi_mirror_dir_for_project, resolved_viewshed_root, NodesBoardIndex,
+    load_preset, resolved_coverage_max_workers, resolved_dem_fetch_max_workers,
+    resolved_skadi_mirror_dir_for_project, resolved_viewshed_root, BoardViewshedResolver,
 };
 use peaky_serve::viewshed::ensure_viewshed_for_site_blocking;
 use rayon::prelude::*;
@@ -91,7 +91,8 @@ pub fn run_map_export(
     let project_dir = peaky_preset::resolve_project_dir(&project.to_string_lossy());
     let preset_path = project_dir.join("config.yaml");
     let preset = load_preset(&preset_path)?;
-    let board_index = load_nodes_board_index(&project_dir);
+    let board_viewshed = BoardViewshedResolver::load(&project_dir)
+        .map_err(|e| anyhow::anyhow!("boards.yaml: {e}"))?;
     let hub_config = meshenvy::nevada_hub_bridge_config();
     let coverage_bbox = hub_config.bbox(0.5);
 
@@ -138,7 +139,7 @@ pub fn run_map_export(
                     &preset_path,
                     &preset,
                     fleet_site,
-                    &board_index,
+                    &board_viewshed,
                     opts.verbose,
                 )
                 {
@@ -253,13 +254,13 @@ fn ensure_site_viewshed(
     preset_path: &Path,
     preset: &peaky_preset::Preset,
     fleet_site: &FleetSite,
-    board_index: &NodesBoardIndex,
+    board_viewshed: &BoardViewshedResolver,
     verbose: bool,
 ) -> Result<(PathBuf, bool)> {
     let digest = peaky_serve::viewshed::target_viewshed_digest_for_site(
         preset,
         &fleet_site.site,
-        Some(board_index),
+        Some(board_viewshed),
     )?;
     let workdir = resolved_viewshed_root(preset_path).join(&digest);
     let png = workdir.join("splat.png");
@@ -270,7 +271,7 @@ fn ensure_site_viewshed(
         preset,
         &fleet_site.slug,
         &fleet_site.site,
-        Some(board_index),
+        Some(board_viewshed),
         verbose,
     )?;
     Ok((workdir, cache_hit))

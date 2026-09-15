@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use anyhow::{bail, Context, Result};
 use peaky_preset::{
     effective_target_raster_dimension, environment_catalog_from_preset, modem_catalog_from_preset,
-    preset_radius_km, site_viewshed_radius_km, NodesBoardIndex, Preset, SiteEntry,
+    preset_radius_km, site_viewshed_radius_km, BoardViewshedResolver, Preset, SiteEntry,
 };
 use serde_yaml::Mapping;
 use splatter::CovRequest;
@@ -228,10 +228,10 @@ pub fn preset_to_request_with_sim(
     lon: f64,
     site: Option<&SiteEntry>,
     sim: Option<&ViewshedSimOverrides>,
-    board_index: Option<&NodesBoardIndex>,
+    board_viewshed: Option<&BoardViewshedResolver>,
 ) -> Result<CovRequest> {
-    let mut req = preset_to_request_inner(preset, lat, lon, site, board_index)?;
-    let site_radius_km = site.map(|s| site_viewshed_radius_km(preset, s, board_index));
+    let mut req = preset_to_request_inner(preset, lat, lon, site, board_viewshed)?;
+    let site_radius_km = site.map(|s| site_viewshed_radius_km(preset, s, board_viewshed));
     if let Some(sim) = sim {
         if let Some(radius_km) = sim.radius_km {
             req.radius = radius_km * 1000.0;
@@ -255,7 +255,7 @@ fn preset_to_request_inner(
     lat: f64,
     lon: f64,
     site: Option<&SiteEntry>,
-    board_index: Option<&NodesBoardIndex>,
+    board_viewshed: Option<&BoardViewshedResolver>,
 ) -> Result<CovRequest> {
     let env = resolved_environment(preset)?;
     let mut modem_map = resolved_modem(preset)?;
@@ -289,7 +289,7 @@ fn preset_to_request_inner(
     let rel = reliability_margin_db(situation, time_pct);
 
     let radius_km = site
-        .map(|s| site_viewshed_radius_km(preset, s, board_index))
+        .map(|s| site_viewshed_radius_km(preset, s, board_viewshed))
         .unwrap_or_else(|| preset_radius_km(preset));
 
     let tx_height = site

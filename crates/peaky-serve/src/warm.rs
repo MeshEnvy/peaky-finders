@@ -13,7 +13,8 @@ use peaky_peaks::{
     load_routing_for_points, warm_place_access_with_routing, OsmRouting, OsmRoutingOpts,
 };
 use peaky_preset::{
-    ensure_access_meta, load_access, load_preset, resolved_viewshed_root, NodesBoardIndex, Preset,
+    ensure_access_meta, load_access, load_preset, resolved_viewshed_root, BoardViewshedResolver,
+    Preset,
     SiteEntry,
 };
 use serde_json::{json, Value};
@@ -214,7 +215,7 @@ pub struct WarmHub {
     workers_started: Arc<AtomicBool>,
     /// Project-wide OSM routing graph (lazy; shared across site access warms).
     osm_routing: Arc<Mutex<Option<Arc<OsmRouting>>>>,
-    board_index: Arc<NodesBoardIndex>,
+    board_viewshed: Arc<BoardViewshedResolver>,
 }
 
 impl WarmHub {
@@ -223,7 +224,7 @@ impl WarmHub {
         events: ServeEventHub,
         verbose: bool,
         coverage_workers: usize,
-        board_index: Arc<NodesBoardIndex>,
+        board_viewshed: Arc<BoardViewshedResolver>,
     ) -> Self {
         Self {
             session,
@@ -233,7 +234,7 @@ impl WarmHub {
             projects: Arc::new(Mutex::new(HashMap::new())),
             workers_started: Arc::new(AtomicBool::new(false)),
             osm_routing: Arc::new(Mutex::new(None)),
-            board_index,
+            board_viewshed,
         }
     }
 
@@ -284,7 +285,7 @@ impl WarmHub {
         preset: &Preset,
         site: &SiteEntry,
     ) -> Result<String> {
-        target_viewshed_digest_for_site(preset, site, Some(self.board_index.as_ref()))
+        target_viewshed_digest_for_site(preset, site, Some(self.board_viewshed.as_ref()))
     }
 
     fn site_coverage_exists(preset_path: &PathBuf, key: &str) -> bool {
@@ -391,7 +392,7 @@ impl WarmHub {
             &site,
             &preset,
             None,
-            Some(hub.board_index.as_ref()),
+            Some(hub.board_viewshed.as_ref()),
         ) {
             Ok(Some(overlay)) => !Self::overlay_is_at_target(&overlay),
             _ => true,
@@ -405,7 +406,7 @@ impl WarmHub {
                 &preset,
                 &site_slug,
                 &site,
-                Some(hub.board_index.as_ref()),
+                Some(hub.board_viewshed.as_ref()),
                 hub.verbose,
                 |overlay| hub.publish_viewshed(&slug, overlay),
             ) {
@@ -573,7 +574,7 @@ impl WarmHub {
             site,
             preset,
             None,
-            Some(self.board_index.as_ref()),
+            Some(self.board_viewshed.as_ref()),
         ) {
             if Self::overlay_is_at_target(&overlay) {
                 viewshed_needed = false;
@@ -703,7 +704,7 @@ impl WarmHub {
                 site,
                 &preset,
                 None,
-                Some(self.board_index.as_ref()),
+                Some(self.board_viewshed.as_ref()),
             ) {
                 self.publish_viewshed(slug, overlay.clone());
                 if Self::overlay_is_at_target(&overlay) {

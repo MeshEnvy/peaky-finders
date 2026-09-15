@@ -5,9 +5,7 @@ use std::path::Path;
 
 use serde_yaml::Value;
 
-use crate::board_sim::normalize_board_id;
-
-/// Maps fleet unit keys (``me0041``) to normalized board ids (``heltec-t096``).
+/// Maps fleet unit keys (``me0041``) to board ids from ``nodes.yaml`` (lowercase).
 #[derive(Debug, Clone, Default)]
 pub struct NodesBoardIndex {
     node_to_board: HashMap<String, String>,
@@ -59,7 +57,7 @@ pub fn load_nodes_board_index_from_path(path: &Path) -> Result<NodesBoardIndex, 
         };
         node_to_board.insert(
             node_key.trim().to_ascii_lowercase(),
-            normalize_board_id(board_raw),
+            board_raw.trim().to_ascii_lowercase(),
         );
     }
     Ok(NodesBoardIndex { node_to_board })

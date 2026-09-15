@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use peaky_geo::polygonize::{fraction_to_lat_lon, LatLonBox};
-use peaky_preset::{preset_radius_km, resolved_viewshed_root, NodesBoardIndex, Preset, SiteEntry};
+use peaky_preset::{preset_radius_km, resolved_viewshed_root, BoardViewshedResolver, Preset, SiteEntry};
 use serde_json::{json, Value};
 
 use crate::rf::{preset_to_request, viewshed_workspace_digest};
@@ -66,9 +66,9 @@ fn site_index_entry(
     preset: &Preset,
     viewshed_root: &Path,
     target_raster: u32,
-    board_index: Option<&NodesBoardIndex>,
+    board_viewshed: Option<&BoardViewshedResolver>,
 ) -> Result<Value> {
-    let target_digest = viewshed_digest_for_raster(preset, site, target_raster, board_index)?;
+    let target_digest = viewshed_digest_for_raster(preset, site, target_raster, board_viewshed)?;
     let target_workdir = viewshed_root.join(&target_digest);
     let target_png = target_workdir.join("splat.png");
     if target_png.is_file() && splat_png_is_valid_fast(&target_png) {
@@ -85,7 +85,7 @@ fn site_index_entry(
 
     let ladder = raster_upgrade_ladder(MIN_SERVE_RASTER_DIMENSION, target_raster);
     for raster in ladder.iter().rev().copied().skip(1) {
-        let digest = viewshed_digest_for_raster(preset, site, raster, board_index)?;
+        let digest = viewshed_digest_for_raster(preset, site, raster, board_viewshed)?;
         let workdir = viewshed_root.join(&digest);
         let png = workdir.join("splat.png");
         if png.is_file() && splat_png_is_valid_fast(&png) {
@@ -144,13 +144,13 @@ pub fn build_viewshed_index(
     project_slug: &str,
     preset_path: &Path,
     preset: &Preset,
-    board_index: Option<&NodesBoardIndex>,
+    board_viewshed: Option<&BoardViewshedResolver>,
 ) -> Result<Value> {
     let viewshed_root = resolved_viewshed_root(preset_path);
     let mut entries = serde_json::Map::new();
     let mut ready_count = 0usize;
     for (slug, site) in preset.sites.iter() {
-        let target_raster = effective_target_raster_for_site(preset, site, board_index, None);
+        let target_raster = effective_target_raster_for_site(preset, site, board_viewshed, None);
         let row = site_index_entry(
             project_slug,
             slug,
@@ -158,7 +158,7 @@ pub fn build_viewshed_index(
             preset,
             &viewshed_root,
             target_raster,
-            board_index,
+            board_viewshed,
         )?;
         if row.get("ready").and_then(|v| v.as_bool()) == Some(true) {
             ready_count += 1;
@@ -184,10 +184,10 @@ pub fn site_viewshed_overlay_if_ready(
     site: &SiteEntry,
     preset: &Preset,
     sim: Option<&ViewshedSimOverrides>,
-    board_index: Option<&NodesBoardIndex>,
+    board_viewshed: Option<&BoardViewshedResolver>,
 ) -> Result<Option<Value>> {
     let viewshed_root = resolved_viewshed_root(preset_path);
-    let target_raster = effective_target_raster_for_site(preset, site, board_index, sim);
+    let target_raster = effective_target_raster_for_site(preset, site, board_viewshed, sim);
     let row = site_index_entry(
         project_slug,
         site_slug,
@@ -195,7 +195,7 @@ pub fn site_viewshed_overlay_if_ready(
         preset,
         &viewshed_root,
         target_raster,
-        board_index,
+        board_viewshed,
     )?;
     if row.get("ready").and_then(|v| v.as_bool()) != Some(true) {
         return Ok(None);

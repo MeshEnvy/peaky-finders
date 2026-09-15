@@ -7,8 +7,8 @@ use anyhow::{Context, Result};
 use axum::Router;
 use peaky_geo::prepare_land_at_boot;
 use peaky_preset::{
-    load_nodes_board_index, load_preset, resolved_coverage_max_workers,
-    resolved_dem_fetch_max_workers, resolved_skadi_mirror_dir_for_project,
+    load_preset, resolved_coverage_max_workers, resolved_dem_fetch_max_workers,
+    resolved_skadi_mirror_dir_for_project, BoardViewshedResolver,
 };
 use splatter::Session;
 use tokio::sync::Semaphore;
@@ -76,7 +76,10 @@ pub async fn run_server(
     let coverage_workers = resolved_coverage_max_workers(&preset);
     let session = Arc::new(Session::new(mirror, verbose, dem_workers));
     let events = crate::events::ServeEventHub::default();
-    let board_index = Arc::new(load_nodes_board_index(&project_dir));
+    let board_viewshed = Arc::new(
+        BoardViewshedResolver::load(&project_dir)
+            .map_err(|e| anyhow::anyhow!("boards.yaml: {e}"))?,
+    );
     let state = AppState {
         session: session.clone(),
         events: events.clone(),
@@ -85,14 +88,14 @@ pub async fn run_server(
             events,
             verbose,
             coverage_workers,
-            Arc::clone(&board_index),
+            Arc::clone(&board_viewshed),
         ),
         link_solver: LinkSolverHub::new(Arc::clone(&session), verbose),
         alternates: AlternatesHub::new(Arc::clone(&session), verbose),
         fortify: FortifyHub::new(session, verbose),
         verbose,
         dem_tile_render: Arc::new(Semaphore::new(crate::state::DEM_TILE_RENDER_PERMITS)),
-        board_index,
+        board_viewshed,
         project_dir: project_dir.clone(),
         slug,
     };

@@ -497,7 +497,7 @@ async fn viewshed_png(
         state.session.clone(),
         &path,
         &site_slug,
-        state.board_index.as_ref(),
+        state.board_viewshed.as_ref(),
         state.verbose,
     )
         .await
@@ -549,7 +549,7 @@ async fn viewshed_meta(State(state): State<AppState>,
             site,
             &preset,
             Some(&sim),
-            Some(state.board_index.as_ref()),
+            Some(state.board_viewshed.as_ref()),
         )
     {
         return Ok(Json(overlay));
@@ -557,14 +557,14 @@ async fn viewshed_meta(State(state): State<AppState>,
     let target_raster = crate::viewshed_sim::effective_target_raster_for_site(
         &preset,
         site,
-        Some(state.board_index.as_ref()),
+        Some(state.board_viewshed.as_ref()),
         Some(&sim),
     );
     let digest = crate::viewshed::viewshed_digest_for_raster(
         &preset,
         site,
         target_raster,
-        Some(state.board_index.as_ref()),
+        Some(state.board_viewshed.as_ref()),
     )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(json!({
@@ -584,7 +584,7 @@ async fn viewshed_index(State(state): State<AppState>,
         &state.slug,
         &path,
         &preset,
-        Some(state.board_index.as_ref()),
+        Some(state.board_viewshed.as_ref()),
     )
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
