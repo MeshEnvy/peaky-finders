@@ -253,7 +253,10 @@ export function createMapChromeDomain(ctx) {
       viewshedVisible: Object.fromEntries(viewshedVisible),
       accessVisible: Object.fromEntries(accessVisible),
       entityPanelOpen: !!store?.ui?.entityPanelOpen,
-      entityPanelTab: store?.ui?.entityPanelTab === 'land' ? 'land' : 'sites',
+      entityPanelTab: ['land', 'peaks'].includes(store?.ui?.entityPanelTab)
+        ? store.ui.entityPanelTab
+        : 'sites',
+      hiddenPeaks: store?.peaks?.hidden ? [...store.peaks.hidden] : [],
       landVisible: Object.fromEntries(landVisible),
       landSourceBatchVisible: Object.fromEntries(landSourceBatchVisible),
       landLabelsVisible: Object.fromEntries(landLabelsVisible),

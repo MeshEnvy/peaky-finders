@@ -81,6 +81,16 @@ export function placeAccessApiUrl(projectSlug, placeSlug, opts = {}) {
   return qs ? `${base}?${qs}` : base
 }
 
+/** @param {string} projectSlug @param {string} placeSlug @param {{ lat?: number, lon?: number }} [opts] */
+export function placeAccessWarmApiUrl(projectSlug, placeSlug, opts = {}) {
+  const params = new URLSearchParams()
+  if (Number.isFinite(opts.lat)) params.set('lat', String(opts.lat))
+  if (Number.isFinite(opts.lon)) params.set('lon', String(opts.lon))
+  const qs = params.toString()
+  const base = `/api/p/${projectSlug}/access/${encodeURIComponent(placeSlug)}/warm`
+  return qs ? `${base}?${qs}` : base
+}
+
 export function landApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/land`
 }
@@ -175,9 +185,10 @@ export function viewshedIndexUrl(projectSlug, params) {
   return `/api/p/${projectSlug}/viewsheds/index?${params}`
 }
 
-export function linkSolverScanUrl(projectSlug, slugA, slugB, minRoutes) {
+export function linkSolverScanUrl(projectSlug, slugA, slugB, minRoutes, excludePeaks = []) {
   const params = new URLSearchParams({ a: slugA, b: slugB })
   if (minRoutes != null) params.set('min_routes', String(minRoutes))
+  if (excludePeaks?.length) params.set('exclude_peaks', excludePeaks.join(','))
   return `/api/p/${projectSlug}/link-solver?${params}`
 }
 
@@ -207,8 +218,9 @@ export function alternatesScanProgressUrl(projectSlug, siteSlug, anchorSlugs = [
   return `/api/p/${projectSlug}/alternates/scan-progress?${params}`
 }
 
-export function fortifyScanUrl(projectSlug, slugA, slugB) {
+export function fortifyScanUrl(projectSlug, slugA, slugB, excludePeaks = []) {
   const params = new URLSearchParams({ a: slugA, b: slugB })
+  if (excludePeaks?.length) params.set('exclude_peaks', excludePeaks.join(','))
   return `/api/p/${projectSlug}/fortify?${params}`
 }
 

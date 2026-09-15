@@ -1,6 +1,6 @@
 //! Fortify: catalog peaks that mutual-P2P both ends of an existing site link.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
@@ -42,6 +42,7 @@ pub struct FortifyRequest {
     pub preset_path: PathBuf,
     pub slug_a: String,
     pub slug_b: String,
+    pub exclude_peaks: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -223,6 +224,7 @@ pub fn parse_fortify_request(
         preset_path,
         slug_a,
         slug_b,
+        exclude_peaks: crate::query_params::parse_exclude_peaks(params),
     })
 }
 
@@ -469,6 +471,7 @@ fn load_fortify_body(
         .entries
         .iter()
         .filter(|(_, entry)| !entry.deny.unwrap_or(false))
+        .filter(|(slug, _)| !req.exclude_peaks.contains(slug.as_str()))
         .filter_map(|(slug, entry)| {
             let lat = entry.lat();
             let lon = entry.lon();

@@ -13,6 +13,7 @@ import {
   removeDraftLinksLayer,
 } from '../map/links-layers.js'
 import { ensurePeaksLayers, setPeaksLayerData, setPeaksCursorPoint, clearPeaksCursorPoint } from '../map/peaks-layers.js'
+import { hiddenPeakSlugs, isPeakMapVisible, visiblePeaksForMap } from '../stores/peaks.js'
 import { setPendingCoords } from '../stores/viewshed.js'
 
 /**
@@ -27,6 +28,7 @@ import { setPendingCoords } from '../stores/viewshed.js'
  * @param {() => object|null|undefined} [opts.getViewshed]
  * @param {(slug: string) => boolean} [opts.isSiteMapHidden]
  * @param {() => void} [opts.raiseSiteLayers]
+ * @param {() => void} [opts.scheduleSaveMapState]
  */
 export function createPeaksDomain(opts) {
   const {
@@ -40,6 +42,7 @@ export function createPeaksDomain(opts) {
     getViewshed,
     isSiteMapHidden,
     raiseSiteLayers,
+    scheduleSaveMapState,
   } = opts
 
   let peakViewshedGen = 0
@@ -51,6 +54,31 @@ export function createPeaksDomain(opts) {
 
   function peakPanelEl() {
     return document.getElementById('peak-panel')
+  }
+
+  function bumpPeaksPanel() {
+    store.peaks.panelRevision = (store.peaks.panelRevision || 0) + 1
+  }
+
+  function pruneHiddenPeaks() {
+    const known = new Set(store.peaks.list.map((peak) => peak.slug))
+    for (const slug of [...store.peaks.hidden]) {
+      if (!known.has(slug)) store.peaks.hidden.delete(slug)
+    }
+  }
+
+  function refreshPeakLayers() {
+    if (!getMapReady()) return
+    setPeaksLayerData(getMap(), visiblePeaksForMap(store))
+  }
+
+  function applyPeakVisibilityChange(slug) {
+    refreshPeakLayers()
+    if (store.ui.selectedPeakSlug === slug && !isPeakMapVisible(store, slug)) {
+      deselectPeak({ syncDeepLink: true })
+    }
+    bumpPeaksPanel()
+    scheduleSaveMapState?.()
   }
 
   function syncDeepLinkToUrl({ replace = false } = {}) {
@@ -207,9 +235,12 @@ export function createPeaksDomain(opts) {
       const data = await resp.json()
       store.peaks.list = data.peaks || []
       store.peaks.rules = data.rules || null
+      pruneHiddenPeaks()
       await ensurePeaksLayers(map)
-      setPeaksLayerData(map, store.peaks.list)
+      refreshPeakLayers()
       updatePeakHighlight(store.ui.selectedPeakSlug)
+      bumpPeaksPanel()
+      raiseSiteLayers?.()
     } catch (err) {
       console.warn('peaks: catalog load failed', err)
     }
@@ -266,9 +297,48 @@ export function createPeaksDomain(opts) {
     }
   }
 
-  function refreshPeakLayers() {
-    if (!getMapReady()) return
-    setPeaksLayerData(getMap(), store.peaks.list)
+  function togglePeakMapVisible(slug) {
+    const value = String(slug || '').trim()
+    if (!value) return
+    if (store.peaks.hidden.has(value)) store.peaks.hidden.delete(value)
+    else store.peaks.hidden.add(value)
+    applyPeakVisibilityChange(value)
+  }
+
+  function showAllPeaks() {
+    if (!store.peaks.hidden.size) return
+    store.peaks.hidden.clear()
+    refreshPeakLayers()
+    bumpPeaksPanel()
+    scheduleSaveMapState?.()
+  }
+
+  function hideAllPeaks() {
+    let changed = false
+    for (const peak of store.peaks.list) {
+      if (!peak?.slug || store.peaks.hidden.has(peak.slug)) continue
+      store.peaks.hidden.add(peak.slug)
+      changed = true
+    }
+    if (!changed) return
+    if (store.ui.selectedPeakSlug) deselectPeak({ syncDeepLink: true })
+    refreshPeakLayers()
+    bumpPeaksPanel()
+    scheduleSaveMapState?.()
+  }
+
+  /** @param {object} peak */
+  function showPeakInView(peak) {
+    const lat = Number(peak?.lat)
+    const lon = Number(peak?.lon)
+    if (!getMapReady() || !Number.isFinite(lat) || !Number.isFinite(lon)) return
+    const map = getMap()
+    map.flyTo({
+      center: [lon, lat],
+      zoom: Math.max(map.getZoom(), 12),
+      duration: 600,
+    })
+    syncMapViewport?.()
   }
 
   function deselectPeak({ syncDeepLink = true } = {}) {
@@ -306,5 +376,12 @@ export function createPeaksDomain(opts) {
     updatePeakHighlight,
     flyToProfilePoint,
     clearPeakRfPreview,
+    togglePeakMapVisible,
+    showAllPeaks,
+    hideAllPeaks,
+    showPeakInView,
+    bumpPeaksPanel,
+    hiddenPeakSlugs: () => hiddenPeakSlugs(store),
+    isPeakMapVisible: (slug) => isPeakMapVisible(store, slug),
   }
 }

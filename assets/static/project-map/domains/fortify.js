@@ -1,6 +1,5 @@
 // @ts-check
 
-import * as apiUrls from '../api/urls.js'
 import { FORTIFY_CANDIDATES_LAYER, FORTIFY_VIEWSHED_SLUG, viewshedLayerId } from '../constants.js'
 import { applyFortifyLayers, removeFortifyLayers } from '../map/fortify-layers.js'
 import { clearPendingEpoch, setPendingCoords } from '../stores/viewshed.js'
@@ -33,6 +32,7 @@ function sleepMs(ms) {
  *     ingestAccess: (slug: string, access: object, site?: object) => void,
  *     refreshLayers: () => void,
  *   },
+ *   getHiddenPeakSlugs?: () => string[],
  * }} ctx
  */
 export function createFortifyDomain(ctx) {
@@ -48,6 +48,7 @@ export function createFortifyDomain(ctx) {
     loadSingleSiteLinks,
     raiseSiteLayers,
     getSiteBySlug,
+    getHiddenPeakSlugs,
     getViewshed,
     applyViewshedVisibilityForSite,
     siteAccessDomain,
@@ -194,18 +195,15 @@ export function createFortifyDomain(ctx) {
       siteAccessDomain.refreshLayers()
       return
     }
-    try {
-      const resp = await fetch(
-        apiUrls.placeAccessApiUrl(projectSlug, peakSlug, { warm: true, lat, lon }),
-      )
-      if (!resp.ok) return
-      const access = await resp.json()
-      if (store.fortify.accessSlug !== peakSlug) return
-      siteAccessDomain.ingestAccess(peakSlug, access, { slug: peakSlug, name, lat, lon })
-      siteAccessDomain.refreshLayers()
-    } catch (err) {
-      console.warn('fortify access load failed', peakSlug, err)
-    }
+    await siteAccessDomain.ensurePlaceAccessProfiles?.(peakSlug, lat, lon, {
+      slug: peakSlug,
+      name,
+      lat,
+      lon,
+    }, {
+      isActive: () => store.fortify.accessSlug === peakSlug,
+      onReady: () => siteAccessDomain.refreshLayers(),
+    })
   }
 
   function showPreviewForCandidate(feature) {
@@ -343,7 +341,10 @@ export function createFortifyDomain(ctx) {
     fetchAbort = new AbortController()
     const signal = fetchAbort.signal
     try {
-      const resp = await fetch(apiUrls.fortifyScanUrl(projectSlug, linkA, linkB), { signal })
+      const resp = await fetch(
+        apiUrls.fortifyScanUrl(projectSlug, linkA, linkB, getHiddenPeakSlugs?.() || []),
+        { signal },
+      )
       if (!resp.ok) {
         const errBody = await resp.json().catch(() => ({}))
         throw new Error(errBody.error || `HTTP ${resp.status}`)

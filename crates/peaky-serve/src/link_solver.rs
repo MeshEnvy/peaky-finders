@@ -59,6 +59,7 @@ pub struct LinkSolverRequest {
     pub slug_a: String,
     pub slug_b: String,
     pub min_routes: usize,
+    pub exclude_peaks: HashSet<String>,
 }
 
 struct LinkSolverJob {
@@ -208,6 +209,7 @@ pub fn parse_link_solver_request(
         slug_a,
         slug_b,
         min_routes,
+        exclude_peaks: crate::query_params::parse_exclude_peaks(params),
     })
 }
 
@@ -1071,6 +1073,9 @@ fn load_link_solver_body(
         if entry.deny.unwrap_or(false) {
             continue;
         }
+        if req.exclude_peaks.contains(slug.as_str()) {
+            continue;
+        }
         let lat = entry.lat();
         let lon = entry.lon();
         if haversine_m(lat, lon, a_lat, a_lon) <= ENDPOINT_EXCLUDE_M {
@@ -1195,27 +1200,35 @@ fn load_link_solver_body(
     let mut peak_seen: HashSet<String> = HashSet::new();
     let mut route_rows = Vec::new();
 
+    let node_by_slug: HashMap<&str, &GraphNode> = nodes
+        .iter()
+        .map(|node| (node.slug.as_str(), node))
+        .collect();
+
     for route in &diverse {
-        let coords: Vec<[f64; 2]> = route
-            .node_path
-            .iter()
-            .filter_map(|&idx| nodes.get(idx).map(|n| [n.lon, n.lat]))
-            .collect();
-        if coords.len() < 2 {
-            continue;
+        for leg in &route.legs {
+            let Some(from) = node_by_slug.get(leg.from_slug.as_str()) else {
+                continue;
+            };
+            let Some(to) = node_by_slug.get(leg.to_slug.as_str()) else {
+                continue;
+            };
+            line_features.push(json!({
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[from.lon, from.lat], [to.lon, to.lat]],
+                },
+                "properties": {
+                    "route_id": route.route_id,
+                    "from": leg.from_slug,
+                    "to": leg.to_slug,
+                    "margin_db": (leg.margin_db * 10.0).round() / 10.0,
+                    "distance_km": (leg.distance_km * 10.0).round() / 10.0,
+                    "bearing_deg": (leg.bearing_deg * 10.0).round() / 10.0,
+                },
+            }));
         }
-        line_features.push(json!({
-            "type": "Feature",
-            "geometry": { "type": "LineString", "coordinates": coords },
-            "properties": {
-                "route_id": route.route_id,
-                "hops": route.hops,
-                "bottleneck_db": (route.bottleneck_db * 10.0).round() / 10.0,
-                "total_km": (route.total_km * 10.0).round() / 10.0,
-                "unique": route.unique,
-                "similar_to": route.similar_to,
-            },
-        }));
 
         for &idx in &route.node_path {
             if idx < 2 {
@@ -1403,7 +1416,7 @@ pub fn accept_link_solver_route(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::io::Write;
     use tempfile::TempDir;
 

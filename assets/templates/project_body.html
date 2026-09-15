@@ -34,9 +34,10 @@
   </div>
 </header>
 <div class="map-shell">
-  <aside id="entity-panel" class="entity-panel" hidden aria-label="Sites and land">
+  <aside id="entity-panel" class="entity-panel" hidden aria-label="Sites, peaks, and land">
     <div class="entity-tabs" role="tablist" aria-label="Sidebar panels">
       <button type="button" class="entity-tab active" data-entity-tab="sites" role="tab" aria-selected="true" aria-controls="entity-panel-sites-pane">Sites</button>
+      <button type="button" class="entity-tab" data-entity-tab="peaks" role="tab" aria-selected="false" aria-controls="entity-panel-peaks-pane">Peaks</button>
       <button type="button" class="entity-tab" data-entity-tab="land" role="tab" aria-selected="false" aria-controls="entity-panel-land-pane">Land</button>
     </div>
     <div class="entity-panel__body">
@@ -62,6 +63,16 @@
             <wa-button id="entity-panel-add-site" appearance="outlined" variant="brand" size="s" class="pf-stretch" type="button" title="Add site">+ Site</wa-button>
           </div>
         </div>
+      </div>
+      <div id="entity-panel-peaks-pane" class="entity-panel__pane" role="tabpanel" hidden>
+        <div class="entity-panel__list-header">
+          <div class="entity-panel__list-toolbar">
+            <span class="wa-caption pf-muted entity-panel__list-count" id="entity-panel-peaks-count"></span>
+            <wa-button id="entity-panel-peaks-show-all" appearance="outlined" size="s" type="button" title="Show all peaks on the map">Show all</wa-button>
+            <wa-button id="entity-panel-peaks-hide-all" appearance="outlined" size="s" type="button" title="Hide all peaks on the map">Hide all</wa-button>
+          </div>
+        </div>
+        <div id="entity-panel-peaks-list" class="entity-panel__list"></div>
       </div>
       <div id="entity-panel-land-pane" class="entity-panel__pane" role="tabpanel" hidden>
         <div class="entity-panel__list-header">

@@ -17,6 +17,7 @@ export function createEntityChromeDomain(ctx) {
     entityPanel,
     entityPanelToggle,
     entityPanelSitesPane,
+    entityPanelPeaksPane,
     entityPanelLandPane,
     entityPanelTabs,
     mapToolSites,
@@ -49,9 +50,10 @@ export function createEntityChromeDomain(ctx) {
   }
 
   function setEntityTab(tab) {
-    const next = tab === 'land' ? 'land' : 'sites'
+    const next = tab === 'land' ? 'land' : tab === 'peaks' ? 'peaks' : 'sites'
     store.ui.entityPanelTab = next
     if (entityPanelSitesPane) entityPanelSitesPane.hidden = next !== 'sites'
+    if (entityPanelPeaksPane) entityPanelPeaksPane.hidden = next !== 'peaks'
     if (entityPanelLandPane) entityPanelLandPane.hidden = next !== 'land'
     for (const btn of entityPanelTabs) {
       const active = (btn.getAttribute('data-entity-tab') || 'sites') === next

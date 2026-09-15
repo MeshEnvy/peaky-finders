@@ -39,6 +39,8 @@ export function createRootStore(config, savedMapState) {
     peaks: {
       list: [],
       rules: null,
+      hidden: new Set(),
+      panelRevision: 0,
     },
     access: {
       bySlug: {},
@@ -52,7 +54,9 @@ export function createRootStore(config, savedMapState) {
       selectedPeakSlug: null,
       selectedLink: null,
       entityPanelOpen: savedMapState?.entityPanelOpen === true,
-      entityPanelTab: savedMapState?.entityPanelTab === 'land' ? 'land' : 'sites',
+      entityPanelTab: ['land', 'peaks'].includes(savedMapState?.entityPanelTab)
+        ? savedMapState.entityPanelTab
+        : 'sites',
       filterByViewport: savedMapState?.filterByViewport === true,
       viewportEpoch: 0,
       tagFilters: new Set(Array.isArray(savedMapState?.tagFilters) ? savedMapState.tagFilters : []),
@@ -159,6 +163,8 @@ export function createRootStore(config, savedMapState) {
       payload: null,
       minRoutes: 5,
       selectedRouteId: null,
+      selectedPeakSlug: null,
+      accessSlug: null,
       likeOf: null,
       likeRoutes: [],
       accepting: false,
@@ -200,6 +206,9 @@ export function createRootStore(config, savedMapState) {
   }
   if (savedMapState?.hiddenSites && Array.isArray(savedMapState.hiddenSites)) {
     for (const slug of savedMapState.hiddenSites) store.sites.hidden.add(String(slug))
+  }
+  if (savedMapState?.hiddenPeaks && Array.isArray(savedMapState.hiddenPeaks)) {
+    for (const slug of savedMapState.hiddenPeaks) store.peaks.hidden.add(String(slug))
   }
   if (savedMapState?.landVisible) {
     for (const [k, v] of Object.entries(savedMapState.landVisible)) {

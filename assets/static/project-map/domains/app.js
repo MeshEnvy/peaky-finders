@@ -132,6 +132,7 @@ export function runApp(ctx = {}) {
     getViewshed: () => viewshedDomain,
     isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
     raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
+    scheduleSaveMapState: () => mapChrome?.scheduleSaveMapState(),
   })
 
   siteAccessDomain = createSiteAccessDomain({
@@ -273,6 +274,7 @@ export function runApp(ctx = {}) {
     entityPanel: document.getElementById('entity-panel'),
     entityPanelToggle: document.getElementById('entity-panel-toggle'),
     entityPanelSitesPane: document.getElementById('entity-panel-sites-pane'),
+    entityPanelPeaksPane: document.getElementById('entity-panel-peaks-pane'),
     entityPanelLandPane: document.getElementById('entity-panel-land-pane'),
     entityPanelTabs: document.querySelectorAll('[data-entity-tab]'),
     mapToolSites: toolbar.mapToolSites,
@@ -419,6 +421,10 @@ export function runApp(ctx = {}) {
         findSiteLinkFeature: (a, b) => linksDomain?.findSiteLinkFeature(a, b),
         selectSite: (...args) => placementDomain.selectSite(...args),
         getViewshed: () => viewshedDomain,
+        applyViewshedVisibilityForSite: (slug) =>
+          viewshedDomain?.applyViewshedVisibilityForSite(slug),
+        siteAccessDomain,
+        getHiddenPeakSlugs: () => peaksDomain?.hiddenPeakSlugs?.() || [],
         mapToolLinkSolver: toolbar.mapToolLinkSolver,
         linkSolverPanel: document.getElementById('link-solver-panel'),
         updatePinOverlays: () => viewshedDomain?.updatePinOverlays(),
@@ -462,6 +468,7 @@ export function runApp(ctx = {}) {
         applyViewshedVisibilityForSite: (slug) =>
           viewshedDomain?.applyViewshedVisibilityForSite(slug),
         siteAccessDomain,
+        getHiddenPeakSlugs: () => peaksDomain?.hiddenPeakSlugs?.() || [],
       })
       if (store.ui.mapReady) fortifyDomain.installMapHandlers(map)
     }
@@ -660,6 +667,11 @@ export function runApp(ctx = {}) {
     deselectSite: (...args) => placementDomain.deselectSite(...args),
     selectPeak: (...args) => peaksDomain.selectPeak(...args),
     deselectPeak: (...args) => peaksDomain.deselectPeak(...args),
+    togglePeakMapVisible: (...args) => peaksDomain.togglePeakMapVisible(...args),
+    showAllPeaks: () => peaksDomain.showAllPeaks(),
+    hideAllPeaks: () => peaksDomain.hideAllPeaks(),
+    showPeakInView: (...args) => peaksDomain.showPeakInView(...args),
+    renderPeaksPanel: () => peaksDomain.bumpPeaksPanel(),
     deselectLink: (...args) => linksDomain?.deselectLink(...args),
     findSiteLinkFeature: (a, b) => linksDomain?.findSiteLinkFeature(a, b),
     flyToPeakProfilePoint: (...args) => peaksDomain.flyToProfilePoint(...args),

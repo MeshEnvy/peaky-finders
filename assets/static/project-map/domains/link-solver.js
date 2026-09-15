@@ -1,13 +1,18 @@
 // @ts-check
 
 import * as apiUrls from '../api/urls.js'
-import { LINK_SOLVER_PEAKS_LAYER, LINK_SOLVER_VIEWSHED_PREFIX } from '../constants.js'
+import {
+  LINK_SOLVER_PEAKS_LAYER,
+  LINK_SOLVER_VIEWSHED_PREFIX,
+  viewshedLayerId,
+} from '../constants.js'
 import { applyLinkSolverLayers, removeLinkSolverLayers } from '../map/link-solver-layers.js'
-import { setPendingCoords } from '../stores/viewshed.js'
+import { clearPendingEpoch, setPendingCoords } from '../stores/viewshed.js'
 
 const PROGRESS_POLL_MS = 250
 const PROGRESS_IDLE_GRACE_MS = 3000
 const PROGRESS_TIMEOUT_MS = 180_000
+const VIEWSHED_POLL_MS = 400
 
 function sleepMs(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -30,6 +35,13 @@ function sleepMs(ms) {
  *   findSiteLinkFeature?: (a: string, b: string) => object | null,
  *   selectSite?: (slug: string) => void,
  *   getViewshed?: () => object,
+ *   applyViewshedVisibilityForSite?: (slug: string) => void,
+ *   siteAccessDomain?: {
+ *     ingestAccess: (slug: string, access: object, site?: object) => void,
+ *     refreshLayers: () => void,
+ *     accessHasRouteProfiles?: (row: object) => boolean,
+ *   },
+ *   getHiddenPeakSlugs?: () => string[],
  *   mapToolLinkSolver?: HTMLElement | null,
  *   linkSolverPanel?: HTMLElement | null,
  *   updatePinOverlays?: () => void,
@@ -52,6 +64,9 @@ export function createLinkSolverDomain(ctx) {
     findSiteLinkFeature,
     selectSite,
     getViewshed,
+    applyViewshedVisibilityForSite,
+    siteAccessDomain,
+    getHiddenPeakSlugs,
     mapToolLinkSolver,
     linkSolverPanel,
     updatePinOverlays,
@@ -65,6 +80,8 @@ export function createLinkSolverDomain(ctx) {
   const hopViewshedSlugs = new Set()
   /** @type {Map<string, { lat: number, lon: number }>} */
   const hopViewshedCoords = new Map()
+  /** @type {Set<string>} */
+  const hiddenPreviewSiteSlugs = new Set()
 
   function vs() {
     return getViewshed?.()
@@ -96,11 +113,36 @@ export function createLinkSolverDomain(ctx) {
     return `${LINK_SOLVER_VIEWSHED_PREFIX}${index}`
   }
 
+  function hideSiteViewshedLayer(slug) {
+    const map = getMap()
+    if (!slug || !map) return
+    const layerId = viewshedLayerId(slug)
+    if (!map.getLayer(layerId)) return
+    map.setLayoutProperty(layerId, 'visibility', 'none')
+    hiddenPreviewSiteSlugs.add(slug)
+  }
+
+  function restoreHiddenPreviewSiteViewsheds() {
+    for (const slug of hiddenPreviewSiteSlugs) {
+      applyViewshedVisibilityForSite?.(slug)
+    }
+    hiddenPreviewSiteSlugs.clear()
+  }
+
+  function clearHopPreview() {
+    clearHopViewsheds()
+    restoreHiddenPreviewSiteViewsheds()
+    store.linkSolver.accessSlug = null
+    store.linkSolver.selectedPeakSlug = null
+    siteAccessDomain?.refreshLayers?.()
+    updatePinOverlays?.()
+  }
+
   function clearHopViewsheds() {
     hopViewshedGen += 1
     const vsDomain = vs()
     for (const slug of hopViewshedSlugs) {
-      store.viewshed.pendingEpoch.delete(slug)
+      clearPendingEpoch(store, slug)
       store.viewshed.loading.delete(slug)
       store.viewshed.visible.delete(slug)
       vsDomain?.clearViewshedLoadingState?.(slug)
@@ -111,12 +153,34 @@ export function createLinkSolverDomain(ctx) {
     updatePinOverlays?.()
   }
 
+  async function pollHopViewshedReady(slug, lat, lon, gen, epoch, vsDomain) {
+    const deadline = Date.now() + PROGRESS_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      if (hopViewshedGen !== gen) return
+      if (store.viewshed.pendingEpoch.get(slug) !== epoch) return
+      if (await vsDomain.tryLoadCoordViewshedFromCache?.(slug, lat, lon)) {
+        vsDomain.raiseViewshedLayers?.()
+        raiseSiteLayers?.()
+        updatePinOverlays?.()
+        return
+      }
+      await sleepMs(VIEWSHED_POLL_MS)
+    }
+    if (hopViewshedGen === gen && store.viewshed.pendingEpoch.get(slug) === epoch) {
+      clearPendingEpoch(store, slug)
+      store.viewshed.loading.delete(slug)
+      vsDomain?.clearViewshedLoadingState?.(slug)
+      updatePinOverlays?.()
+    }
+  }
+
   async function loadHopViewshed(slug, lat, lon, gen) {
     const vsDomain = vs()
     if (!vsDomain) return
     store.viewshed.visible.set(slug, true)
     if (await vsDomain.tryLoadCoordViewshedFromCache?.(slug, lat, lon)) {
       vsDomain.raiseViewshedLayers?.()
+      raiseSiteLayers?.()
       return
     }
     vsDomain.removeViewshedLayer?.(slug)
@@ -130,8 +194,8 @@ export function createLinkSolverDomain(ctx) {
       if (hopViewshedGen !== gen) return
       if (store.viewshed.pendingEpoch.get(slug) !== epoch) return
       if (!resp.ok) {
+        clearPendingEpoch(store, slug)
         store.viewshed.loading.delete(slug)
-        store.viewshed.pendingEpoch.delete(slug)
         updatePinOverlays?.()
         return
       }
@@ -141,13 +205,91 @@ export function createLinkSolverDomain(ctx) {
       if (ready && ready.status === 'ready') {
         vsDomain.handleViewshedReady({ ...ready, slug }, epoch)
         vsDomain.raiseViewshedLayers?.()
+        raiseSiteLayers?.()
+      } else {
+        void pollHopViewshedReady(slug, lat, lon, gen, epoch, vsDomain)
       }
     } catch (_) {
       if (hopViewshedGen === gen) {
+        clearPendingEpoch(store, slug)
         store.viewshed.loading.delete(slug)
-        store.viewshed.pendingEpoch.delete(slug)
         updatePinOverlays?.()
       }
+    }
+  }
+
+  function peakRowAccess(peakSlug) {
+    const peak = store.peaks?.list?.find((row) => row.slug === peakSlug)
+    if (!peak?.hike?.profile && !peak?.jeep?.profile) return null
+    return peak
+  }
+
+  async function loadHopAccess(peakSlug, lat, lon, name) {
+    if (!peakSlug || !siteAccessDomain) return
+    store.linkSolver.accessSlug = peakSlug
+
+    const cached = store.access?.bySlug?.[peakSlug]
+    if (siteAccessDomain.accessHasRouteProfiles?.(cached)) {
+      siteAccessDomain.refreshLayers()
+      raiseSiteLayers?.()
+      return
+    }
+
+    const peakRow = peakRowAccess(peakSlug)
+    if (peakRow) {
+      siteAccessDomain.ingestAccess(
+        peakSlug,
+        {
+          road_lat: peakRow.road_lat,
+          road_lon: peakRow.road_lon,
+          paved_lat: peakRow.paved_lat,
+          paved_lon: peakRow.paved_lon,
+          hike_m: peakRow.hike_m,
+          jeep_m: peakRow.jeep_m,
+          hike: peakRow.hike,
+          jeep: peakRow.jeep,
+        },
+        { slug: peakSlug, name, lat, lon },
+      )
+      siteAccessDomain.refreshLayers()
+      raiseSiteLayers?.()
+      return
+    }
+
+    await siteAccessDomain.ensurePlaceAccessProfiles?.(peakSlug, lat, lon, {
+      slug: peakSlug,
+      name,
+      lat,
+      lon,
+    }, {
+      isActive: () => store.linkSolver.accessSlug === peakSlug,
+      onReady: () => {
+        siteAccessDomain.refreshLayers()
+        raiseSiteLayers?.()
+      },
+    })
+  }
+
+  function prefetchSolverPeaksAccess() {
+    if (!siteAccessDomain?.ensurePlaceAccessProfiles) return
+    const features = store.linkSolver.payload?.peaks?.features
+    if (!Array.isArray(features)) return
+    for (const feature of features) {
+      const props = feature.properties || {}
+      const slug = String(props.peak_slug || props.slug || '')
+      const coords = feature.geometry?.coordinates
+      if (!slug || !coords) continue
+      const lon = Number(coords[0])
+      const lat = Number(coords[1])
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
+      if (siteAccessDomain.accessHasRouteProfiles?.(store.access?.bySlug?.[slug])) continue
+      void siteAccessDomain.ensurePlaceAccessProfiles(
+        slug,
+        lat,
+        lon,
+        { slug, name: props.name || slug, lat, lon },
+        { prefetchOnly: true },
+      )
     }
   }
 
@@ -166,8 +308,11 @@ export function createLinkSolverDomain(ctx) {
     if (!map || !getMapReady()) return
     applyLinkSolverLayers(map, payload, {
       selectedRouteId: store.linkSolver.selectedRouteId,
+      selectedPeakSlug: store.linkSolver.selectedPeakSlug,
+      routes: payload?.routes,
       raiseSiteLayers,
     })
+    prefetchSolverPeaksAccess()
   }
 
   function routeById(routeId) {
@@ -231,39 +376,109 @@ export function createLinkSolverDomain(ctx) {
     )
   }
 
-  async function loadRouteHopViewsheds(route) {
+  function hopIndexForPeak(route, peakSlug) {
+    if (!route?.peaks?.length || !peakSlug) return -1
+    return route.peaks.findIndex(
+      (peak) => String(peak.peak_slug || peak.slug || '') === peakSlug,
+    )
+  }
+
+  function flyToHopPeak(feature) {
+    const map = getMap()
+    if (!map || !getMapReady()) return
+    const coords = feature?.geometry?.coordinates
+    if (!coords) return
+    const lon = Number(coords[0])
+    const lat = Number(coords[1])
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+
+    const siteA = store.linkSolver.a ? getSiteBySlug?.(store.linkSolver.a) : null
+    const siteB = store.linkSolver.b ? getSiteBySlug?.(store.linkSolver.b) : null
+    if (siteA && siteB) {
+      const lons = [lon, Number(siteA.lon), Number(siteB.lon)].filter(Number.isFinite)
+      const lats = [lat, Number(siteA.lat), Number(siteB.lat)].filter(Number.isFinite)
+      if (lons.length >= 2 && lats.length >= 2) {
+        map.fitBounds(
+          [
+            [Math.min(...lons), Math.min(...lats)],
+            [Math.max(...lons), Math.max(...lats)],
+          ],
+          { padding: 80, duration: 600, maxZoom: 13 },
+        )
+        return
+      }
+    }
+    map.flyTo({
+      center: [lon, lat],
+      zoom: Math.max(map.getZoom(), 12),
+      duration: 600,
+    })
+  }
+
+  function selectLinkSolverPeak(feature) {
+    const props = feature?.properties || {}
+    const peakSlug = String(props.peak_slug || props.slug || '')
+    const coords = feature?.geometry?.coordinates
+    if (!peakSlug || !coords) return
+
+    const routeId = store.linkSolver.selectedRouteId
+    const route = routeById(routeId)
+    if (!routeId || !route) return
+
+    const lon = Number(coords[0])
+    const lat = Number(coords[1])
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+
+    store.linkSolver.selectedPeakSlug = peakSlug
     clearHopViewsheds()
-    const peaks = route?.peaks
-    if (!Array.isArray(peaks) || !peaks.length) return
-    const gen = ++hopViewshedGen
-    for (let i = 0; i < peaks.length; i += 1) {
-      const peak = peaks[i]
-      const lat = Number(peak.lat)
-      const lon = Number(peak.lon)
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
-      const slug = hopViewshedSlug(i)
+    restoreHiddenPreviewSiteViewsheds()
+    if (store.linkSolver.a) hideSiteViewshedLayer(store.linkSolver.a)
+    if (store.linkSolver.b) hideSiteViewshedLayer(store.linkSolver.b)
+    store.linkSolver.accessSlug = null
+    siteAccessDomain?.refreshLayers?.()
+
+    applyPayload(store.linkSolver.payload)
+
+    const hopIndex = hopIndexForPeak(route, peakSlug)
+    if (hopIndex >= 0) {
+      const slug = hopViewshedSlug(hopIndex)
+      const gen = ++hopViewshedGen
       hopViewshedSlugs.add(slug)
       hopViewshedCoords.set(slug, { lat, lon })
-      await loadHopViewshed(slug, lat, lon, gen)
-      if (hopViewshedGen !== gen) return
+      void loadHopViewshed(slug, lat, lon, gen)
     }
-    vs()?.raiseViewshedLayers?.()
-    updatePinOverlays?.()
+
+    void loadHopAccess(peakSlug, lat, lon, props.name || peakSlug)
+    flyToHopPeak(feature)
+
+    const name = props.name || peakSlug
+    setStatus(`Selected hop — ${name}`)
   }
 
   function selectRoute(routeId) {
     if (!routeId) return
     store.linkSolver.selectedRouteId = routeId
+    clearHopPreview()
     applyPayload(store.linkSolver.payload)
     const route = routeById(routeId)
     if (!route) return
     fitRouteBounds(route)
-    void loadRouteHopViewsheds(route)
     const hops = route.hops ?? '?'
     const bottleneck = route.bottleneck_db
     const bits = [`${hops} hop${hops === 1 ? '' : 's'}`]
     if (Number.isFinite(bottleneck)) bits.push(`${Number(bottleneck).toFixed(1)} dB bottleneck`)
     setStatus(`Selected route — ${bits.join(', ')}`)
+    if (route.peaks?.length === 1) {
+      const peak = route.peaks[0]
+      const peakSlug = String(peak.peak_slug || peak.slug || '')
+      if (peakSlug && Number.isFinite(Number(peak.lat)) && Number.isFinite(Number(peak.lon))) {
+        selectLinkSolverPeak({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [Number(peak.lon), Number(peak.lat)] },
+          properties: { peak_slug: peakSlug, name: peak.name || peakSlug },
+        })
+      }
+    }
   }
 
   function checkAlreadyLinked(a, b) {
@@ -278,7 +493,7 @@ export function createLinkSolverDomain(ctx) {
 
   function clearLinkSolver({ closePanel = false } = {}) {
     bumpFetchEpoch()
-    clearHopViewsheds()
+    clearHopPreview()
     store.linkSolver.scanning = false
     store.linkSolver.statusText = ''
     store.linkSolver.payload = null
@@ -349,7 +564,7 @@ export function createLinkSolverDomain(ctx) {
     store.linkSolver.likeOf = null
     store.linkSolver.likeRoutes = []
     store.linkSolver.payload = null
-    clearHopViewsheds()
+    clearHopPreview()
     setScanning(true)
     setStatus('Starting link solver scan…')
     clearLinkSolverLayers()
@@ -358,7 +573,13 @@ export function createLinkSolverDomain(ctx) {
     const signal = fetchAbort.signal
     try {
       const resp = await fetch(
-        apiUrls.linkSolverScanUrl(projectSlug, a, b, store.linkSolver.minRoutes),
+        apiUrls.linkSolverScanUrl(
+          projectSlug,
+          a,
+          b,
+          store.linkSolver.minRoutes,
+          getHiddenPeakSlugs?.() || [],
+        ),
         { signal },
       )
       if (!resp.ok) {
@@ -467,9 +688,9 @@ export function createLinkSolverDomain(ctx) {
   function installMapHandlers(map) {
     map.on('click', LINK_SOLVER_PEAKS_LAYER, (ev) => {
       if (!store.linkSolver.panelOpen || !store.linkSolver.payload) return
-      const routeId = store.linkSolver.selectedRouteId
-      if (!routeId) return
-      selectRoute(routeId)
+      if (!store.linkSolver.selectedRouteId) return
+      const feature = ev.features?.[0]
+      if (feature) selectLinkSolverPeak(feature)
     })
   }
 
@@ -483,6 +704,7 @@ export function createLinkSolverDomain(ctx) {
     clearLinkSolver,
     solve,
     selectRoute,
+    selectLinkSolverPeak,
     loadMore,
     moreLikeThis,
     acceptSelectedRoute,
@@ -492,8 +714,14 @@ export function createLinkSolverDomain(ctx) {
     getLinkSolverHopViewshedSlugs: () => [...hopViewshedSlugs],
     getLinkSolverHopViewshedCoords: () => hopViewshedCoords,
     syncLinkSolverHopViewsheds: () => {
-      const route = routeById(store.linkSolver.selectedRouteId)
-      if (route) void loadRouteHopViewsheds(route)
+      const peakSlug = store.linkSolver.selectedPeakSlug
+      if (!peakSlug) return
+      const features = store.linkSolver.payload?.peaks?.features
+      if (!Array.isArray(features)) return
+      const feature = features.find(
+        (f) => String(f?.properties?.peak_slug || f?.properties?.slug || '') === peakSlug,
+      )
+      if (feature) selectLinkSolverPeak(feature)
     },
     install,
     installMapHandlers,
