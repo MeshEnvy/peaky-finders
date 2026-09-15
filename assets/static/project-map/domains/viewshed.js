@@ -7,7 +7,6 @@ import {
   PEAK_VIEWSHED_SLUG,
   DRAFT_VIEWSHED_SLUG,
   isPreviewViewshedSlug,
-  SITES_CIRCLE,
   VIEWSHED_OVERLAY_BATCH,
 } from '../constants.js'
 import { viewshedLayerId } from '../constants.js'
@@ -16,6 +15,10 @@ import {
   buildViewshedPreviewSimQueryParams,
   buildViewshedSimQueryParams,
 } from '../stores/simulation.js'
+import {
+  raiseViewshedLayersBelowStack,
+  stackFloorBeforeId,
+} from '../map/layer-stack.js'
 import {
   addViewshedRasterLayer,
   removeViewshedLayer as removeViewshedRasterLayer,
@@ -255,22 +258,18 @@ export function createViewshedDomain(opts) {
   }
 
   function viewshedLayerInsertBefore() {
-    return map.getLayer(SITES_CIRCLE) ? SITES_CIRCLE : undefined
+    if (!getMapReady()) return undefined
+    return stackFloorBeforeId(map)
   }
 
   function raiseViewshedLayers() {
     if (!getMapReady()) return
-    const beforeId = viewshedLayerInsertBefore()
+    const beforeId = stackFloorBeforeId(map)
     if (!beforeId) return
-    for (const slug of viewshedOverlaySlugs()) {
-      const layerId = viewshedLayerId(slug)
-      if (!map.getLayer(layerId)) continue
-      try {
-        map.moveLayer(layerId, beforeId)
-      } catch (_) {
-        /* layer may be mid-remove */
-      }
-    }
+    const layerIds = viewshedOverlaySlugs()
+      .map((slug) => viewshedLayerId(slug))
+      .filter((id) => map.getLayer(id))
+    raiseViewshedLayersBelowStack(map, beforeId, layerIds)
   }
 
   function applyViewshedOpacityToAllLayers() {

@@ -12,6 +12,16 @@ import {
 import { linkLabelsLayerSpec } from './links-layers.js'
 import { rfLinesGeoJsonWithLabels } from './line-labels.js'
 
+/** @param {object[]} [routes] @param {string|null} [routeId] */
+function peakSlugsOnRoute(routes, routeId) {
+  if (!routeId || !Array.isArray(routes)) return null
+  const route = routes.find((r) => r.route_id === routeId)
+  if (!route?.peaks?.length) return null
+  return new Set(
+    route.peaks.map((p) => String(p.peak_slug || p.slug || '')).filter(Boolean),
+  )
+}
+
 /** @param {maplibregl.Map} map */
 export function removeLinkSolverLayers(map) {
   for (const id of [LINK_SOLVER_LINES_LABELS_LAYER, LINK_SOLVER_LINES_LAYER, LINK_SOLVER_PEAKS_LAYER]) {
@@ -28,24 +38,59 @@ export function removeLinkSolverLayers(map) {
  *   peaks?: import('geojson').FeatureCollection,
  *   lines?: import('geojson').FeatureCollection,
  * }} payload
- * @param {{ selectedRouteId?: string|null, raiseSiteLayers?: () => void }} [opts]
+ * @param {{
+ *   selectedRouteId?: string|null,
+ *   selectedPeakSlug?: string|null,
+ *   routes?: object[],
+ *   raiseSiteLayers?: () => void,
+ * }} [opts]
  */
 export function applyLinkSolverLayers(map, payload, opts = {}) {
   if (!payload) return
   removeLinkSolverLayers(map)
 
   const selectedId = opts.selectedRouteId || null
+  const selectedPeak = opts.selectedPeakSlug || null
+  const routePeakSlugs = peakSlugsOnRoute(opts.routes, selectedId)
   const peaks = payload.peaks
-  if (peaks?.features?.length) {
-    map.addSource(LINK_SOLVER_PEAKS_SOURCE, { type: 'geojson', data: peaks })
+  const peakFeatures = peaks?.features?.length
+    ? peaks.features.filter((feature) => {
+        if (!routePeakSlugs) return true
+        const slug = String(feature?.properties?.peak_slug || feature?.properties?.slug || '')
+        return routePeakSlugs.has(slug)
+      })
+    : []
+  if (peakFeatures.length) {
+    map.addSource(LINK_SOLVER_PEAKS_SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: peakFeatures },
+    })
     map.addLayer(
       {
         id: LINK_SOLVER_PEAKS_LAYER,
         type: 'circle',
         source: LINK_SOLVER_PEAKS_SOURCE,
         paint: {
-          'circle-radius': 8,
-          'circle-color': '#38bdf8',
+          'circle-radius': [
+            'case',
+            [
+              '==',
+              ['coalesce', ['get', 'peak_slug'], ['get', 'slug']],
+              selectedPeak || '',
+            ],
+            10,
+            8,
+          ],
+          'circle-color': [
+            'case',
+            [
+              '==',
+              ['coalesce', ['get', 'peak_slug'], ['get', 'slug']],
+              selectedPeak || '',
+            ],
+            '#f59e0b',
+            '#38bdf8',
+          ],
           'circle-stroke-width': 2,
           'circle-stroke-color': '#0f172a',
         },

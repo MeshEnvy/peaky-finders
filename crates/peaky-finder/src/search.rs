@@ -578,8 +578,13 @@ impl<'a> SearchCtx<'a> {
             };
             let sim = ViewshedSimOverrides::default();
             let project_dir = preset_path.parent().unwrap_or(&preset_path);
-            let board_viewshed = peaky_preset::BoardViewshedResolver::load(project_dir)
-                .map_err(|e| format!("boards.yaml: {e}"))?;
+            let board_viewshed = match peaky_preset::BoardViewshedResolver::load(project_dir) {
+                Ok(resolver) => resolver,
+                Err(e) => {
+                    tracing::warn!("chain viewshed warm skipped for {slug}: boards.yaml: {e}");
+                    return;
+                }
+            };
             let result = if let Some(ref site) = site_entry {
                 ensure_viewshed_progressive_for_site_blocking(
                     session,

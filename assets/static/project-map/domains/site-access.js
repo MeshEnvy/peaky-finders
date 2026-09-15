@@ -25,6 +25,8 @@ export function createSiteAccessDomain(opts) {
 
   /** @type {Map<string, Promise<void>>} */
   const inflight = new Map()
+  /** @type {Map<string, Promise<void>>} */
+  const placeInflight = new Map()
 
   if (!store.access) {
     store.access = { bySlug: {}, visible: new Map() }
@@ -121,6 +123,70 @@ export function createSiteAccessDomain(opts) {
     return accessHasRouteProfiles(row)
   }
 
+  /**
+   * Cache-first access load for peaks / solver previews. GET disk cache, then POST warm.
+   * @param {string} slug
+   * @param {number} lat
+   * @param {number} lon
+   * @param {object} [siteMeta]
+   * @param {{ prefetchOnly?: boolean, isActive?: () => boolean, onReady?: () => void }} [opts]
+   */
+  async function ensurePlaceAccessProfiles(slug, lat, lon, siteMeta, opts = {}) {
+    if (!slug) return
+    const active = () => (opts.isActive ? opts.isActive() : true)
+    const meta = siteMeta || { slug, lat, lon, name: slug }
+
+    const cached = store.access.bySlug[slug]
+    if (accessHasRouteProfiles(cached)) {
+      if (!opts.prefetchOnly && active()) opts.onReady?.()
+      return
+    }
+
+    if (placeInflight.has(slug)) {
+      await placeInflight.get(slug)
+      return
+    }
+
+    const task = (async () => {
+      try {
+        if (!active() && !opts.prefetchOnly) return
+
+        const resp = await fetch(
+          apiUrls.placeAccessApiUrl(projectSlug, slug, { lat, lon }),
+        )
+        if (resp.ok) {
+          const access = await resp.json()
+          if (active() || opts.prefetchOnly) {
+            ingestAccess(slug, access, meta)
+          }
+          if (accessHasRouteProfiles(access)) {
+            if (!opts.prefetchOnly && active()) opts.onReady?.()
+            return
+          }
+        }
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+        const warmResp = await fetch(
+          apiUrls.placeAccessWarmApiUrl(projectSlug, slug, { lat, lon }),
+          { method: 'POST' },
+        )
+        if (!warmResp.ok) return
+        const warmed = await warmResp.json()
+        if (active() || opts.prefetchOnly) {
+          ingestAccess(slug, warmed, meta)
+        }
+        if (!opts.prefetchOnly && active()) opts.onReady?.()
+      } catch (err) {
+        console.warn('place access load failed', slug, err)
+      } finally {
+        placeInflight.delete(slug)
+      }
+    })()
+
+    placeInflight.set(slug, task)
+    await task
+  }
+
   function ensureSiteAccess(site) {
     if (!site?.slug) return
     if (!siteAccessShowing(site.slug)) return
@@ -183,6 +249,7 @@ export function createSiteAccessDomain(opts) {
 
   return {
     ensureSiteAccess,
+    ensurePlaceAccessProfiles,
     ensureSitesAccess,
     ensureAccessForVisibleSites,
     handleAccessEvent,
