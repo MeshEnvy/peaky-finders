@@ -7,6 +7,7 @@ import {
   viewshedLayerId,
 } from '../constants.js'
 import { applyLinkSolverLayers, removeLinkSolverLayers } from '../map/link-solver-layers.js'
+import { clearAccessPreviewFocus, setAccessPreviewFocus } from '../stores/access.js'
 import { clearPendingEpoch, setPendingCoords } from '../stores/viewshed.js'
 
 const PROGRESS_POLL_MS = 250
@@ -132,7 +133,7 @@ export function createLinkSolverDomain(ctx) {
   function clearHopPreview() {
     clearHopViewsheds()
     restoreHiddenPreviewSiteViewsheds()
-    store.linkSolver.accessSlug = null
+    clearAccessPreviewFocus(store)
     store.linkSolver.selectedPeakSlug = null
     siteAccessDomain?.refreshLayers?.()
     updatePinOverlays?.()
@@ -226,7 +227,8 @@ export function createLinkSolverDomain(ctx) {
 
   async function loadHopAccess(peakSlug, lat, lon, name) {
     if (!peakSlug || !siteAccessDomain) return
-    store.linkSolver.accessSlug = peakSlug
+    setAccessPreviewFocus(store, 'linkSolver', peakSlug)
+    siteAccessDomain.refreshLayers()
 
     const cached = store.access?.bySlug?.[peakSlug]
     if (siteAccessDomain.accessHasRouteProfiles?.(cached)) {
@@ -467,7 +469,7 @@ export function createLinkSolverDomain(ctx) {
     restoreHiddenPreviewSiteViewsheds()
     if (store.linkSolver.a) hideSiteViewshedLayer(store.linkSolver.a)
     if (store.linkSolver.b) hideSiteViewshedLayer(store.linkSolver.b)
-    store.linkSolver.accessSlug = null
+    clearAccessPreviewFocus(store)
     siteAccessDomain?.refreshLayers?.()
 
     applyPayload(store.linkSolver.payload)

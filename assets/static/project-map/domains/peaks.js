@@ -14,6 +14,10 @@ import {
 } from '../map/links-layers.js'
 import { ensurePeaksLayers, setPeaksLayerData, setPeaksCursorPoint, clearPeaksCursorPoint } from '../map/peaks-layers.js'
 import {
+  clearAccessPreviewFocus,
+  setAccessPreviewFocus,
+} from '../stores/access.js'
+import {
   hiddenPeakSlugs,
   isPeakMapVisible,
   sidebarPeaks,
@@ -74,12 +78,14 @@ export function createPeaksDomain(opts) {
     }
   }
 
+  function stripPeakRouteProfiles(peak) {
+    if (!peak.hike && !peak.jeep) return peak
+    return { ...peak, hike: null, jeep: null }
+  }
+
   function peaksForMapLayers() {
-    const previewSlug = store.peaks.accessSlug
-    return visiblePeaksForMap(store).map((peak) => {
-      if (!previewSlug || peak.slug !== previewSlug) return peak
-      return { ...peak, hike: null, jeep: null }
-    })
+    // Route geometry paints via site-access for the focused peak only.
+    return visiblePeaksForMap(store).map(stripPeakRouteProfiles)
   }
 
   function refreshPeakLayers() {
@@ -108,7 +114,7 @@ export function createPeaksDomain(opts) {
   }
 
   function clearPeakAccessPreview() {
-    store.peaks.accessSlug = null
+    clearAccessPreviewFocus(store)
     siteAccessDomain?.refreshLayers?.()
     refreshPeakLayers()
   }
@@ -262,8 +268,9 @@ export function createPeaksDomain(opts) {
     const lat = Number(peak.lat)
     const lon = Number(peak.lon)
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
-    store.peaks.accessSlug = peak.slug
+    setAccessPreviewFocus(store, 'peaks', peak.slug)
     refreshPeakLayers()
+    siteAccessDomain.refreshLayers()
 
     const cached = store.access?.bySlug?.[peak.slug]
     if (siteAccessDomain.accessHasRouteProfiles?.(cached)) {
@@ -300,6 +307,7 @@ export function createPeaksDomain(opts) {
     vs()?.removeViewshedLayer?.(PEAK_VIEWSHED_SLUG)
     store.viewshed.visible.delete(PEAK_VIEWSHED_SLUG)
     removePeakDraftLinks()
+    vs()?.updatePinOverlays?.()
     void loadPeakCoordViewshed(lat, lon)
     void loadPeakPrefetchLinks(lat, lon)
     void loadPeakAccess(peak)
