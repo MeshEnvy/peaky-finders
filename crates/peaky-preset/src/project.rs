@@ -100,9 +100,13 @@ pub fn read_merged_document(layout: &ProjectLayout) -> Result<Mapping> {
 
     if layout.uses_split_sites() {
         merged.remove(&yaml_key("sites"));
+        merged.remove(&yaml_key("links"));
         let sites_doc = read_preset_document(&layout.sites_document_path())?;
         if let Some(sites) = sites_doc.get(&yaml_key("sites")) {
             merged.insert(yaml_key("sites"), sites.clone());
+        }
+        if let Some(links) = sites_doc.get(&yaml_key("links")) {
+            merged.insert(yaml_key("links"), links.clone());
         }
     }
 
@@ -122,9 +126,16 @@ pub fn write_merged_document(layout: &ProjectLayout, merged: &Mapping) -> Result
     let mut config_map = merged.clone();
 
     if layout.uses_split_sites() {
-        if let Some(sites) = config_map.remove(&yaml_key("sites")) {
+        let sites = config_map.remove(&yaml_key("sites"));
+        let links = config_map.remove(&yaml_key("links"));
+        if sites.is_some() || links.is_some() {
             let mut sites_doc = Mapping::new();
-            sites_doc.insert(yaml_key("sites"), sites);
+            if let Some(sites) = sites {
+                sites_doc.insert(yaml_key("sites"), sites);
+            }
+            if let Some(links) = links {
+                sites_doc.insert(yaml_key("links"), links);
+            }
             write_preset_value(
                 &layout.split_sites_path(),
                 Value::Mapping(sites_doc),
@@ -194,9 +205,44 @@ mod tests {
         write_merged_document(&layout, &merged).unwrap();
 
         let config_text = fs::read_to_string(&config_path).unwrap();
-        assert!(config_text.contains("links:"));
+        assert!(!config_text.contains("links:"));
         assert!(!config_text.contains("sites:"));
         let sites_text = fs::read_to_string(layout.split_sites_path()).unwrap();
         assert!(sites_text.contains("sites:"));
+        assert!(sites_text.contains("links:"));
+    }
+
+    #[test]
+    fn split_layout_reads_links_from_sites_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.yaml");
+        let mut config = Mapping::new();
+        config.insert(yaml_key("simulation"), yaml_key("stub"));
+        config.insert(
+            yaml_key("links"),
+            Value::Sequence(vec![Value::Sequence(vec![
+                yaml_key("a"),
+                yaml_key("b"),
+            ])]),
+        );
+        write_yaml_document(&config_path, &config).unwrap();
+
+        let mut sites_doc = Mapping::new();
+        sites_doc.insert(yaml_key("sites"), Value::Mapping(Mapping::new()));
+        sites_doc.insert(
+            yaml_key("links"),
+            Value::Sequence(vec![Value::Sequence(vec![
+                yaml_key("x"),
+                yaml_key("y"),
+            ])]),
+        );
+        write_yaml_document(&dir.path().join("sites.yaml"), &sites_doc).unwrap();
+
+        let layout = ProjectLayout::from_config_path(&config_path).unwrap();
+        let merged = read_merged_document(&layout).unwrap();
+        let links = merged.get(&yaml_key("links")).unwrap();
+        let pair = links.as_sequence().unwrap().first().unwrap().as_sequence().unwrap();
+        assert_eq!(pair[0], yaml_key("x"));
+        assert_eq!(pair[1], yaml_key("y"));
     }
 }

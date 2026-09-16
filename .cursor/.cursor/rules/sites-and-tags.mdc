@@ -17,6 +17,19 @@ Roles like `installed` or `planned` are **tags**, not schema fields.
 
 ## Links
 
-Manual mutual pairs at top level: `links: [[site-a, site-b], …]`.
+Manual **RF overrides** only — not spine declaration or "should hear" planning.
 
-See [MEMORY.md](../../MEMORY.md) and skill `peaky-preset`.
+```yaml
+links:
+- - site-a
+  - site-b
+```
+
+- Split layout: `links:` lives in **`sites.yaml`** (with `sites:`). Monolithic projects: `config.yaml`.
+- Add a pair only after serve map / P2P omits a hop that field reality requires. See skill **`manual-links`**.
+
+## advert_name
+
+Optional per-site on-air base (≤16 chars) for node-bound sites. **Do not** embed `{lora.sh}` — suffix is book-level in `nodes.yaml`. EIP pins without nodes should not have `advert_name`. Use public geographic names on-air (Soldier Meadows, not SLPT).
+
+See [MEMORY.md](../../MEMORY.md), skills `manual-links` and `peaky-preset`.

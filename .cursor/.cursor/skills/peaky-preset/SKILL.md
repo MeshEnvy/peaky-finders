@@ -23,7 +23,7 @@ Read [MEMORY.md](../../MEMORY.md) first.
 | `simulation` | `modem` / `environment` names, `radius_km`, `raster_dimension`, chains |
 | `display` | Viewshed colormap / transparency |
 | `sites` | `name`, `loc`, optional `tags`, `height_m`, metadata — **no `type`** |
-| `links` | Manual pairs `[[a, b], …]` |
+| `links` | Manual RF override pairs `[[a, b], …]` — split layout: `sites.yaml`; else `config.yaml` |
 | `land` | Project-only GDB overlay registry (`land.sources`, `land.sidebar`) — attribute filters + style-by-value v2 |
 
 `load_preset` deep-merges global ← project. Writes prune keys equal to defaults.
@@ -69,7 +69,7 @@ land:
 
 Optional `tags: [lowercase, …]` — UI filter labels only. Reject `sites.*.type` on load.
 
-Rule: `sites-and-tags`.
+Rules/skills: `sites-and-tags`, `manual-links` (when to add links; `advert_name` discipline).
 
 ## Path helpers (`core/preset/paths.py`)
 
