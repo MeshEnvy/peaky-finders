@@ -16,7 +16,7 @@ use crate::rf::{
 };
 
 /// Bumps when link computation semantics change; invalidates prior mesh caches.
-const LINKS_MODEL: &str = "p2p-v6";
+const LINKS_MODEL: &str = "p2p-v7";
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -702,7 +702,7 @@ pub fn load_coords_site_links(
     let exclude = exclude_site_slug.unwrap_or("").trim();
     let manual_pairs = manual_link_pairs(preset);
     let boards = load_board_viewshed(preset_path);
-    let draft_h = crate::rf::default_repeater_tx_height_m(preset);
+    let draft_h = crate::rf::default_candidate_tx_height(preset, lat, lon);
     let mut candidates: Vec<(String, f64, f64, f64, f64)> = Vec::new();
 
     for (slug, site) in preset.sites.iter() {
@@ -824,9 +824,7 @@ pub fn site_pair_link_detail(
         vec![None]
     };
     let strength = strengths.first().copied().flatten();
-    let linked = strength.is_some();
-    let strength_str = strength.map(strength_label).unwrap_or("none");
-    let margin_db = if in_hop_range {
+    let margin_db_raw = if in_hop_range {
         session
             .seek_repeater_link_margins(lat_a, lon_a, tx_a, &[(lat_b, lon_b, tx_b)], &rf_json)
             .map_err(|e| LinksError(e.to_string()))?
@@ -836,6 +834,13 @@ pub fn site_pair_link_detail(
     } else {
         None
     };
+    let linked = crate::rf::mutual_rf_viable(margin_db_raw);
+    let strength_str = if linked {
+        strength.map(strength_label).unwrap_or("strong").to_string()
+    } else {
+        "none".to_string()
+    };
+    let margin_db = margin_db_raw.filter(|m| m.is_finite());
     Ok(json!({
         "a": a,
         "b": b,

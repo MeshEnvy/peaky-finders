@@ -15,17 +15,15 @@ use serde_json::{json, Value};
 use splatter::Session;
 
 use crate::alternates::{inside_all_discs, multi_disc_lens_bbox, HopDiscAnchor};
+use crate::geo::along_track_t;
 use crate::rf::{load_board_viewshed, max_hop_range_m, site_hop_radius_m};
 use crate::links::canonical_site_pair;
 use crate::rf::{
-    default_repeater_tx_height_m, preset_to_request, resolved_site_tx_height_m, rf_json_for_preset,
+    default_candidate_tx_height, mutual_rf_viable, resolved_site_tx_height_m, rf_json_for_preset,
 };
 use crate::scan_progress::ScanProgressHub;
 use splatter::propagate::haversine_m;
 
-const ENDPOINT_EXCLUDE_M: f64 = 500.0;
-const SITE_PEAK_DEDUP_M: f64 = 500.0;
-const CANDIDATE_SEP_M: f64 = 800.0;
 const RF_CHUNK: usize = 512;
 
 #[derive(Debug, thiserror::Error)]
@@ -229,48 +227,6 @@ pub fn parse_fortify_request(
     })
 }
 
-/// Along-track fraction on the A–B geodesic (AC / AB). None if C is off-corridor.
-pub fn along_track_fraction(
-    a_lat: f64,
-    a_lon: f64,
-    b_lat: f64,
-    b_lon: f64,
-    c_lat: f64,
-    c_lon: f64,
-) -> Option<f64> {
-    let ab = haversine_m(a_lat, a_lon, b_lat, b_lon);
-    if ab < 1.0 {
-        return None;
-    }
-    let ac = haversine_m(a_lat, a_lon, c_lat, c_lon);
-    let bc = haversine_m(b_lat, b_lon, c_lat, c_lon);
-    if ac + bc > ab * 1.08 {
-        return None;
-    }
-    let t = ac / ab;
-    if t <= 0.05 || t >= 0.95 {
-        return None;
-    }
-    Some(t)
-}
-
-pub fn peak_between_endpoints(
-    a_lat: f64,
-    a_lon: f64,
-    b_lat: f64,
-    b_lon: f64,
-    c_lat: f64,
-    c_lon: f64,
-) -> bool {
-    along_track_fraction(a_lat, a_lon, b_lat, b_lon, c_lat, c_lon).is_some()
-}
-
-fn default_candidate_tx_height(preset: &Preset, lat: f64, lon: f64) -> f64 {
-    preset_to_request(preset, lat, lon, None)
-        .map(|req| req.tx_height.max(1.0))
-        .unwrap_or_else(|_| default_repeater_tx_height_m(preset).max(1.0))
-}
-
 #[derive(Clone)]
 struct CatalogPeak {
     slug: String,
@@ -293,9 +249,9 @@ struct FortifyCandidate {
     lat: f64,
     elev_m: f64,
     candidate_id: String,
-    margin_ca: f64,
-    margin_cb: f64,
-    margin_db: f64,
+    margin_ca: Option<f64>,
+    margin_cb: Option<f64>,
+    rf_viable: bool,
     along_track: f64,
     leg_a_km: f64,
     leg_b_km: f64,
@@ -304,6 +260,18 @@ struct FortifyCandidate {
     access_difficulty: Option<String>,
     hike_m: Option<f64>,
     jeep_m: Option<f64>,
+}
+
+impl FortifyCandidate {
+    fn weaker_leg_margin_db(&self) -> Option<f64> {
+        if !self.rf_viable {
+            return None;
+        }
+        match (self.margin_ca, self.margin_cb) {
+            (Some(a), Some(b)) if a.is_finite() && b.is_finite() => Some(a.min(b)),
+            _ => None,
+        }
+    }
 }
 
 fn catalog_peak_difficulty(entry: &PeakCatalogEntry) -> (Option<String>, Option<String>, Option<String>) {
@@ -319,12 +287,22 @@ fn catalog_peak_difficulty(entry: &PeakCatalogEntry) -> (Option<String>, Option<
 }
 
 fn cmp_fortify_rank(a: &FortifyCandidate, b: &FortifyCandidate) -> std::cmp::Ordering {
-    b.margin_db
-        .partial_cmp(&a.margin_db)
-        .unwrap_or(std::cmp::Ordering::Equal)
+    b.rf_viable
+        .cmp(&a.rf_viable)
         .then_with(|| {
-            let bal_a = (a.margin_ca - a.margin_cb).abs();
-            let bal_b = (b.margin_ca - b.margin_cb).abs();
+            let ma = a.weaker_leg_margin_db().unwrap_or(f64::NEG_INFINITY);
+            let mb = b.weaker_leg_margin_db().unwrap_or(f64::NEG_INFINITY);
+            mb.partial_cmp(&ma).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .then_with(|| {
+            let bal_a = match (a.margin_ca, a.margin_cb) {
+                (Some(x), Some(y)) => (x - y).abs(),
+                _ => f64::INFINITY,
+            };
+            let bal_b = match (b.margin_ca, b.margin_cb) {
+                (Some(x), Some(y)) => (x - y).abs(),
+                _ => f64::INFINITY,
+            };
             bal_a
                 .partial_cmp(&bal_b)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -336,26 +314,6 @@ fn cmp_fortify_rank(a: &FortifyCandidate, b: &FortifyCandidate) -> std::cmp::Ord
                 .partial_cmp(&mid_b)
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
-}
-
-fn take_spatially_diverse(
-    ranked: Vec<FortifyCandidate>,
-    min_sep_m: f64,
-    cap: usize,
-) -> Vec<FortifyCandidate> {
-    let mut taken = Vec::new();
-    for item in ranked {
-        if taken.len() >= cap {
-            break;
-        }
-        let too_close = taken.iter().any(|other: &FortifyCandidate| {
-            haversine_m(item.lat, item.lon, other.lat, other.lon) <= min_sep_m
-        });
-        if !too_close {
-            taken.push(item);
-        }
-    }
-    taken
 }
 
 fn pair_mutual_margin(
@@ -390,8 +348,6 @@ fn load_fortify_body(
     };
 
     let preset = load_preset(&req.preset_path)?;
-    let scan_cfg = preset.scan.clone();
-    let cap = scan_cfg.max_candidates as usize;
     let boards = load_board_viewshed(&req.preset_path);
     let project_hop_m = max_hop_range_m(&preset);
 
@@ -477,27 +433,6 @@ fn load_fortify_body(
             if !inside_all_discs(lat, lon, &anchors) {
                 return None;
             }
-            if haversine_m(lat, lon, endpoint_a.lat, endpoint_a.lon) <= ENDPOINT_EXCLUDE_M {
-                return None;
-            }
-            if haversine_m(lat, lon, endpoint_b.lat, endpoint_b.lon) <= ENDPOINT_EXCLUDE_M {
-                return None;
-            }
-            if !peak_between_endpoints(
-                endpoint_a.lat,
-                endpoint_a.lon,
-                endpoint_b.lat,
-                endpoint_b.lon,
-                lat,
-                lon,
-            ) {
-                return None;
-            }
-            if preset.sites.values().any(|site| {
-                haversine_m(lat, lon, site.loc[0], site.loc[1]) <= SITE_PEAK_DEDUP_M
-            }) {
-                return None;
-            }
             let (hike_difficulty, jeep_difficulty, access_difficulty) =
                 catalog_peak_difficulty(entry);
             Some(CatalogPeak {
@@ -542,7 +477,7 @@ fn load_fortify_body(
         (endpoint_b.lat, endpoint_b.lon, endpoint_b.tx_h),
     ];
 
-    let mut viable: Vec<FortifyCandidate> = Vec::new();
+    let mut candidates: Vec<FortifyCandidate> = Vec::with_capacity(peaks.len());
     let mut peak_idx = 0usize;
     for chunk in peaks.chunks(RF_CHUNK) {
         ensure_active()?;
@@ -560,12 +495,13 @@ fn load_fortify_body(
             let margins = session
                 .seek_repeater_link_margins(peak.lat, peak.lon, tx_h, &endpoints, &rf_json)
                 .map_err(|e| FortifyRunError::User(e.to_string(), 503))?;
-            let (Some(m_ca), Some(m_cb)) = (margins.first().copied().flatten(), margins.get(1).copied().flatten())
-            else {
-                peak_idx += 1;
+            let m_ca = margins.first().copied().flatten();
+            let m_cb = margins.get(1).copied().flatten();
+            let rf_viable = mutual_rf_viable(m_ca) && mutual_rf_viable(m_cb);
+            if !rf_viable {
                 continue;
-            };
-            let along_track = along_track_fraction(
+            }
+            let along_track = along_track_t(
                 endpoint_a.lat,
                 endpoint_a.lon,
                 endpoint_b.lat,
@@ -578,7 +514,7 @@ fn load_fortify_body(
                 haversine_m(endpoint_a.lat, endpoint_a.lon, peak.lat, peak.lon) / 1000.0;
             let leg_b_km =
                 haversine_m(endpoint_b.lat, endpoint_b.lon, peak.lat, peak.lon) / 1000.0;
-            viable.push(FortifyCandidate {
+            candidates.push(FortifyCandidate {
                 slug: peak.slug.clone(),
                 name: peak.name.clone(),
                 lon: peak.lon,
@@ -587,7 +523,7 @@ fn load_fortify_body(
                 candidate_id: format!("f{peak_idx}"),
                 margin_ca: m_ca,
                 margin_cb: m_cb,
-                margin_db: m_ca.min(m_cb),
+                rf_viable,
                 along_track,
                 leg_a_km,
                 leg_b_km,
@@ -601,8 +537,7 @@ fn load_fortify_body(
         }
     }
 
-    viable.sort_by(|a, b| cmp_fortify_rank(a, b));
-    let candidates = take_spatially_diverse(viable, CANDIDATE_SEP_M, cap);
+    candidates.sort_by(|a, b| cmp_fortify_rank(a, b));
 
     let (canonical_a, canonical_b) = canonical_site_pair(&req.slug_a, &req.slug_b);
     let link_distance_km =
@@ -615,6 +550,7 @@ fn load_fortify_body(
     let mut line_features = Vec::new();
 
     for row in &candidates {
+        let weaker_margin = row.weaker_leg_margin_db();
         candidate_features.push(json!({
             "type": "Feature",
             "geometry": { "type": "Point", "coordinates": [row.lon, row.lat] },
@@ -626,9 +562,9 @@ fn load_fortify_body(
                 "lat": row.lat,
                 "lon": row.lon,
                 "elev_m": (row.elev_m * 10.0).round() / 10.0,
-                "margin_db": (row.margin_db * 10.0).round() / 10.0,
-                "margin_ca_db": (row.margin_ca * 10.0).round() / 10.0,
-                "margin_cb_db": (row.margin_cb * 10.0).round() / 10.0,
+                "margin_db": weaker_margin.map(|m| (m * 10.0).round() / 10.0),
+                "margin_ca_db": row.margin_ca.map(|m| (m * 10.0).round() / 10.0),
+                "margin_cb_db": row.margin_cb.map(|m| (m * 10.0).round() / 10.0),
                 "along_track": (row.along_track * 1000.0).round() / 1000.0,
                 "split_from_a_pct": (row.along_track * 100.0).round() as i32,
                 "leg_a_km": (row.leg_a_km * 10.0).round() / 10.0,
@@ -639,15 +575,22 @@ fn load_fortify_body(
                 "access_difficulty": row.access_difficulty,
                 "hike_m": row.hike_m.map(|m| (m * 10.0).round() / 10.0),
                 "jeep_m": row.jeep_m.map(|m| (m * 10.0).round() / 10.0),
-                "rf_viable": true,
+                "rf_viable": row.rf_viable,
             },
         }));
+
+        if !row.rf_viable {
+            continue;
+        }
 
         for (leg, ep) in [
             ("a", &endpoint_a),
             ("b", &endpoint_b),
         ] {
             let margin = if leg == "a" { row.margin_ca } else { row.margin_cb };
+            let Some(margin) = margin else {
+                continue;
+            };
             line_features.push(json!({
                 "type": "Feature",
                 "geometry": {
@@ -674,7 +617,9 @@ fn load_fortify_body(
             "a": canonical_a,
             "b": canonical_b,
             "distance_km": link_distance_km,
-            "original_margin_db": original_margin.map(|m| (m * 10.0).round() / 10.0),
+            "original_margin_db": original_margin
+                .filter(|m| m.is_finite())
+                .map(|m| (m * 10.0).round() / 10.0),
         },
         "endpoints": [
             {
@@ -709,16 +654,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn along_track_accepts_midpoint_rejects_behind_endpoint() {
-        let a = (39.0, -119.0);
-        let b = (39.1, -119.0);
-        let mid = (39.05, -119.0);
-        let behind = (38.99, -119.0);
-        assert!(peak_between_endpoints(a.0, a.1, b.0, b.1, mid.0, mid.1));
-        assert!(!peak_between_endpoints(a.0, a.1, b.0, b.1, behind.0, behind.1));
-    }
-
-    #[test]
     fn rank_prefers_higher_weaker_leg_margin() {
         let strong = FortifyCandidate {
             slug: "p1".into(),
@@ -727,9 +662,9 @@ mod tests {
             lat: 0.0,
             elev_m: 100.0,
             candidate_id: "f0".into(),
-            margin_ca: 8.0,
-            margin_cb: 8.0,
-            margin_db: 8.0,
+            margin_ca: Some(8.0),
+            margin_cb: Some(8.0),
+            rf_viable: true,
             along_track: 0.5,
             leg_a_km: 10.0,
             leg_b_km: 10.0,
@@ -746,9 +681,9 @@ mod tests {
             lat: 0.1,
             elev_m: 100.0,
             candidate_id: "f1".into(),
-            margin_ca: 3.0,
-            margin_cb: 3.0,
-            margin_db: 3.0,
+            margin_ca: Some(3.0),
+            margin_cb: Some(3.0),
+            rf_viable: true,
             along_track: 0.5,
             leg_a_km: 10.0,
             leg_b_km: 10.0,
@@ -759,6 +694,30 @@ mod tests {
             jeep_m: None,
         };
         assert_eq!(cmp_fortify_rank(&strong, &weak), std::cmp::Ordering::Less);
+
+        let in_lens_only = FortifyCandidate {
+            slug: "p3".into(),
+            name: "P3".into(),
+            lon: 0.2,
+            lat: 0.2,
+            elev_m: 100.0,
+            candidate_id: "f2".into(),
+            margin_ca: Some(9.0),
+            margin_cb: None,
+            rf_viable: false,
+            along_track: 0.5,
+            leg_a_km: 10.0,
+            leg_b_km: 10.0,
+            hike_difficulty: None,
+            jeep_difficulty: None,
+            access_difficulty: None,
+            hike_m: None,
+            jeep_m: None,
+        };
+        assert_eq!(
+            cmp_fortify_rank(&weak, &in_lens_only),
+            std::cmp::Ordering::Less
+        );
     }
 
     #[test]

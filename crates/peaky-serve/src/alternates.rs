@@ -16,7 +16,7 @@ use splatter::Session;
 
 use crate::links::load_single_site_links;
 use crate::rf::{
-    default_repeater_tx_height_m, load_board_viewshed, max_hop_range_m, preset_to_request,
+    default_candidate_tx_height, load_board_viewshed, max_hop_range_m, mutual_rf_viable,
     resolved_site_tx_height_m, rf_json_for_preset, site_hop_radius_m,
 };
 use crate::geo::bearing_deg;
@@ -367,12 +367,6 @@ fn resolve_subject_tx_height(preset: &Preset, _lat: f64, _lon: f64, site: &peaky
     resolved_site_tx_height_m(preset, site).max(1.0)
 }
 
-fn default_candidate_tx_height(preset: &Preset, lat: f64, lon: f64) -> f64 {
-    preset_to_request(preset, lat, lon, None)
-        .map(|req| req.tx_height.max(1.0))
-        .unwrap_or_else(|_| default_repeater_tx_height_m(&preset).max(1.0))
-}
-
 fn linked_peer_slugs(links_payload: &Value, site_slug: &str) -> Vec<String> {
     let mut peers = Vec::new();
     if let Some(rows) = links_payload.get("links").and_then(|v| v.as_array()) {
@@ -415,10 +409,10 @@ fn margins_to_all_anchors(
         .map_err(|e| AlternatesRunError::User(e.to_string(), 503))?;
     let mut min_margin = f64::INFINITY;
     for margin in margins {
-        let Some(m) = margin else {
+        if !mutual_rf_viable(margin) {
             return Ok(None);
-        };
-        min_margin = min_margin.min(m);
+        }
+        min_margin = min_margin.min(margin.unwrap());
     }
     Ok(Some(min_margin))
 }

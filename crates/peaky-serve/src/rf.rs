@@ -213,6 +213,11 @@ pub fn default_candidate_tx_height(preset: &Preset, lat: f64, lon: f64) -> f64 {
         .unwrap_or_else(|_| default_repeater_tx_height_m(preset).max(1.0))
 }
 
+/// Both directions decode: finite weaker-leg margin over threshold. One-way = not linked.
+pub fn mutual_rf_viable(margin: Option<f64>) -> bool {
+    splatter::propagate::mutual_site_link_viable(margin)
+}
+
 pub fn preset_to_request(
     preset: &Preset,
     lat: f64,

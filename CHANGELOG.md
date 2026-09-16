@@ -22,6 +22,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **One mutual RF standard** — mesh links, peak prefetch, Fortify, alternates, and link solver all require bidirectional decode (`mutual_rf_viable`: finite weaker-leg margin). One-way paths no longer render as linked. Site mesh cache bumps to `p2p-v7`.
+- **Fortify scans every in-range peak** — no corridor sausage, along-track pad, site-dedup, or `scan.max_candidates` thinning. Every catalog peak inside both hop discs is RF-checked (map-hidden / `deny` still omitted); only peaks that mutual-link to both ends are returned, ranked by weaker-leg margin.
 - **Peak click preview** — catalog peak, Fortify relay, and link-solver hop clicks all paint viewshed, jeep/hike access (cache-first warm), and RF legs to booked sites. Solver hop dots no longer require picking a route first. Peak preview access no longer blocked by the hidden-site gate (catalog slugs are not site rows).
 - **Hidden site access paths** — eye-hidden or tag-filtered sites no longer leave jeep/hike approach lines on the map (including while selected or when an RF link sheet is open).
 - **Per-board hop radius on links** — optional ``boards.yaml`` ``radius_km`` now gates computed mesh, draft, fortify, alternates, link solver, and finder hops (pair min of endpoint board radii). Manual ``links:`` rows unchanged. Link sheet shows per-pair ``hop_range_km``.
@@ -37,7 +39,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 ### Changed
 
 - **Per-board viewshed radius** — optional project ``boards.yaml`` ``boards.<id>.radius_km`` caps site viewshed extent when the staked unit's ``nodes.yaml`` board matches (e.g. Heltec T096 at 50 km). ``simulation.boards`` removed; move board params to ``boards.yaml``.
-- **Preset `scan:`** — renamed from `seek:`; caps peak candidates for link solver, Fortify, and alternates scans.
+- **Preset `scan:`** — renamed from `seek:`; caps peak candidates for link solver and alternates. Fortify no longer uses this cap.
 - **Hike/jeep difficulty is runtime-derived** — pin rings, Fortify, and the access sheet recompute easy/medium/difficult/extreme from grade and OSM facts. Only facts persist on thin `peaks/` rows (`hike_gain_m`, grades, `jeep_highway`); `difficulty` / `hike_difficulty` / `jeep_difficulty` are not written to YAML. Re-run `peaky peaks` on affected rows to refresh fact scalars after an algo change.
 - **Paved snap uses interpolated samples** — paved anchors are densified every 40 m like jeep roads, so on-road snap reaches pads between sparse OSM vertices. `ACCESS_ALGO_VERSION` → **10**. Re-open a peak/site sheet to re-warm leftover pins.
 - **Four access modes** — jeep and hike are independent. Pad on pavement within 40 m → no jeep, no hike. On dirt → jeep only. Paved park with a walk → hike only. Dirt park → both. Stops inventing a dirt loop when the pin is already on the street. `ACCESS_ALGO_VERSION` → **9**. Re-open a peak/site sheet to re-warm leftover pins.

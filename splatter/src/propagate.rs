@@ -312,8 +312,13 @@ pub fn evaluate_mutual_links_parallel(
         .collect()
 }
 
+/// True when both directions decode: weaker-leg margin is finite (not one-way).
+pub fn mutual_site_link_viable(margin: Option<f64>) -> bool {
+    margin.is_some_and(|m| m.is_finite())
+}
+
 /// Weaker-leg dB over threshold. `None` if neither direction decodes.
-/// A one-way (Weak) link scores `-inf` on the failed leg, so two-way beats one-way.
+/// One-way decode returns `Some(-inf)`; use [`mutual_site_link_viable`] for linked / rendered.
 pub fn evaluate_mutual_site_link_margin(
     dem: &DemMosaic,
     lat_a: f64,
@@ -362,13 +367,8 @@ pub fn evaluate_mutual_site_link_strength(
     evaluate_mutual_site_link_margin(
         dem, lat_a, lon_a, tx_h_a, lat_b, lon_b, tx_h_b, base,
     )
-    .map(|margin| {
-        if margin.is_finite() {
-            LinkStrength::Strong
-        } else {
-            LinkStrength::Weak
-        }
-    })
+    .filter(|margin| margin.is_finite())
+    .map(|_| LinkStrength::Strong)
 }
 
 pub fn evaluate_mutual_site_link_strengths_parallel(
@@ -400,10 +400,10 @@ pub fn evaluate_link_strength(
 ) -> Option<LinkStrength> {
     let ab = evaluate_link_viable(dem, lat_a, lon_a, lat_b, lon_b, ctx);
     let ba = evaluate_link_viable(dem, lat_b, lon_b, lat_a, lon_a, ctx);
-    match (ab, ba) {
-        (true, true) => Some(LinkStrength::Strong),
-        (true, false) | (false, true) => Some(LinkStrength::Weak),
-        _ => None,
+    if ab && ba {
+        Some(LinkStrength::Strong)
+    } else {
+        None
     }
 }
 
@@ -435,5 +435,13 @@ mod tests {
         let ctx = link_context_from_json(raw).expect("fixture RF JSON");
         assert!(ctx.threshold_dbm < 0.0);
         assert!(ctx.max_range_m > 0.0);
+    }
+
+    #[test]
+    fn mutual_site_link_viable_requires_finite_margin() {
+        assert!(mutual_site_link_viable(Some(6.0)));
+        assert!(!mutual_site_link_viable(None));
+        assert!(!mutual_site_link_viable(Some(f64::NEG_INFINITY)));
+        assert!(!mutual_site_link_viable(Some(f64::INFINITY)));
     }
 }

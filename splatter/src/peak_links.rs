@@ -12,7 +12,7 @@ use crate::peaks::{
     LandFilterIndex, Peak, RingSectorFilter,
 };
 use crate::propagate::{
-    evaluate_mutual_site_link_strength, haversine_m, link_context_from_json, LinkContext,
+    haversine_m, link_context_from_json, LinkContext,
 };
 
 pub struct LinkablePeak {
@@ -104,17 +104,18 @@ pub fn linkable_binned_peaks_with_dem(
     let viable: Vec<bool> = candidates
         .par_iter()
         .map(|peak| {
-            evaluate_mutual_site_link_strength(
-                dem,
-                source_lat,
-                source_lon,
-                from_tx_h,
-                peak.lat,
-                peak.lon,
-                peak_tx_h,
-                &base,
+            crate::propagate::mutual_site_link_viable(
+                crate::propagate::evaluate_mutual_site_link_margin(
+                    dem,
+                    source_lat,
+                    source_lon,
+                    from_tx_h,
+                    peak.lat,
+                    peak.lon,
+                    peak_tx_h,
+                    &base,
+                ),
             )
-            .is_some()
         })
         .collect();
     let mut out: Vec<LinkablePeak> = candidates

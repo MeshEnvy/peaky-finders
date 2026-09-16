@@ -116,6 +116,8 @@ export function mountLinkSheet(store, appApi) {
             name: props.name || props.peak_slug || props.slug || `Candidate ${index + 1}`,
             elevM: props.elev_m != null ? Number(props.elev_m) : null,
             marginDb: props.margin_db != null ? Number(props.margin_db) : null,
+            marginCaDb: props.margin_ca_db != null ? Number(props.margin_ca_db) : null,
+            marginCbDb: props.margin_cb_db != null ? Number(props.margin_cb_db) : null,
             splitFromAPct:
               props.split_from_a_pct != null ? Number(props.split_from_a_pct) : null,
             legAKm: props.leg_a_km != null ? Number(props.leg_a_km) : null,

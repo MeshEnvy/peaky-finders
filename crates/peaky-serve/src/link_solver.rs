@@ -22,8 +22,8 @@ use splatter::Session;
 use crate::geo::bearing_deg;
 use crate::links::{canonical_site_pair, load_project_site_links, site_pair_link_detail};
 use crate::rf::{
-    default_candidate_tx_height, load_board_viewshed, max_hop_range_m, pair_hop_range_m,
-    resolved_site_tx_height_m, rf_json_for_preset, site_hop_radius_m,
+    default_candidate_tx_height, load_board_viewshed, max_hop_range_m, mutual_rf_viable,
+    pair_hop_range_m, resolved_site_tx_height_m, rf_json_for_preset, site_hop_radius_m,
 };
 use crate::scan_progress::ScanProgressHub;
 use crate::html::site_api_row;
@@ -270,7 +270,7 @@ pub fn pair_linked_with_session(
     }
     let detail = site_pair_link_detail(session, preset_path, preset, None, slug_a, slug_b)
         .map_err(|e| LinkSolverError(e.0))?;
-    Ok(detail.get("margin_db").and_then(|v| v.as_f64()).is_some())
+    Ok(detail.get("linked").and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
 enum LinkSolverRunError {
@@ -717,6 +717,9 @@ fn build_route(
         let from = &nodes[node_path[i]];
         let to = &nodes[node_path[i + 1]];
         let margin = margins[i]?;
+        if !mutual_rf_viable(Some(margin)) {
+            return None;
+        }
         let dist_km = haversine_m(from.lat, from.lon, to.lat, to.lon) / 1000.0;
         total_km += dist_km;
         sum_margins += margin;
@@ -789,7 +792,7 @@ fn expand_layer(
                 .collect();
             let margins = oracle.margins(from.lat, from.lon, from.tx_h, &targets)?;
             for (to_idx, margin) in candidates.iter().zip(margins.into_iter()) {
-                if margin.is_none() {
+                if !mutual_rf_viable(margin) {
                     continue;
                 }
                 let mut new_path = path.clone();

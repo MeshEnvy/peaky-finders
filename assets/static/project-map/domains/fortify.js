@@ -3,6 +3,7 @@
 import * as apiUrls from '../api/urls.js'
 import { FORTIFY_CANDIDATES_LAYER, FORTIFY_VIEWSHED_SLUG, viewshedLayerId } from '../constants.js'
 import { applyFortifyLayers, removeFortifyLayers } from '../map/fortify-layers.js'
+import { clearAccessPreviewFocus, setAccessPreviewFocus } from '../stores/access.js'
 import { clearPendingEpoch, setPendingCoords } from '../stores/viewshed.js'
 
 const PROGRESS_POLL_MS = 250
@@ -124,7 +125,7 @@ export function createFortifyDomain(ctx) {
   function clearFortifyPreview() {
     dismissFortifyViewshedOverlay()
     restoreHiddenPreviewSiteViewsheds()
-    store.fortify.accessSlug = null
+    clearAccessPreviewFocus(store)
     siteAccessDomain?.refreshLayers?.()
     vs()?.updatePinOverlays?.()
   }
@@ -190,7 +191,8 @@ export function createFortifyDomain(ctx) {
 
   async function loadFortifyAccess(peakSlug, lat, lon, name) {
     if (!peakSlug || !siteAccessDomain) return
-    store.fortify.accessSlug = peakSlug
+    setAccessPreviewFocus(store, 'fortify', peakSlug)
+    siteAccessDomain.refreshLayers()
     const cached = store.access?.bySlug?.[peakSlug]
     if (siteAccessDomain.accessHasRouteProfiles?.(cached)) {
       siteAccessDomain.refreshLayers()
@@ -281,7 +283,6 @@ export function createFortifyDomain(ctx) {
     store.fortify.linkB = null
     store.fortify.scanning = false
     store.fortify.selectedCandidateId = null
-    store.fortify.accessSlug = null
     store.fortify.payload = null
     setStatus('')
     clearFortifyLayers()
@@ -332,7 +333,6 @@ export function createFortifyDomain(ctx) {
     store.fortify.linkA = linkA
     store.fortify.linkB = linkB
     store.fortify.selectedCandidateId = null
-    store.fortify.accessSlug = null
     store.fortify.payload = null
     clearFortifyPreview()
     setScanning(true)
@@ -360,8 +360,13 @@ export function createFortifyDomain(ctx) {
         return
       }
       applyPayload(outcome.payload)
-      const n = outcome.payload?.meta?.n_candidates ?? outcome.payload?.candidates?.features?.length ?? 0
-      setStatus(n ? `Found ${n} fortify candidate(s)` : 'No fortify candidates in lens')
+      const meta = outcome.payload?.meta || {}
+      const n = meta.n_candidates ?? outcome.payload?.candidates?.features?.length ?? 0
+      if (!n) {
+        setStatus('No peaks link both ends')
+      } else {
+        setStatus(`Found ${n} fortify candidate(s)`)
+      }
     } catch (err) {
       if (signal.aborted || fetchEpoch !== epoch) return
       setStatus(String(err?.message || err))

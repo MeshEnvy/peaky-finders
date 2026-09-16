@@ -444,7 +444,7 @@ impl Session {
             .collect())
     }
 
-    /// Goal-seek / peak links: same per-endpoint antenna model as site mesh (Weak counts as linked).
+    /// Goal-seek / peak links: same per-endpoint antenna model as site mesh (mutual decode required).
     pub fn seek_repeater_link_batch(
         &self,
         from_lat: f64,
@@ -456,7 +456,7 @@ impl Session {
         Ok(self
             .seek_repeater_link_margins(from_lat, from_lon, from_tx_h, endpoints, rf_json)?
             .into_iter()
-            .map(|m| m.is_some())
+            .map(crate::propagate::mutual_site_link_viable)
             .collect())
     }
 
