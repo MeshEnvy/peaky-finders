@@ -34,6 +34,7 @@ import { setPendingCoords } from '../stores/viewshed.js'
  * @param {(slug: string) => boolean} [opts.isSiteMapHidden]
  * @param {() => void} [opts.raiseSiteLayers]
  * @param {() => void} [opts.scheduleSaveMapState]
+ * @param {object} [opts.siteAccessDomain]
  */
 export function createPeaksDomain(opts) {
   const {
@@ -48,6 +49,7 @@ export function createPeaksDomain(opts) {
     isSiteMapHidden,
     raiseSiteLayers,
     scheduleSaveMapState,
+    siteAccessDomain,
   } = opts
 
   let peakViewshedGen = 0
@@ -72,9 +74,43 @@ export function createPeaksDomain(opts) {
     }
   }
 
+  function peaksForMapLayers() {
+    const previewSlug = store.peaks.accessSlug
+    return visiblePeaksForMap(store).map((peak) => {
+      if (!previewSlug || peak.slug !== previewSlug) return peak
+      return { ...peak, hike: null, jeep: null }
+    })
+  }
+
   function refreshPeakLayers() {
     if (!getMapReady()) return
-    setPeaksLayerData(getMap(), visiblePeaksForMap(store))
+    setPeaksLayerData(getMap(), peaksForMapLayers())
+  }
+
+  function mergePeakAccess(slug, access) {
+    const idx = store.peaks.list.findIndex((p) => p.slug === slug)
+    if (idx < 0) return
+    const merged = {
+      ...store.peaks.list[idx],
+      road_lat: access.road_lat ?? store.peaks.list[idx].road_lat,
+      road_lon: access.road_lon ?? store.peaks.list[idx].road_lon,
+      paved_lat: access.paved_lat ?? store.peaks.list[idx].paved_lat,
+      paved_lon: access.paved_lon ?? store.peaks.list[idx].paved_lon,
+      hike_m: access.hike_m ?? store.peaks.list[idx].hike_m,
+      jeep_m: access.jeep_m ?? store.peaks.list[idx].jeep_m,
+      hike: access.hike ?? store.peaks.list[idx].hike,
+      jeep: access.jeep ?? store.peaks.list[idx].jeep,
+      hike_difficulty: access.hike?.difficulty ?? store.peaks.list[idx].hike_difficulty,
+      jeep_difficulty: access.jeep?.difficulty ?? store.peaks.list[idx].jeep_difficulty,
+      access_difficulty: undefined,
+    }
+    store.peaks.list.splice(idx, 1, merged)
+  }
+
+  function clearPeakAccessPreview() {
+    store.peaks.accessSlug = null
+    siteAccessDomain?.refreshLayers?.()
+    refreshPeakLayers()
   }
 
   function applyPeakVisibilityChange(slug) {
@@ -155,6 +191,7 @@ export function createPeaksDomain(opts) {
     vs()?.removeViewshedLayer?.(PEAK_VIEWSHED_SLUG)
     store.viewshed.visible.delete(PEAK_VIEWSHED_SLUG)
     removePeakDraftLinks()
+    clearPeakAccessPreview()
     vs()?.updatePinOverlays?.()
   }
 
@@ -220,15 +257,52 @@ export function createPeaksDomain(opts) {
     }
   }
 
+  async function loadPeakAccess(peak) {
+    if (!peak?.slug || !siteAccessDomain) return
+    const lat = Number(peak.lat)
+    const lon = Number(peak.lon)
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+    store.peaks.accessSlug = peak.slug
+    refreshPeakLayers()
+
+    const cached = store.access?.bySlug?.[peak.slug]
+    if (siteAccessDomain.accessHasRouteProfiles?.(cached)) {
+      mergePeakAccess(peak.slug, cached)
+      siteAccessDomain.refreshLayers()
+      return
+    }
+
+    await siteAccessDomain.ensurePlaceAccessProfiles?.(
+      peak.slug,
+      lat,
+      lon,
+      { slug: peak.slug, name: peak.name || peak.slug, lat, lon },
+      {
+        isActive: () => store.peaks.accessSlug === peak.slug,
+        onReady: () => {
+          const row = store.access?.bySlug?.[peak.slug]
+          if (row) mergePeakAccess(peak.slug, row)
+          siteAccessDomain.refreshLayers()
+          refreshPeakLayers()
+        },
+      },
+    )
+  }
+
   /** @param {object} peak */
   function showPeakRfPreview(peak) {
     if (store.ui.createMode || store.ui.editMode) return
     const lat = Number(peak?.lat)
     const lon = Number(peak?.lon)
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
-    clearPeakRfPreview()
+    cancelPeakViewshedLoad()
+    peakLinksPrefetchGen += 1
+    vs()?.removeViewshedLayer?.(PEAK_VIEWSHED_SLUG)
+    store.viewshed.visible.delete(PEAK_VIEWSHED_SLUG)
+    removePeakDraftLinks()
     void loadPeakCoordViewshed(lat, lon)
     void loadPeakPrefetchLinks(lat, lon)
+    void loadPeakAccess(peak)
   }
 
   async function loadPeaks() {
@@ -263,43 +337,7 @@ export function createPeaksDomain(opts) {
     if (getMapReady()) clearPeaksCursorPoint(getMap())
     syncMapViewport?.()
     showPeakRfPreview(peak)
-    void enrichPeakAccess(peak)
     if (syncDeepLink) syncDeepLinkToUrl({ replace: false })
-  }
-
-  /** @param {object} peak */
-  async function enrichPeakAccess(peak) {
-    if (!peak?.slug) return
-    if (peak.hike?.profile || peak.jeep?.profile) {
-      refreshPeakLayers()
-      return
-    }
-    try {
-      const resp = await fetch(apiUrls.placeAccessApiUrl(projectSlug, peak.slug))
-      if (!resp.ok) return
-      const access = await resp.json()
-      const idx = store.peaks.list.findIndex((p) => p.slug === peak.slug)
-      if (idx < 0) return
-      const merged = {
-        ...store.peaks.list[idx],
-        road_lat: access.road_lat ?? store.peaks.list[idx].road_lat,
-        road_lon: access.road_lon ?? store.peaks.list[idx].road_lon,
-        paved_lat: access.paved_lat ?? store.peaks.list[idx].paved_lat,
-        paved_lon: access.paved_lon ?? store.peaks.list[idx].paved_lon,
-        hike_m: access.hike_m ?? store.peaks.list[idx].hike_m,
-        jeep_m: access.jeep_m ?? store.peaks.list[idx].jeep_m,
-        hike: access.hike ?? store.peaks.list[idx].hike,
-        jeep: access.jeep ?? store.peaks.list[idx].jeep,
-        hike_difficulty: access.hike?.difficulty ?? store.peaks.list[idx].hike_difficulty,
-        jeep_difficulty: access.jeep?.difficulty ?? store.peaks.list[idx].jeep_difficulty,
-        access_difficulty: undefined,
-      }
-      store.peaks.list.splice(idx, 1, merged)
-      refreshPeakLayers()
-      updatePeakHighlight(store.ui.selectedPeakSlug)
-    } catch (err) {
-      console.warn('peaks: access load failed', err)
-    }
   }
 
   function togglePeakMapVisible(slug) {

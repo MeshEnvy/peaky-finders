@@ -144,6 +144,9 @@ export function createSiteAccessDomain(opts) {
 
     if (placeInflight.has(slug)) {
       await placeInflight.get(slug)
+      if (accessHasRouteProfiles(store.access.bySlug[slug])) {
+        if (!opts.prefetchOnly && active()) opts.onReady?.()
+      }
       return
     }
 

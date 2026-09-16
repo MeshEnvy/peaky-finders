@@ -84,7 +84,6 @@ export function createMapInteractionsDomain(ctx) {
       layers: [LINK_SOLVER_PEAKS_LAYER],
     })
     if (!feats.length) return false
-    if (!store.linkSolver.selectedRouteId) return false
     linkSolver()?.selectLinkSolverPeak?.(feats[0])
     return true
   }

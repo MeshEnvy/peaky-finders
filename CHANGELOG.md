@@ -22,6 +22,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Peak click preview** — catalog peak, Fortify relay, and link-solver hop clicks all paint viewshed, jeep/hike access (cache-first warm), and RF legs to booked sites. Solver hop dots no longer require picking a route first. Peak preview access no longer blocked by the hidden-site gate (catalog slugs are not site rows).
+- **Hidden site access paths** — eye-hidden or tag-filtered sites no longer leave jeep/hike approach lines on the map (including while selected or when an RF link sheet is open).
 - **Per-board hop radius on links** — optional ``boards.yaml`` ``radius_km`` now gates computed mesh, draft, fortify, alternates, link solver, and finder hops (pair min of endpoint board radii). Manual ``links:`` rows unchanged. Link sheet shows per-pair ``hop_range_km``.
 - **Site tag filters on load** — restored tag chips (union/intersect) now hide non-matching sites on the map immediately after refresh, not only after re-clicking a chip.
 - **Link solver hop preview** — clicking a route hop shows viewshed and jeep/hike access (cache-first load). Route legs show distance labels on the map.

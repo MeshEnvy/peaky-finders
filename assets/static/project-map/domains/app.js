@@ -125,6 +125,16 @@ export function runApp(ctx = {}) {
     return isMapTiltedViewAt(mapInstance, store.ui.mapReady)
   }
 
+  siteAccessDomain = createSiteAccessDomain({
+    store,
+    projectSlug: String(store.projectSlug || projectSlug || ''),
+    getMap: () => map,
+    getMapReady: () => store.ui.mapReady,
+    getSites: () => sites,
+    isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
+    raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
+  })
+
   peaksDomain = createPeaksDomain({
     store,
     projectSlug: String(store.projectSlug || projectSlug || ''),
@@ -137,16 +147,7 @@ export function runApp(ctx = {}) {
     isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
     raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
     scheduleSaveMapState: () => mapChrome?.scheduleSaveMapState(),
-  })
-
-  siteAccessDomain = createSiteAccessDomain({
-    store,
-    projectSlug: String(store.projectSlug || projectSlug || ''),
-    getMap: () => map,
-    getMapReady: () => store.ui.mapReady,
-    getSites: () => sites,
-    isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
-    raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
+    siteAccessDomain,
   })
 
   siteLayers = createSiteLayersDomain({

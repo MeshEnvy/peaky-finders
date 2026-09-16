@@ -383,6 +383,40 @@ export function createLinkSolverDomain(ctx) {
     )
   }
 
+  function routeForPeakSlug(peakSlug) {
+    if (!peakSlug) return null
+    return (
+      displayRoutes().find((route) =>
+        route.peaks?.some(
+          (peak) => String(peak.peak_slug || peak.slug || '') === peakSlug,
+        ),
+      ) || null
+    )
+  }
+
+  function ensureRouteForPeak(peakSlug) {
+    const currentId = store.linkSolver.selectedRouteId
+    if (currentId) {
+      const currentRoute = routeById(currentId)
+      if (currentRoute && hopIndexForPeak(currentRoute, peakSlug) >= 0) {
+        return currentRoute
+      }
+    }
+    const route = routeForPeakSlug(peakSlug)
+    if (!route?.route_id) return null
+    if (store.linkSolver.selectedRouteId !== route.route_id) {
+      clearHopPreview()
+      store.linkSolver.selectedRouteId = route.route_id
+      applyPayload(store.linkSolver.payload)
+      const hops = route.hops ?? '?'
+      const bottleneck = route.bottleneck_db
+      const bits = [`${hops} hop${hops === 1 ? '' : 's'}`]
+      if (Number.isFinite(bottleneck)) bits.push(`${Number(bottleneck).toFixed(1)} dB bottleneck`)
+      setStatus(`Selected route — ${bits.join(', ')}`)
+    }
+    return route
+  }
+
   function flyToHopPeak(feature) {
     const map = getMap()
     if (!map || !getMapReady()) return
@@ -421,9 +455,8 @@ export function createLinkSolverDomain(ctx) {
     const coords = feature?.geometry?.coordinates
     if (!peakSlug || !coords) return
 
-    const routeId = store.linkSolver.selectedRouteId
-    const route = routeById(routeId)
-    if (!routeId || !route) return
+    const route = ensureRouteForPeak(peakSlug)
+    if (!route) return
 
     const lon = Number(coords[0])
     const lat = Number(coords[1])
@@ -688,7 +721,6 @@ export function createLinkSolverDomain(ctx) {
   function installMapHandlers(map) {
     map.on('click', LINK_SOLVER_PEAKS_LAYER, (ev) => {
       if (!store.linkSolver.panelOpen || !store.linkSolver.payload) return
-      if (!store.linkSolver.selectedRouteId) return
       const feature = ev.features?.[0]
       if (feature) selectLinkSolverPeak(feature)
     })

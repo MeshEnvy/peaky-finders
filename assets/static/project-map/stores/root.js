@@ -41,6 +41,8 @@ export function createRootStore(config, savedMapState) {
       rules: null,
       hidden: new Set(),
       panelRevision: 0,
+      /** Catalog peak click preview — jeep/hike via site access layers */
+      accessSlug: null,
     },
     access: {
       bySlug: {},

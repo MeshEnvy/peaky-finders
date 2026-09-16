@@ -18,20 +18,28 @@ export function isSelectedLinkEndpoint(store, slug) {
   return Boolean(link && (link.a === slug || link.b === slug))
 }
 
+/** Catalog / Fortify / link-solver peak click preview (not a booked site slug). */
+export function isPeakAccessPreview(store, slug) {
+  return (
+    store.peaks?.accessSlug === slug ||
+    store.fortify?.accessSlug === slug ||
+    store.linkSolver?.accessSlug === slug
+  )
+}
+
 /**
- * Selected site always paints jeep/hike lines (even if tag-hidden).
- * RF link endpoints paint while the link sheet is open.
- * Access toggle pins them after deselect. Default is off.
+ * Map jeep/hike lines for a site slug.
+ * Hidden sites never paint (pin, viewshed, and access stay aligned).
+ * Peak preview slugs are exempt — catalog peaks are not site rows.
  * @param {object} store
  * @param {string} slug
  * @param {boolean} [hidden]
  */
 export function siteAccessShouldShow(store, slug, hidden = false) {
   if (!slug) return false
-  if (store.ui?.selectedSlug === slug) return true
-  if (store.fortify?.accessSlug === slug) return true
-  if (store.linkSolver?.accessSlug === slug) return true
-  if (isSelectedLinkEndpoint(store, slug)) return true
+  if (isPeakAccessPreview(store, slug)) return true
   if (hidden) return false
+  if (store.ui?.selectedSlug === slug) return true
+  if (isSelectedLinkEndpoint(store, slug)) return true
   return isAccessVisible(store, slug)
 }

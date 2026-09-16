@@ -1,5 +1,6 @@
 // @ts-check
 
+import * as apiUrls from '../api/urls.js'
 import { FORTIFY_CANDIDATES_LAYER, FORTIFY_VIEWSHED_SLUG, viewshedLayerId } from '../constants.js'
 import { applyFortifyLayers, removeFortifyLayers } from '../map/fortify-layers.js'
 import { clearPendingEpoch, setPendingCoords } from '../stores/viewshed.js'
