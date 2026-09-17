@@ -142,6 +142,34 @@ impl Default for ScanConfig {
     }
 }
 
+/// Optional hike difficulty thresholds for UI derivation (defaults in serve + map).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct HikeDifficultyRules {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extreme_min_gain_m: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extreme_min_avg_grade_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub difficult_min_gain_m: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub difficult_min_avg_grade_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub medium_min_max_grade_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub medium_min_avg_grade_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub medium_min_gain_m: Option<f64>,
+}
+
+/// Difficulty derivation knobs under ``peaks/_meta.yaml`` → ``rules.difficulty``.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct DifficultyRules {
+    #[serde(default)]
+    pub hike: HikeDifficultyRules,
+}
+
 /// Access rules stamped into ``peaks/_meta.yaml`` when ``peaky peaks`` runs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -158,6 +186,8 @@ pub struct PeakAccessRules {
     pub max_jeep_m: f64,
     #[serde(default = "default_paved_highways")]
     pub paved_highways: Vec<String>,
+    #[serde(default)]
+    pub difficulty: DifficultyRules,
 }
 
 fn default_max_jeep_m() -> f64 {
@@ -217,6 +247,7 @@ impl Default for PeakAccessRules {
             road_highways: default_jeep_highways(),
             max_jeep_m: DEFAULT_MAX_JEEP_M,
             paved_highways: default_paved_highways(),
+            difficulty: DifficultyRules::default(),
         }
     }
 }

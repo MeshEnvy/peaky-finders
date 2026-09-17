@@ -90,7 +90,7 @@ export function createPeaksDomain(opts) {
 
   function refreshPeakLayers() {
     if (!getMapReady()) return
-    setPeaksLayerData(getMap(), peaksForMapLayers())
+    setPeaksLayerData(getMap(), peaksForMapLayers(), store.peaks.rules?.difficulty || null)
   }
 
   function mergePeakAccess(slug, access) {
@@ -106,9 +106,6 @@ export function createPeaksDomain(opts) {
       jeep_m: access.jeep_m ?? store.peaks.list[idx].jeep_m,
       hike: access.hike ?? store.peaks.list[idx].hike,
       jeep: access.jeep ?? store.peaks.list[idx].jeep,
-      hike_difficulty: access.hike?.difficulty ?? store.peaks.list[idx].hike_difficulty,
-      jeep_difficulty: access.jeep?.difficulty ?? store.peaks.list[idx].jeep_difficulty,
-      access_difficulty: undefined,
     }
     store.peaks.list.splice(idx, 1, merged)
   }

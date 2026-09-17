@@ -1,7 +1,15 @@
 // @ts-check
 
 import { computed } from 'vue'
+import {
+  deriveHikeDifficulty,
+  deriveJeepDifficulty,
+  difficultyClass,
+  jeepOsmClass,
+} from '../difficulty.js'
 import { formatElevLabel } from '../geo.js'
+
+export { difficultyClass } from '../difficulty.js'
 
 /** Grade → fill color (flat → steep), onX-style elevation map. */
 const GRADE_COLORS = [
@@ -199,88 +207,6 @@ export function formatGradePct(pct) {
   return `${pct.toFixed(1)}%`
 }
 
-export function difficultyClass(d) {
-  const dMap = {
-    easy: 'peak-difficulty--easy',
-    medium: 'peak-difficulty--medium',
-    difficult: 'peak-difficulty--difficult',
-    extreme: 'peak-difficulty--extreme',
-  }
-  return dMap[String(d || '').toLowerCase()] || 'peak-difficulty--medium'
-}
-
-/** OSM rank used for the jeep badge. Keep in sync with `jeep_road_rank` in difficulty.rs. */
-function osmRoadRank(highway, tracktype) {
-  const hw = String(highway || '')
-  const tt = tracktype || ''
-  if (['motorway', 'trunk', 'primary', 'secondary', 'tertiary'].includes(hw)) return 0
-  if (hw === 'residential' || hw === 'unclassified') {
-    if (tt === 'grade5') return 3
-    if (tt === 'grade4' || tt === 'grade3') return 2
-    if (tt === 'grade1') return 0
-    return 1
-  }
-  if (hw === 'service') return 1
-  if (hw === 'track') {
-    if (tt === 'grade5') return 3
-    if (tt === 'grade4' || tt === 'grade3') return 2
-    return 1
-  }
-  return 1
-}
-
-/**
- * Governing OSM class for the jeep badge (highway + tracktype + distance).
- * Prefers serve-computed `osm_*` fields; falls back to `segments`.
- * @param {object|null|undefined} jeep
- */
-export function jeepOsmClass(jeep) {
-  if (!jeep) return null
-  if (jeep.osm_highway) {
-    return {
-      highway: String(jeep.osm_highway),
-      tracktype: jeep.osm_tracktype ? String(jeep.osm_tracktype) : '',
-      dist_m: Number(jeep.osm_class_m),
-    }
-  }
-  const raw = Array.isArray(jeep.segments) ? jeep.segments : []
-  if (!raw.length) return null
-  const segs = []
-  for (const s of raw) {
-    const dist = Math.max(Number(s.dist_m) || 0, 0)
-    if (!dist) continue
-    const last = segs[segs.length - 1]
-    const highway = s.highway || ''
-    const tracktype = s.tracktype || ''
-    if (last && last.highway === highway && last.tracktype === tracktype) {
-      last.dist_m += dist
-      continue
-    }
-    segs.push({ highway, tracktype, dist_m: dist })
-  }
-  if (!segs.length) return null
-  const total = segs.reduce((sum, s) => sum + s.dist_m, 0)
-  const minLen = Math.max(total * 0.02, 40)
-  const kept = segs.filter((s) => total < 80 || s.dist_m >= minLen)
-  if (!kept.length) return null
-  let worst = 0
-  for (const s of kept) worst = Math.max(worst, osmRoadRank(s.highway, s.tracktype))
-  const distByClass = new Map()
-  for (const s of kept) {
-    if (osmRoadRank(s.highway, s.tracktype) !== worst) continue
-    const key = `${s.highway || ''}\t${s.tracktype || ''}`
-    distByClass.set(key, (distByClass.get(key) || 0) + Math.max(Number(s.dist_m) || 0, 0))
-  }
-  let best = null
-  for (const [key, dist] of distByClass) {
-    if (!best || dist > best.dist_m) {
-      const [highway, tracktype] = key.split('\t')
-      best = { highway, tracktype, dist_m: dist }
-    }
-  }
-  return best
-}
-
 /** OSM tracktype / highway in plain language (wiki tracktype, jeep-operator voice). */
 export function osmRoadClassHint(highway, tracktype) {
   const tt = String(tracktype || '').toLowerCase()
@@ -324,6 +250,8 @@ export const AccessProfilesPanel = {
     hikeEndElevM: { type: Number, default: undefined },
     hikeStartLabel: { type: String, default: 'Road' },
     hikeEndLabel: { type: String, default: 'Summit' },
+    /** Optional override from `peaks/_meta.yaml` → `rules.difficulty`. */
+    difficultyConfig: { type: Object, default: null },
     emptyText: { type: String, default: 'No access route yet' },
   },
   emits: ['point-click'],
@@ -360,6 +288,12 @@ export const AccessProfilesPanel = {
     })
     const showHike = computed(() => hasAccessLeg(props.hike))
     const showJeep = computed(() => hasAccessLeg(props.jeep))
+    const hikeDifficultyLabel = computed(() =>
+      deriveHikeDifficulty(props.hike, props.difficultyConfig),
+    )
+    const jeepDifficultyLabel = computed(() =>
+      deriveJeepDifficulty(props.jeep, props.difficultyConfig),
+    )
 
     return {
       elevationChart,
@@ -369,6 +303,8 @@ export const AccessProfilesPanel = {
       osmRoadHint,
       showHike,
       showJeep,
+      hikeDifficultyLabel,
+      jeepDifficultyLabel,
       onChartClick,
       formatAccessDist,
       formatGainLoss,
@@ -383,7 +319,11 @@ export const AccessProfilesPanel = {
       <template v-else-if="showHike || showJeep">
         <template v-if="showHike">
           <div class="peak-sheet__rating">
-            <span class="peak-difficulty" :class="difficultyClass(hike.difficulty)">{{ hike.difficulty }}</span>
+            <span
+              v-if="hikeDifficultyLabel"
+              class="peak-difficulty"
+              :class="difficultyClass(hikeDifficultyLabel)"
+            >{{ hikeDifficultyLabel }}</span>
             <span class="pf-muted">hike</span>
           </div>
           <wa-callout v-if="netDownhillNote" variant="neutral" class="peak-sheet__note">{{ netDownhillNote }}</wa-callout>
@@ -471,7 +411,11 @@ export const AccessProfilesPanel = {
           <div class="site-panel__section peak-sheet__jeep-header">
             <span class="site-panel__label">Jeep access</span>
             <div class="peak-sheet__rating">
-              <span class="peak-difficulty" :class="difficultyClass(jeep.difficulty)">{{ jeep.difficulty }}</span>
+              <span
+                v-if="jeepDifficultyLabel"
+                class="peak-difficulty"
+                :class="difficultyClass(jeepDifficultyLabel)"
+              >{{ jeepDifficultyLabel }}</span>
               <span class="pf-muted">drive</span>
             </div>
           </div>

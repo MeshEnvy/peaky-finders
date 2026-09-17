@@ -135,6 +135,7 @@ export function mountSiteSheet(store, appApi) {
 
       const accessHike = computed(() => access.value?.hike || null)
       const accessJeep = computed(() => access.value?.jeep || null)
+      const difficultyConfig = computed(() => store.peaks.rules?.difficulty || null)
 
       /** @param {{ lat: number, lon: number }} pt */
       function onAccessPointClick(pt) {
@@ -470,6 +471,7 @@ export function mountSiteSheet(store, appApi) {
         accessError,
         accessHike,
         accessJeep,
+        difficultyConfig,
         onAccessPointClick,
         viewshedActive,
         accessActive,
@@ -546,6 +548,7 @@ export function mountSiteSheet(store, appApi) {
               :loading="accessLoading"
               :error="accessError"
               :hike-end-elev-m="hikeEndElevM"
+              :difficulty-config="difficultyConfig"
               hike-end-label="Site"
               empty-text="No access route yet"
               @point-click="onAccessPointClick"

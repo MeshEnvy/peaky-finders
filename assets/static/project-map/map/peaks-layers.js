@@ -1,5 +1,6 @@
 // @ts-check
 
+import { accessDifficulty as deriveAccessDifficulty } from '../difficulty.js'
 import {
   PEAKS_ACCESS_LINE,
   PEAKS_ACCESS_SOURCE,
@@ -35,24 +36,13 @@ function addLayerBefore(map, spec, beforeId) {
   else map.addLayer(spec)
 }
 
-const DIFFICULTY_RANK = { easy: 0, medium: 1, difficult: 2, extreme: 3 }
-
-/** @param {string|null|undefined} label */
-function difficultyRank(label) {
-  return DIFFICULTY_RANK[String(label || '').toLowerCase()] ?? -1
+/** Worse of hike vs jeep (grade vs road class), derived from facts. */
+export function accessDifficulty(peak, difficultyConfig) {
+  return deriveAccessDifficulty(peak, difficultyConfig)
 }
 
-/** Worse of hike vs jeep (grade vs road class). */
-export function accessDifficulty(peak) {
-  if (peak?.access_difficulty) return String(peak.access_difficulty).toLowerCase()
-  const hike = peak?.hike_difficulty || peak?.hike?.difficulty
-  const jeep = peak?.jeep_difficulty || peak?.jeep?.difficulty
-  if (difficultyRank(hike) >= difficultyRank(jeep)) return hike ? String(hike).toLowerCase() : ''
-  return jeep ? String(jeep).toLowerCase() : ''
-}
-
-/** @param {object[]} peaks */
-export function peaksGeoJson(peaks) {
+/** @param {object[]} peaks @param {object|null|undefined} difficultyConfig */
+export function peaksGeoJson(peaks, difficultyConfig) {
   return {
     type: 'FeatureCollection',
     features: peaks
@@ -65,7 +55,7 @@ export function peaksGeoJson(peaks) {
           name: peak.name || '',
           source: peak.source || '',
           elev_m: peak.elev_m ?? null,
-          access_difficulty: accessDifficulty(peak),
+          access_difficulty: accessDifficulty(peak, difficultyConfig),
         },
       })),
   }
@@ -375,10 +365,10 @@ export function clearPeaksCursorPoint(map) {
   setPeaksCursorPoint(map, NaN, NaN)
 }
 
-/** @param {maplibregl.Map} map @param {object[]} peaks */
-export function setPeaksLayerData(map, peaks) {
+/** @param {maplibregl.Map} map @param {object[]} peaks @param {object|null|undefined} difficultyConfig */
+export function setPeaksLayerData(map, peaks, difficultyConfig) {
   if (map.getSource(PEAKS_SOURCE)) {
-    map.getSource(PEAKS_SOURCE).setData(peaksGeoJson(peaks))
+    map.getSource(PEAKS_SOURCE).setData(peaksGeoJson(peaks, difficultyConfig))
   }
   if (map.getSource(PEAKS_JEEP_SOURCE)) {
     map.getSource(PEAKS_JEEP_SOURCE).setData(peaksJeepGeoJson(peaks))

@@ -179,29 +179,14 @@ pub fn load_peaks_catalog(config_path: &Path) -> Result<PeaksCatalog> {
     load_peaks_catalog_with(config_path, load_peak)
 }
 
-fn listed_hike_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
-    crate::difficulty::derived_hike_difficulty(entry)
-}
-
-fn listed_jeep_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
-    crate::difficulty::derived_jeep_difficulty(entry)
-}
-
 /// List API payload: deny-filtered scalars, no hike/jeep blobs.
+/// Difficulty labels are derived client-side from the fact scalars below.
 pub fn build_peaks_list_json(catalog: &PeaksCatalog) -> serde_json::Value {
     let mut peaks: Vec<serde_json::Value> = catalog
         .entries
         .iter()
         .filter(|(_, entry)| !entry.deny.unwrap_or(false))
         .map(|(slug, entry)| {
-            let hike_diff = listed_hike_difficulty(entry);
-            let jeep_diff = listed_jeep_difficulty(entry);
-            let access_diff = match (&hike_diff, &jeep_diff) {
-                (Some(h), Some(j)) => Some(crate::difficulty::worse_difficulty(h, j).to_string()),
-                (Some(h), None) => Some(h.clone()),
-                (None, Some(j)) => Some(j.clone()),
-                (None, None) => None,
-            };
             serde_json::json!({
                 "slug": slug,
                 "name": entry.name,
@@ -213,13 +198,15 @@ pub fn build_peaks_list_json(catalog: &PeaksCatalog) -> serde_json::Value {
                 "road_lat": entry.road_loc.map(|loc| loc[0]),
                 "road_lon": entry.road_loc.map(|loc| loc[1]),
                 "hike_m": entry.hike_m,
+                "hike_gain_m": entry.hike_gain_m,
+                "hike_avg_grade_pct": entry.hike_avg_grade_pct,
+                "hike_max_grade_pct": entry.hike_max_grade_pct,
                 "max_slope_deg": entry.max_slope_deg,
                 "paved_lat": entry.paved_loc.map(|loc| loc[0]),
                 "paved_lon": entry.paved_loc.map(|loc| loc[1]),
                 "jeep_m": entry.jeep_m,
-                "hike_difficulty": hike_diff,
-                "jeep_difficulty": jeep_diff,
-                "access_difficulty": access_diff,
+                "jeep_highway": entry.jeep_highway,
+                "jeep_tracktype": entry.jeep_tracktype,
                 "compute_key": entry.compute_key,
             })
         })
@@ -237,7 +224,7 @@ pub fn build_peaks_list_json(catalog: &PeaksCatalog) -> serde_json::Value {
     })
 }
 
-pub const PEAKS_LIST_CACHE_VERSION: u32 = 3;
+pub const PEAKS_LIST_CACHE_VERSION: u32 = 4;
 
 pub fn peaks_list_cache_path(config_path: &Path) -> std::path::PathBuf {
     crate::paths::resolved_preset_cache_dir(config_path).join("peaks/list.json")
@@ -796,10 +783,10 @@ peaks:
             .iter()
             .find(|p| p.get("slug").and_then(|s| s.as_str()) == Some("bump-peak"))
             .expect("bump row");
-        assert_eq!(
-            row.get("hike_difficulty").and_then(|v| v.as_str()),
-            Some("medium")
-        );
+        assert_eq!(row.get("hike_gain_m").and_then(|v| v.as_f64()), Some(36.0));
+        assert_eq!(row.get("hike_avg_grade_pct").and_then(|v| v.as_f64()), Some(16.0));
+        assert_eq!(row.get("hike_max_grade_pct").and_then(|v| v.as_f64()), Some(29.3));
+        assert!(row.get("hike_difficulty").is_none());
     }
 
     #[test]

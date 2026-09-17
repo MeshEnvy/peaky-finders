@@ -129,6 +129,8 @@ export function mountPeakSheet(store, appApi) {
         appApi.flyToPeakProfilePoint?.(pt.lat, pt.lon)
       }
 
+      const difficultyConfig = computed(() => store.peaks.rules?.difficulty || null)
+
       return {
         panelVisible,
         selectedPeak,
@@ -138,6 +140,7 @@ export function mountPeakSheet(store, appApi) {
         accessError,
         actionError,
         title,
+        difficultyConfig,
         closePanel,
         onAccessPointClick,
         addPeakAsSite,
@@ -162,6 +165,7 @@ export function mountPeakSheet(store, appApi) {
           :loading="loading"
           :error="accessError"
           :hike-end-elev-m="selectedPeak?.elev_m"
+          :difficulty-config="difficultyConfig"
           hike-end-label="Summit"
           empty-text="No access route yet"
           @point-click="onAccessPointClick"
