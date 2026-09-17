@@ -2,7 +2,7 @@
 
 import { createApp, computed, ref, watch } from 'vue'
 import * as apiUrls from '../api/urls.js'
-import { difficultyClass } from './access-profiles.js'
+import { AccessProfilesPanel, difficultyClass } from './access-profiles.js'
 
 /** @param {string} a @param {string} b */
 function canonicalLinkPair(a, b) {
@@ -31,6 +31,7 @@ export function mountLinkSheet(store, appApi) {
   body.appendChild(mountPoint)
 
   const app = createApp({
+    components: { AccessProfilesPanel },
     setup() {
       const pairDetail = ref(/** @type {object|null} */ (null))
       const loading = ref(false)
@@ -127,13 +128,42 @@ export function mountLinkSheet(store, appApi) {
             accessDifficulty: props.access_difficulty || null,
             hikeDifficulty: props.hike_difficulty || null,
             jeepDifficulty: props.jeep_difficulty || null,
-            hikeM: props.hike_m != null ? Number(props.hike_m) : null,
-            jeepM: props.jeep_m != null ? Number(props.jeep_m) : null,
+            peakSlug: props.peak_slug || props.slug || null,
           }
         })
       })
 
       const selectedCandidateId = computed(() => store.fortify?.selectedCandidateId || null)
+
+      const selectedCandidate = computed(() => {
+        const id = selectedCandidateId.value
+        if (!id) return null
+        return fortifyCandidates.value.find((row) => row.id === id) || null
+      })
+
+      const selectedAccess = computed(() => {
+        const slug = selectedCandidate.value?.peakSlug
+        if (!slug) return null
+        return store.access?.bySlug?.[slug] || null
+      })
+
+      const selectedAccessHike = computed(() => selectedAccess.value?.hike || null)
+      const selectedAccessJeep = computed(() => selectedAccess.value?.jeep || null)
+
+      const selectedAccessLoading = computed(() => {
+        const slug = selectedCandidate.value?.peakSlug
+        if (!slug) return false
+        const row = store.access?.bySlug?.[slug]
+        const hikeProfile = row?.hike?.profile
+        const jeepProfile = row?.jeep?.profile
+        const hasProfiles =
+          (Array.isArray(hikeProfile) && hikeProfile.length >= 2) ||
+          (Array.isArray(jeepProfile) && jeepProfile.length >= 2)
+        if (hasProfiles) return false
+        return store.fortify?.accessSlug === slug
+      })
+
+      const difficultyConfig = computed(() => store.peaks.rules?.difficulty || null)
 
       async function loadPairDetail(a, b) {
         if (!a || !b) {
@@ -210,6 +240,11 @@ export function mountLinkSheet(store, appApi) {
         appApi.selectFortifyCandidateById?.(id)
       }
 
+      /** @param {{ lat: number, lon: number }} pt */
+      function onAccessPointClick(pt) {
+        appApi.flyToPeakProfilePoint?.(pt.lat, pt.lon)
+      }
+
       function strengthLabel(val) {
         if (val === 'strong') return 'Mutual (strong)'
         if (val === 'weak') return 'One-way (weak)'
@@ -261,13 +296,6 @@ export function mountLinkSheet(store, appApi) {
         ).toLowerCase()
       }
 
-      function accessLines(row) {
-        const lines = []
-        if (row.hikeM != null) lines.push(`${Math.round(row.hikeM)} m hike`)
-        if (row.jeepM != null) lines.push(`${(row.jeepM / 1000).toFixed(1)} km jeep`)
-        return lines
-      }
-
       function difficultyCardClass(row) {
         const d = primaryDifficulty(row)
         if (d === 'easy' || d === 'medium' || d === 'difficult' || d === 'extreme') {
@@ -294,6 +322,11 @@ export function mountLinkSheet(store, appApi) {
         fortifyStatus,
         fortifyCandidates,
         selectedCandidateId,
+        selectedCandidate,
+        selectedAccessHike,
+        selectedAccessJeep,
+        selectedAccessLoading,
+        difficultyConfig,
         closePanel,
         jumpToSite,
         startFortify,
@@ -305,7 +338,7 @@ export function mountLinkSheet(store, appApi) {
         legLines,
         rfSummary,
         primaryDifficulty,
-        accessLines,
+        onAccessPointClick,
         difficultyClass,
         difficultyCardClass,
         titleCaseDifficulty,
@@ -410,14 +443,21 @@ export function mountLinkSheet(store, appApi) {
                     </div>
                   </div>
                 </div>
-                <div v-if="accessLines(row).length" class="fortify-candidate__detail">
-                  <span class="fortify-candidate__detail-label">Route</span>
-                  <div class="fortify-candidate__detail-value">
-                    <div v-for="line in accessLines(row)" :key="line">{{ line }}</div>
-                  </div>
-                </div>
               </div>
             </button>
+          </div>
+          <div v-if="selectedCandidate" class="fortify-candidate-access site-panel__section">
+            <span class="site-panel__label">Access · {{ selectedCandidate.name }}</span>
+            <AccessProfilesPanel
+              :hike="selectedAccessHike"
+              :jeep="selectedAccessJeep"
+              :loading="selectedAccessLoading"
+              :difficulty-config="difficultyConfig"
+              :hike-end-elev-m="selectedCandidate.elevM"
+              hike-end-label="Summit"
+              empty-text="No access route yet"
+              @point-click="onAccessPointClick"
+            />
           </div>
         </div>
         <wa-callout v-if="actionError" variant="danger">{{ actionError }}</wa-callout>

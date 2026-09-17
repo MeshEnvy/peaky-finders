@@ -786,11 +786,17 @@ body.wide #map {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
-  max-height: min(44vh, 22rem);
+  max-height: min(32vh, 16rem);
   overflow-x: hidden;
   overflow-y: auto;
   margin-top: 0.35rem;
   padding-right: 0.1rem;
+}
+
+.fortify-candidate-access {
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--wa-color-surface-border);
 }
 
 button.fortify-candidate,
