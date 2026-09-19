@@ -748,6 +748,11 @@ body.wide #map {
   background: rgba(74, 108, 247, 0.18);
 }
 
+.tag-picker__option--create {
+  color: #8ba4ff;
+  font-style: italic;
+}
+
 .tag-picker--bulk .tag-picker__chip {
   cursor: pointer;
 }

@@ -4,6 +4,7 @@ import { watch } from 'vue'
 import {
   allProjectTags,
   bulkTagInitialCounts,
+  bulkTagListTags,
   bulkTagVisualState,
   computeBulkTagOps,
 } from '../stores/sites.js'
@@ -29,9 +30,7 @@ export function mountBulkTagModal(store, appApi) {
 
   function chipTags(listedSites) {
     const counts = bulkTagInitialCounts(listedSites)
-    return [...new Set([...allProjectTags(store), ...Object.keys(counts), ...Object.keys(store.modals.bulkTag.pending || {})])].sort(
-      (a, b) => a.localeCompare(b),
-    )
+    return bulkTagListTags(store.modals.bulkTag.pending || {}, counts)
   }
 
   function bulkStates(listedSites, modal) {

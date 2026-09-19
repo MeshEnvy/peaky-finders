@@ -37,8 +37,11 @@ export const TagPicker = {
     const dropdownOpen = ref(false)
     const highlightIndex = ref(-1)
 
+    const inputNeedle = computed(() => normalizeTagInput(inputValue.value))
+
     const filteredSuggestions = computed(() => {
-      const needle = normalizeTagInput(inputValue.value).toLowerCase()
+      const needle = inputNeedle.value.toLowerCase()
+      if (!needle) return []
       return props.suggestions
         .filter((tag) => {
           if (props.mode === 'bulk') {
@@ -46,11 +49,29 @@ export const TagPicker = {
           } else if (props.modelValue.includes(tag)) {
             return false
           }
-          if (!needle) return true
           return tag.toLowerCase().includes(needle)
         })
         .slice(0, 12)
     })
+
+    const canCreateTag = computed(() => {
+      const tag = inputNeedle.value
+      if (!tag) return false
+      if (props.mode === 'bulk' && tag in props.states) return false
+      if (props.mode === 'simple' && props.modelValue.includes(tag)) return false
+      return !filteredSuggestions.value.some((entry) => entry.toLowerCase() === tag.toLowerCase())
+    })
+
+    const dropdownVisible = computed(
+      () =>
+        dropdownOpen.value &&
+        !!inputNeedle.value &&
+        (filteredSuggestions.value.length > 0 || canCreateTag.value),
+    )
+
+    const dropdownOptionCount = computed(
+      () => filteredSuggestions.value.length + (canCreateTag.value ? 1 : 0),
+    )
 
     const visibleChips = computed(() => {
       if (props.mode === 'simple') {
@@ -104,21 +125,37 @@ export const TagPicker = {
       }, 120)
     }
 
+    function selectHighlightedOption() {
+      const index = highlightIndex.value
+      if (index >= 0 && index < filteredSuggestions.value.length) {
+        addTag(filteredSuggestions.value[index])
+        return
+      }
+      if (canCreateTag.value && index === filteredSuggestions.value.length) {
+        addTag(inputNeedle.value)
+        return
+      }
+      if (canCreateTag.value) {
+        addTag(inputNeedle.value)
+        return
+      }
+      if (index >= 0 && filteredSuggestions.value[index]) {
+        addTag(filteredSuggestions.value[index])
+      }
+    }
+
     /** @param {KeyboardEvent} ev */
     function onInputKeydown(ev) {
       if (ev.key === 'Enter') {
         ev.preventDefault()
-        if (highlightIndex.value >= 0 && filteredSuggestions.value[highlightIndex.value]) {
-          addTag(filteredSuggestions.value[highlightIndex.value])
-        } else {
-          addTag(inputValue.value)
-        }
+        selectHighlightedOption()
         return
       }
       if (ev.key === 'ArrowDown') {
         ev.preventDefault()
+        if (!inputNeedle.value) return
         dropdownOpen.value = true
-        const max = filteredSuggestions.value.length - 1
+        const max = dropdownOptionCount.value - 1
         highlightIndex.value = Math.min(highlightIndex.value + 1, max)
         return
       }
@@ -134,8 +171,7 @@ export const TagPicker = {
     }
 
     watch(inputValue, () => {
-      dropdownOpen.value =
-        !!normalizeTagInput(inputValue.value) || filteredSuggestions.value.length > 0
+      dropdownOpen.value = !!inputNeedle.value
       highlightIndex.value = -1
     })
 
@@ -143,7 +179,12 @@ export const TagPicker = {
       inputValue,
       dropdownOpen,
       highlightIndex,
+      inputNeedle,
       filteredSuggestions,
+      canCreateTag,
+      dropdownVisible,
+      dropdownOptionCount,
+      selectHighlightedOption,
       visibleChips,
       chipState,
       removeTag,
@@ -195,11 +236,11 @@ export const TagPicker = {
           maxlength="32"
           aria-label="Add tag"
           :disabled="disabled"
-          @focus="dropdownOpen = filteredSuggestions.length > 0 || !!inputValue.trim()"
+          @focus="dropdownOpen = !!inputNeedle"
           @blur="onInputBlur"
           @keydown="onInputKeydown"
         >
-        <ul v-if="dropdownOpen && filteredSuggestions.length" class="tag-picker__dropdown" role="listbox">
+        <ul v-if="dropdownVisible" class="tag-picker__dropdown" role="listbox">
           <li
             v-for="(tag, index) in filteredSuggestions"
             :key="tag"
@@ -208,6 +249,13 @@ export const TagPicker = {
             role="option"
             @mousedown.prevent="addTag(tag)"
           >{{ tag }}</li>
+          <li
+            v-if="canCreateTag"
+            class="tag-picker__option tag-picker__option--create"
+            :class="{ 'tag-picker__option--active': highlightIndex === filteredSuggestions.length }"
+            role="option"
+            @mousedown.prevent="addTag(inputNeedle)"
+          >+ create tag "{{ inputNeedle }}"</li>
         </ul>
       </div>
     </div>
