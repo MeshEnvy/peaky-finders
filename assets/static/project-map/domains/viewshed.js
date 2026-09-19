@@ -482,16 +482,27 @@ export function createViewshedDomain(opts) {
         active.add(site.slug)
         renderPinLoadOverlay(site.slug, site.lon, site.lat, progressFor(site.slug))
       }
-      if (viewshedLoadingHasDraft?.() && getDraftPlacement) {
+      const osm = store?.access?.osm
+      const osmBusy = osm?.status === 'parsing'
+      const accessBusy = !!store?.access?.draftLoading || osmBusy
+      if ((viewshedLoadingHasDraft?.() || accessBusy) && getDraftPlacement) {
         const draft = getDraftPlacement()
         if (draft) {
           active.add(DRAFT_VIEWSHED_SLUG)
-          renderPinLoadOverlay(
-            DRAFT_VIEWSHED_SLUG,
-            draft.lon,
-            draft.lat,
-            progressFor(DRAFT_VIEWSHED_SLUG),
-          )
+          const vsBusy =
+            viewshedLoadingHasDraft?.() && !siteViewshedReady.has(DRAFT_VIEWSHED_SLUG)
+          const progress = vsBusy
+            ? progressFor(DRAFT_VIEWSHED_SLUG)
+            : osmBusy
+              ? {
+                  progressLabel:
+                    osm.step > 0 && osm.total > 0
+                      ? `roads ${osm.step}/${osm.total}`
+                      : 'roads…',
+                  progressFraction: Number(osm.fraction) > 0 ? Number(osm.fraction) : 0.12,
+                }
+              : { progressLabel: 'access…', progressFraction: 0.9 }
+          renderPinLoadOverlay(DRAFT_VIEWSHED_SLUG, draft.lon, draft.lat, progress)
         }
       }
       if (getLinkSolverHopViewshedSlugs && getLinkSolverHopViewshedCoords) {

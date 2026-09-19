@@ -2,15 +2,16 @@
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::path::{PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use peaky_peaks::{
-    load_routing_for_points, warm_place_access_with_routing, OsmRouting, OsmRoutingOpts,
+    load_routing_for_points_progress, routing_bbox_for_points, routing_coverage_bbox,
+    warm_place_access_with_routing, OsmParsePhase, OsmRouting, OsmRoutingOpts, OSM_ROUTE_PAD_DEG,
 };
 use peaky_preset::{
     ensure_access_meta, load_access, load_preset, resolved_viewshed_root, BoardViewshedResolver,
@@ -41,6 +42,63 @@ pub const PRIORITY_LINK_ADJACENT: i32 = 20;
 pub const PRIORITY_BACKGROUND: i32 = 100;
 
 const LINKS_REFRESH_DEBOUNCE_MS: u64 = 2000;
+
+/// Reuse the cached graph when the point plus this pad still sits inside it.
+/// Jeep cap is ~20 mi (~0.29°); 0.35° keeps a margin without forcing a rebuild.
+const OSM_COVER_PAD_DEG: f64 = 0.35;
+
+struct CachedOsmRouting {
+    routing: Arc<OsmRouting>,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+}
+
+impl CachedOsmRouting {
+    fn covers(&self, lat: f64, lon: f64, pad_deg: f64) -> bool {
+        lon - pad_deg >= self.west
+            && lon + pad_deg <= self.east
+            && lat - pad_deg >= self.south
+            && lat + pad_deg <= self.north
+    }
+}
+
+#[derive(Clone, Debug)]
+struct OsmStatus {
+    status: String,
+    phase: String,
+    step: u32,
+    total: u32,
+    fraction: f64,
+    error: Option<String>,
+}
+
+impl Default for OsmStatus {
+    fn default() -> Self {
+        Self {
+            status: "idle".into(),
+            phase: String::new(),
+            step: 0,
+            total: 3,
+            fraction: 0.0,
+            error: None,
+        }
+    }
+}
+
+impl OsmStatus {
+    fn json(&self) -> Value {
+        json!({
+            "status": self.status,
+            "phase": self.phase,
+            "step": self.step,
+            "total": self.total,
+            "fraction": (self.fraction * 100.0).round() / 100.0,
+            "error": self.error,
+        })
+    }
+}
 
 type JobFn = Box<dyn FnOnce() + Send>;
 
@@ -214,7 +272,12 @@ pub struct WarmHub {
     projects: Arc<Mutex<HashMap<String, Arc<ProjectWarm>>>>,
     workers_started: Arc<AtomicBool>,
     /// Project-wide OSM routing graph (lazy; shared across site access warms).
-    osm_routing: Arc<Mutex<Option<Arc<OsmRouting>>>>,
+    osm_routing: Arc<Mutex<Option<CachedOsmRouting>>>,
+    /// Single-flight lock so prefetch and HTTP warm share one PBF parse.
+    osm_build: Arc<Mutex<()>>,
+    osm_status: Arc<Mutex<OsmStatus>>,
+    osm_last_pub: Arc<Mutex<Option<Instant>>>,
+    project_slug: String,
     board_viewshed: Arc<BoardViewshedResolver>,
 }
 
@@ -225,6 +288,7 @@ impl WarmHub {
         verbose: bool,
         coverage_workers: usize,
         board_viewshed: Arc<BoardViewshedResolver>,
+        project_slug: String,
     ) -> Self {
         Self {
             session,
@@ -234,6 +298,10 @@ impl WarmHub {
             projects: Arc::new(Mutex::new(HashMap::new())),
             workers_started: Arc::new(AtomicBool::new(false)),
             osm_routing: Arc::new(Mutex::new(None)),
+            osm_build: Arc::new(Mutex::new(())),
+            osm_status: Arc::new(Mutex::new(OsmStatus::default())),
+            osm_last_pub: Arc::new(Mutex::new(None)),
+            project_slug,
             board_viewshed,
         }
     }
@@ -423,40 +491,142 @@ impl WarmHub {
         let _ = warm_access;
     }
 
-    fn ensure_project_osm_routing(
-        &self,
-        preset_path: &std::path::Path,
-        preset: &Preset,
-    ) -> Result<Arc<OsmRouting>> {
-        {
-            let guard = self.osm_routing.lock().unwrap();
-            if let Some(routing) = guard.as_ref() {
-                return Ok(routing.clone());
-            }
+    pub fn osm_status_json(&self) -> Value {
+        let mut payload = self.osm_status.lock().unwrap().json();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("project".into(), json!(self.project_slug));
         }
+        payload
+    }
+
+    fn publish_osm_progress(&self, phase: OsmParsePhase, fraction: f64, force: bool) {
+        {
+            let mut last = self.osm_last_pub.lock().unwrap();
+            if !force {
+                if let Some(prev) = *last {
+                    if prev.elapsed() < Duration::from_millis(250) {
+                        return;
+                    }
+                }
+            }
+            *last = Some(Instant::now());
+        }
+        let status = if phase == OsmParsePhase::Ready {
+            "ready"
+        } else {
+            "parsing"
+        };
+        let snap = OsmStatus {
+            status: status.into(),
+            phase: phase.label().into(),
+            step: phase.step(),
+            total: phase.total(),
+            fraction: fraction.clamp(0.0, 1.0),
+            error: None,
+        };
+        *self.osm_status.lock().unwrap() = snap.clone();
+        let mut payload = snap.json();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("project".into(), json!(self.project_slug));
+        }
+        self.events.publish(&self.project_slug, "osm", payload);
+    }
+
+    fn publish_osm_error(&self, error: &str) {
+        let snap = OsmStatus {
+            status: "error".into(),
+            phase: "error".into(),
+            step: 0,
+            total: 3,
+            fraction: 0.0,
+            error: Some(error.to_string()),
+        };
+        *self.osm_status.lock().unwrap() = snap.clone();
+        let mut payload = snap.json();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("project".into(), json!(self.project_slug));
+        }
+        self.events.publish(&self.project_slug, "osm", payload);
+    }
+
+    fn cached_osm_if_covers(&self, extra: &[(f64, f64)]) -> Option<Arc<OsmRouting>> {
+        let guard = self.osm_routing.lock().unwrap();
+        let cached = guard.as_ref()?;
+        if extra.is_empty() || extra.iter().all(|&(lat, lon)| cached.covers(lat, lon, OSM_COVER_PAD_DEG))
+        {
+            Some(cached.routing.clone())
+        } else {
+            None
+        }
+    }
+
+    /// OSM graph covering booked sites plus ``extra`` points (0.5° pad).
+    /// Reuses the in-process cache when it already covers the extras.
+    pub fn ensure_osm_covering(
+        &self,
+        preset_path: &Path,
+        extra: &[(f64, f64)],
+    ) -> Result<Arc<OsmRouting>> {
+        if let Some(routing) = self.cached_osm_if_covers(extra) {
+            return Ok(routing);
+        }
+        let _build = self.osm_build.lock().unwrap();
+        if let Some(routing) = self.cached_osm_if_covers(extra) {
+            return Ok(routing);
+        }
+        let preset = load_preset(preset_path)?;
+        let mut points: Vec<(f64, f64)> = preset.sites.values().map(|s| (s.lat(), s.lon())).collect();
+        points.extend_from_slice(extra);
         let project_dir = preset_path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("preset path has no parent"))?;
-        let points: Vec<(f64, f64)> = preset
-            .sites
-            .values()
-            .map(|s| (s.lat(), s.lon()))
-            .collect();
         let meta = ensure_access_meta(preset_path)?;
         let opts = OsmRoutingOpts::from(&meta);
-        let routing = Arc::new(load_routing_for_points(
+        let (west, south, east, north) = routing_bbox_for_points(&points, OSM_ROUTE_PAD_DEG)
+            .ok_or_else(|| anyhow::anyhow!("no points for OSM routing"))?;
+        self.publish_osm_progress(OsmParsePhase::Cache, 0.08, true);
+        let hub = self.clone();
+        let routing = match load_routing_for_points_progress(
             project_dir,
             &points,
-            0.5,
+            OSM_ROUTE_PAD_DEG,
             false,
             &opts,
-        )?);
-        let mut guard = self.osm_routing.lock().unwrap();
-        if let Some(existing) = guard.as_ref() {
-            return Ok(existing.clone());
-        }
-        *guard = Some(routing.clone());
+            &mut |phase, frac| hub.publish_osm_progress(phase, frac, phase == OsmParsePhase::Ready),
+        ) {
+            Ok(r) => Arc::new(r),
+            Err(e) => {
+                self.publish_osm_error(&e.to_string());
+                return Err(e);
+            }
+        };
+        let (cwest, csouth, ceast, cnorth) = routing_coverage_bbox(west, south, east, north);
+        let cached = CachedOsmRouting {
+            routing: routing.clone(),
+            west: cwest,
+            south: csouth,
+            east: ceast,
+            north: cnorth,
+        };
+        *self.osm_routing.lock().unwrap() = Some(cached);
+        self.publish_osm_progress(OsmParsePhase::Ready, 1.0, true);
         Ok(routing)
+    }
+
+    /// Prefetch the site-bbox graph after listen so the first draft click is a route, not a PBF parse.
+    pub fn prefetch_osm_routing(&self, preset_path: &Path) {
+        match self.ensure_osm_covering(preset_path, &[]) {
+            Ok(_) => tracing::info!("osm routing graph ready"),
+            Err(e) => tracing::warn!("osm routing prefetch: {e:#}"),
+        }
+    }
+
+    fn ensure_project_osm_routing(
+        &self,
+        preset_path: &Path,
+        _preset: &Preset,
+    ) -> Result<Arc<OsmRouting>> {
+        self.ensure_osm_covering(preset_path, &[])
     }
 
     fn warm_and_publish_site_access(

@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createApp, computed, ref, watch } from 'vue'
+import { DRAFT_VIEWSHED_SLUG } from '../constants.js'
 import { formatCoord, formatElevLabel, normalizeTagInput } from '../geo.js'
 import { allProjectTags, tagChipChoices, toggleTag } from '../stores/sites.js'
 import { apiFetch } from '../api/client.js'
@@ -104,10 +105,26 @@ export function mountSiteSheet(store, appApi) {
       }
 
       watch(
-        () => [store.ui.selectedSlug, store.ui.createMode, store.ui.editMode],
+        () => [
+          store.ui.selectedSlug,
+          store.ui.createMode,
+          store.ui.editMode,
+          store.access?.bySlug?.[DRAFT_VIEWSHED_SLUG],
+          store.access?.draftLoading,
+          store.access?.osm?.status,
+          store.access?.osm?.step,
+        ],
         () => {
+          if (store.ui.createMode) {
+            const row = store.access?.bySlug?.[DRAFT_VIEWSHED_SLUG] || null
+            access.value = row
+            accessError.value = ''
+            const osmBusy = store.access?.osm?.status === 'parsing'
+            accessLoading.value = (!!store.access?.draftLoading || osmBusy) && !row
+            return
+          }
           const slug = store.ui.selectedSlug
-          if (!slug || store.ui.createMode || store.ui.editMode) {
+          if (!slug || store.ui.editMode) {
             access.value = null
             return
           }
@@ -132,6 +149,15 @@ export function mountSiteSheet(store, appApi) {
           }
         },
       )
+
+      const accessLoadingLabel = computed(() => {
+        const osm = store.access?.osm
+        if (osm?.status === 'parsing' && osm.step > 0 && osm.total > 0) {
+          return `Loading roads ${osm.step}/${osm.total}…`
+        }
+        if (osm?.status === 'parsing') return 'Loading roads…'
+        return 'Loading access profile…'
+      })
 
       const accessHike = computed(() => access.value?.hike || null)
       const accessJeep = computed(() => access.value?.jeep || null)
@@ -468,6 +494,7 @@ export function mountSiteSheet(store, appApi) {
         errorText,
         access,
         accessLoading,
+        accessLoadingLabel,
         accessError,
         accessHike,
         accessJeep,
@@ -546,6 +573,7 @@ export function mountSiteSheet(store, appApi) {
               :hike="accessHike"
               :jeep="accessJeep"
               :loading="accessLoading"
+              :loading-label="accessLoadingLabel"
               :error="accessError"
               :hike-end-elev-m="hikeEndElevM"
               :difficulty-config="difficultyConfig"
@@ -696,6 +724,21 @@ export function mountSiteSheet(store, appApi) {
           <div class="site-panel__section">
             <span class="site-panel__label">Elevation</span>
             <p class="site-panel__value">{{ createCoordsLabel ? elevLabel : '—' }}</p>
+          </div>
+          <div class="site-panel__section">
+            <span class="site-panel__label">Access</span>
+            <AccessProfilesPanel
+              :hike="accessHike"
+              :jeep="accessJeep"
+              :loading="accessLoading"
+              :loading-label="accessLoadingLabel"
+              :error="accessError"
+              :hike-end-elev-m="hikeEndElevM"
+              :difficulty-config="difficultyConfig"
+              hike-end-label="Site"
+              empty-text="No access route yet"
+              @point-click="onAccessPointClick"
+            />
           </div>
           <wa-callout v-if="errorText" variant="danger">{{ errorText }}</wa-callout>
           <div class="site-panel__create-actions">

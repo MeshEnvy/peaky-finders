@@ -30,6 +30,9 @@ export function createPlacementDomain(ctx) {
     loadSingleSiteLinks,
     loadSiteLinks,
     ensureSiteAccess,
+    ensureDraftAccess,
+    clearDraftAccess,
+    ingestAccess,
     refreshSiteAccessLayers,
     scheduleViewshedLoad,
     viewshedVisible,
@@ -176,8 +179,11 @@ export function createPlacementDomain(ctx) {
     if (panel) panel.hidden = false
     syncMapViewport?.()
     showPanelCreate()
+    deselectPeak?.({ syncDeepLink: false })
+    clearLinkSelection?.()
     viewshedVisible?.set?.(DRAFT_VIEWSHED_SLUG, true)
     void loadDraftViewshedAt?.(lat, lon)
+    ensureDraftAccess?.(lat, lon)
   }
 
   function cancelCreate() {
@@ -187,6 +193,7 @@ export function createPlacementDomain(ctx) {
     removeDraftMarker()
     removeDraftViewshed?.()
     removeDraftLinksLayer?.()
+    clearDraftAccess?.()
     const panel = sitePanelEl()
     const selected = selectedSlug()
     if (selected) {
@@ -279,6 +286,11 @@ export function createPlacementDomain(ctx) {
       lon: site.lon ?? fallbackLon,
     })
     if (!row) return false
+    const draftAccess = store.access?.bySlug?.[DRAFT_VIEWSHED_SLUG]
+    if (draftAccess && row.slug) {
+      ingestAccess?.(row.slug, draftAccess, row)
+      clearDraftAccess?.()
+    }
     registerSite(row)
     viewshedVisible?.set?.(row.slug, true)
     scheduleViewshedLoad?.(row)

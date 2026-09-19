@@ -1,6 +1,7 @@
 // @ts-check
 
 import * as apiUrls from '../api/urls.js'
+import { DRAFT_VIEWSHED_SLUG, isEphemeralPlaceSlug } from '../constants.js'
 import { ensureSiteAccessLayers, setSiteAccessLayerData } from '../map/site-access-layers.js'
 import {
   isAccessVisible as isAccessVisibleInStore,
@@ -105,6 +106,18 @@ export function createSiteAccessDomain(opts) {
     ingestAccess(data.slug, data)
   }
 
+  function handleOsmEvent(data) {
+    if (!data || typeof data !== 'object') return
+    store.access.osm = {
+      status: data.status || 'idle',
+      phase: data.phase || '',
+      step: Number(data.step) || 0,
+      total: Number(data.total) || 3,
+      fraction: Number(data.fraction) || 0,
+    }
+    opts.updatePinOverlays?.()
+  }
+
   /**
    * Fetch access for a site (cache-first GET; warm=1 so server computes if missing).
    * @param {object} site
@@ -154,17 +167,19 @@ export function createSiteAccessDomain(opts) {
       try {
         if (!active() && !opts.prefetchOnly) return
 
-        const resp = await fetch(
-          apiUrls.placeAccessApiUrl(projectSlug, slug, { lat, lon }),
-        )
-        if (resp.ok) {
-          const access = await resp.json()
-          if (active() || opts.prefetchOnly) {
-            ingestAccess(slug, access, meta)
-          }
-          if (accessHasRouteProfiles(access)) {
-            if (!opts.prefetchOnly && active()) opts.onReady?.()
-            return
+        if (!isEphemeralPlaceSlug(slug)) {
+          const resp = await fetch(
+            apiUrls.placeAccessApiUrl(projectSlug, slug, { lat, lon }),
+          )
+          if (resp.ok) {
+            const access = await resp.json()
+            if (active() || opts.prefetchOnly) {
+              ingestAccess(slug, access, meta)
+            }
+            if (accessHasRouteProfiles(access)) {
+              if (!opts.prefetchOnly && active()) opts.onReady?.()
+              return
+            }
           }
         }
 
@@ -250,12 +265,67 @@ export function createSiteAccessDomain(opts) {
     }
   }
 
+  function clearDraftAccess() {
+    delete store.access.bySlug[DRAFT_VIEWSHED_SLUG]
+    placeInflight.delete(DRAFT_VIEWSHED_SLUG)
+    store.access.draftLoading = false
+    refreshLayers()
+  }
+
+  /**
+   * Place-access preview at a draft pin (no peak catalog gates).
+   * @param {number} lat
+   * @param {number} lon
+   */
+  function ensureDraftAccess(lat, lon) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+    const existing = store.access.bySlug[DRAFT_VIEWSHED_SLUG]
+    if (
+      existing &&
+      existing.lat === lat &&
+      existing.lon === lon &&
+      accessHasRouteProfiles(existing)
+    ) {
+      store.access.draftLoading = false
+      refreshLayers()
+      return
+    }
+    delete store.access.bySlug[DRAFT_VIEWSHED_SLUG]
+    placeInflight.delete(DRAFT_VIEWSHED_SLUG)
+    store.access.draftLoading = true
+    opts.updatePinOverlays?.()
+    void ensurePlaceAccessProfiles(
+      DRAFT_VIEWSHED_SLUG,
+      lat,
+      lon,
+      { slug: DRAFT_VIEWSHED_SLUG, name: 'New site', lat, lon },
+      {
+        isActive: () =>
+          !!store.ui.createMode && store.ui.createLat === lat && store.ui.createLon === lon,
+        onReady: () => {
+          if (store.ui.createLat === lat && store.ui.createLon === lon) {
+            store.access.draftLoading = false
+            opts.updatePinOverlays?.()
+          }
+        },
+      },
+    ).finally(() => {
+      if (store.ui.createLat === lat && store.ui.createLon === lon) {
+        store.access.draftLoading = false
+        opts.updatePinOverlays?.()
+      }
+    })
+  }
+
   return {
     ensureSiteAccess,
+    ensureDraftAccess,
+    clearDraftAccess,
     ensurePlaceAccessProfiles,
     ensureSitesAccess,
     ensureAccessForVisibleSites,
     handleAccessEvent,
+    handleOsmEvent,
     refreshLayers,
     ingestAccess,
     accessHasRouteProfiles,

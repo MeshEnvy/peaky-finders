@@ -4,7 +4,7 @@ import { projectEventsUrl } from './urls.js'
 
 /**
  * @param {string} projectSlug
- * @param {{ onHello?: () => void, onViewshed?: (data: object) => void, onLinks?: (data: object) => void, onAccess?: (data: object) => void }} handlers
+ * @param {{ onHello?: (data?: object) => void, onViewshed?: (data: object) => void, onLinks?: (data: object) => void, onAccess?: (data: object) => void, onOsm?: (data: object) => void }} handlers
  */
 export function connectProjectEvents(projectSlug, handlers) {
   /** @type {EventSource|null} */
@@ -16,8 +16,14 @@ export function connectProjectEvents(projectSlug, handlers) {
       source = null
     }
     source = new EventSource(projectEventsUrl(projectSlug))
-    source.addEventListener('hello', () => {
-      handlers.onHello?.()
+    source.addEventListener('hello', (ev) => {
+      let data
+      try {
+        data = ev.data ? JSON.parse(ev.data) : {}
+      } catch {
+        data = {}
+      }
+      handlers.onHello?.(data)
     })
     source.addEventListener('viewshed', (ev) => {
       try {
@@ -36,6 +42,13 @@ export function connectProjectEvents(projectSlug, handlers) {
     source.addEventListener('access', (ev) => {
       try {
         handlers.onAccess?.(JSON.parse(ev.data))
+      } catch {
+        /* malformed */
+      }
+    })
+    source.addEventListener('osm', (ev) => {
+      try {
+        handlers.onOsm?.(JSON.parse(ev.data))
       } catch {
         /* malformed */
       }

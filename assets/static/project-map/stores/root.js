@@ -49,6 +49,14 @@ export function createRootStore(config, savedMapState) {
       bySlug: {},
       selected: null,
       visible: new Map(),
+      draftLoading: false,
+      osm: {
+        status: 'idle',
+        phase: '',
+        step: 0,
+        total: 3,
+        fraction: 0,
+      },
     },
     ui: {
       mapReady: false,

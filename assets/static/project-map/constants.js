@@ -101,6 +101,11 @@ export const LAND_PREVIEW_LINE_WIDTH = 2.5
 export const VIEWSHED_OPACITY_DEFAULT = 0.75
 export const VIEWSHED_OVERLAY_BATCH = 4
 export const DRAFT_VIEWSHED_SLUG = '_draft'
+
+/** Preview slugs (`_draft`, `_peak`, …) — compute in memory, never write `access/<slug>.yaml`. */
+export function isEphemeralPlaceSlug(slug) {
+  return typeof slug === 'string' && slug.startsWith('_')
+}
 export const ALTERNATE_VIEWSHED_SLUG = '_alternate'
 export const FORTIFY_VIEWSHED_SLUG = '_fortify'
 export const PEAK_VIEWSHED_SLUG = '_peak'

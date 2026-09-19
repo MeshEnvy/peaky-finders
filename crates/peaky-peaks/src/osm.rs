@@ -11,6 +11,45 @@ use tracing::info;
 
 use crate::hike::haversine_m;
 
+/// Extra bbox pad applied when parsing the PBF.
+pub const OSM_BUILD_PAD_DEG: f64 = 0.05;
+
+/// Parse / cache-load stages for serve pin progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OsmParsePhase {
+    Cache,
+    Nodes,
+    Ways,
+    Index,
+    Ready,
+}
+
+impl OsmParsePhase {
+    pub fn step(self) -> u32 {
+        match self {
+            Self::Cache => 1,
+            Self::Nodes => 1,
+            Self::Ways => 2,
+            Self::Index => 3,
+            Self::Ready => 3,
+        }
+    }
+
+    pub fn total(self) -> u32 {
+        3
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cache => "cache",
+            Self::Nodes => "nodes",
+            Self::Ways => "roads",
+            Self::Index => "index",
+            Self::Ready => "ready",
+        }
+    }
+}
+
 pub const JEEP_HIGHWAY_TAGS: &[&str] = &[
     "track",
     "unclassified",
@@ -84,6 +123,19 @@ pub struct JeepRoadIndex {
 }
 
 impl JeepRoadIndex {
+    pub(crate) fn from_samples(samples: Vec<RoadPoint>, way_count: usize) -> Self {
+        let point_count = samples.len();
+        Self {
+            tree: RTree::bulk_load(samples),
+            point_count,
+            way_count,
+        }
+    }
+
+    pub(crate) fn sample_points(&self) -> Vec<RoadPoint> {
+        self.tree.iter().copied().collect()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.point_count == 0
     }
@@ -138,6 +190,18 @@ impl JeepRoadGraph {
             nodes: Vec::new(),
             adj: Vec::new(),
         }
+    }
+
+    pub(crate) fn from_parts(nodes: Vec<(f64, f64)>, adj: Vec<Vec<GraphEdge>>) -> Self {
+        Self { nodes, adj }
+    }
+
+    pub(crate) fn nodes_slice(&self) -> &[(f64, f64)] {
+        &self.nodes
+    }
+
+    pub(crate) fn adj_slice(&self) -> &[Vec<GraphEdge>] {
+        &self.adj
     }
 
     pub fn is_empty(&self) -> bool {
@@ -258,6 +322,16 @@ pub struct PavedAnchorIndex {
 }
 
 impl PavedAnchorIndex {
+    pub(crate) fn from_points(points: Vec<PavedPoint>) -> Self {
+        Self {
+            tree: RTree::bulk_load(points),
+        }
+    }
+
+    pub(crate) fn sample_points(&self) -> Vec<PavedPoint> {
+        self.tree.iter().copied().collect()
+    }
+
     pub fn from_nodes(_graph: &JeepRoadGraph, nodes: &[(u32, f64, f64)]) -> Self {
         let points: Vec<PavedPoint> = nodes
             .iter()
@@ -588,7 +662,22 @@ pub fn build_osm_routing(
     north: f64,
     opts: &OsmRoutingOpts,
 ) -> Result<OsmRouting> {
-    let pad = 0.05;
+    build_osm_routing_with_progress(pbf_path, west, south, east, north, opts, &mut |_, _| {})
+}
+
+pub fn build_osm_routing_with_progress<F>(
+    pbf_path: &Path,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    opts: &OsmRoutingOpts,
+    progress: &mut F,
+) -> Result<OsmRouting>
+where
+    F: FnMut(OsmParsePhase, f64),
+{
+    let pad = OSM_BUILD_PAD_DEG;
     let west = west - pad;
     let south = south - pad;
     let east = east + pad;
@@ -603,25 +692,39 @@ pub fn build_osm_routing(
         "peaks: parsing OSM ways…"
     );
     let t0 = Instant::now();
+    progress(OsmParsePhase::Nodes, 0.06);
 
-    let mut osm_nodes: HashMap<i64, (f64, f64)> = HashMap::new();
-    ElementReader::from_path(pbf_path)
+    let node_rows: Vec<(i64, f64, f64)> = ElementReader::from_path(pbf_path)
         .context("open OSM PBF")?
-        .for_each(|element| {
-            let (id, lat, lon) = match element {
-                Element::Node(node) => (node.id(), node.lat(), node.lon()),
-                Element::DenseNode(node) => (node.id(), node.lat(), node.lon()),
-                _ => return,
-            };
-            if node_in_bbox(lat, lon, west, south, east, north) {
-                osm_nodes.insert(id, (lat, lon));
-            }
-        })?;
+        .par_map_reduce(
+            |element| {
+                let (id, lat, lon) = match element {
+                    Element::Node(node) => (node.id(), node.lat(), node.lon()),
+                    Element::DenseNode(node) => (node.id(), node.lat(), node.lon()),
+                    _ => return Vec::new(),
+                };
+                if node_in_bbox(lat, lon, west, south, east, north) {
+                    vec![(id, lat, lon)]
+                } else {
+                    Vec::new()
+                }
+            },
+            Vec::new,
+            |mut a, mut b| {
+                a.append(&mut b);
+                a
+            },
+        )?;
+    let mut osm_nodes: HashMap<i64, (f64, f64)> = HashMap::with_capacity(node_rows.len());
+    for (id, lat, lon) in node_rows {
+        osm_nodes.insert(id, (lat, lon));
+    }
     info!(
         nodes = osm_nodes.len(),
         elapsed_secs = t0.elapsed().as_secs_f64(),
         "peaks: OSM nodes loaded"
     );
+    progress(OsmParsePhase::Ways, 0.22);
 
     let mut jeep_samples: Vec<RoadPoint> = Vec::new();
     let mut jeep_way_count = 0usize;
@@ -629,6 +732,8 @@ pub fn build_osm_routing(
     let mut graph_node_map: HashMap<i64, u32> = HashMap::new();
     let mut paved_points: Vec<PavedPoint> = Vec::new();
     let mut graph_way_count = 0usize;
+    let mut way_hits = 0usize;
+    let ways_t0 = Instant::now();
 
     ElementReader::from_path(pbf_path)
         .context("reopen OSM PBF")?
@@ -652,6 +757,12 @@ pub fn build_osm_routing(
                 }
                 if coords.len() < 2 {
                     return;
+                }
+                way_hits += 1;
+                if way_hits % 2500 == 0 {
+                    let t = ways_t0.elapsed().as_secs_f64();
+                    let frac = 0.22 + 0.62 * (t / 80.0).min(0.98);
+                    progress(OsmParsePhase::Ways, frac);
                 }
                 if jeep {
                     jeep_samples.extend(sample_way(&coords, sample_step));
@@ -707,6 +818,7 @@ pub fn build_osm_routing(
             }
         })?;
 
+    progress(OsmParsePhase::Index, 0.88);
     let jeep_point_count = jeep_samples.len();
     let jeep_tree = RTree::bulk_load(jeep_samples);
     let paved_tree = RTree::bulk_load(paved_points);
@@ -720,6 +832,7 @@ pub fn build_osm_routing(
         elapsed_secs = t0.elapsed().as_secs_f64(),
         "peaks: OSM routing ready"
     );
+    progress(OsmParsePhase::Ready, 1.0);
 
     Ok(OsmRouting {
         jeep_roads: JeepRoadIndex {

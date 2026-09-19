@@ -20,9 +20,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - **Catalog peak RF preview** — clicking a catalog peak prefetches a viewshed raster and hop-range P2P draft links to booked sites (same placement preview APIs as seek/alternates). Deselect, close the sheet, or pick a site to clear; **Add as site** hands off to the real site mesh. Cold-cache warms paint on first click (SSE `_draft` → `_peak`).
 - **Map deep links** — selecting a site or catalog peak writes `?site=` / `?peak=` plus camera (`lat`, `lon`, `z`, optional `bearing`, `pitch`) to the address bar. Back, forward, refresh, and pasted URLs restore the pin and view. Basemap, land layers, and viewshed prefs stay in localStorage.
 - **New-site coordinates** — the create sheet Copy button copies the draft pin as `lat, lon` (same format as an existing site).
+- **New-site access** — placing a draft pin paints jeep and hike routes (same place-access routing as booked sites). Peak catalog gates (0.5 mi hike, land, slope eligibility) do not apply.
 
 ### Fixed
 
+- **One hike pathfinder** — sites, draft pins, and catalog peaks share the same A* (contours past 1 mi, length budget 2× crow). Peak autofind still drops a candidate when that path fails the length/slope gate. `ACCESS_ALGO_VERSION` → **11**. Re-open a long-approach pin to re-warm.
+- **New-site access warm** — reuse the serve OSM graph (prefetch after listen) so draft trails don't re-parse the PBF on every click. The draft pin keeps the viewshed-style progress bar (`roads 1/3`) while OSM parses; the parsed graph is cached under `.peaky/cache/osm/routing-v1.bin` so later boots skip the PBF.
 - **One mutual RF standard** — mesh links, peak prefetch, Fortify, alternates, and link solver all require bidirectional decode (`mutual_rf_viable`: finite weaker-leg margin). One-way paths no longer render as linked. Site mesh cache bumps to `p2p-v7`.
 - **Fortify scans every in-range peak** — no corridor sausage, along-track pad, site-dedup, or `scan.max_candidates` thinning. Every catalog peak inside both hop discs is RF-checked (map-hidden / `deny` still omitted); only peaks that mutual-link to both ends are returned, ranked by weaker-leg margin.
 - **Peak click preview** — catalog peak, Fortify relay, and link-solver hop clicks all paint viewshed, jeep/hike access (cache-first warm), and RF legs to booked sites. Solver hop dots no longer require picking a route first. Peak preview access no longer blocked by the hidden-site gate (catalog slugs are not site rows).

@@ -1,5 +1,7 @@
 // @ts-check
 
+import { DRAFT_VIEWSHED_SLUG } from '../constants.js'
+
 /** @param {object} store @param {string} slug @param {boolean} visible */
 export function setAccessVisible(store, slug, visible) {
   if (!store.access) store.access = { bySlug: {}, visible: new Map() }
@@ -61,6 +63,7 @@ export function clearAccessPreviewFocus(store) {
 export function siteAccessShouldShow(store, slug, hidden = false) {
   if (!slug) return false
   if (isPeakAccessPreview(store, slug)) return true
+  if (store.ui?.createMode && slug === DRAFT_VIEWSHED_SLUG) return true
   if (hidden) return false
   if (store.ui?.selectedSlug === slug) return true
   if (isSelectedLinkEndpoint(store, slug)) return true

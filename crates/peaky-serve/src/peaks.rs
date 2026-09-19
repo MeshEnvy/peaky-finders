@@ -4,7 +4,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use peaky_peaks::{profile_along_polyline, resolve_hike, warm_place_access, HikeSampleElev};
+use peaky_peaks::{
+    profile_along_polyline, resolve_hike, warm_place_access, warm_place_access_with_routing,
+    HikeSampleElev, OsmRouting,
+};
 use crate::peaks_cache::cached_peaks_list;
 use peaky_preset::{
     ensure_access_meta, load_access, load_peak, load_peaks_rules,
@@ -108,6 +111,22 @@ pub fn list_peaks_payload(preset_path: &Path) -> Result<Value> {
     cached_peaks_list(preset_path)
 }
 
+fn warm_place(
+    preset_path: &Path,
+    session: &Arc<Session>,
+    routing: Option<&OsmRouting>,
+    slug: &str,
+    lat: f64,
+    lon: f64,
+) -> Result<Option<PlaceAccess>> {
+    if let Some(routing) = routing {
+        let meta = ensure_access_meta(preset_path)?;
+        warm_place_access_with_routing(preset_path, session, routing, &meta, slug, lat, lon)
+    } else {
+        warm_place_access(preset_path, session, slug, lat, lon)
+    }
+}
+
 pub fn place_access_payload(
     preset_path: &Path,
     session: &Arc<Session>,
@@ -115,6 +134,7 @@ pub fn place_access_payload(
     warm_if_missing: bool,
     warm_lat: Option<f64>,
     warm_lon: Option<f64>,
+    routing: Option<&OsmRouting>,
 ) -> Result<Value> {
     if let Some(access) = load_access(preset_path, place_slug)? {
         if access_fresh_on_disk(preset_path, &access) || !warm_if_missing {
@@ -128,7 +148,7 @@ pub fn place_access_payload(
             None
         };
         if let Some((lat, lon)) = warm_coords {
-            if let Some(fresh) = warm_place_access(preset_path, session, place_slug, lat, lon)? {
+            if let Some(fresh) = warm_place(preset_path, session, routing, place_slug, lat, lon)? {
                 return Ok(access_json(place_slug, &fresh));
             }
         }
@@ -140,9 +160,14 @@ pub fn place_access_payload(
         if access_fresh_on_disk(preset_path, &access) || !warm_if_missing {
             return Ok(access_json(place_slug, &access));
         }
-        if let Some(fresh) =
-            warm_place_access(preset_path, session, place_slug, peak.lat(), peak.lon())?
-        {
+        if let Some(fresh) = warm_place(
+            preset_path,
+            session,
+            routing,
+            place_slug,
+            peak.lat(),
+            peak.lon(),
+        )? {
             return Ok(access_json(place_slug, &fresh));
         }
         return Ok(access_json(place_slug, &access));
@@ -150,7 +175,7 @@ pub fn place_access_payload(
     if warm_if_missing {
         let lat = warm_lat.context("lat required to warm access")?;
         let lon = warm_lon.context("lon required to warm access")?;
-        if let Some(access) = warm_place_access(preset_path, session, place_slug, lat, lon)? {
+        if let Some(access) = warm_place(preset_path, session, routing, place_slug, lat, lon)? {
             return Ok(access_json(place_slug, &access));
         }
         anyhow::bail!("access not found for {place_slug}");

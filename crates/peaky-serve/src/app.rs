@@ -89,6 +89,7 @@ pub async fn run_server(
             verbose,
             coverage_workers,
             Arc::clone(&board_viewshed),
+            slug.clone(),
         ),
         link_solver: LinkSolverHub::new(Arc::clone(&session), verbose),
         alternates: AlternatesHub::new(Arc::clone(&session), verbose),
@@ -100,10 +101,16 @@ pub async fn run_server(
         slug,
     };
 
+    let osm_warm = state.warm.clone();
+    let osm_preset = preset_path.clone();
     let app = router(state);
 
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
     tracing::info!("peaky serve listening on http://{addr}");
+    std::thread::Builder::new()
+        .name("osm-routing-prefetch".into())
+        .spawn(move || osm_warm.prefetch_osm_routing(&osm_preset))
+        .context("spawn osm-routing-prefetch")?;
     if verbose {
         tracing::info!("DemMirror console log enabled (--verbose)");
     } else if std::env::var("PEAKY_DEM_MIRROR_LOG")

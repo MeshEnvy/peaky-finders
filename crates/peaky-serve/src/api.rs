@@ -700,7 +700,11 @@ async fn project_events(
             axum::response::sse::Event::default().comment("connected"),
         );
         yield Ok(axum::response::sse::Event::default().event("hello").data(
-            serde_json::json!({ "project": state.slug.clone() }).to_string(),
+            serde_json::json!({
+                "project": state.slug.clone(),
+                "osm": state.warm.osm_status_json(),
+            })
+            .to_string(),
         ));
         let mut interval = tokio::time::interval(sse_keepalive_interval());
         loop {
@@ -765,16 +769,10 @@ async fn place_access(
     let warm = params.get("warm").map(|v| v == "1" || v == "true").unwrap_or(false);
     let lat = params.get("lat").and_then(|s| s.parse().ok());
     let lon = params.get("lon").and_then(|s| s.parse().ok());
-    place_access_payload(
-        &state.preset_path(),
-        &state.session,
-        &place_slug,
-        warm,
-        lat,
-        lon,
-    )
-    .map(Json)
-    .map_err(|_| StatusCode::NOT_FOUND)
+    place_access_resolved(state, place_slug, warm, lat, lon)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::NOT_FOUND)
 }
 
 async fn place_access_warm(
@@ -790,16 +788,41 @@ async fn place_access_warm(
         .get("lon")
         .and_then(|s| s.parse().ok())
         .ok_or((StatusCode::BAD_REQUEST, "lon required".into()))?;
-    place_access_payload(
-        &state.preset_path(),
-        &state.session,
-        &place_slug,
-        true,
-        Some(lat),
-        Some(lon),
-    )
-    .map(Json)
-    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))
+    place_access_resolved(state, place_slug, true, Some(lat), Some(lon))
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))
+}
+
+async fn place_access_resolved(
+    state: AppState,
+    place_slug: String,
+    warm: bool,
+    lat: Option<f64>,
+    lon: Option<f64>,
+) -> Result<Value, anyhow::Error> {
+    tokio::task::spawn_blocking(move || {
+        let routing = if warm {
+            let extra = match (lat, lon) {
+                (Some(la), Some(lo)) => vec![(la, lo)],
+                _ => Vec::new(),
+            };
+            Some(state.warm.ensure_osm_covering(&state.preset_path(), &extra)?)
+        } else {
+            None
+        };
+        place_access_payload(
+            &state.preset_path(),
+            &state.session,
+            &place_slug,
+            warm,
+            lat,
+            lon,
+            routing.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("place access task: {e}"))?
 }
 
 async fn land_list(State(state): State<AppState>,

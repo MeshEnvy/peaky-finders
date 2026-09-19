@@ -9,7 +9,7 @@ use crate::hike::{
 };
 
 const SEARCH_PAD_M: f64 = 500.0;
-/// Site display: if the 30% cap finds nothing, retry these before a chord.
+/// If the 30% cap finds nothing, retry these before a chord.
 const RELAXED_SLOPE_DEGS: [f64; 4] = [21.8, 26.6, 31.0, 45.0];
 /// Naismith-ish: prefer contouring over climb-then-descend on a bump.
 const CLIMB_W: f64 = 4.0;
@@ -103,10 +103,33 @@ pub fn route_hike_coords<E: HikeSampleElev>(
     path_max_m: f64,
     sample_m: f64,
 ) -> Option<Vec<(f64, f64)>> {
+    route_hike_coords_limited(
+        elev,
+        park_lat,
+        park_lon,
+        dest_lat,
+        dest_lon,
+        max_slope_deg,
+        path_max_m,
+        path_max_m.max(SEARCH_PAD_M),
+        sample_m,
+    )
+}
+
+fn route_hike_coords_limited<E: HikeSampleElev>(
+    elev: &E,
+    park_lat: f64,
+    park_lon: f64,
+    dest_lat: f64,
+    dest_lon: f64,
+    max_slope_deg: f64,
+    len_max_m: f64,
+    pad_m: f64,
+    sample_m: f64,
+) -> Option<Vec<(f64, f64)>> {
     let step_m = sample_m.max(10.0);
     let mid_lat = (park_lat + dest_lat) * 0.5;
     let (step_lat, step_lon) = meters_to_deg(mid_lat, step_m);
-    let pad_m = path_max_m.max(SEARCH_PAD_M);
     let (pad_lat, pad_lon) = meters_to_deg(mid_lat, pad_m);
     let min_lat = park_lat.min(dest_lat) - pad_lat;
     let max_lat = park_lat.max(dest_lat) + pad_lat;
@@ -193,7 +216,7 @@ pub fn route_hike_coords<E: HikeSampleElev>(
         }
 
         let cur_len = g_len.get(&current).copied().unwrap_or(g);
-        if cur_len + step_m > path_max_m + 1.0 {
+        if cur_len + step_m > len_max_m + 1.0 {
             continue;
         }
 
@@ -227,7 +250,7 @@ pub fn route_hike_coords<E: HikeSampleElev>(
                 continue;
             };
             let tentative_len = cur_len + edge.len_3d;
-            if tentative_len > path_max_m + 1.0 {
+            if tentative_len > len_max_m + 1.0 {
                 continue;
             }
             let tentative = g + edge.cost;
@@ -376,7 +399,9 @@ fn detail_passes_gate(detail: &HikeProfileDetailed, max_slope_deg: f64, path_max
     detail.hike_m_3d <= path_max_m + 1.0 && detail.max_slope_deg <= max_slope_deg + 0.5
 }
 
-/// Pathfind when crow-flies ≤ ``path_max_m``; fall back to grade-safe chord when allowed.
+/// Same A* for sites, draft pins, and catalog peaks. Chord only if A* cannot
+/// finish. ``gate_eligibility`` is a post-filter (peak autofind), not a
+/// different router.
 pub fn resolve_hike<E: HikeSampleElev>(
     elev: &E,
     park_lat: f64,
@@ -388,50 +413,59 @@ pub fn resolve_hike<E: HikeSampleElev>(
     sample_m: f64,
     gate_eligibility: bool,
 ) -> Option<HikeProfileDetailed> {
-    let crow = haversine_m(park_lat, park_lon, dest_lat, dest_lon);
-
-    if crow <= path_max_m + 1.0 {
-        let mut caps = vec![max_slope_deg];
-        if !gate_eligibility {
-            caps.extend(
-                RELAXED_SLOPE_DEGS
-                    .iter()
-                    .copied()
-                    .filter(|c| *c > max_slope_deg + 0.5),
-            );
-        }
-        for cap in caps {
-            if let Some(coords) = route_hike_coords(
-                elev,
-                park_lat,
-                park_lon,
-                dest_lat,
-                dest_lon,
-                cap,
-                path_max_m,
-                sample_m,
-            ) {
-                if let Some(detail) = profile_polyline_detailed(elev, &coords, sample_m) {
-                    if !gate_eligibility || detail_passes_gate(&detail, max_slope_deg, path_max_m) {
-                        return Some(detail);
-                    }
-                }
-            }
-        }
-    }
-
-    let chord = profile_hike_detailed(
+    let detail = route_best_hike(
         elev,
         park_lat,
         park_lon,
         dest_lat,
         dest_lon,
+        max_slope_deg,
+        path_max_m,
         sample_m,
     )?;
-    if gate_eligibility && chord.max_slope_deg > max_slope_deg + 0.5 {
+    if gate_eligibility && !detail_passes_gate(&detail, max_slope_deg, path_max_m) {
         return None;
     }
-    Some(chord)
+    Some(detail)
+}
+
+fn route_best_hike<E: HikeSampleElev>(
+    elev: &E,
+    park_lat: f64,
+    park_lon: f64,
+    dest_lat: f64,
+    dest_lon: f64,
+    max_slope_deg: f64,
+    path_max_m: f64,
+    sample_m: f64,
+) -> Option<HikeProfileDetailed> {
+    let crow = haversine_m(park_lat, park_lon, dest_lat, dest_lon);
+    let len_max = (crow * 2.0 + SEARCH_PAD_M).max(path_max_m);
+    let pad_m = path_max_m.max(SEARCH_PAD_M);
+    let caps = std::iter::once(max_slope_deg).chain(
+        RELAXED_SLOPE_DEGS
+            .iter()
+            .copied()
+            .filter(|c| *c > max_slope_deg + 0.5),
+    );
+    for cap in caps {
+        if let Some(coords) = route_hike_coords_limited(
+            elev,
+            park_lat,
+            park_lon,
+            dest_lat,
+            dest_lon,
+            cap,
+            len_max,
+            pad_m,
+            sample_m,
+        ) {
+            if let Some(detail) = profile_polyline_detailed(elev, &coords, sample_m) {
+                return Some(detail);
+            }
+        }
+    }
+    profile_hike_detailed(elev, park_lat, park_lon, dest_lat, dest_lon, sample_m)
 }
 
 #[cfg(test)]
@@ -507,7 +541,7 @@ mod tests {
             cliff_elev: 2400.0,
         };
         let ceiling = default_max_slope_deg();
-        let detail = resolve_hike(
+        let gated = resolve_hike(
             &elev,
             park_lat,
             park_lon,
@@ -519,6 +553,21 @@ mod tests {
             true,
         )
         .expect("wrap-around path");
+        let open = resolve_hike(
+            &elev,
+            park_lat,
+            park_lon,
+            dest_lat,
+            dest_lon,
+            ceiling,
+            path_max_m(),
+            30.0,
+            false,
+        )
+        .expect("same pathfinder without the gate");
+        assert_eq!(gated.profile.len(), open.profile.len());
+        assert!((gated.hike_m_3d - open.hike_m_3d).abs() < 1e-6);
+        let detail = gated;
         assert!(detail.max_slope_deg <= ceiling + 0.5);
         assert!(detail.hike_m_3d <= path_max_m() + 1.0);
         let chord = profile_hike_detailed(&elev, park_lat, park_lon, dest_lat, dest_lon, 30.0)
@@ -581,7 +630,7 @@ mod tests {
     }
 
     #[test]
-    fn site_ungated_keeps_steep_chord_when_astar_skipped() {
+    fn site_ungated_keeps_steep_chord_when_astar_fails() {
         let park_lat = 38.0;
         let park_lon = -117.0;
         let dest_lat = 38.05;
@@ -604,6 +653,55 @@ mod tests {
         )
         .expect("ungated chord");
         assert!(detail.hike_m_3d > DEFAULT_MAX_HIKE_M);
+    }
+
+    #[test]
+    fn site_ungated_long_cliff_routes_around() {
+        let park_lat = 38.0;
+        let park_lon = -117.0;
+        let dest_lat = 38.03;
+        let dest_lon = -117.0;
+        let elev = CliffOnChord {
+            park_lat,
+            park_lon,
+            dest_lat,
+            dest_lon,
+            base: 2000.0,
+            cliff_elev: 2800.0,
+        };
+        let ceiling = default_max_slope_deg();
+        assert!(
+            resolve_hike(
+                &elev,
+                park_lat,
+                park_lon,
+                dest_lat,
+                dest_lon,
+                ceiling,
+                path_max_m(),
+                30.0,
+                true,
+            )
+            .is_none(),
+            "autofind rejects a path that fails the length/slope gate"
+        );
+        let detail = resolve_hike(
+            &elev,
+            park_lat,
+            park_lon,
+            dest_lat,
+            dest_lon,
+            ceiling,
+            path_max_m(),
+            30.0,
+            false,
+        )
+        .expect("manual pin should contour");
+        assert!(detail.max_slope_deg <= ceiling + 0.5);
+        let chord = profile_hike_detailed(&elev, park_lat, park_lon, dest_lat, dest_lon, 30.0)
+            .unwrap();
+        assert!(chord.max_slope_deg > ceiling + 0.5);
+        assert!(detail.horiz_m > chord.horiz_m * 0.95);
     }
 
     struct Pinnacle {

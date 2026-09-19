@@ -134,6 +134,7 @@ export function runApp(ctx = {}) {
     getSites: () => sites,
     isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
     raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
+    updatePinOverlays: () => viewshedDomain?.updatePinOverlays(),
   })
 
   peaksDomain = createPeaksDomain({
@@ -375,6 +376,9 @@ export function runApp(ctx = {}) {
         loadSingleSiteLinks: (slug) => linksDomain?.loadSingleSiteLinks(slug),
         loadSiteLinks: () => linksDomain?.loadSiteLinks(),
         ensureSiteAccess: (site) => siteAccessDomain?.ensureSiteAccess(site),
+        ensureDraftAccess: (lat, lon) => siteAccessDomain?.ensureDraftAccess(lat, lon),
+        clearDraftAccess: () => siteAccessDomain?.clearDraftAccess(),
+        ingestAccess: (...args) => siteAccessDomain?.ingestAccess(...args),
         refreshSiteAccessLayers: () => siteAccessDomain?.refreshLayers(),
         scheduleViewshedLoad: (site) => viewshedDomain?.scheduleViewshedLoad(site),
         viewshedVisible,
@@ -531,13 +535,17 @@ export function runApp(ctx = {}) {
       projectEventsConn = null
     }
     projectEventsConn = openProjectEventsStream(projectSlug, {
-      onHello: () => viewshedDomain?.reconcilePendingViewsheds(),
+      onHello: (data) => {
+        if (data?.osm) siteAccessDomain?.handleOsmEvent(data.osm)
+        viewshedDomain?.reconcilePendingViewsheds()
+      },
       onViewshed: (data) => viewshedDomain?.handleViewshedEvent(data),
       onLinks: (data) => {
         if (!data) return
         linksDomain?.applySiteLinksPayload(data)
       },
       onAccess: (data) => siteAccessDomain?.handleAccessEvent(data),
+      onOsm: (data) => siteAccessDomain?.handleOsmEvent(data),
     })
   }
 

@@ -254,7 +254,7 @@ impl Default for PeakAccessRules {
 
 /// Bump when hike/jeep routing or DEM profile semantics change (forces recompute).
 /// Written into ``access/_meta.yaml`` as ``algo_version``.
-pub const ACCESS_ALGO_VERSION: u32 = 10;
+pub const ACCESS_ALGO_VERSION: u32 = 11;
 
 /// Bump when peak eligibility / summit snap / universe filter semantics change.
 pub const PEAK_ALGO_VERSION: u32 = 5;

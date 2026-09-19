@@ -245,6 +245,7 @@ export const AccessProfilesPanel = {
     hike: { type: Object, default: null },
     jeep: { type: Object, default: null },
     loading: { type: Boolean, default: false },
+    loadingLabel: { type: String, default: '' },
     error: { type: String, default: '' },
     /** Optional catalog elev for hike end snap (peaks). */
     hikeEndElevM: { type: Number, default: undefined },
@@ -315,7 +316,7 @@ export const AccessProfilesPanel = {
   template: `
     <div class="access-profiles">
       <wa-callout v-if="error" variant="danger">{{ error }}</wa-callout>
-      <p v-else-if="loading" class="pf-muted">Loading access profile…</p>
+      <p v-else-if="loading" class="pf-muted">{{ loadingLabel || 'Loading access profile…' }}</p>
       <template v-else-if="showHike || showJeep">
         <template v-if="showHike">
           <div class="peak-sheet__rating">

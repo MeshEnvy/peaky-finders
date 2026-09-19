@@ -1751,6 +1751,7 @@ name = "peaky-peaks"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "geo",
  "geojson",
  "osmpbf",
