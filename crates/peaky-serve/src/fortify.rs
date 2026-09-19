@@ -274,15 +274,16 @@ impl FortifyCandidate {
     }
 }
 
-fn catalog_peak_difficulty(entry: &PeakCatalogEntry) -> (Option<String>, Option<String>, Option<String>) {
-    let hike = peaky_preset::derived_hike_difficulty(entry);
-    let jeep = peaky_preset::derived_jeep_difficulty(entry);
-    let access = match (&hike, &jeep) {
-        (Some(h), Some(j)) => Some(worse_difficulty(h, j).to_string()),
-        (Some(h), None) => Some(h.clone()),
-        (None, Some(j)) => Some(j.clone()),
-        (None, None) => None,
-    };
+fn catalog_peak_difficulty(
+    entry: &PeakCatalogEntry,
+    difficulty: Option<&peaky_preset::PeaksDifficultyConfig>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let hike = peaky_preset::stored_hike_difficulty(entry, difficulty.map(|d| &d.hike));
+    let jeep = peaky_preset::stored_jeep_difficulty(entry, difficulty.map(|d| &d.jeep));
+    let access = peaky_preset::access_difficulty_from_stored(
+        hike.as_deref(),
+        jeep.as_deref(),
+    );
     (hike, jeep, access)
 }
 
@@ -434,7 +435,7 @@ fn load_fortify_body(
                 return None;
             }
             let (hike_difficulty, jeep_difficulty, access_difficulty) =
-                catalog_peak_difficulty(entry);
+                catalog_peak_difficulty(entry, Some(&catalog.rules.difficulty));
             Some(CatalogPeak {
                 slug: slug.clone(),
                 name: entry

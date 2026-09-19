@@ -179,14 +179,22 @@ pub fn load_peaks_catalog(config_path: &Path) -> Result<PeaksCatalog> {
     load_peaks_catalog_with(config_path, load_peak)
 }
 
-/// List API payload: deny-filtered scalars, no hike/jeep blobs.
-/// Difficulty labels are derived client-side from the fact scalars below.
+/// List API payload: deny-filtered scalars + stamped difficulty labels (no profile blobs).
 pub fn build_peaks_list_json(catalog: &PeaksCatalog) -> serde_json::Value {
+    let bands = &catalog.rules.difficulty;
     let mut peaks: Vec<serde_json::Value> = catalog
         .entries
         .iter()
         .filter(|(_, entry)| !entry.deny.unwrap_or(false))
         .map(|(slug, entry)| {
+            let hike_difficulty =
+                crate::difficulty::stored_hike_difficulty(entry, Some(&bands.hike));
+            let jeep_difficulty =
+                crate::difficulty::stored_jeep_difficulty(entry, Some(&bands.jeep));
+            let access_difficulty = crate::difficulty::access_difficulty_from_stored(
+                hike_difficulty.as_deref(),
+                jeep_difficulty.as_deref(),
+            );
             serde_json::json!({
                 "slug": slug,
                 "name": entry.name,
@@ -207,6 +215,9 @@ pub fn build_peaks_list_json(catalog: &PeaksCatalog) -> serde_json::Value {
                 "jeep_m": entry.jeep_m,
                 "jeep_highway": entry.jeep_highway,
                 "jeep_tracktype": entry.jeep_tracktype,
+                "hike_difficulty": hike_difficulty,
+                "jeep_difficulty": jeep_difficulty,
+                "access_difficulty": access_difficulty,
                 "compute_key": entry.compute_key,
             })
         })
@@ -224,7 +235,7 @@ pub fn build_peaks_list_json(catalog: &PeaksCatalog) -> serde_json::Value {
     })
 }
 
-pub const PEAKS_LIST_CACHE_VERSION: u32 = 4;
+pub const PEAKS_LIST_CACHE_VERSION: u32 = 5;
 
 pub fn peaks_list_cache_path(config_path: &Path) -> std::path::PathBuf {
     crate::paths::resolved_preset_cache_dir(config_path).join("peaks/list.json")
@@ -711,11 +722,11 @@ peaks:
         upsert_peak_with_access(&config, "peak-test", &entry).unwrap();
         let thin = load_peak_thin(&config, "peak-test").unwrap().unwrap();
         assert!(thin.hike.is_none());
+        assert_eq!(thin.hike_difficulty.as_deref(), Some("easy"));
         assert_eq!(
-            crate::difficulty::derived_hike_difficulty(&thin).as_deref(),
-            Some("medium")
+            crate::difficulty::stored_hike_difficulty(&thin, None).as_deref(),
+            Some("easy"),
         );
-        assert!(thin.hike_difficulty.is_none());
         let joined = load_peak(&config, "peak-test").unwrap().unwrap();
         assert!(joined.hike.is_some());
         let catalog = load_peaks_catalog_thin(&config).unwrap();
@@ -772,7 +783,7 @@ peaks:
         upsert_peak_with_access(&config, "bump-peak", &entry).unwrap();
         let thin = load_peak_thin(&config, "bump-peak").unwrap().unwrap();
         assert_eq!(thin.hike_gain_m, Some(36.0));
-        assert!(thin.hike_difficulty.is_none());
+        assert_eq!(thin.hike_difficulty.as_deref(), Some("extreme"));
         let catalog = load_peaks_catalog_thin(&config).unwrap();
         let list = build_peaks_list_json(&catalog);
         let peaks = list
@@ -786,7 +797,10 @@ peaks:
         assert_eq!(row.get("hike_gain_m").and_then(|v| v.as_f64()), Some(36.0));
         assert_eq!(row.get("hike_avg_grade_pct").and_then(|v| v.as_f64()), Some(16.0));
         assert_eq!(row.get("hike_max_grade_pct").and_then(|v| v.as_f64()), Some(29.3));
-        assert!(row.get("hike_difficulty").is_none());
+        assert_eq!(
+            row.get("hike_difficulty").and_then(|v| v.as_str()),
+            Some("extreme")
+        );
     }
 
     #[test]

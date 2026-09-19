@@ -29,6 +29,7 @@ pub fn parse_preset_dict(raw: Mapping) -> Result<Preset, PresetValidationError> 
     let value = Value::Mapping(raw);
     let mut preset: Preset = serde_yaml::from_value(value)
         .map_err(|e| PresetValidationError::Message(e.to_string()))?;
+    preset.scan.peaks.normalize_legacy();
     validate_preset(&preset)?;
     Ok(preset)
 }

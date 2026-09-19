@@ -10,6 +10,7 @@ mod jeep;
 mod osm;
 mod osm_cache;
 mod park;
+mod probe;
 mod run;
 mod universe;
 
@@ -31,6 +32,7 @@ pub use osm::{
 };
 pub use osm_cache::{save_osm_routing_cache, try_load_osm_routing_cache};
 pub use corridor::{corridor_polygon, parse_corridor_coords, resolve_corridor_sites, MI_TO_M};
+pub use probe::probe_peak;
 pub use run::{
     build_peaks_catalog, resolve_corridor_from_opts, PeaksBuildOptions, PeaksBuildSummary,
 };

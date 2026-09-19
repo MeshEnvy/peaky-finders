@@ -7,7 +7,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crate::model::{AccessMeta, PeakAccessRules, PlaceAccess};
+use crate::model::{AccessMeta, PeakAccessRules, PeaksDifficultyConfig, PlaceAccess};
 
 pub use crate::model::{
     ACCESS_ALGO_VERSION, PEAK_ALGO_VERSION,
@@ -38,6 +38,28 @@ fn sorted_joined(items: &[String]) -> String {
     let mut v: Vec<&str> = items.iter().map(String::as_str).collect();
     v.sort_unstable();
     v.join(",")
+}
+
+fn difficulty_fingerprint(difficulty: &PeaksDifficultyConfig) -> u64 {
+    let hike = &difficulty.hike;
+    let jeep = &difficulty.jeep;
+    let parts = format!(
+        "h:{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0}|j:{},{},{},{},{:.0}",
+        hike.medium.min_max_grade_pct,
+        hike.medium.min_avg_grade_pct,
+        hike.medium.min_gain_m,
+        hike.difficult.min_gain_m,
+        hike.difficult.min_avg_grade_pct,
+        hike.extreme.min_gain_m,
+        hike.extreme.min_avg_grade_pct,
+        hike.extreme.max_segment_grade_pct,
+        sorted_joined(&jeep.medium.highways),
+        sorted_joined(&jeep.medium.tracktypes),
+        sorted_joined(&jeep.difficult.tracktypes),
+        sorted_joined(&jeep.extreme.tracktypes),
+        jeep.extreme.max_route_m,
+    );
+    hash_str(&parts)
 }
 
 /// Fingerprint for paved→park→pad path compute (stored on ``access/<slug>.yaml``).
@@ -111,6 +133,7 @@ pub fn peak_row_compute_key(
         round_m(rules.max_hike_m) as u64,
         round_m(rules.max_slope_grade_pct) as u64,
         round_m(rules.max_slope_deg) as u64,
+        difficulty_fingerprint(&rules.difficulty),
         hash_str(&peak_access_compute_key(access, rules.max_hike_m)),
     ])
 }

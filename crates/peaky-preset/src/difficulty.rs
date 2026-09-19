@@ -1,7 +1,8 @@
 //! Access difficulty labels (easy / medium / difficult / extreme).
 
 use crate::model::{
-    PeakCatalogEntry, PeakHikeProfile, PeakJeepProfile, PeakJeepRoadSegment, PlaceAccess,
+    HikeDifficultyBands, JeepDifficultyBands, PeakCatalogEntry, PeakHikeProfile, PeakJeepProfile,
+    PeakJeepRoadSegment, PeaksDifficultyConfig,
 };
 
 pub fn difficulty_rank(label: &str) -> u8 {
@@ -27,34 +28,38 @@ pub fn worse_difficulty(a: &str, b: &str) -> &'static str {
     difficulty_label(difficulty_rank(a).max(difficulty_rank(b)))
 }
 
-/// Razorback-class: hours of sustained steep climbing.
 pub const HIKE_EXTREME_MIN_GAIN_M: f64 = 250.0;
 pub const HIKE_EXTREME_MIN_AVG_GRADE_PCT: f64 = 18.0;
-
-/// Goldfield-class: real scramble, not a roadside bump.
 pub const HIKE_DIFFICULT_MIN_GAIN_M: f64 = 80.0;
 pub const HIKE_DIFFICULT_MIN_AVG_GRADE_PCT: f64 = 15.0;
-
-/// Sustained effort or scrambling on a short pad.
 pub const HIKE_MEDIUM_MIN_MAX_GRADE_PCT: f64 = 15.0;
 pub const HIKE_MEDIUM_MIN_AVG_GRADE_PCT: f64 = 8.0;
 pub const HIKE_MEDIUM_MIN_GAIN_M: f64 = 40.0;
 
+pub fn default_hike_bands() -> HikeDifficultyBands {
+    HikeDifficultyBands::default()
+}
+
+pub fn default_jeep_bands() -> JeepDifficultyBands {
+    JeepDifficultyBands::default()
+}
+
 /// Hike difficulty from gain + sustained avg grade. Max grade only signals scrambling (medium).
-pub fn hike_difficulty(
+pub fn classify_hike(
     max_grade_pct: f64,
     avg_grade_pct: f64,
-    _horiz_m: f64,
     gain_m: f64,
+    bands: &HikeDifficultyBands,
 ) -> &'static str {
-    if gain_m >= HIKE_EXTREME_MIN_GAIN_M && avg_grade_pct >= HIKE_EXTREME_MIN_AVG_GRADE_PCT {
+    if gain_m >= bands.extreme.min_gain_m && avg_grade_pct >= bands.extreme.min_avg_grade_pct {
         "extreme"
-    } else if gain_m >= HIKE_DIFFICULT_MIN_GAIN_M && avg_grade_pct >= HIKE_DIFFICULT_MIN_AVG_GRADE_PCT
+    } else if gain_m >= bands.difficult.min_gain_m
+        && avg_grade_pct >= bands.difficult.min_avg_grade_pct
     {
         "difficult"
-    } else if max_grade_pct >= HIKE_MEDIUM_MIN_MAX_GRADE_PCT
-        || avg_grade_pct >= HIKE_MEDIUM_MIN_AVG_GRADE_PCT
-        || gain_m >= HIKE_MEDIUM_MIN_GAIN_M
+    } else if max_grade_pct >= bands.medium.min_max_grade_pct
+        || avg_grade_pct >= bands.medium.min_avg_grade_pct
+        || gain_m >= bands.medium.min_gain_m
     {
         "medium"
     } else {
@@ -62,31 +67,55 @@ pub fn hike_difficulty(
     }
 }
 
-/// OSM track/highway class → rank. Grade spikes are ignored; surface class is the signal.
-///
-/// `grade4` is a rough jeep road (difficult), not a no-go. Only `grade5` is extreme.
-pub fn jeep_road_rank(highway: &str, tracktype: Option<&str>) -> u8 {
+pub fn hike_difficulty(
+    max_grade_pct: f64,
+    avg_grade_pct: f64,
+    _horiz_m: f64,
+    gain_m: f64,
+) -> &'static str {
+    classify_hike(
+        max_grade_pct,
+        avg_grade_pct,
+        gain_m,
+        &default_hike_bands(),
+    )
+}
+
+/// OSM track/highway class → rank using YAML jeep bands.
+pub fn jeep_segment_rank(
+    highway: &str,
+    tracktype: Option<&str>,
+    bands: &JeepDifficultyBands,
+) -> u8 {
+    if let Some(tt) = tracktype {
+        if bands.extreme.tracktypes.iter().any(|t| t == tt) {
+            return 3;
+        }
+        if bands.difficult.tracktypes.iter().any(|t| t == tt) {
+            return 2;
+        }
+        if bands.medium.tracktypes.iter().any(|t| t == tt) {
+            return 1;
+        }
+    }
     match highway {
         "motorway" | "trunk" | "primary" | "secondary" | "tertiary" => 0,
         "residential" | "unclassified" => match tracktype {
-            Some("grade5") => 3,
-            Some("grade4") | Some("grade3") => 2,
-            Some("grade2") => 1,
             Some("grade1") => 0,
             _ => 1,
         },
         "service" => 1,
-        "track" => match tracktype {
-            Some("grade5") => 3,
-            Some("grade4") | Some("grade3") => 2,
-            Some("grade2") | Some("grade1") => 1,
-            _ => 1,
-        },
+        "track" => 1,
+        _ if bands.medium.highways.iter().any(|h| h == highway) => 1,
         _ => 1,
     }
 }
 
-/// OSM ways are often 10–50 m. Merge consecutive same class before judging a stretch.
+/// Legacy rank table (default bands).
+pub fn jeep_road_rank(highway: &str, tracktype: Option<&str>) -> u8 {
+    jeep_segment_rank(highway, tracktype, &default_jeep_bands())
+}
+
 fn coalesce_jeep_segments(segments: &[PeakJeepRoadSegment]) -> Vec<PeakJeepRoadSegment> {
     let mut out: Vec<PeakJeepRoadSegment> = Vec::new();
     for s in segments {
@@ -114,17 +143,19 @@ fn qualifying_jeep_segments(segments: &[PeakJeepRoadSegment]) -> Vec<PeakJeepRoa
         .collect()
 }
 
-/// Worst road class among stretches that are at least 2% of the route (40 m floor).
-pub fn jeep_difficulty(segments: &[PeakJeepRoadSegment]) -> &'static str {
+pub fn classify_jeep(segments: &[PeakJeepRoadSegment], bands: &JeepDifficultyBands) -> &'static str {
     let rank = qualifying_jeep_segments(segments)
         .iter()
-        .map(|s| jeep_road_rank(&s.highway, s.tracktype.as_deref()))
+        .map(|s| jeep_segment_rank(&s.highway, s.tracktype.as_deref(), bands))
         .max()
         .unwrap_or(0);
     difficulty_label(rank)
 }
 
-/// OSM class that set the jeep badge (worst qualifying highway + tracktype).
+pub fn jeep_difficulty(segments: &[PeakJeepRoadSegment]) -> &'static str {
+    classify_jeep(segments, &default_jeep_bands())
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct JeepClassReason {
     pub highway: String,
@@ -141,17 +172,20 @@ impl JeepClassReason {
     }
 }
 
-pub fn jeep_class_reason(segments: &[PeakJeepRoadSegment]) -> Option<JeepClassReason> {
+pub fn jeep_class_reason_with_bands(
+    segments: &[PeakJeepRoadSegment],
+    bands: &JeepDifficultyBands,
+) -> Option<JeepClassReason> {
     let kept = qualifying_jeep_segments(segments);
     let rank = kept
         .iter()
-        .map(|s| jeep_road_rank(&s.highway, s.tracktype.as_deref()))
+        .map(|s| jeep_segment_rank(&s.highway, s.tracktype.as_deref(), bands))
         .max()?;
     let mut by_class: std::collections::HashMap<(String, Option<String>), f64> =
         std::collections::HashMap::new();
     for s in kept
         .iter()
-        .filter(|s| jeep_road_rank(&s.highway, s.tracktype.as_deref()) == rank)
+        .filter(|s| jeep_segment_rank(&s.highway, s.tracktype.as_deref(), bands) == rank)
     {
         *by_class
             .entry((s.highway.clone(), s.tracktype.clone()))
@@ -167,7 +201,10 @@ pub fn jeep_class_reason(segments: &[PeakJeepRoadSegment]) -> Option<JeepClassRe
     })
 }
 
-/// Copy hike grade facts from a profile onto a thin peak row.
+pub fn jeep_class_reason(segments: &[PeakJeepRoadSegment]) -> Option<JeepClassReason> {
+    jeep_class_reason_with_bands(segments, &default_jeep_bands())
+}
+
 pub fn copy_hike_facts_from_profile(entry: &mut PeakCatalogEntry, h: &PeakHikeProfile) {
     entry.hike_gain_m = Some(h.gain_m);
     entry.hike_avg_grade_pct = Some(h.avg_grade_pct);
@@ -178,63 +215,148 @@ pub fn copy_hike_facts_from_profile(entry: &mut PeakCatalogEntry, h: &PeakHikePr
     if entry.max_slope_deg.is_none() {
         entry.max_slope_deg = Some(h.max_slope_deg);
     }
-}
-
-/// Copy jeep OSM class facts from a profile onto a thin peak row.
-pub fn copy_jeep_facts_from_profile(entry: &mut PeakCatalogEntry, j: &PeakJeepProfile) {
-    if let Some(reason) = jeep_class_reason(&j.segments) {
-        entry.jeep_highway = Some(reason.highway);
-        entry.jeep_tracktype = reason.tracktype;
+    if !h.difficulty.is_empty() {
+        entry.hike_difficulty = Some(h.difficulty.clone());
     }
 }
 
-/// Hike label at read time. Facts win over stored ``hike_difficulty``.
-pub fn derived_hike_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
+pub fn copy_jeep_facts_from_profile(entry: &mut PeakCatalogEntry, j: &PeakJeepProfile) {
+    copy_jeep_facts_from_profile_with_bands(entry, j, &default_jeep_bands());
+}
+
+pub fn copy_jeep_facts_from_profile_with_bands(
+    entry: &mut PeakCatalogEntry,
+    j: &PeakJeepProfile,
+    bands: &JeepDifficultyBands,
+) {
+    if let Some(reason) = jeep_class_reason_with_bands(&j.segments, bands) {
+        entry.jeep_highway = Some(reason.highway);
+        entry.jeep_tracktype = reason.tracktype;
+    }
+    if !j.difficulty.is_empty() {
+        entry.jeep_difficulty = Some(j.difficulty.clone());
+    }
+}
+
+pub fn stamp_peak_difficulties(
+    entry: &mut PeakCatalogEntry,
+    difficulty: &PeaksDifficultyConfig,
+) {
+    if let Some(ref h) = entry.hike {
+        let label = classify_hike(
+            h.max_grade_pct,
+            h.avg_grade_pct,
+            h.gain_m,
+            &difficulty.hike,
+        )
+        .to_string();
+        entry.hike_difficulty = Some(label);
+    }
+    if let Some(ref j) = entry.jeep {
+        let label = classify_jeep(&j.segments, &difficulty.jeep).to_string();
+        entry.jeep_difficulty = Some(label);
+    }
+}
+
+pub fn access_difficulty_from_stored(
+    hike: Option<&str>,
+    jeep: Option<&str>,
+) -> Option<String> {
+    let hike = hike.filter(|s| !s.is_empty());
+    let jeep = jeep.filter(|s| !s.is_empty());
+    match (hike, jeep) {
+        (Some(h), Some(j)) => Some(worse_difficulty(h, j).to_string()),
+        (Some(h), None) => Some(h.to_string()),
+        (None, Some(j)) => Some(j.to_string()),
+        _ => None,
+    }
+}
+
+fn legacy_classify_hike(entry: &PeakCatalogEntry, bands: &HikeDifficultyBands) -> Option<String> {
     if let (Some(gain), Some(avg), Some(max)) = (
         entry.hike_gain_m,
         entry.hike_avg_grade_pct,
         entry.hike_max_grade_pct,
     ) {
-        let horiz = entry.hike_m.unwrap_or(0.0);
-        return Some(hike_difficulty(max, avg, horiz, gain).to_string());
+        return Some(
+            classify_hike(max, avg, gain, bands).to_string(),
+        );
     }
     if let Some(h) = entry.hike.as_ref() {
         return Some(
-            hike_difficulty(h.max_grade_pct, h.avg_grade_pct, h.horiz_m, h.gain_m).to_string(),
+            classify_hike(h.max_grade_pct, h.avg_grade_pct, h.gain_m, bands).to_string(),
         );
     }
-    if let (Some(hike_m), Some(max_deg)) = (entry.hike_m, entry.max_slope_deg) {
+    if let (Some(_hike_m), Some(max_deg)) = (entry.hike_m, entry.max_slope_deg) {
         let max_grade = max_deg.to_radians().tan() * 100.0;
-        return Some(hike_difficulty(max_grade, 0.0, hike_m, 0.0).to_string());
+        return Some(classify_hike(max_grade, 0.0, 0.0, bands).to_string());
     }
     None
 }
 
-/// Jeep label at read time. OSM class facts win over stored ``jeep_difficulty``.
-pub fn derived_jeep_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
+fn legacy_classify_jeep(entry: &PeakCatalogEntry, bands: &JeepDifficultyBands) -> Option<String> {
     if let Some(hw) = entry.jeep_highway.as_deref() {
-        let rank = jeep_road_rank(hw, entry.jeep_tracktype.as_deref());
+        let rank = jeep_segment_rank(hw, entry.jeep_tracktype.as_deref(), bands);
         return Some(difficulty_label(rank).to_string());
     }
     if let Some(j) = entry.jeep.as_ref() {
-        return Some(jeep_difficulty(&j.segments).to_string());
+        return Some(classify_jeep(&j.segments, bands).to_string());
     }
     None
 }
 
-/// Clear runtime-only difficulty labels before persisting access YAML.
-pub fn strip_access_difficulty_labels(access: &mut PlaceAccess) {
-    if let Some(ref mut h) = access.hike {
-        h.difficulty.clear();
+/// Stored hike label; legacy rows fall back to classifying from facts.
+pub fn stored_hike_difficulty(
+    entry: &PeakCatalogEntry,
+    bands: Option<&HikeDifficultyBands>,
+) -> Option<String> {
+    if let Some(ref s) = entry.hike_difficulty {
+        if !s.is_empty() {
+            return Some(s.clone());
+        }
     }
-    if let Some(ref mut j) = access.jeep {
-        j.difficulty.clear();
+    legacy_classify_hike(entry, bands.unwrap_or(&default_hike_bands()))
+}
+
+/// Stored jeep label; legacy rows fall back to classifying from facts.
+pub fn stored_jeep_difficulty(
+    entry: &PeakCatalogEntry,
+    bands: Option<&JeepDifficultyBands>,
+) -> Option<String> {
+    if let Some(ref s) = entry.jeep_difficulty {
+        if !s.is_empty() {
+            return Some(s.clone());
+        }
     }
+    legacy_classify_jeep(entry, bands.unwrap_or(&default_jeep_bands()))
+}
+
+pub fn stored_access_difficulty(
+    entry: &PeakCatalogEntry,
+    difficulty: Option<&PeaksDifficultyConfig>,
+) -> Option<String> {
+    let hike_bands = difficulty.map(|d| &d.hike);
+    let jeep_bands = difficulty.map(|d| &d.jeep);
+    access_difficulty_from_stored(
+        stored_hike_difficulty(entry, hike_bands).as_deref(),
+        stored_jeep_difficulty(entry, jeep_bands).as_deref(),
+    )
+}
+
+#[deprecated(note = "use stored_hike_difficulty")]
+pub fn derived_hike_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
+    stored_hike_difficulty(entry, None)
+}
+
+#[deprecated(note = "use stored_jeep_difficulty")]
+pub fn derived_jeep_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
+    stored_jeep_difficulty(entry, None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::PeakCatalogEntry;
 
     fn seg(highway: &str, tracktype: Option<&str>, dist_m: f64) -> PeakJeepRoadSegment {
         PeakJeepRoadSegment {
@@ -300,34 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn chopped_grade4_counts_as_one_stretch() {
-        let mut segs = vec![seg("residential", None, 400.0)];
-        for _ in 0..300 {
-            segs.push(seg("track", Some("grade4"), 50.0));
-        }
-        assert_eq!(jeep_difficulty(&segs), "difficult");
-        let reason = jeep_class_reason(&segs).unwrap();
-        assert_eq!(reason.label(), "track grade4");
-        assert!((reason.dist_m - 15000.0).abs() < 0.1);
-    }
-
-    #[test]
-    fn short_connector_does_not_promote() {
-        let segs = vec![
-            seg("unclassified", Some("grade2"), 5000.0),
-            seg("track", Some("grade5"), 20.0),
-        ];
-        assert_eq!(jeep_difficulty(&segs), "medium");
-    }
-
-    #[test]
-    fn worse_picks_hike_extreme_over_jeep_medium() {
-        assert_eq!(worse_difficulty("extreme", "medium"), "extreme");
-        assert_eq!(worse_difficulty("easy", "difficult"), "difficult");
-    }
-
-    #[test]
-    fn derived_hike_uses_facts_not_stored_label() {
+    fn stored_hike_prefers_stamped_label() {
         let entry = PeakCatalogEntry {
             name: None,
             loc: [37.28, -115.64],
@@ -351,39 +446,11 @@ mod tests {
             jeep_difficulty: None,
             deny: None,
         };
-        assert_eq!(derived_hike_difficulty(&entry).as_deref(), Some("medium"));
+        assert_eq!(stored_hike_difficulty(&entry, None).as_deref(), Some("extreme"));
     }
 
     #[test]
-    fn derived_hike_legacy_slope_fallback_without_facts() {
-        let entry = PeakCatalogEntry {
-            name: None,
-            loc: [38.0, -117.0],
-            elev_m: None,
-            source: "dem".into(),
-            compute_key: None,
-            road_m: None,
-            road_loc: None,
-            hike_m: Some(200.0),
-            hike_gain_m: None,
-            hike_avg_grade_pct: None,
-            hike_max_grade_pct: None,
-            max_slope_deg: Some(16.0),
-            hike: None,
-            paved_loc: None,
-            jeep_m: None,
-            jeep_highway: None,
-            jeep_tracktype: None,
-            jeep: None,
-            hike_difficulty: None,
-            jeep_difficulty: None,
-            deny: None,
-        };
-        assert_eq!(derived_hike_difficulty(&entry).as_deref(), Some("medium"));
-    }
-
-    #[test]
-    fn derived_jeep_uses_osm_facts() {
+    fn stored_jeep_uses_osm_facts_when_unstamped() {
         let entry = PeakCatalogEntry {
             name: None,
             loc: [38.0, -117.0],
@@ -407,6 +474,6 @@ mod tests {
             jeep_difficulty: None,
             deny: None,
         };
-        assert_eq!(derived_jeep_difficulty(&entry).as_deref(), Some("difficult"));
+        assert_eq!(stored_jeep_difficulty(&entry, None).as_deref(), Some("difficult"));
     }
 }

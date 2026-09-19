@@ -46,11 +46,11 @@ use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candida
 const PROGRESS_WRITE_EVERY: usize = 10;
 
 #[derive(Debug, Clone, Copy)]
-struct PeaksFilterParams {
-    site_dedup_m: f64,
-    candidate_dedup_m: f64,
-    summit_snap_m: f64,
-    min_prominence_m: f64,
+pub(crate) struct PeaksFilterParams {
+    pub site_dedup_m: f64,
+    pub candidate_dedup_m: f64,
+    pub summit_snap_m: f64,
+    pub min_prominence_m: f64,
 }
 
 impl From<&PeaksScanConfig> for PeaksFilterParams {
@@ -65,7 +65,7 @@ impl From<&PeaksScanConfig> for PeaksFilterParams {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FilterDrop {
+pub enum FilterDrop {
     SiteDedup,
     Land,
     Region,
@@ -76,22 +76,22 @@ enum FilterDrop {
 }
 
 #[derive(Debug, Clone)]
-struct FilterPass {
-    cand: RawCandidate,
-    peak_lat: f64,
-    peak_lon: f64,
-    peak_elev: f64,
-    road_lat: f64,
-    road_lon: f64,
-    road_m: f64,
-    hike_m_3d: f64,
-    max_slope_deg: f64,
-    hike: PeakHikeProfile,
-    hike_detail: HikeProfileDetailed,
-    paved_lat: f64,
-    paved_lon: f64,
-    jeep_m: f64,
-    jeep: PeakJeepProfile,
+pub(crate) struct FilterPass {
+    pub cand: RawCandidate,
+    pub peak_lat: f64,
+    pub peak_lon: f64,
+    pub peak_elev: f64,
+    pub road_lat: f64,
+    pub road_lon: f64,
+    pub road_m: f64,
+    pub hike_m_3d: f64,
+    pub max_slope_deg: f64,
+    pub hike: PeakHikeProfile,
+    pub hike_detail: HikeProfileDetailed,
+    pub paved_lat: f64,
+    pub paved_lon: f64,
+    pub jeep_m: f64,
+    pub jeep: PeakJeepProfile,
 }
 
 fn peaks_filter_workers() -> usize {
@@ -158,7 +158,7 @@ struct DropCounts {
     region: usize,
 }
 
-fn filter_candidate(
+pub(crate) fn filter_candidate(
     cand: &RawCandidate,
     session: &Session,
     land: &LandFilterIndex,
@@ -641,7 +641,7 @@ pub fn build_peaks_catalog(
                     (slug, false)
                 }
             };
-        let entry = PeakCatalogEntry {
+        let mut entry = PeakCatalogEntry {
             name: pass.cand.name.clone(),
             loc: [pass.peak_lat, pass.peak_lon],
             elev_m,
@@ -669,6 +669,28 @@ pub fn build_peaks_catalog(
             jeep_difficulty: None,
             deny: None,
         };
+        if let Some(ref mut h) = entry.hike {
+            h.difficulty = peaky_preset::classify_hike(
+                h.max_grade_pct,
+                h.avg_grade_pct,
+                h.gain_m,
+                &catalog.rules.difficulty.hike,
+            )
+            .to_string();
+        }
+        if let Some(ref mut j) = entry.jeep {
+            j.difficulty = peaky_preset::classify_jeep(&j.segments, &catalog.rules.difficulty.jeep)
+                .to_string();
+        }
+        peaky_preset::stamp_peak_difficulties(&mut entry, &catalog.rules.difficulty);
+        let hike_snap = entry.hike.clone();
+        let jeep_snap = entry.jeep.clone();
+        if let Some(h) = hike_snap {
+            peaky_preset::copy_hike_facts_from_profile(&mut entry, &h);
+        }
+        if let Some(j) = jeep_snap {
+            peaky_preset::copy_jeep_facts_from_profile(&mut entry, &j);
+        }
         catalog.entries.insert(slug.clone(), entry.clone());
         pending_write.push((slug, entry));
         kept += 1;

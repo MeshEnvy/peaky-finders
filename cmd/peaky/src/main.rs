@@ -40,51 +40,10 @@ enum Commands {
         #[command(subcommand)]
         command: FindCommands,
     },
-    /// Build eligible-peaks catalog (peaks/ + access/)
+    /// Eligible-peaks catalog (build or probe)
     Peaks {
-        /// Project directory (or path to config.yaml)
-        #[arg(value_name = "PROJECT")]
-        project: PathBuf,
-        /// Scan bbox west,south,east,north (default: project AOI)
-        #[arg(
-            long,
-            value_name = "W,S,E,N",
-            allow_hyphen_values = true,
-            conflicts_with_all = ["polygon", "corridor", "corridor_sites"]
-        )]
-        bbox: Option<String>,
-        /// Clip scan to a GeoJSON polygon file
-        #[arg(long, value_name = "PATH", conflicts_with_all = ["bbox", "corridor", "corridor_sites"])]
-        polygon: Option<PathBuf>,
-        /// Corridor from_lat,from_lon,to_lat,to_lon (100 mi wide by default)
-        #[arg(
-            long,
-            value_name = "LAT,LON,LAT,LON",
-            allow_hyphen_values = true,
-            conflicts_with_all = ["bbox", "polygon", "corridor_sites"]
-        )]
-        corridor: Option<String>,
-        /// Corridor from site slug to site slug (e.g. tonopah-overlook,eip-us1041015)
-        #[arg(
-            long,
-            value_name = "FROM,TO",
-            conflicts_with_all = ["bbox", "polygon", "corridor"]
-        )]
-        corridor_sites: Option<String>,
-        /// Total corridor width in miles (default 100)
-        #[arg(long, default_value_t = 100.0)]
-        corridor_width_mi: f64,
-        /// Re-download OSM PBF even if cached
-        #[arg(long)]
-        force: bool,
-        #[arg(long)]
-        verbose: bool,
-        /// Stop after N qualifying peaks (serial scan; prints hike profile for each)
-        #[arg(long)]
-        stop_after: Option<usize>,
-        /// Wipe peaks/ + access/ and rebuild from this scan only (default: merge/freshen)
-        #[arg(long)]
-        clean: bool,
+        #[command(subcommand)]
+        command: PeaksCommands,
     },
     /// Export tag-filtered sites as KML points (onX field clipboard)
     Export {
@@ -152,6 +111,65 @@ enum MapCommands {
         silver_base_step_m: f64,
         #[arg(long)]
         verbose: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PeaksCommands {
+    /// Build eligible-peaks catalog (peaks/ + access/)
+    Build {
+        /// Project directory (or path to config.yaml)
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
+        /// Scan bbox west,south,east,north (default: project AOI)
+        #[arg(
+            long,
+            value_name = "W,S,E,N",
+            allow_hyphen_values = true,
+            conflicts_with_all = ["polygon", "corridor", "corridor_sites"]
+        )]
+        bbox: Option<String>,
+        /// Clip scan to a GeoJSON polygon file
+        #[arg(long, value_name = "PATH", conflicts_with_all = ["bbox", "corridor", "corridor_sites"])]
+        polygon: Option<PathBuf>,
+        /// Corridor from_lat,from_lon,to_lat,to_lon (100 mi wide by default)
+        #[arg(
+            long,
+            value_name = "LAT,LON,LAT,LON",
+            allow_hyphen_values = true,
+            conflicts_with_all = ["bbox", "polygon", "corridor_sites"]
+        )]
+        corridor: Option<String>,
+        /// Corridor from site slug to site slug (e.g. tonopah-overlook,eip-us1041015)
+        #[arg(
+            long,
+            value_name = "FROM,TO",
+            conflicts_with_all = ["bbox", "polygon", "corridor"]
+        )]
+        corridor_sites: Option<String>,
+        /// Total corridor width in miles (default 100)
+        #[arg(long, default_value_t = 100.0)]
+        corridor_width_mi: f64,
+        /// Re-download OSM PBF even if cached
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        verbose: bool,
+        /// Stop after N qualifying peaks (serial scan; prints hike profile for each)
+        #[arg(long)]
+        stop_after: Option<usize>,
+        /// Wipe peaks/ + access/ and rebuild from this scan only (default: merge/freshen)
+        #[arg(long)]
+        clean: bool,
+    },
+    /// Stage-by-stage eligibility report for one lat,lon
+    Probe {
+        /// Project directory (or path to config.yaml)
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
+        /// Latitude,longitude (e.g. 39.922869,-117.128549)
+        #[arg(value_name = "LAT,LON", allow_hyphen_values = true)]
+        lat_lon: String,
     },
 }
 
@@ -236,19 +254,8 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Commands::Peaks {
-            project,
-            bbox,
-            polygon,
-            corridor,
-            corridor_sites,
-            corridor_width_mi,
-            force,
-            verbose,
-            stop_after,
-            clean,
-        } => {
-            peaks::run(
+        Commands::Peaks { command } => match command {
+            PeaksCommands::Build {
                 project,
                 bbox,
                 polygon,
@@ -259,8 +266,24 @@ async fn main() -> Result<()> {
                 verbose,
                 stop_after,
                 clean,
-            )?;
-        }
+            } => {
+                peaks::run_build(
+                    project,
+                    bbox,
+                    polygon,
+                    corridor,
+                    corridor_sites,
+                    corridor_width_mi,
+                    force,
+                    verbose,
+                    stop_after,
+                    clean,
+                )?;
+            }
+            PeaksCommands::Probe { project, lat_lon } => {
+                peaks::run_probe(project, lat_lon)?;
+            }
+        },
         Commands::Export {
             project,
             tag,

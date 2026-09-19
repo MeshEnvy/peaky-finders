@@ -204,16 +204,176 @@ impl Default for PeaksSeedConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct HikeMediumBands {
+    pub min_max_grade_pct: f64,
+    pub min_avg_grade_pct: f64,
+    pub min_gain_m: f64,
+}
+
+impl Default for HikeMediumBands {
+    fn default() -> Self {
+        Self {
+            min_max_grade_pct: 15.0,
+            min_avg_grade_pct: 8.0,
+            min_gain_m: 40.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HikeDifficultBands {
+    pub min_gain_m: f64,
+    pub min_avg_grade_pct: f64,
+}
+
+impl Default for HikeDifficultBands {
+    fn default() -> Self {
+        Self {
+            min_gain_m: 80.0,
+            min_avg_grade_pct: 15.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HikeExtremeBands {
+    pub min_gain_m: f64,
+    pub min_avg_grade_pct: f64,
+    /// Max segment grade on road-to-summit profile (A* / filter reject above this).
+    pub max_segment_grade_pct: f64,
+}
+
+impl Default for HikeExtremeBands {
+    fn default() -> Self {
+        Self {
+            min_gain_m: 250.0,
+            min_avg_grade_pct: 18.0,
+            max_segment_grade_pct: 110.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HikeDifficultyBands {
+    pub medium: HikeMediumBands,
+    pub difficult: HikeDifficultBands,
+    pub extreme: HikeExtremeBands,
+}
+
+impl Default for HikeDifficultyBands {
+    fn default() -> Self {
+        Self {
+            medium: HikeMediumBands::default(),
+            difficult: HikeDifficultBands::default(),
+            extreme: HikeExtremeBands::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JeepMediumBands {
+    pub highways: Vec<String>,
+    pub tracktypes: Vec<String>,
+}
+
+impl Default for JeepMediumBands {
+    fn default() -> Self {
+        Self {
+            highways: vec![
+                "unclassified".into(),
+                "residential".into(),
+                "service".into(),
+            ],
+            tracktypes: vec!["grade2".into()],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JeepDifficultBands {
+    pub tracktypes: Vec<String>,
+}
+
+impl Default for JeepDifficultBands {
+    fn default() -> Self {
+        Self {
+            tracktypes: vec!["grade3".into(), "grade4".into()],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JeepExtremeBands {
+    pub tracktypes: Vec<String>,
+    /// Jeep gate: paved→park route longer than this is reject (20 mi default).
+    pub max_route_m: f64,
+}
+
+impl Default for JeepExtremeBands {
+    fn default() -> Self {
+        Self {
+            tracktypes: vec!["grade5".into()],
+            max_route_m: DEFAULT_MAX_JEEP_M,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JeepDifficultyBands {
+    pub medium: JeepMediumBands,
+    pub difficult: JeepDifficultBands,
+    pub extreme: JeepExtremeBands,
+}
+
+impl Default for JeepDifficultyBands {
+    fn default() -> Self {
+        Self {
+            medium: JeepMediumBands::default(),
+            difficult: JeepDifficultBands::default(),
+            extreme: JeepExtremeBands::default(),
+        }
+    }
+}
+
+/// Hike + jeep difficulty bands and gates under ``scan.peaks.difficulty``.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PeaksDifficultyConfig {
+    pub hike: HikeDifficultyBands,
+    pub jeep: JeepDifficultyBands,
+}
+
+impl Default for PeaksDifficultyConfig {
+    fn default() -> Self {
+        Self {
+            hike: HikeDifficultyBands::default(),
+            jeep: JeepDifficultyBands::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PeaksScanConfig {
     #[serde(default = "default_max_road_search_m")]
     pub max_road_search_m: f64,
     pub hike_path_max_m: f64,
-    pub max_slope_grade_pct: f64,
     pub min_prominence_m: f64,
     pub summit_snap_m: f64,
     pub candidate_dedup_m: f64,
     pub site_dedup_m: f64,
-    pub max_jeep_m: f64,
+    pub difficulty: PeaksDifficultyConfig,
+    #[serde(default, skip_serializing, rename = "max_slope_grade_pct")]
+    legacy_max_slope_grade_pct: Option<f64>,
+    #[serde(default, skip_serializing, rename = "max_jeep_m")]
+    legacy_max_jeep_m: Option<f64>,
     #[serde(default = "default_jeep_highways")]
     pub road_highways: Vec<String>,
     #[serde(default = "default_paved_highways")]
@@ -228,17 +388,38 @@ fn default_max_road_search_m() -> f64 {
     805.0
 }
 
+impl PeaksScanConfig {
+    /// Apply deprecated top-level slope/jeep caps into ``difficulty`` when present.
+    pub fn normalize_legacy(&mut self) {
+        if let Some(pct) = self.legacy_max_slope_grade_pct.take() {
+            self.difficulty.hike.extreme.max_segment_grade_pct = pct;
+        }
+        if let Some(m) = self.legacy_max_jeep_m.take() {
+            self.difficulty.jeep.extreme.max_route_m = m;
+        }
+    }
+
+    pub fn hike_segment_gate_grade_pct(&self) -> f64 {
+        self.difficulty.hike.extreme.max_segment_grade_pct
+    }
+
+    pub fn jeep_route_gate_m(&self) -> f64 {
+        self.difficulty.jeep.extreme.max_route_m
+    }
+}
+
 impl Default for PeaksScanConfig {
     fn default() -> Self {
         Self {
             max_road_search_m: default_max_road_search_m(),
             hike_path_max_m: DEFAULT_HIKE_PATH_MAX_M,
-            max_slope_grade_pct: default_max_slope_grade_pct(),
             min_prominence_m: 20.0,
             summit_snap_m: 500.0,
             candidate_dedup_m: 300.0,
             site_dedup_m: 300.0,
-            max_jeep_m: DEFAULT_MAX_JEEP_M,
+            difficulty: PeaksDifficultyConfig::default(),
+            legacy_max_slope_grade_pct: None,
+            legacy_max_jeep_m: None,
             road_highways: default_jeep_highways(),
             paved_highways: default_paved_highways(),
             profile_sample_m: DEFAULT_ACCESS_PROFILE_SAMPLE_M,
@@ -267,64 +448,36 @@ impl Default for ScanConfig {
     }
 }
 
-/// Optional hike difficulty thresholds for UI derivation (defaults in serve + map).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct HikeDifficultyRules {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extreme_min_gain_m: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extreme_min_avg_grade_pct: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub difficult_min_gain_m: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub difficult_min_avg_grade_pct: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub medium_min_max_grade_pct: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub medium_min_avg_grade_pct: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub medium_min_gain_m: Option<f64>,
-}
-
-/// Difficulty derivation knobs under ``peaks/_meta.yaml`` → ``rules.difficulty``.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct DifficultyRules {
-    #[serde(default)]
-    pub hike: HikeDifficultyRules,
-}
-
 /// Access rules stamped into ``peaks/_meta.yaml`` when ``peaky peaks`` runs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PeakAccessRules {
     pub max_hike_m: f64,
     /// Max segment grade on road-to-summit profile (percent; rise/run × 100).
-    #[serde(default = "default_max_slope_grade_pct")]
+    #[serde(default = "default_stamped_max_slope_grade_pct")]
     pub max_slope_grade_pct: f64,
     pub max_slope_deg: f64,
     #[serde(default = "default_jeep_highways")]
     pub road_highways: Vec<String>,
     /// Max horizontal jeep route from paved road to park point (20 mi default).
-    #[serde(default = "default_max_jeep_m")]
+    #[serde(default = "default_stamped_max_jeep_m")]
     pub max_jeep_m: f64,
     #[serde(default = "default_paved_highways")]
     pub paved_highways: Vec<String>,
     #[serde(default)]
-    pub difficulty: DifficultyRules,
+    pub difficulty: PeaksDifficultyConfig,
 }
 
-fn default_max_jeep_m() -> f64 {
-    DEFAULT_MAX_JEEP_M
+fn default_max_slope_deg_from_pct(pct: f64) -> f64 {
+    (pct / 100.0).atan().to_degrees()
 }
 
-fn default_max_slope_grade_pct() -> f64 {
-    30.0
+fn default_stamped_max_slope_grade_pct() -> f64 {
+    PeaksDifficultyConfig::default().hike.extreme.max_segment_grade_pct
 }
 
-fn default_max_slope_deg() -> f64 {
-    (default_max_slope_grade_pct() / 100.0).atan().to_degrees()
+fn default_stamped_max_jeep_m() -> f64 {
+    PeaksDifficultyConfig::default().jeep.extreme.max_route_m
 }
 
 fn default_jeep_highways() -> Vec<String> {
@@ -365,14 +518,16 @@ pub const DEFAULT_HIKE_PATH_MAX_M: f64 = 1609.0;
 
 impl Default for PeakAccessRules {
     fn default() -> Self {
+        let difficulty = PeaksDifficultyConfig::default();
+        let max_slope_grade_pct = difficulty.hike.extreme.max_segment_grade_pct;
         Self {
             max_hike_m: 805.0,
-            max_slope_grade_pct: default_max_slope_grade_pct(),
-            max_slope_deg: default_max_slope_deg(),
+            max_slope_grade_pct,
+            max_slope_deg: default_max_slope_deg_from_pct(max_slope_grade_pct),
             road_highways: default_jeep_highways(),
-            max_jeep_m: DEFAULT_MAX_JEEP_M,
+            max_jeep_m: difficulty.jeep.extreme.max_route_m,
             paved_highways: default_paved_highways(),
-            difficulty: DifficultyRules::default(),
+            difficulty,
         }
     }
 }
@@ -382,7 +537,7 @@ impl Default for PeakAccessRules {
 pub const ACCESS_ALGO_VERSION: u32 = 11;
 
 /// Bump when peak eligibility / summit snap / universe filter semantics change.
-pub const PEAK_ALGO_VERSION: u32 = 5;
+pub const PEAK_ALGO_VERSION: u32 = 6;
 
 /// Pathfinding settings in ``access/_meta.yaml`` (jeep/hike routing + algo stamp).
 ///
@@ -462,8 +617,6 @@ pub struct PeakHikeProfile {
     pub max_slope_deg: f64,
     pub max_grade_pct: f64,
     pub avg_grade_pct: f64,
-    /// Runtime-only label; derived at serve. Not written to YAML.
-    #[serde(default, skip_serializing)]
     pub difficulty: String,
     pub profile: Vec<PeakHikeProfilePoint>,
     pub histogram: Vec<PeakHikeGradeBucket>,
@@ -497,8 +650,6 @@ pub struct PeakJeepProfile {
     pub max_slope_deg: f64,
     pub max_grade_pct: f64,
     pub avg_grade_pct: f64,
-    /// Runtime-only label; derived at serve. Not written to YAML.
-    #[serde(default, skip_serializing)]
     pub difficulty: String,
     pub profile: Vec<PeakJeepProfilePoint>,
     pub histogram: Vec<PeakHikeGradeBucket>,
@@ -573,11 +724,9 @@ pub struct PeakCatalogEntry {
     /// Full jeep profile — carried in-memory / via ``access/``; omitted from thin peak rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jeep: Option<PeakJeepProfile>,
-    /// Runtime-only hike rating; use ``derived_hike_difficulty``. Not written to YAML.
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hike_difficulty: Option<String>,
-    /// Runtime-only jeep rating; use ``derived_jeep_difficulty``. Not written to YAML.
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jeep_difficulty: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deny: Option<bool>,
@@ -627,8 +776,8 @@ impl PeakCatalogEntry {
             jeep_highway: self.jeep_highway.clone(),
             jeep_tracktype: self.jeep_tracktype.clone(),
             jeep: None,
-            hike_difficulty: None,
-            jeep_difficulty: None,
+            hike_difficulty: self.hike_difficulty.clone(),
+            jeep_difficulty: self.jeep_difficulty.clone(),
             deny: self.deny,
         };
         if let Some(ref h) = self.hike {
@@ -661,8 +810,8 @@ impl PeakCatalogEntry {
             jeep_highway: self.jeep_highway.clone(),
             jeep_tracktype: self.jeep_tracktype.clone(),
             jeep: access.jeep.clone().or_else(|| self.jeep.clone()),
-            hike_difficulty: None,
-            jeep_difficulty: None,
+            hike_difficulty: self.hike_difficulty.clone(),
+            jeep_difficulty: self.jeep_difficulty.clone(),
             deny: self.deny,
         };
         if let Some(ref h) = access.hike {
@@ -674,6 +823,20 @@ impl PeakCatalogEntry {
             crate::difficulty::copy_jeep_facts_from_profile(&mut out, j);
         } else if let Some(ref j) = self.jeep {
             crate::difficulty::copy_jeep_facts_from_profile(&mut out, j);
+        }
+        if out.hike_difficulty.is_none() {
+            if let Some(ref h) = out.hike {
+                if !h.difficulty.is_empty() {
+                    out.hike_difficulty = Some(h.difficulty.clone());
+                }
+            }
+        }
+        if out.jeep_difficulty.is_none() {
+            if let Some(ref j) = out.jeep {
+                if !j.difficulty.is_empty() {
+                    out.jeep_difficulty = Some(j.difficulty.clone());
+                }
+            }
         }
         out
     }
@@ -923,14 +1086,15 @@ impl Preset {
     /// Peak eligibility + access routing knobs from ``config.yaml`` → ``scan.peaks``.
     pub fn peak_access_rules(&self) -> PeakAccessRules {
         let p = &self.scan.peaks;
+        let max_slope_grade_pct = p.hike_segment_gate_grade_pct();
         PeakAccessRules {
             max_hike_m: p.max_road_search_m,
-            max_slope_grade_pct: p.max_slope_grade_pct,
-            max_slope_deg: (p.max_slope_grade_pct / 100.0).atan().to_degrees(),
+            max_slope_grade_pct,
+            max_slope_deg: default_max_slope_deg_from_pct(max_slope_grade_pct),
             road_highways: p.road_highways.clone(),
-            max_jeep_m: p.max_jeep_m,
+            max_jeep_m: p.jeep_route_gate_m(),
             paved_highways: p.paved_highways.clone(),
-            difficulty: DifficultyRules::default(),
+            difficulty: p.difficulty.clone(),
         }
     }
 
@@ -941,7 +1105,7 @@ impl Preset {
             algo_version: ACCESS_ALGO_VERSION,
             profile_sample_m: p.profile_sample_m,
             road_sample_step_m: p.road_sample_step_m,
-            max_jeep_m: p.max_jeep_m,
+            max_jeep_m: p.jeep_route_gate_m(),
             road_highways: p.road_highways.clone(),
             paved_highways: p.paved_highways.clone(),
             place_road_search_m: p.place_road_search_m,

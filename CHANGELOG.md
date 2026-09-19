@@ -12,7 +12,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
-- **Peak scan config** — `config.yaml` `sources` (OSM PBF URL, GNIS GDB path/layer/filter) and `scan.peaks` (road search, slope, prominence, dedup, summit snap, jeep cap, highway lists, seed toggles). `peaky peaks` and `ensure_access_meta` read these instead of hardcoded defaults.
+- **One YAML for peak grade and gate** — `scan.peaks.difficulty.hike` and `.jeep` band tables with separate extremes (hike A* cap = `hike.extreme.max_segment_grade_pct` default **110%**; jeep reject = `jeep.extreme.max_route_m`). Scan stamps `hike_difficulty` and `jeep_difficulty` on thin rows and access profiles; serve/list/map read stored labels. `PEAK_ALGO_VERSION` → **6**. Re-run `peaky peaks build`.
+- **`peaky peaks probe lat,lon`** — stage report (land, DEM snap/prominence, roads, filter, sector parks, stamped bands). Build subcommand is now `peaky peaks build` (same flags as before).
+- **Peak scan config** — `config.yaml` `sources` (OSM PBF URL, GNIS GDB path/layer/filter) and `scan.peaks` (road search, prominence, dedup, summit snap, highway lists, seed toggles). `ensure_access_meta` reads jeep cap from `difficulty.jeep.extreme.max_route_m`.
 - **Site tag visibility** — tag chips hide non-matching sites on the map but keep them in the sidebar; per-site eye toggles match the peaks panel. **In view** on the Peaks tab scopes the peaks list (same flag as Sites; Land unchanged).
 - **Peaks entity tab** — Sites | Peaks | Land sidebar lists the catalog with show/hide per peak, show in view, and show all / hide all. Hidden peaks drop off the map and are omitted from Fortify and link solver scans.
 - **Link solver** — map tool to find multi-hop peak routes between two preset sites. Floating panel, route list ranked by fewest hops then shortest distance, margin labels on legs, preview viewsheds, **More like this**, **Load more**, and **Accept** to create hop sites and seed mesh links. Replaces goal seek.
