@@ -79,8 +79,8 @@ export function mountBulkTagModal(store, appApi) {
           )
           chip.title =
             visual === 'full'
-              ? `Remove ${tag} from all sites in view`
-              : `Add ${tag} to all sites in view`
+              ? `Remove ${tag} from all visible sites`
+              : `Add ${tag} to all visible sites`
           chip.addEventListener('click', () => appApi.toggleBulkTag?.(tag))
           tagsEl.appendChild(chip)
         }

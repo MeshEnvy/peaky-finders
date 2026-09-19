@@ -216,6 +216,16 @@ export function sidebarSites(store, opts = {}) {
 }
 
 /**
+ * Map-visible sites in the current sidebar scope (respects tag filters and eye toggles).
+ * @param {object} store
+ * @param {{ map?: object, mapReady?: boolean }} [opts]
+ */
+export function visibleSidebarSites(store, opts = {}) {
+  void store.sites?.revision
+  return sidebarSites(store, opts).filter((site) => isSiteMapVisible(store, site.slug))
+}
+
+/**
  * Mark KML preview points that sit within IMPORT_DEDUPE_METERS of an existing site.
  * @param {object[]} points
  * @param {object[]} sites

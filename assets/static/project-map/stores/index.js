@@ -12,6 +12,7 @@ export {
   viewportSites,
   tagFilteredSites,
   sidebarSites,
+  visibleSidebarSites,
   syncTagFilterVisibility,
   isSiteMapVisible,
   toggleSiteManualHidden,

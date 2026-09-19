@@ -52,7 +52,7 @@
         <div class="entity-panel__list-header">
           <div class="entity-panel__list-toolbar">
             <span class="wa-caption pf-muted entity-panel__list-count" id="entity-panel-sites-count"></span>
-            <wa-button id="entity-panel-bulk-tag" appearance="outlined" size="s" type="button" title="Add or remove tags on sites listed in the sidebar" disabled>Bulk tag</wa-button>
+            <wa-button id="entity-panel-bulk-tag" appearance="outlined" size="s" type="button" title="Add or remove tags on visible sites" disabled>Bulk tag</wa-button>
           </div>
         </div>
         <div id="entity-panel-sites-list" class="entity-panel__list"></div>
@@ -635,7 +635,7 @@
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
   <wa-button slot="footer" id="land-folder-save" variant="brand" size="s" type="button">Save</wa-button>
 </wa-dialog>
-<wa-dialog id="bulk-tag-modal" label="Bulk tag sidebar sites" style="--width: 28rem" with-footer light-dismiss>
+<wa-dialog id="bulk-tag-modal" label="Bulk tag visible sites" style="--width: 28rem" with-footer light-dismiss>
   <wa-callout id="bulk-tag-error" variant="danger" hidden></wa-callout>
   <p class="wa-caption pf-muted" id="bulk-tag-status"></p>
   <div class="pf-form-field pf-form-field--full bulk-tag-form">

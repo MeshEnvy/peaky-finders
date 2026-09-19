@@ -5,6 +5,7 @@ import {
   sidebarSites as sidebarSitesFromStore,
   sidebarTags as sidebarTagsFromStore,
   isSiteMapVisible,
+  visibleSidebarSites as visibleSidebarSitesFromStore,
   viewportSites as viewportSitesFromStore,
 } from '../stores/sites.js'
 import { mountViewportFilterCheckbox } from './viewport-filter.js'
@@ -192,20 +193,21 @@ export function mountSitesPanel(store, appApi) {
   const exportBtn = document.getElementById('entity-panel-export-sites')
   const importBtn = document.getElementById('entity-panel-import-sites')
   watch(
-    () => sidebarSitesFromStore(store, mapOpts()).length,
-    (count) => {
-      if (bulkTagBtn) bulkTagBtn.disabled = !store.ui.mapReady || count === 0
+    () => [
+      store.ui.mapReady,
+      store.sites.revision,
+      store.ui.viewportEpoch,
+      store.ui.tagFilters.size,
+      store.ui.tagFilterMode,
+      store.sites.hidden.size,
+      visibleSidebarSitesFromStore(store, mapOpts()).length,
+    ],
+    () => {
+      if (!bulkTagBtn) return
+      const count = visibleSidebarSitesFromStore(store, mapOpts()).length
+      bulkTagBtn.disabled = !store.ui.mapReady || count === 0
     },
     { immediate: true },
-  )
-  watch(
-    () => store.ui.mapReady,
-    () => {
-      if (bulkTagBtn) {
-        bulkTagBtn.disabled =
-          !store.ui.mapReady || sidebarSitesFromStore(store, mapOpts()).length === 0
-      }
-    },
   )
   function syncExportButton() {
     if (!exportBtn) return

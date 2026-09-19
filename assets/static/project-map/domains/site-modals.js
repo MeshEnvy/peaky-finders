@@ -6,7 +6,7 @@ import {
   annotateImportPoints,
   bulkTagInitialCounts,
   computeBulkTagOps,
-  sidebarSites,
+  visibleSidebarSites,
   syncTagFilterVisibility,
   toggleTag,
 } from '../stores/sites.js'
@@ -49,7 +49,7 @@ export function createSiteModalsDomain(ctx) {
   let importPreviewMoveHandler = null
 
   function listedSidebarSites() {
-    return sidebarSites(store, { map: getMap?.(), mapReady: getMapReady?.() })
+    return visibleSidebarSites(store, { map: getMap?.(), mapReady: getMapReady?.() })
   }
 
   function bulkTagStatusText(listed) {
@@ -63,7 +63,7 @@ export function createSiteModalsDomain(ctx) {
     }
     if (store.ui.filterByViewport) scopeParts.push('in the current map view')
     const scope = scopeParts.length ? ` ${scopeParts.join(' and ')}` : ''
-    if (count === 0) return 'No sites match the current sidebar filters.'
+    if (count === 0) return 'No visible sites match the current filters.'
     if (count === 1) return `Apply to 1 site${scope}`
     return `Apply to ${count} sites${scope}`
   }

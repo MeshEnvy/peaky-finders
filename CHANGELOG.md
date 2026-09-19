@@ -31,6 +31,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - **Link solver hop preview** — clicking a route hop shows viewshed and jeep/hike access (cache-first load). Route legs show distance labels on the map.
 - **Fortify / link solver / alternates catalog load** — RF scans use cached thin ``peaks/`` rows only (no per-scan ``access/`` merge). First load ~1s; repeat scans are instant until peaks change.
 - **Access paths on RF links** — selecting a link paints jeep/hike routes on both endpoints (site deselect no longer hides them).
+- **Bulk tag scope** — bulk tag applies only to map-visible sites (tag-filter and eye-hidden rows are skipped), not every site still listed in the sidebar.
 
 ### Removed
 
