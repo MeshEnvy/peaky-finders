@@ -296,9 +296,9 @@ export function mountSiteSheet(store, appApi) {
       }
 
       function copyCoords() {
-        const site = selectedSite.value
-        if (!site) return
-        void appApi.copyCoordPair?.(site.lat, site.lon)
+        const [lat, lon] = sheetCoords()
+        if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) return
+        void appApi.copyCoordPair?.(lat, lon)
       }
 
       function toggleEditTag(tag) {
@@ -522,9 +522,9 @@ export function mountSiteSheet(store, appApi) {
           <div class="site-panel__facts">
             <div class="site-panel__fact site-panel__fact--wide">
               <span class="site-panel__label">Coordinates</span>
-              <div class="site-panel__value-row">
+              <div class="pf-copy-row">
                 <p class="site-panel__value pf-mono">{{ formatCoord(selectedSite.lat) }}, {{ formatCoord(selectedSite.lon) }}</p>
-                <button type="button" class="coord-action-btn" @click="copyCoords">Copy</button>
+                <button type="button" class="coord-action-btn" title="Copy lat, lon" @click="copyCoords">Copy</button>
               </div>
             </div>
             <div class="site-panel__fact">
@@ -687,7 +687,11 @@ export function mountSiteSheet(store, appApi) {
           </div>
           <div class="site-panel__section">
             <span class="site-panel__label">Coordinates</span>
-            <p class="site-panel__value">{{ createCoordsLabel || 'Pick a location on the map' }}</p>
+            <div v-if="createCoordsLabel" class="pf-copy-row">
+              <p class="site-panel__value pf-mono">{{ createCoordsLabel }}</p>
+              <button type="button" class="coord-action-btn" title="Copy lat, lon" @click="copyCoords">Copy</button>
+            </div>
+            <p v-else class="site-panel__value">Pick a location on the map</p>
           </div>
           <div class="site-panel__section">
             <span class="site-panel__label">Elevation</span>
