@@ -213,6 +213,7 @@ export function createSiteLayersDomain(ctx) {
     siteBySlug.delete(slug)
     siteHidden.delete(slug)
     store?.sites?.manualHidden?.delete?.(slug)
+    store?.sites?.manualShown?.delete?.(slug)
     store?.viewshed?.visible?.delete?.(slug)
     removeViewshedLayer?.(slug)
     purgeSiteLinksForSlug?.(slug)

@@ -34,6 +34,7 @@ export function createRootStore(config, savedMapState) {
       list: [],
       hidden: new Set(),
       manualHidden: new Set(),
+      manualShown: new Set(),
       revision: 0,
     },
     peaks: {
@@ -216,6 +217,11 @@ export function createRootStore(config, savedMapState) {
   } else if (savedMapState?.hiddenSites && Array.isArray(savedMapState.hiddenSites)) {
     for (const slug of savedMapState.hiddenSites) {
       store.sites.manualHidden.add(String(slug))
+    }
+  }
+  if (savedMapState?.manualShownSites && Array.isArray(savedMapState.manualShownSites)) {
+    for (const slug of savedMapState.manualShownSites) {
+      store.sites.manualShown.add(String(slug))
     }
   }
   syncTagFilterVisibility(store)

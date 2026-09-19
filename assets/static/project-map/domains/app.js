@@ -14,6 +14,7 @@ import {
 } from '../api/deep-link.js'
 import { setSimulation } from '../stores/simulation.js'
 import {
+  isSiteMapVisible,
   sidebarSites,
   syncTagFilterVisibility,
   toggleSiteManualHidden,
@@ -687,9 +688,15 @@ export function runApp(ctx = {}) {
       })
       let changed = false
       for (const site of listed) {
-        if (!site?.slug || !store.sites.manualHidden.has(site.slug)) continue
-        store.sites.manualHidden.delete(site.slug)
-        changed = true
+        if (!site?.slug) continue
+        if (store.sites.manualHidden.has(site.slug)) {
+          store.sites.manualHidden.delete(site.slug)
+          changed = true
+        }
+        if (!isSiteMapVisible(store, site.slug)) {
+          store.sites.manualShown.add(site.slug)
+          changed = true
+        }
       }
       if (!changed) return
       syncTagFilterVisibility(store)
@@ -703,9 +710,15 @@ export function runApp(ctx = {}) {
       })
       let changed = false
       for (const site of listed) {
-        if (!site?.slug || store.sites.manualHidden.has(site.slug)) continue
-        store.sites.manualHidden.add(site.slug)
-        changed = true
+        if (!site?.slug) continue
+        if (store.sites.manualShown.has(site.slug)) {
+          store.sites.manualShown.delete(site.slug)
+          changed = true
+        }
+        if (!store.sites.manualHidden.has(site.slug)) {
+          store.sites.manualHidden.add(site.slug)
+          changed = true
+        }
       }
       if (!changed) return
       syncTagFilterVisibility(store)

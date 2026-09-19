@@ -32,6 +32,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - **Fortify / link solver / alternates catalog load** — RF scans use cached thin ``peaks/`` rows only (no per-scan ``access/`` merge). First load ~1s; repeat scans are instant until peaks change.
 - **Access paths on RF links** — selecting a link paints jeep/hike routes on both endpoints (site deselect no longer hides them).
 - **Bulk tag scope** — bulk tag applies only to map-visible sites (tag-filter and eye-hidden rows are skipped), not every site still listed in the sidebar.
+- **Site eye vs tag filters** — per-site show/hide now inverts effective map visibility, so the eye can reveal a tag-hidden row (and hide a tag-visible one). Show all / hide all in the sidebar scope honor the same rules.
 
 ### Removed
 

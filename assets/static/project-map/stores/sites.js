@@ -76,18 +76,22 @@ export function tagChipChoices(projectTags, selected = []) {
 }
 
 /**
- * Rebuild sites.hidden from manualHidden plus active tag filters.
+ * Rebuild sites.hidden from manualHidden, manualShown, and active tag filters.
  * @param {object} store
  */
 export function syncTagFilterVisibility(store) {
   if (!store?.sites) return
-  const manual = store.sites.manualHidden
+  const manualHidden = store.sites.manualHidden
+  const manualShown = store.sites.manualShown
   const hidden = new Set()
   const hasTags = !!store.ui?.tagFilters?.size
   for (const site of store.sites.list || []) {
     const slug = site.slug
-    if (manual.has(slug)) {
+    if (manualHidden.has(slug)) {
       hidden.add(slug)
+      continue
+    }
+    if (manualShown.has(slug)) {
       continue
     }
     if (hasTags && !sitePassesTagFilter(site, store)) {
@@ -108,8 +112,13 @@ export function isSiteMapVisible(store, slug) {
 export function toggleSiteManualHidden(store, slug) {
   const value = String(slug || '').trim()
   if (!value || !store?.sites) return
-  if (store.sites.manualHidden.has(value)) store.sites.manualHidden.delete(value)
-  else store.sites.manualHidden.add(value)
+  if (isSiteMapVisible(store, value)) {
+    store.sites.manualShown.delete(value)
+    store.sites.manualHidden.add(value)
+  } else {
+    store.sites.manualHidden.delete(value)
+    store.sites.manualShown.add(value)
+  }
   syncTagFilterVisibility(store)
 }
 
@@ -156,6 +165,7 @@ export function unregisterSite(store, slug) {
   if (idx >= 0) store.sites.list.splice(idx, 1)
   store.sites.hidden?.delete?.(slug)
   store.sites.manualHidden?.delete?.(slug)
+  store.sites.manualShown?.delete?.(slug)
   if (store.ui?.selectedSlug === slug) store.ui.selectedSlug = null
   store.sites.revision = (store.sites.revision || 0) + 1
 }
