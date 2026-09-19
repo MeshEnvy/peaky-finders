@@ -119,7 +119,7 @@ export function runApp(ctx = {}) {
   function syncMapCursor() {
     if (!store.ui.mapReady) return
     map.getCanvas().style.cursor =
-      store.ui.addPlacementMode || store.ui.editMode ? 'crosshair' : ''
+      store.ui.addPlacementMode || store.ui.relocateMode ? 'crosshair' : ''
   }
 
   function isMapTiltedView(mapInstance = map) {
@@ -169,7 +169,7 @@ export function runApp(ctx = {}) {
     linkFeatureTouchesSnapshotCoords: (feature) =>
       editPreviewDomain?.linkFeatureTouchesSnapshotCoords(feature) ?? false,
     applyEntityVisibility: () => entityChrome?.applyEntityVisibility(),
-    syncEditMapShell: () => placementDomain?.syncEditMapShell(),
+    syncRelocateMapShell: () => placementDomain?.syncRelocateMapShell(),
     refreshSiteAccessLayers: () => siteAccessDomain?.refreshLayers(),
   })
 
@@ -320,8 +320,8 @@ export function runApp(ctx = {}) {
         linksDomain?.deselectLink()
         return
       }
-      if (store.ui.editMode) {
-        placementDomain.cancelEdit()
+      if (store.ui.relocateMode) {
+        placementDomain.cancelRelocate()
         return
       }
       if (store.ui.selectedPeakSlug) peaksDomain?.deselectPeak()
@@ -385,10 +385,10 @@ export function runApp(ctx = {}) {
         removeDraftViewshed: (...args) => editPreviewDomain.removeDraftViewshed(...args),
         removeDraftLinksLayer: () => editPreviewDomain.removeDraftLinksLayer(),
         loadDraftViewshedAt: (...args) => editPreviewDomain.loadDraftViewshedAt(...args),
-        onOpenEdit: (entity) => editPreviewDomain.startEditSession(entity),
-        onCancelEdit: () => editPreviewDomain.endEditSession(),
-        onCleanupEditSave: () => editPreviewDomain.cleanupEditSave(),
-        onFinishEditSave: () => siteLayers.finishEditSaveUi(),
+        onStartRelocate: (entity) => editPreviewDomain.startEditSession(entity),
+        onCancelRelocate: () => editPreviewDomain.endEditSession(),
+        onCleanupRelocate: () => editPreviewDomain.cleanupEditSave(),
+        onRelocateCoordsChanged: () => editPreviewDomain.onEditCoordsChanged(),
         deselectPeak: (...args) => peaksDomain?.deselectPeak(...args),
         clearLinkSelection: () => linksDomain?.clearLinkSelection(),
       })
@@ -509,8 +509,9 @@ export function runApp(ctx = {}) {
         getLinks: () => linksDomain,
         getSiteBySlug: (slug) => siteBySlug.get(slug),
         syncMapCursor,
-        setEditDraftCoords: (...args) => placementDomain.setEditDraftCoords(...args),
-        onEditCoordsChanged: () => editPreviewDomain.onEditCoordsChanged(),
+        setRelocateDraftCoords: (...args) => placementDomain.setRelocateDraftCoords(...args),
+        onRelocateCoordsChanged: () => editPreviewDomain.onEditCoordsChanged(),
+        commitRelocateAt: (...args) => placementDomain.commitRelocateAt(...args),
         setAddPlacementMode: (...args) => placementDomain.setAddPlacementMode(...args),
         selectSite: (...args) => placementDomain.selectSite(...args),
         deselectSite: (...args) => placementDomain.deselectSite(...args),
@@ -741,11 +742,10 @@ export function runApp(ctx = {}) {
     sitesDomain,
     applySavedSiteToMap: (...args) => placementDomain?.applySavedSiteToMap(...args),
     selectSite: (...args) => placementDomain?.selectSite(...args),
-    openEditPanel: () => placementDomain.openEditPanel(),
-    cancelEdit: () => placementDomain.cancelEdit(),
+    toggleRelocate: () => placementDomain.toggleRelocate(),
+    cancelRelocate: () => placementDomain.cancelRelocate(),
     cancelCreate: () => placementDomain.cancelCreate(),
-    onEditCoordsChanged: () => editPreviewDomain.onEditCoordsChanged(),
-    saveEdit: (payload) => placementDomain.saveEditFromSheet(payload),
+    patchSiteField: (slug, body) => placementDomain.patchSiteField(slug, body),
     saveCreate: (payload) => placementDomain.saveCreateFromSheet(payload),
     deleteSelectedSite: () => placementDomain.deleteSelectedSite(),
     syncMapViewport: () => entityChrome.syncMapViewport(),
@@ -780,8 +780,7 @@ export function runApp(ctx = {}) {
     ...bind(() => siteModalsDomain, [
       'openBulkTagModal',
       'closeBulkTagModal',
-      'toggleBulkTag',
-      'addBulkTagFromInput',
+      'setBulkTagState',
       'saveBulkTagModal',
       'bulkTagStatusText',
       'listedSidebarSites',

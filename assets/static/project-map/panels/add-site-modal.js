@@ -3,7 +3,7 @@
 import { watch } from 'vue'
 import { allProjectTags } from '../stores/sites.js'
 import { formatCoord, parseCoordPairFromText } from '../geo.js'
-import { renderToggleTagChips, syncTagSuggestions } from './tag-chips.js'
+import { mountTagPicker } from './tag-picker.js'
 
 /**
  * Drive #add-site-modal from store.modals.addSite.
@@ -17,11 +17,22 @@ export function mountAddSiteModal(store, appApi) {
   const nameEl = document.getElementById('add-site-name')
   const coordsEl = document.getElementById('add-site-coords')
   const tagsEl = document.getElementById('add-site-tags')
-  const form = document.getElementById('add-site-tag-form')
-  const input = document.getElementById('add-site-tag-input')
-  const suggestions = document.getElementById('add-site-tag-suggestions')
   const errorEl = document.getElementById('add-site-error')
   const save = document.getElementById('add-site-save')
+
+  mountTagPicker(
+    tagsEl,
+    () => ({
+      mode: 'simple',
+      modelValue: store.modals.addSite?.tags || [],
+      suggestions: allProjectTags(store),
+    }),
+    {
+      onUpdate: (tags) => {
+        if (store.modals.addSite) store.modals.addSite.tags = tags
+      },
+    },
+  )
 
   watch(
     () => store.modals.addSite,
@@ -30,18 +41,11 @@ export function mountAddSiteModal(store, appApi) {
       dialog.open = !!modal.open
       if (nameEl && nameEl !== document.activeElement) nameEl.value = modal.name || ''
       if (coordsEl && coordsEl !== document.activeElement) coordsEl.value = modal.coords || ''
-      if (input && input !== document.activeElement) input.value = modal.tagInput || ''
       if (errorEl) {
         errorEl.textContent = modal.error || ''
         errorEl.hidden = !modal.error
       }
       if (save) save.disabled = !!modal.saving
-      renderToggleTagChips(tagsEl, {
-        tags: allProjectTags(store),
-        selected: modal.tags || [],
-        onToggle: (tag) => appApi.toggleAddSiteTag?.(tag),
-      })
-      syncTagSuggestions(suggestions, allProjectTags(store), modal.tags || [])
     },
     { deep: true },
   )
@@ -73,13 +77,6 @@ export function mountAddSiteModal(store, appApi) {
     if (ev.key !== 'Enter') return
     ev.preventDefault()
     void appApi.saveAddSiteModal?.()
-  })
-  input?.addEventListener('input', () => {
-    if (store.modals.addSite) store.modals.addSite.tagInput = input.value
-  })
-  form?.addEventListener('submit', (ev) => {
-    ev.preventDefault()
-    appApi.addAddSiteTagFromInput?.()
   })
   save?.addEventListener('click', () => {
     void appApi.saveAddSiteModal?.()

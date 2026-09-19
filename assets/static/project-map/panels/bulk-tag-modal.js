@@ -1,8 +1,13 @@
 // @ts-check
 
 import { watch } from 'vue'
-import { allProjectTags, bulkTagInitialCounts, computeBulkTagOps } from '../stores/sites.js'
-import { syncTagSuggestions } from './tag-chips.js'
+import {
+  allProjectTags,
+  bulkTagInitialCounts,
+  bulkTagVisualState,
+  computeBulkTagOps,
+} from '../stores/sites.js'
+import { mountTagPicker } from './tag-picker.js'
 
 /**
  * Drive #bulk-tag-modal from store.modals.bulkTag.
@@ -16,9 +21,6 @@ export function mountBulkTagModal(store, appApi) {
   const errorEl = document.getElementById('bulk-tag-error')
   const statusEl = document.getElementById('bulk-tag-status')
   const tagsEl = document.getElementById('bulk-tag-tags')
-  const form = document.getElementById('bulk-tag-add-form')
-  const input = document.getElementById('bulk-tag-add-input')
-  const suggestions = document.getElementById('bulk-tag-add-suggestions')
   const save = document.getElementById('bulk-tag-save')
 
   function listed() {
@@ -32,6 +34,33 @@ export function mountBulkTagModal(store, appApi) {
     )
   }
 
+  function bulkStates(listedSites, modal) {
+    const counts = bulkTagInitialCounts(listedSites)
+    const total = listedSites.length
+    const pending = modal.pending || {}
+    /** @type {Record<string, string>} */
+    const states = {}
+    for (const tag of chipTags(listedSites)) {
+      states[tag] = bulkTagVisualState(tag, total, pending, counts)
+    }
+    return states
+  }
+
+  mountTagPicker(
+    tagsEl,
+    () => {
+      const sites = listed()
+      return {
+        mode: 'bulk',
+        states: bulkStates(sites, store.modals.bulkTag || {}),
+        suggestions: allProjectTags(store),
+      }
+    },
+    {
+      onSetState: (tag, visual) => appApi.setBulkTagState?.(tag, visual),
+    },
+  )
+
   watch(
     () => store.modals.bulkTag,
     (modal) => {
@@ -43,54 +72,11 @@ export function mountBulkTagModal(store, appApi) {
       }
       const sites = listed()
       if (statusEl) statusEl.textContent = appApi.bulkTagStatusText?.(sites) || ''
-      const known = chipTags(sites)
-      const pending = modal.pending || {}
       const counts = bulkTagInitialCounts(sites)
-      const total = sites.length
-      if (tagsEl) {
-        tagsEl.innerHTML = ''
-        for (const tag of known) {
-          let visual = 'none'
-          if (pending[tag] === 'all') visual = 'full'
-          else if (pending[tag] === 'none') visual = 'none'
-          else {
-            const count = counts[tag] || 0
-            if (count >= total && total) visual = 'full'
-            else if (count > 0) visual = 'partial'
-          }
-          const chip = document.createElement('button')
-          chip.type = 'button'
-          chip.className = 'site-tag site-tag--toggle'
-          if (visual === 'full') chip.classList.add('is-selected')
-          if (visual === 'partial') chip.classList.add('is-partial')
-          if (visual === 'partial') {
-            const icon = document.createElement('span')
-            icon.className = 'site-tag__partial-icon'
-            icon.setAttribute('aria-hidden', 'true')
-            icon.textContent = '◐'
-            chip.appendChild(icon)
-          }
-          const label = document.createElement('span')
-          label.textContent = tag
-          chip.appendChild(label)
-          chip.setAttribute(
-            'aria-pressed',
-            visual === 'full' ? 'true' : visual === 'partial' ? 'mixed' : 'false',
-          )
-          chip.title =
-            visual === 'full'
-              ? `Remove ${tag} from all visible sites`
-              : `Add ${tag} to all visible sites`
-          chip.addEventListener('click', () => appApi.toggleBulkTag?.(tag))
-          tagsEl.appendChild(chip)
-        }
-      }
-      if (input) input.value = modal.tagInput || ''
-      syncTagSuggestions(suggestions, allProjectTags(store), [])
       if (save) {
         const { addTags, removeTags } = computeBulkTagOps(
           sites.map((s) => s.slug),
-          pending,
+          modal.pending,
           counts,
         )
         save.disabled = !!modal.saving || !sites.length || (!addTags.length && !removeTags.length)
@@ -99,13 +85,6 @@ export function mountBulkTagModal(store, appApi) {
     { deep: true },
   )
 
-  input?.addEventListener('input', () => {
-    if (store.modals.bulkTag) store.modals.bulkTag.tagInput = input.value
-  })
-  form?.addEventListener('submit', (ev) => {
-    ev.preventDefault()
-    appApi.addBulkTagFromInput?.()
-  })
   save?.addEventListener('click', () => {
     void appApi.saveBulkTagModal?.()
   })

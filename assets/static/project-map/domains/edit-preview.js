@@ -79,8 +79,8 @@ export function createEditPreviewDomain(ctx) {
   }
 
   function readEditCoords() {
-    const lat = Number(store?.ui?.editLat)
-    const lon = Number(store?.ui?.editLon)
+    const lat = Number(store?.ui?.relocateLat)
+    const lon = Number(store?.ui?.relocateLon)
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
     return { lat, lon }
   }
@@ -125,14 +125,14 @@ export function createEditPreviewDomain(ctx) {
   }
 
   function linkFeatureTouchesSnapshotCoords(feature) {
-    if (!store.ui.editMode || !editSnapshot || !editCoordsMovedFromSnapshot()) {
+    if (!store.ui.relocateMode || !editSnapshot || !editCoordsMovedFromSnapshot()) {
       return false
     }
     return lineTouchesLonLat(feature, editSnapshot.lon, editSnapshot.lat)
   }
 
   function editingSiteSlug() {
-    return store.ui.editMode && store.ui.editSlug ? store.ui.editSlug : null
+    return store.ui.relocateMode && store.ui.relocateSlug ? store.ui.relocateSlug : null
   }
 
   function filterEditSitePrefetchPayload(payload) {
@@ -179,7 +179,7 @@ export function createEditPreviewDomain(ctx) {
     draftViewshedLoading = false
     // Edit prefetch already requested links with exclude_site. The create
     // placement fetch does not, and would draw a line back to the old pin.
-    if (store.ui.editMode) return
+    if (store.ui.relocateMode) return
     if (draftPlacementLat != null && draftPlacementLon != null) {
       void loadPlacementPrefetchAt(draftPlacementLat, draftPlacementLon)
     }
@@ -300,9 +300,9 @@ export function createEditPreviewDomain(ctx) {
   }
 
   function loadEditDraftViewshedAt(lat, lon) {
-    if (!store.ui.editMode) return
+    if (!store.ui.relocateMode) return
     viewshedVisible.set(DRAFT_VIEWSHED_SLUG, true)
-    hideViewshedLayerForEdit(store.ui.editSlug)
+    hideViewshedLayerForEdit(store.ui.relocateSlug)
     void loadDraftViewshedAt(lat, lon)
   }
 
@@ -313,7 +313,7 @@ export function createEditPreviewDomain(ctx) {
     placeDraftMarker?.(lat, lon)
     applySiteLayerFilters?.()
     refreshFilteredLinks?.()
-    if (store.ui.editMode) {
+    if (store.ui.relocateMode) {
       if (atOriginal) {
         removeDraftViewshed()
         restoreEditHiddenViewshed()
@@ -325,7 +325,7 @@ export function createEditPreviewDomain(ctx) {
       removeDraftLinksLayer?.()
     }
     try {
-      const url = apiUrls.sitesPrefetchUrl(projectSlug, lat, lon, store.ui.editSlug)
+      const url = apiUrls.sitesPrefetchUrl(projectSlug, lat, lon, store.ui.relocateSlug)
       const resp = await fetch(url)
       if (gen !== editPrefetchGen) return
       if (!resp.ok) return
@@ -340,7 +340,7 @@ export function createEditPreviewDomain(ctx) {
   }
 
   function scheduleEditPrefetch() {
-    if (!store.ui.editMode) return
+    if (!store.ui.relocateMode) return
     if (editPrefetchTimer) clearTimeout(editPrefetchTimer)
     editPrefetchTimer = setTimeout(() => {
       editPrefetchTimer = null
@@ -351,7 +351,7 @@ export function createEditPreviewDomain(ctx) {
   }
 
   function onEditCoordsChanged() {
-    if (!store.ui.editMode) return
+    if (!store.ui.relocateMode) return
     const coords = readEditCoords()
     if (!coords) return
     const atOriginal = coordsMatchEditSnapshot(coords.lat, coords.lon)

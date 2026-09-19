@@ -5,6 +5,7 @@ import {
   allProjectTags,
   annotateImportPoints,
   bulkTagInitialCounts,
+  bulkTagVisualState,
   computeBulkTagOps,
   visibleSidebarSites,
   syncTagFilterVisibility,
@@ -87,35 +88,25 @@ export function createSiteModalsDomain(ctx) {
     }
   }
 
-  function toggleBulkTag(tag) {
-    const listed = listedSidebarSites()
-    const counts = bulkTagInitialCounts(listed)
+  /** @param {string} tag @param {'full'|'none'|'cycle'} visual */
+  function setBulkTagState(tag, visual) {
     const modal = store.modals.bulkTag
     const pending = { ...(modal.pending || {}) }
-    const total = listed.length
-    const current = pending[tag]
-    let visual = 'none'
-    if (current === 'all') visual = 'full'
-    else if (current === 'none') visual = 'none'
-    else {
-      const count = counts[tag] || 0
-      if (count >= total && total) visual = 'full'
-      else if (count > 0) visual = 'partial'
-    }
-    pending[tag] = visual === 'full' ? 'none' : 'all'
+    if (visual === 'cycle') {
+      const listed = listedSidebarSites()
+      const counts = bulkTagInitialCounts(listed)
+      const total = listed.length
+      const current = bulkTagVisualState(tag, total, pending, counts)
+      if (current === 'partial') pending[tag] = 'all'
+      else if (current === 'full') pending[tag] = 'none'
+      else if (pending[tag] === 'none' && (counts[tag] || 0) > 0) delete pending[tag]
+      else pending[tag] = 'all'
+    } else if (visual === 'full') pending[tag] = 'all'
+    else pending[tag] = 'none'
     store.modals.bulkTag = { ...modal, pending, error: '' }
   }
 
-  function addBulkTagFromInput() {
-    const tag = normalizeTagInput(store.modals.bulkTag.tagInput)
-    store.modals.bulkTag.tagInput = ''
-    if (!tag) return
-    const pending = { ...(store.modals.bulkTag.pending || {}), [tag]: 'all' }
-    store.modals.bulkTag = { ...store.modals.bulkTag, pending }
-  }
-
   async function saveBulkTagModal() {
-    addBulkTagFromInput()
     const listed = listedSidebarSites()
     const slugs = listed.map((site) => site.slug)
     const counts = bulkTagInitialCounts(listed)
@@ -197,7 +188,6 @@ export function createSiteModalsDomain(ctx) {
   }
 
   async function saveAddSiteModal() {
-    addAddSiteTagFromInput()
     const name = String(store.modals.addSite.name || '').trim()
     if (!name) {
       store.modals.addSite = { ...store.modals.addSite, error: 'Name is required.' }
@@ -455,7 +445,6 @@ export function createSiteModalsDomain(ctx) {
   }
 
   async function saveImportSitesModal() {
-    addImportTagFromInput()
     const pointsToImport = importablePoints()
     const tags = effectiveImportTags()
     if (!tags.length || !pointsToImport.length) {
@@ -515,8 +504,7 @@ export function createSiteModalsDomain(ctx) {
   return {
     openBulkTagModal,
     closeBulkTagModal,
-    toggleBulkTag,
-    addBulkTagFromInput,
+    setBulkTagState,
     saveBulkTagModal,
     bulkTagStatusText,
     listedSidebarSites,

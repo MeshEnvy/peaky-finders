@@ -295,7 +295,7 @@ export function createPeaksDomain(opts) {
 
   /** @param {object} peak */
   function showPeakRfPreview(peak) {
-    if (store.ui.createMode || store.ui.editMode) return
+    if (store.ui.createMode || store.ui.relocateMode) return
     const lat = Number(peak?.lat)
     const lon = Number(peak?.lon)
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return

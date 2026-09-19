@@ -38,7 +38,7 @@ Living snapshot of **current** architecture. **Agents: read before substantive w
 | `crates/peaky-serve/` | Axum app, API routes, HTML, embedded static |
 | `crates/peaky-map/` | `peaky map export`: fleet filter + native `splat.png` mosaic + public GeoJSON/tiles |
 | `splatter/` | RF coverage engine (Skadi DEM, Fresnel/FSPL). Library only |
-| `assets/static/project-map/` | Vue 3 reactive UI: `main.js` → `boot.js`, `stores/` (incl. land display helpers), `domains/` (`app.js` wiring only), `panels/`, `map/` (adapters + land overlay catalog), `api/` (client, events, urls, **deep-link.js** — `?site=` / `?peak=` + camera in address bar; localStorage keeps basemap/land/viewshed prefs); debug disk-serve for `/static/` |
+| `assets/static/project-map/` | Vue 3 reactive UI: `main.js` → `boot.js`, `stores/` (incl. land display helpers), `domains/` (`app.js` wiring only), `panels/` (incl. **`tag-picker.js`** — shared simple + bulk tri-state tag editor), `map/` (adapters + land overlay catalog), `api/` (client, events, urls, **deep-link.js** — `?site=` / `?peak=` + camera in address bar; localStorage keeps basemap/land/viewshed prefs); debug disk-serve for `/static/` |
 | `assets/finder-watch/` | Embedded MapLibre page for `peaky find path --watch` |
 | `assets/templates/` | Server-rendered HTML fragments |
 | `tests/fixtures/` | Golden RF/GeoJSON fixtures from v4 |

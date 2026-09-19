@@ -6,7 +6,7 @@ import { normalizeSiteFromApi } from '../stores/sites.js'
 import { captureDeepLinkFromMap, writeDeepLink } from '../api/deep-link.js'
 
 /**
- * Create/edit draft marker, site sheet modes, select/deselect, save.
+ * Create/relocation draft marker, site sheet modes, select/deselect, save.
  * MapLibre marker + store.ui; Vue sheet watches the store.
  * @param {object} ctx
  */
@@ -39,10 +39,10 @@ export function createPlacementDomain(ctx) {
     removeDraftViewshed,
     removeDraftLinksLayer,
     loadDraftViewshedAt,
-    onOpenEdit,
-    onCancelEdit,
-    onCleanupEditSave,
-    onFinishEditSave,
+    onStartRelocate,
+    onCancelRelocate,
+    onCleanupRelocate,
+    onRelocateCoordsChanged,
     deselectPeak,
     clearLinkSelection,
   } = ctx
@@ -77,12 +77,12 @@ export function createPlacementDomain(ctx) {
     return !!store.ui.createMode
   }
 
-  function isEditMode() {
-    return !!store.ui.editMode
+  function isRelocateMode() {
+    return !!store.ui.relocateMode
   }
 
-  function getEditSlug() {
-    return store.ui.editSlug
+  function getRelocateSlug() {
+    return store.ui.relocateSlug
   }
 
   function getAddPlacementMode() {
@@ -94,9 +94,9 @@ export function createPlacementDomain(ctx) {
     store.ui.createLon = lon
   }
 
-  function setEditDraftCoords(lat, lon) {
-    store.ui.editLat = lat
-    store.ui.editLon = lon
+  function setRelocateDraftCoords(lat, lon) {
+    store.ui.relocateLat = lat
+    store.ui.relocateLon = lon
   }
 
   function selectedSlug() {
@@ -107,32 +107,22 @@ export function createPlacementDomain(ctx) {
     store.ui.selectedSlug = slug
   }
 
-  function syncEditMapShell() {
+  function syncRelocateMapShell() {
     const shell = mapShell()
-    if (shell) shell.classList.toggle('edit-mode', isEditMode())
+    if (shell) shell.classList.toggle('relocate-mode', isRelocateMode())
     syncMapCursor?.()
   }
 
   function showPanelView() {
     store.ui.createMode = false
-    store.ui.editMode = false
-    store.ui.editSlug = null
-    syncEditMapShell()
-  }
-
-  function showPanelEdit() {
-    store.ui.createMode = false
-    store.ui.editMode = true
-    syncEditMapShell()
+    syncRelocateMapShell()
   }
 
   function showPanelCreate() {
     store.ui.createMode = true
-    store.ui.editMode = false
-    store.ui.editSlug = null
     assignSelectedSlug(null)
     updateSelectedLayer?.()
-    syncEditMapShell()
+    syncRelocateMapShell()
   }
 
   function removeDraftMarker() {
@@ -172,6 +162,7 @@ export function createPlacementDomain(ctx) {
   }
 
   function openCreatePanel(lat, lon) {
+    if (isRelocateMode()) cancelRelocate()
     setCreateDraftCoords(lat, lon)
     removeDraftLinksLayer?.()
     placeDraftMarker(lat, lon)
@@ -207,45 +198,103 @@ export function createPlacementDomain(ctx) {
   }
 
   function beginCreateAtMapPoint(lat, lon) {
-    if (isEditMode()) return
+    if (isRelocateMode()) return
     if (isCreateMode()) cancelCreate()
     setAddPlacementMode(null)
     openCreatePanel(lat, lon)
   }
 
-  function openEditPanel() {
+  function toggleRelocate() {
     const slug = selectedSlug()
     const entity = getSiteBySlug?.(slug)
     if (!entity || !slug) return
-    store.ui.editSlug = slug
-    setEditDraftCoords(Number(entity.lat), Number(entity.lon))
-    showPanelEdit()
-    onOpenEdit?.(entity)
+    if (isRelocateMode() && store.ui.relocateSlug === slug) {
+      cancelRelocate()
+      return
+    }
+    if (isRelocateMode()) cancelRelocate()
+    store.ui.relocateSlug = slug
+    store.ui.relocateMode = true
+    setRelocateDraftCoords(Number(entity.lat), Number(entity.lon))
+    syncRelocateMapShell()
+    onStartRelocate?.(entity)
   }
 
-  function cancelEdit() {
-    if (!isEditMode()) return
-    store.ui.editMode = false
-    store.ui.editSlug = null
-    setEditDraftCoords(null, null)
+  function cancelRelocate() {
+    if (!isRelocateMode()) return
+    store.ui.relocateMode = false
+    store.ui.relocateSlug = null
+    setRelocateDraftCoords(null, null)
     removeDraftMarker()
     removeDraftViewshed?.()
     removeDraftLinksLayer?.()
-    onCancelEdit?.()
+    onCancelRelocate?.()
     applySiteLayerFilters?.()
     refreshFilteredLinks?.()
-    syncEditMapShell()
-    const panel = sitePanelEl()
-    if (panel) panel.hidden = false
-    syncMapViewport?.()
-    showPanelView()
+    syncRelocateMapShell()
+  }
+
+  /**
+   * @param {string} slug
+   * @param {Record<string, unknown>} body
+   */
+  async function patchSiteField(slug, body) {
+    if (!slug) throw new Error('No site selected.')
+    if (!sitesDomain) throw new Error('Sites API unavailable.')
+    store.ui.sheetError = ''
+    const result = await sitesDomain.updateSite(slug, body)
+    const { site, promoted } = result
+    if (promoted && site) {
+      registerSite(site)
+    } else if (site) {
+      applySiteRowUpdate(site)
+    }
+    if (site && (body.lat != null || body.lon != null)) {
+      viewshedVisible?.set?.(site.slug, true)
+      scheduleViewshedLoad?.(site)
+      void loadSiteLinks?.()
+    }
+    return site
+  }
+
+  /**
+   * @param {number} lat
+   * @param {number} lon
+   */
+  async function commitRelocateAt(lat, lon) {
+    const slug = store.ui.relocateSlug
+    if (!slug || !isRelocateMode()) return null
+    try {
+      const site = await patchSiteField(slug, { lat, lon })
+      removeDraftMarker()
+      removeDraftViewshed?.()
+      removeDraftLinksLayer?.()
+      store.ui.relocateMode = false
+      store.ui.relocateSlug = null
+      setRelocateDraftCoords(null, null)
+      onCleanupRelocate?.()
+      applySiteLayerFilters?.()
+      refreshFilteredLinks?.()
+      syncRelocateMapShell()
+      updateSelectedLayer?.()
+      raiseSiteLayers?.()
+      return site
+    } catch (err) {
+      store.ui.sheetError = err instanceof Error ? err.message : 'Could not move site.'
+      const entity = getSiteBySlug?.(slug)
+      if (entity) {
+        setRelocateDraftCoords(Number(entity.lat), Number(entity.lon))
+        onRelocateCoordsChanged?.()
+      }
+      throw err
+    }
   }
 
   function selectSite(slug, { syncDeepLink = true } = {}) {
     const site = getSiteBySlug?.(slug)
     if (!site) return
     if (isCreateMode()) cancelCreate()
-    if (isEditMode()) cancelEdit()
+    if (isRelocateMode()) cancelRelocate()
     clearLinkSelection?.()
     deselectPeak?.({ syncDeepLink: false })
     assignSelectedSlug(slug)
@@ -266,8 +315,8 @@ export function createPlacementDomain(ctx) {
       cancelCreate()
       return
     }
-    if (isEditMode()) {
-      cancelEdit()
+    if (isRelocateMode()) {
+      cancelRelocate()
       return
     }
     assignSelectedSlug(null)
@@ -306,65 +355,23 @@ export function createPlacementDomain(ctx) {
     return `${formatCoord(lat)}, ${formatCoord(lon)}`
   }
 
-  async function saveEditFromSheet({ name, lat, lon, height_m, tags }) {
-    if (!isEditMode() || !store.ui.editSlug) throw new Error('Not in edit mode.')
-    if (!name) throw new Error('Name is required.')
-    const latNum = Number.parseFloat(lat)
-    const lonNum = Number.parseFloat(lon)
-    if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
-      throw new Error('Valid latitude and longitude are required.')
-    }
-    const body = { name, lat: latNum, lon: lonNum, tags: [...(tags || [])] }
-    if (height_m) {
-      const heightM = Number(height_m)
-      if (!Number.isFinite(heightM) || heightM < 1) {
-        throw new Error('Antenna height must be at least 1 m.')
-      }
-      body.height_m = heightM
-    } else {
-      body.height_m = null
-    }
-    if (!sitesDomain) throw new Error('Sites API unavailable.')
-    const result = await sitesDomain.updateSite(store.ui.editSlug, body)
-    const { site, promoted } = result
-    removeDraftMarker()
-    removeDraftViewshed?.()
-    removeDraftLinksLayer?.()
-    store.ui.editMode = false
-    store.ui.editSlug = null
-    setEditDraftCoords(null, null)
-    onCleanupEditSave?.()
-    if (promoted && site) {
-      registerSite(site)
-    } else if (site) {
-      applySiteRowUpdate(site)
-    }
-    if (!site) return
-    assignSelectedSlug(site.slug)
-    viewshedVisible?.set?.(site.slug, true)
-    scheduleViewshedLoad?.(site)
-    showPanelView()
-    onFinishEditSave?.()
-    void loadSiteLinks?.()
-  }
-
   async function deleteSelectedSite() {
-    const slug = selectedSlug() || getEditSlug()
+    const slug = selectedSlug() || getRelocateSlug()
     const entity = store.sites.list.find((site) => site.slug === slug) || getSiteBySlug?.(slug)
     if (!entity || !slug) throw new Error('No site selected.')
     if (store.sites.list.length <= 1) throw new Error('Cannot delete the last site.')
     if (!window.confirm(`Delete site "${entity.name}"?`)) return { cancelled: true }
     if (!sitesDomain) throw new Error('Sites API unavailable.')
     await sitesDomain.deleteSite(slug)
-    if (isEditMode()) {
-      store.ui.editMode = false
-      store.ui.editSlug = null
-      setEditDraftCoords(null, null)
+    if (isRelocateMode()) {
+      store.ui.relocateMode = false
+      store.ui.relocateSlug = null
+      setRelocateDraftCoords(null, null)
       removeDraftMarker()
       removeDraftViewshed?.()
       removeDraftLinksLayer?.()
-      onCleanupEditSave?.()
-      syncEditMapShell()
+      onCleanupRelocate?.()
+      syncRelocateMapShell()
     }
     unregisterSite?.(slug)
     assignSelectedSlug(null)
@@ -398,29 +405,29 @@ export function createPlacementDomain(ctx) {
 
   return {
     isCreateMode,
-    isEditMode,
-    getEditSlug,
+    isRelocateMode,
+    getRelocateSlug,
     getAddPlacementMode,
     setCreateDraftCoords,
-    setEditDraftCoords,
+    setRelocateDraftCoords,
     showPanelView,
-    showPanelEdit,
     showPanelCreate,
     removeDraftMarker,
     placeDraftMarker,
-    syncEditMapShell,
+    syncRelocateMapShell,
     clearAddPlacementMode,
     setAddPlacementMode,
     openCreatePanel,
     cancelCreate,
     beginCreateAtMapPoint,
-    openEditPanel,
-    cancelEdit,
+    toggleRelocate,
+    cancelRelocate,
+    commitRelocateAt,
+    patchSiteField,
     selectSite,
     deselectSite,
     applySavedSiteToMap,
     getCreateCoordsLabel,
-    saveEditFromSheet,
     saveCreateFromSheet,
     deleteSelectedSite,
   }

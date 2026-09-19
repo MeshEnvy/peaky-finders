@@ -48,7 +48,7 @@ export function createSiteLayersDomain(ctx) {
     purgeSiteLinksForSlug,
     linkFeatureTouchesSnapshotCoords,
     applyEntityVisibility,
-    syncEditMapShell,
+    syncRelocateMapShell,
     refreshSiteAccessLayers,
   } = ctx
 
@@ -68,8 +68,8 @@ export function createSiteLayersDomain(ctx) {
   }
 
   function editSiteLayerFilter() {
-    if (store.ui.editMode && store.ui.editSlug) {
-      return ['!=', ['get', 'slug'], store.ui.editSlug]
+    if (store.ui.relocateMode && store.ui.relocateSlug) {
+      return ['!=', ['get', 'slug'], store.ui.relocateSlug]
     }
     return null
   }
@@ -102,7 +102,7 @@ export function createSiteLayersDomain(ctx) {
     const map = getMap()
     if (!map?.getLayer(SITES_SELECTED)) return
     const selectedSlug = store.ui.selectedSlug
-    if (store.ui.editMode && selectedSlug === store.ui.editSlug) {
+    if (store.ui.relocateMode && selectedSlug === store.ui.relocateSlug) {
       map.setFilter(SITES_SELECTED, ['==', ['get', 'slug'], ''])
       return
     }
@@ -160,8 +160,8 @@ export function createSiteLayersDomain(ctx) {
     const features = geojson.features.filter((feature) => {
       const props = feature.properties || {}
       if (isSiteMapHidden(props.a) || isSiteMapHidden(props.b)) return false
-      if (store.ui.editMode && store.ui.editSlug) {
-        if (props.a === store.ui.editSlug || props.b === store.ui.editSlug) return false
+      if (store.ui.relocateMode && store.ui.relocateSlug) {
+        if (props.a === store.ui.relocateSlug || props.b === store.ui.relocateSlug) return false
       }
       if (linkFeatureTouchesSnapshotCoords?.(feature)) return false
       return true
@@ -234,7 +234,7 @@ export function createSiteLayersDomain(ctx) {
   function finishEditSaveUi() {
     applySiteLayerFilters()
     refreshFilteredLinks?.()
-    syncEditMapShell?.()
+    syncRelocateMapShell?.()
     updateSelectedLayer()
     raiseSiteLayers?.()
   }

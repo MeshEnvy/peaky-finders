@@ -3,7 +3,7 @@
 import { watch } from 'vue'
 import { allProjectTags } from '../stores/sites.js'
 import { formatCoord } from '../geo.js'
-import { renderToggleTagChips, syncTagSuggestions } from './tag-chips.js'
+import { mountTagPicker } from './tag-picker.js'
 
 /**
  * Drive #import-sites-modal from store.modals.importSites.
@@ -19,9 +19,20 @@ export function mountImportSitesModal(store, appApi) {
   const statusEl = document.getElementById('import-sites-status')
   const previewField = document.getElementById('import-sites-preview-field')
   const tagsEl = document.getElementById('import-sites-tags')
-  const form = document.getElementById('import-sites-tag-form')
-  const input = document.getElementById('import-sites-tag-input')
-  const suggestions = document.getElementById('import-sites-tag-suggestions')
+
+  mountTagPicker(
+    tagsEl,
+    () => ({
+      mode: 'simple',
+      modelValue: store.modals.importSites?.tags || [],
+      suggestions: allProjectTags(store),
+    }),
+    {
+      onUpdate: (tags) => {
+        if (store.modals.importSites) store.modals.importSites.tags = tags
+      },
+    },
+  )
   const errorEl = document.getElementById('import-sites-error')
   const save = document.getElementById('import-sites-save')
   const listCount = document.getElementById('import-sites-list-count')
@@ -117,7 +128,6 @@ export function mountImportSitesModal(store, appApi) {
         errorEl.textContent = modal.error || ''
         errorEl.hidden = !modal.error
       }
-      if (input && input !== document.activeElement) input.value = modal.tagInput || ''
       if (filterVisible) filterVisible.checked = !!modal.filterVisible
       const ready =
         (appApi.importablePoints?.() || []).length > 0 &&
@@ -128,12 +138,6 @@ export function mountImportSitesModal(store, appApi) {
       const enabled = (modal.points || []).length > 0 && !modal.busy
       if (selectAll) selectAll.disabled = !enabled
       if (clearAll) clearAll.disabled = !enabled
-      renderToggleTagChips(tagsEl, {
-        tags: allProjectTags(store),
-        selected: modal.tags || [],
-        onToggle: (tag) => appApi.toggleImportTag?.(tag),
-      })
-      syncTagSuggestions(suggestions, allProjectTags(store), modal.tags || [])
       renderPointList(modal)
     },
     { deep: true },
@@ -142,13 +146,6 @@ export function mountImportSitesModal(store, appApi) {
   fileEl?.addEventListener('change', () => {
     const file = fileEl.files && fileEl.files[0]
     if (file) void appApi.previewImportFile?.(file)
-  })
-  input?.addEventListener('input', () => {
-    if (store.modals.importSites) store.modals.importSites.tagInput = input.value
-  })
-  form?.addEventListener('submit', (ev) => {
-    ev.preventDefault()
-    appApi.addImportTagFromInput?.()
   })
   save?.addEventListener('click', () => {
     void appApi.saveImportSitesModal?.()

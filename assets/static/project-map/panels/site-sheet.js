@@ -2,15 +2,15 @@
 
 import { createApp, computed, ref, watch } from 'vue'
 import { DRAFT_VIEWSHED_SLUG } from '../constants.js'
-import { formatCoord, formatElevLabel, normalizeTagInput } from '../geo.js'
-import { allProjectTags, tagChipChoices, toggleTag } from '../stores/sites.js'
+import { formatCoord, formatElevLabel } from '../geo.js'
+import { allProjectTags } from '../stores/sites.js'
 import { apiFetch } from '../api/client.js'
 import * as apiUrls from '../api/urls.js'
 import { AccessProfilesPanel } from './access-profiles.js'
+import { TagPicker } from './tag-picker.js'
 
 /**
- * Vue site detail sheet for #site-panel (view / edit / create).
- * Map-side effects stay on appApi; persistence uses sitesDomain where wired.
+ * Vue site detail sheet for #site-panel (in-place selected site + create draft).
  * @param {object} store
  * @param {object} appApi
  */
@@ -25,17 +25,12 @@ export function mountSiteSheet(store, appApi) {
   body.appendChild(mountPoint)
 
   const app = createApp({
-    components: { AccessProfilesPanel },
+    components: { AccessProfilesPanel, TagPicker },
     setup() {
-      const editName = ref('')
-      const editLat = ref('')
-      const editLon = ref('')
-      const editHeight = ref('')
-      const editTags = ref([])
-      const editTagInput = ref('')
+      const inlineName = ref('')
+      const inlineHeight = ref('')
       const createName = ref('')
       const createTags = ref([])
-      const createTagInput = ref('')
       const errorText = ref('')
       const access = ref(/** @type {object|null} */ (null))
       const accessLoading = ref(false)
@@ -46,19 +41,48 @@ export function mountSiteSheet(store, appApi) {
       let elevSeq = 0
 
       const projectTags = computed(() => allProjectTags(store))
-      const editTagChoices = computed(() => tagChipChoices(projectTags.value, editTags.value))
-      const createTagChoices = computed(() => tagChipChoices(projectTags.value, createTags.value))
-      const editTagSuggestions = computed(() =>
-        projectTags.value.filter((tag) => !editTags.value.includes(tag)),
-      )
-      const createTagSuggestions = computed(() =>
-        projectTags.value.filter((tag) => !createTags.value.includes(tag)),
-      )
 
       const selectedSite = computed(() => {
         const slug = store.ui.selectedSlug
         if (!slug) return null
         return store.sites.list.find((s) => s.slug === slug) || null
+      })
+
+      const panelVisible = computed(
+        () => store.ui.createMode || !!store.ui.selectedSlug,
+      )
+
+      const mode = computed(() => (store.ui.createMode ? 'create' : 'selected'))
+
+      const relocateActive = computed(
+        () =>
+          store.ui.relocateMode &&
+          store.ui.relocateSlug === store.ui.selectedSlug,
+      )
+
+      const displayCoords = computed(() => {
+        const site = selectedSite.value
+        if (!site) return { lat: null, lon: null }
+        if (relocateActive.value) {
+          return {
+            lat: store.ui.relocateLat ?? site.lat,
+            lon: store.ui.relocateLon ?? site.lon,
+          }
+        }
+        return { lat: site.lat, lon: site.lon }
+      })
+
+      const coordsLabel = computed(() => {
+        const { lat, lon } = displayCoords.value
+        if (lat == null || lon == null) return ''
+        return `${formatCoord(lat)}, ${formatCoord(lon)}`
+      })
+
+      const siteTagsModel = computed({
+        get: () => [...(selectedSite.value?.tags || [])],
+        set: (tags) => {
+          void patchTags(tags)
+        },
       })
 
       function accessFromStore(slug) {
@@ -108,7 +132,6 @@ export function mountSiteSheet(store, appApi) {
         () => [
           store.ui.selectedSlug,
           store.ui.createMode,
-          store.ui.editMode,
           store.access?.bySlug?.[DRAFT_VIEWSHED_SLUG],
           store.access?.draftLoading,
           store.access?.osm?.status,
@@ -124,7 +147,7 @@ export function mountSiteSheet(store, appApi) {
             return
           }
           const slug = store.ui.selectedSlug
-          if (!slug || store.ui.editMode) {
+          if (!slug) {
             access.value = null
             return
           }
@@ -134,14 +157,13 @@ export function mountSiteSheet(store, appApi) {
         { immediate: true },
       )
 
-      // Prefer live warm ingest over a prior fetch.
       watch(
         () => {
           const slug = store.ui.selectedSlug
           return slug ? store.access?.bySlug?.[slug] : null
         },
         (row) => {
-          if (!row || store.ui.createMode || store.ui.editMode) return
+          if (!row || store.ui.createMode) return
           if (row.hike || row.jeep) {
             access.value = row
             accessLoading.value = false
@@ -149,6 +171,51 @@ export function mountSiteSheet(store, appApi) {
           }
         },
       )
+
+      watch(
+        () => store.ui.sheetError,
+        (msg) => {
+          if (msg) errorText.value = msg
+        },
+      )
+
+      watch(
+        () => selectedSite.value?.slug,
+        () => {
+          const site = selectedSite.value
+          inlineName.value = site?.name || ''
+          inlineHeight.value =
+            site?.height_m != null && Number.isFinite(Number(site.height_m))
+              ? String(site.height_m)
+              : ''
+          errorText.value = ''
+          store.ui.sheetError = ''
+        },
+        { immediate: true },
+      )
+
+      watch(
+        () => [store.ui.relocateLat, store.ui.relocateLon, store.ui.relocateMode],
+        () => {
+          const { lat, lon } = displayCoords.value
+          if (lat != null && lon != null) void loadElev(lat, lon)
+        },
+      )
+
+      watch(
+        () => store.ui.createMode,
+        (active) => {
+          if (!active) return
+          createName.value = ''
+          createTags.value = []
+          errorText.value = ''
+        },
+      )
+
+      watch(panelVisible, (visible) => {
+        panel.hidden = !visible
+        if (visible) appApi.syncMapViewport?.()
+      })
 
       const accessLoadingLabel = computed(() => {
         const osm = store.access?.osm
@@ -168,95 +235,8 @@ export function mountSiteSheet(store, appApi) {
         appApi.flyToPeakProfilePoint?.(pt.lat, pt.lon)
       }
 
-      const panelVisible = computed(
-        () => store.ui.createMode || store.ui.editMode || !!store.ui.selectedSlug
-      )
-
-      const mode = computed(() => {
-        if (store.ui.createMode) return 'create'
-        if (store.ui.editMode) return 'edit'
-        return 'view'
-      })
-
-      watch(
-        () => store.ui.editMode,
-        (active) => {
-          if (!active || !selectedSite.value) return
-          const site = selectedSite.value
-          editName.value = site.name
-          const lat = store.ui.editLat ?? site.lat
-          const lon = store.ui.editLon ?? site.lon
-          editLat.value = formatCoord(lat)
-          editLon.value = formatCoord(lon)
-          editHeight.value =
-            site.height_m != null && Number.isFinite(Number(site.height_m))
-              ? String(site.height_m)
-              : ''
-          editTags.value = [...(site.tags || [])]
-          editTagInput.value = ''
-          errorText.value = ''
-        },
-        { immediate: true }
-      )
-
-      watch(
-        () => [store.ui.editLat, store.ui.editLon],
-        ([lat, lon]) => {
-          if (lat == null || lon == null) return
-          const nextLat = formatCoord(lat)
-          const nextLon = formatCoord(lon)
-          if (editLat.value !== nextLat) editLat.value = nextLat
-          if (editLon.value !== nextLon) editLon.value = nextLon
-        }
-      )
-
-      watch([editLat, editLon], () => {
-        if (!store.ui.editMode) return
-        const lat = Number.parseFloat(editLat.value)
-        const lon = Number.parseFloat(editLon.value)
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
-        if (
-          store.ui.editLat != null &&
-          store.ui.editLon != null &&
-          formatCoord(store.ui.editLat) === editLat.value &&
-          formatCoord(store.ui.editLon) === editLon.value
-        ) {
-          return
-        }
-        store.ui.editLat = lat
-        store.ui.editLon = lon
-        appApi.onEditCoordsChanged?.()
-      })
-
-      const createCoordsLabel = computed(() => {
-        const lat = store.ui.createLat
-        const lon = store.ui.createLon
-        if (lat == null || lon == null) return ''
-        return `${formatCoord(lat)}, ${formatCoord(lon)}`
-      })
-
-      watch(
-        () => store.ui.createMode,
-        (active) => {
-          if (!active) return
-          createName.value = ''
-          createTags.value = []
-          createTagInput.value = ''
-          errorText.value = ''
-        }
-      )
-
-      watch(panelVisible, (visible) => {
-        panel.hidden = !visible
-        if (visible) appApi.syncMapViewport?.()
-      })
-
       function closePanel() {
         appApi.deselectSite?.()
-      }
-
-      function openEdit() {
-        appApi.openEditPanel?.()
       }
 
       async function deleteSelected() {
@@ -268,41 +248,16 @@ export function mountSiteSheet(store, appApi) {
         }
       }
 
-      function cancelEdit() {
-        appApi.cancelEdit?.()
-      }
-
       function cancelCreate() {
         appApi.cancelCreate?.()
-      }
-
-      async function saveEdit() {
-        errorText.value = ''
-        try {
-          const pending = normalizeTagInput(editTagInput.value)
-          const tags = [...editTags.value]
-          if (pending && !tags.includes(pending)) tags.push(pending)
-          await appApi.saveEdit?.({
-            name: editName.value.trim(),
-            lat: editLat.value.trim(),
-            lon: editLon.value.trim(),
-            height_m: editHeight.value.trim(),
-            tags,
-          })
-        } catch (err) {
-          errorText.value = err instanceof Error ? err.message : 'Save failed.'
-        }
       }
 
       async function saveCreate() {
         errorText.value = ''
         try {
-          const pending = normalizeTagInput(createTagInput.value)
-          const tags = [...createTags.value]
-          if (pending && !tags.includes(pending)) tags.push(pending)
           await appApi.saveCreate?.({
             name: createName.value.trim(),
-            tags,
+            tags: [...createTags.value],
           })
         } catch (err) {
           errorText.value = err instanceof Error ? err.message : 'Save failed.'
@@ -327,43 +282,88 @@ export function mountSiteSheet(store, appApi) {
         void appApi.copyCoordPair?.(lat, lon)
       }
 
-      function toggleEditTag(tag) {
-        editTags.value = toggleTag(editTags.value, tag)
+      function copySlug() {
+        const slug = selectedSite.value?.slug
+        if (!slug) return
+        void navigator.clipboard?.writeText(slug)
       }
 
-      function addEditTagFromInput() {
-        const tag = normalizeTagInput(editTagInput.value)
-        editTagInput.value = ''
-        if (!tag || editTags.value.includes(tag)) return
-        editTags.value = [...editTags.value, tag]
+      function toggleRelocate() {
+        errorText.value = ''
+        store.ui.sheetError = ''
+        appApi.toggleRelocate?.()
       }
 
-      function toggleCreateTag(tag) {
-        createTags.value = toggleTag(createTags.value, tag)
+      /** @param {string[]} tags */
+      async function patchTags(tags) {
+        const site = selectedSite.value
+        if (!site) return
+        const prev = [...(site.tags || [])]
+        try {
+          await appApi.patchSiteField?.(site.slug, { tags: [...tags] })
+        } catch (err) {
+          errorText.value = err instanceof Error ? err.message : 'Could not update tags.'
+          site.tags = prev
+        }
       }
 
-      function addCreateTagFromInput() {
-        const tag = normalizeTagInput(createTagInput.value)
-        createTagInput.value = ''
-        if (!tag || createTags.value.includes(tag)) return
-        createTags.value = [...createTags.value, tag]
+      async function commitName() {
+        const site = selectedSite.value
+        if (!site) return
+        const next = inlineName.value.trim()
+        if (!next) {
+          inlineName.value = site.name
+          errorText.value = 'Name is required.'
+          return
+        }
+        if (next === site.name) return
+        const prev = site.name
+        try {
+          await appApi.patchSiteField?.(site.slug, { name: next })
+        } catch (err) {
+          inlineName.value = prev
+          errorText.value = err instanceof Error ? err.message : 'Could not update name.'
+        }
+      }
+
+      async function commitHeight() {
+        const site = selectedSite.value
+        if (!site) return
+        const raw = inlineHeight.value.trim()
+        const prev =
+          site.height_m != null && Number.isFinite(Number(site.height_m))
+            ? String(site.height_m)
+            : ''
+        let body = /** @type {{ height_m: number|null }} */ ({ height_m: null })
+        if (raw) {
+          const heightM = Number(raw)
+          if (!Number.isFinite(heightM) || heightM < 1) {
+            inlineHeight.value = prev
+            errorText.value = 'Antenna height must be at least 1 m.'
+            return
+          }
+          body = { height_m: heightM }
+        }
+        const prevNum = site.height_m
+        if (raw && Number(raw) === Number(prevNum)) return
+        if (!raw && (prevNum == null || prevNum === '')) return
+        try {
+          await appApi.patchSiteField?.(site.slug, body)
+        } catch (err) {
+          inlineHeight.value = prev
+          errorText.value = err instanceof Error ? err.message : 'Could not update height.'
+        }
       }
 
       const viewshedActive = computed(() =>
-        store.ui.selectedSlug ? !!appApi.isViewshedVisible?.(store.ui.selectedSlug) : false
+        store.ui.selectedSlug ? !!appApi.isViewshedVisible?.(store.ui.selectedSlug) : false,
       )
 
       const accessActive = computed(() =>
-        store.ui.selectedSlug ? !!appApi.isAccessVisible?.(store.ui.selectedSlug) : false
+        store.ui.selectedSlug ? !!appApi.isAccessVisible?.(store.ui.selectedSlug) : false,
       )
 
       const canDelete = computed(() => store.sites.list.length > 1)
-
-      const heightLabel = computed(() => {
-        const site = selectedSite.value
-        if (!site) return ''
-        return appApi.formatSiteHeight?.(site) || ''
-      })
 
       const elevLabel = computed(() => (elevLoading.value ? '…' : formatElevLabel(elevM.value)))
       const hikeEndElevM = computed(() => (Number.isFinite(elevM.value) ? elevM.value : undefined))
@@ -372,12 +372,8 @@ export function mountSiteSheet(store, appApi) {
         if (store.ui.createMode) {
           return [store.ui.createLat, store.ui.createLon]
         }
-        if (store.ui.editMode) {
-          const site = selectedSite.value
-          return [store.ui.editLat ?? site?.lat, store.ui.editLon ?? site?.lon]
-        }
-        const site = selectedSite.value
-        return [site?.lat, site?.lon]
+        const { lat, lon } = displayCoords.value
+        return [lat, lon]
       }
 
       async function loadElev(lat, lon) {
@@ -386,7 +382,7 @@ export function mountSiteSheet(store, appApi) {
           elevLoading.value = false
           return
         }
-        const site = !store.ui.createMode && !store.ui.editMode ? selectedSite.value : null
+        const site = !store.ui.createMode ? selectedSite.value : null
         if (site && Number.isFinite(Number(site.elev_m)) && site.lat === lat && site.lon === lon) {
           elevM.value = Number(site.elev_m)
           elevLoading.value = false
@@ -413,31 +409,33 @@ export function mountSiteSheet(store, appApi) {
       }
 
       watch(
-        () => [...sheetCoords(), store.ui.createMode, store.ui.editMode, store.ui.selectedSlug],
+        () => [...sheetCoords(), store.ui.createMode, store.ui.selectedSlug],
         ([lat, lon]) => {
           void loadElev(lat, lon)
         },
         { immediate: true },
       )
 
+      const createCoordsLabel = computed(() => {
+        const lat = store.ui.createLat
+        const lon = store.ui.createLon
+        if (lat == null || lon == null) return ''
+        return `${formatCoord(lat)}, ${formatCoord(lon)}`
+      })
+
       const peerLinks = computed(() => appApi.getSelectedSiteLinks?.() || [])
-
       const canFindAlternates = computed(() => peerLinks.value.length > 0)
-
       const alternatesForThisSite = computed(
         () =>
           store.alternates.active &&
           store.alternates.siteSlug === store.ui.selectedSlug,
       )
-
       const alternatesBusy = computed(
         () => alternatesForThisSite.value && store.alternates.scanning,
       )
-
       const alternatesStatus = computed(() =>
         alternatesForThisSite.value ? store.alternates.statusText : '',
       )
-
       const canAddAlternateSite = computed(
         () =>
           alternatesForThisSite.value &&
@@ -478,19 +476,12 @@ export function mountSiteSheet(store, appApi) {
         appApi,
         mode,
         selectedSite,
-        editName,
-        editLat,
-        editLon,
-        editHeight,
-        editTags,
-        editTagInput,
-        editTagChoices,
-        editTagSuggestions,
+        inlineName,
+        inlineHeight,
         createName,
         createTags,
-        createTagInput,
-        createTagChoices,
-        createTagSuggestions,
+        projectTags,
+        siteTagsModel,
         errorText,
         access,
         accessLoading,
@@ -504,7 +495,7 @@ export function mountSiteSheet(store, appApi) {
         accessActive,
         canDelete,
         createCoordsLabel,
-        heightLabel,
+        coordsLabel,
         elevLabel,
         hikeEndElevM,
         peerLinks,
@@ -513,54 +504,95 @@ export function mountSiteSheet(store, appApi) {
         alternatesBusy,
         alternatesStatus,
         canAddAlternateSite,
+        relocateActive,
         toggleAlternates,
         addAlternateAsSite,
         closePanel,
-        openEdit,
         deleteSelected,
-        cancelEdit,
         cancelCreate,
-        saveEdit,
         saveCreate,
         toggleViewshed,
         toggleAccess,
         copyCoords,
-        toggleEditTag,
-        addEditTagFromInput,
-        toggleCreateTag,
-        addCreateTagFromInput,
+        copySlug,
+        toggleRelocate,
+        commitName,
+        commitHeight,
         formatCoord,
       }
     },
     template: `
       <div class="site-sheet">
-        <div v-if="mode === 'view' && selectedSite" class="site-panel__view">
-          <div class="site-panel__header">
-            <h2 class="site-panel__title">{{ selectedSite.name }}</h2>
+        <div v-if="mode === 'selected' && selectedSite" class="site-panel__view">
+          <div class="site-panel__header site-panel__header--edit">
+            <input
+              id="site-sheet-name"
+              v-model="inlineName"
+              type="text"
+              class="site-panel__title-input"
+              required
+              aria-label="Site name"
+              @blur="commitName"
+              @keydown.enter.prevent="($event.target).blur()"
+            >
             <button type="button" class="site-panel__close" title="Close" aria-label="Close" @click="closePanel">×</button>
           </div>
           <div class="site-panel__section">
-            <span class="site-panel__label">Tags</span>
-            <div class="site-tags">
-              <span v-for="tag in (selectedSite.tags || [])" :key="tag" class="site-tag">{{ tag }}</span>
-              <span v-if="!(selectedSite.tags || []).length" class="pf-muted">None</span>
+            <span class="site-panel__label">Slug</span>
+            <div class="site-panel__inline-row">
+              <p class="site-panel__slug pf-mono">{{ selectedSite.slug }}</p>
+              <button type="button" class="site-panel__action" title="Copy slug" aria-label="Copy slug" @click="copySlug">
+                <wa-icon name="copy" label="Copy slug"></wa-icon>
+              </button>
             </div>
           </div>
+          <div class="site-panel__section">
+            <span class="site-panel__label">Tags</span>
+            <TagPicker
+              v-model="siteTagsModel"
+              mode="simple"
+              :suggestions="projectTags"
+            />
+          </div>
           <div class="site-panel__facts">
-            <div class="site-panel__fact site-panel__fact--wide">
-              <span class="site-panel__label">Coordinates</span>
-              <div class="pf-copy-row">
-                <p class="site-panel__value pf-mono">{{ formatCoord(selectedSite.lat) }}, {{ formatCoord(selectedSite.lon) }}</p>
-                <button type="button" class="coord-action-btn" title="Copy lat, lon" @click="copyCoords">Copy</button>
+            <div class="site-panel__fact site-panel__fact--wide site-panel__coords-block">
+              <div class="site-panel__coords-head">
+                <span class="site-panel__label">Coordinates</span>
+                <div class="site-panel__actions-inline">
+                  <button type="button" class="site-panel__action" title="Copy lat, lon" aria-label="Copy lat, lon" @click="copyCoords">
+                    <wa-icon name="copy" label="Copy lat, lon"></wa-icon>
+                  </button>
+                  <button
+                    type="button"
+                    class="site-panel__action"
+                    :class="{ 'site-panel__action--active': relocateActive }"
+                    title="Click map to move pin"
+                    aria-label="Relocate on map"
+                    @click="toggleRelocate"
+                  >
+                    <wa-icon name="crosshairs" label="Relocate on map"></wa-icon>
+                  </button>
+                </div>
               </div>
+              <p class="site-panel__value site-panel__coords-value pf-mono">{{ coordsLabel }}</p>
+              <p v-if="relocateActive" class="site-panel__hint">Click the map to place the pin. Escape cancels.</p>
             </div>
             <div class="site-panel__fact">
               <span class="site-panel__label">Elevation</span>
               <p class="site-panel__value">{{ elevLabel }}</p>
             </div>
             <div class="site-panel__fact">
-              <span class="site-panel__label">Antenna height</span>
-              <p class="site-panel__value">{{ heightLabel }}</p>
+              <label class="site-panel__label" for="site-sheet-height">Height (m)</label>
+              <input
+                id="site-sheet-height"
+                v-model="inlineHeight"
+                type="number"
+                step="0.1"
+                min="1"
+                class="site-panel__value-input pf-mono"
+                @blur="commitHeight"
+                @keydown.enter.prevent="($event.target).blur()"
+              >
             </div>
           </div>
           <div v-if="selectedSite.description" class="site-panel__section">
@@ -616,72 +648,11 @@ export function mountSiteSheet(store, appApi) {
                 @click="addAlternateAsSite">Add as site</button>
             </div>
             <div class="site-panel__footer-row site-panel__footer-row--manage">
-              <button type="button" class="site-panel__footer-btn" @click="openEdit">Edit</button>
               <button type="button" class="site-panel__delete-btn"
                 :disabled="!canDelete"
                 :title="canDelete ? 'Delete this site' : 'Cannot delete the last site'"
                 @click="deleteSelected">Delete</button>
             </div>
-          </div>
-        </div>
-
-        <div v-else-if="mode === 'edit' && selectedSite" class="site-panel__edit">
-          <div class="site-panel__header">
-            <h2 class="site-panel__title">Edit</h2>
-            <button type="button" class="site-panel__close" title="Close" aria-label="Close" @click="cancelEdit">×</button>
-          </div>
-          <div class="site-panel__section">
-            <label class="site-panel__label" for="site-sheet-edit-name">Name</label>
-            <input id="site-sheet-edit-name" v-model="editName" type="text" required>
-          </div>
-          <div class="site-panel__section">
-            <span class="site-panel__label">Slug</span>
-            <p class="site-panel__slug pf-mono">{{ selectedSite.slug }}</p>
-          </div>
-          <div class="site-panel__section">
-            <span class="site-panel__label">Coordinates</span>
-            <div class="site-panel__coords-grid">
-              <label class="pf-label" for="site-sheet-edit-lat">Latitude</label>
-              <input id="site-sheet-edit-lat" v-model="editLat" type="text" class="pf-mono" inputmode="decimal">
-              <label class="pf-label" for="site-sheet-edit-lon">Longitude</label>
-              <input id="site-sheet-edit-lon" v-model="editLon" type="text" class="pf-mono" inputmode="decimal">
-            </div>
-          </div>
-          <div class="site-panel__section">
-            <span class="site-panel__label">Elevation</span>
-            <p class="site-panel__value">{{ elevLabel }}</p>
-          </div>
-          <div class="site-panel__section">
-            <label class="site-panel__label" for="site-sheet-edit-height">Antenna height (m)</label>
-            <input id="site-sheet-edit-height" v-model="editHeight" type="number" step="0.1" min="1" class="pf-mono">
-          </div>
-          <div class="site-panel__section">
-            <span class="site-panel__label">Tags</span>
-            <div class="site-tags add-site-tags" role="group">
-              <button v-for="tag in editTagChoices" :key="tag" type="button"
-                class="site-tag site-tag--toggle"
-                :class="{ 'is-selected': editTags.includes(tag) }"
-                :aria-pressed="editTags.includes(tag) ? 'true' : 'false'"
-                :title="editTags.includes(tag) ? 'Remove tag ' + tag : 'Add tag ' + tag"
-                @click="toggleEditTag(tag)">{{ tag }}</button>
-            </div>
-            <form class="site-tag-add-form" @submit.prevent="addEditTagFromInput">
-              <input id="site-sheet-edit-tag-input" v-model="editTagInput" type="text"
-                list="site-sheet-edit-tag-suggestions" placeholder="add tag"
-                autocomplete="off" maxlength="32" aria-label="Add tag">
-              <datalist id="site-sheet-edit-tag-suggestions">
-                <option v-for="tag in editTagSuggestions" :key="tag" :value="tag"></option>
-              </datalist>
-            </form>
-          </div>
-          <wa-callout v-if="errorText" variant="danger">{{ errorText }}</wa-callout>
-          <div class="site-panel__create-actions">
-            <button type="button" class="site-panel__save-btn" @click="saveEdit">Save</button>
-            <button type="button" class="site-panel__cancel-btn" @click="cancelEdit">Cancel</button>
-            <button type="button" class="site-panel__delete-btn"
-              :disabled="!canDelete"
-              :title="canDelete ? 'Delete this site' : 'Cannot delete the last site'"
-              @click="deleteSelected">Delete</button>
           </div>
         </div>
 
@@ -696,28 +667,19 @@ export function mountSiteSheet(store, appApi) {
           </div>
           <div class="site-panel__section">
             <span class="site-panel__label">Tags</span>
-            <div class="site-tags add-site-tags" role="group">
-              <button v-for="tag in createTagChoices" :key="tag" type="button"
-                class="site-tag site-tag--toggle"
-                :class="{ 'is-selected': createTags.includes(tag) }"
-                :aria-pressed="createTags.includes(tag) ? 'true' : 'false'"
-                :title="createTags.includes(tag) ? 'Remove tag ' + tag : 'Add tag ' + tag"
-                @click="toggleCreateTag(tag)">{{ tag }}</button>
-            </div>
-            <form class="site-tag-add-form" @submit.prevent="addCreateTagFromInput">
-              <input id="site-sheet-create-tag-input" v-model="createTagInput" type="text"
-                list="site-sheet-create-tag-suggestions" placeholder="add tag"
-                autocomplete="off" maxlength="32" aria-label="Add tag">
-              <datalist id="site-sheet-create-tag-suggestions">
-                <option v-for="tag in createTagSuggestions" :key="tag" :value="tag"></option>
-              </datalist>
-            </form>
+            <TagPicker
+              v-model="createTags"
+              mode="simple"
+              :suggestions="projectTags"
+            />
           </div>
           <div class="site-panel__section">
             <span class="site-panel__label">Coordinates</span>
-            <div v-if="createCoordsLabel" class="pf-copy-row">
-              <p class="site-panel__value pf-mono">{{ createCoordsLabel }}</p>
-              <button type="button" class="coord-action-btn" title="Copy lat, lon" @click="copyCoords">Copy</button>
+            <div v-if="createCoordsLabel" class="site-panel__inline-row">
+              <p class="site-panel__value site-panel__coords-value pf-mono">{{ createCoordsLabel }}</p>
+              <button type="button" class="site-panel__action" title="Copy lat, lon" aria-label="Copy lat, lon" @click="copyCoords">
+                <wa-icon name="copy" label="Copy lat, lon"></wa-icon>
+              </button>
             </div>
             <p v-else class="site-panel__value">Pick a location on the map</p>
           </div>

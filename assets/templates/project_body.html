@@ -532,11 +532,7 @@
     </div>
     <div class="pf-form-field">
       <span class="pf-label" id="add-site-tags-label">Tags</span>
-      <div class="site-tags add-site-tags" id="add-site-tags" role="group" aria-labelledby="add-site-tags-label"></div>
-      <form class="site-tag-add-form add-site-tag-form" id="add-site-tag-form">
-        <input id="add-site-tag-input" type="text" list="add-site-tag-suggestions" placeholder="add tag" autocomplete="off" maxlength="32" aria-label="Add tag">
-        <datalist id="add-site-tag-suggestions"></datalist>
-      </form>
+      <div class="add-site-tags" id="add-site-tags" aria-labelledby="add-site-tags-label"></div>
     </div>
     <div class="pf-form-field">
       <label for="add-site-coords" class="pf-label">Coordinates</label>
@@ -582,11 +578,7 @@
     </div>
     <div class="pf-form-field pf-form-field--full">
       <span class="pf-label" id="import-sites-tags-label">Tags</span>
-      <div class="site-tags import-sites-tags" id="import-sites-tags" role="group" aria-labelledby="import-sites-tags-label"></div>
-      <form class="site-tag-add-form import-sites-tag-form" id="import-sites-tag-form">
-        <input id="import-sites-tag-input" type="text" list="import-sites-tag-suggestions" placeholder="add tag" autocomplete="off" maxlength="32" aria-label="Add tag">
-        <datalist id="import-sites-tag-suggestions"></datalist>
-      </form>
+      <div class="import-sites-tags" id="import-sites-tags" aria-labelledby="import-sites-tags-label"></div>
     </div>
   </div>
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
@@ -640,11 +632,7 @@
   <p class="wa-caption pf-muted" id="bulk-tag-status"></p>
   <div class="pf-form-field pf-form-field--full bulk-tag-form">
     <span class="pf-label" id="bulk-tag-tags-label">Tags</span>
-    <div class="site-tags bulk-tag-tags" id="bulk-tag-tags" role="group" aria-labelledby="bulk-tag-tags-label"></div>
-    <form class="site-tag-add-form bulk-tag-add-form" id="bulk-tag-add-form">
-      <input id="bulk-tag-add-input" type="text" list="bulk-tag-add-suggestions" placeholder="add tag" autocomplete="off" maxlength="32" aria-label="Add tag">
-      <datalist id="bulk-tag-add-suggestions"></datalist>
-    </form>
+    <div class="bulk-tag-tags" id="bulk-tag-tags" aria-labelledby="bulk-tag-tags-label"></div>
   </div>
   <wa-button slot="footer" data-dialog="close" appearance="outlined" size="s" type="button">Cancel</wa-button>
   <wa-button slot="footer" id="bulk-tag-save" variant="brand" size="s" type="button" disabled>Apply</wa-button>

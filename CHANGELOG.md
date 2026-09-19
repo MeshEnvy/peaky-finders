@@ -22,6 +22,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - **Map deep links** — selecting a site or catalog peak writes `?site=` / `?peak=` plus camera (`lat`, `lon`, `z`, optional `bearing`, `pitch`) to the address bar. Back, forward, refresh, and pasted URLs restore the pin and view. Basemap, land layers, and viewshed prefs stay in localStorage.
 - **New-site coordinates** — the create sheet Copy button copies the draft pin as `lat, lon` (same format as an existing site).
 - **New-site access** — placing a draft pin paints jeep and hike routes (same place-access routing as booked sites). Peak catalog gates (0.5 mi hike, land, slope eligibility) do not apply.
+- **Shared tag picker** — one typeahead + removable chips everywhere site tags are edited (site sheet, new site, + Site, import, bulk tag). Bulk tag keeps partial (◐) state in the same control.
+- **In-place site sheet** — select a site to edit name, tags, antenna height, and coords (crosshairs → map click). Slug stays read-only. No Edit panel or Save row for booked sites.
 
 ### Fixed
 

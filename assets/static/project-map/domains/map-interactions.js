@@ -42,8 +42,9 @@ export function createMapInteractionsDomain(ctx) {
     getFortify,
     getLinks,
     syncMapCursor,
-    setEditDraftCoords,
-    onEditCoordsChanged,
+    setRelocateDraftCoords,
+    onRelocateCoordsChanged,
+    commitRelocateAt,
     setAddPlacementMode,
     selectSite,
     deselectSite,
@@ -133,7 +134,7 @@ export function createMapInteractionsDomain(ctx) {
     canvas.addEventListener(
       'touchstart',
       (ev) => {
-        if (store.ui.editMode || ev.touches.length !== 1) return
+        if (store.ui.relocateMode || ev.touches.length !== 1) return
         const touch = ev.touches[0]
         longPressStart = { x: touch.clientX, y: touch.clientY }
         clearLongPressTimer()
@@ -168,7 +169,7 @@ export function createMapInteractionsDomain(ctx) {
     installed = true
     const map = getMap()
     map.on('mousemove', (ev) => {
-      if (store.ui.addPlacementMode || store.ui.editMode) {
+      if (store.ui.addPlacementMode || store.ui.relocateMode) {
         map.getCanvas().style.cursor = 'crosshair'
         return
       }
@@ -215,7 +216,7 @@ export function createMapInteractionsDomain(ctx) {
     for (const peakLayer of [PEAKS_SYMBOL, PEAKS_RING_CIRCLE]) {
       map.on('mouseenter', peakLayer, () => {
         if (!map.getLayer(peakLayer)) return
-        if (store.ui.addPlacementMode || store.ui.editMode) {
+        if (store.ui.addPlacementMode || store.ui.relocateMode) {
           map.getCanvas().style.cursor = 'crosshair'
           return
         }
@@ -226,7 +227,7 @@ export function createMapInteractionsDomain(ctx) {
       })
     }
     map.on('mouseenter', LINKS_LAYER, () => {
-      if (store.ui.addPlacementMode || store.ui.editMode) {
+      if (store.ui.addPlacementMode || store.ui.relocateMode) {
         map.getCanvas().style.cursor = 'crosshair'
         return
       }
@@ -237,7 +238,7 @@ export function createMapInteractionsDomain(ctx) {
     })
     for (const layerId of SITE_LAYER_IDS) {
       map.on('mouseenter', layerId, () => {
-        if (store.ui.addPlacementMode || store.ui.editMode) {
+        if (store.ui.addPlacementMode || store.ui.relocateMode) {
           map.getCanvas().style.cursor = 'crosshair'
           return
         }
@@ -248,14 +249,15 @@ export function createMapInteractionsDomain(ctx) {
       })
     }
     map.on('contextmenu', (ev) => {
-      if (store.ui.editMode) return
+      if (store.ui.relocateMode) return
       ev.preventDefault()
       beginCreateAtMapPoint(ev.lngLat.lat, ev.lngLat.lng)
     })
     map.on('click', (ev) => {
-      if (store.ui.editMode) {
-        setEditDraftCoords(ev.lngLat.lat, ev.lngLat.lng)
-        onEditCoordsChanged()
+      if (store.ui.relocateMode) {
+        setRelocateDraftCoords(ev.lngLat.lat, ev.lngLat.lng)
+        onRelocateCoordsChanged()
+        void commitRelocateAt(ev.lngLat.lat, ev.lngLat.lng)
         return
       }
       if (trySelectLinkSolverAtPoint(ev.point)) return
