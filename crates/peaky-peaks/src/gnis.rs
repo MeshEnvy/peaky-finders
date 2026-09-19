@@ -6,23 +6,18 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use geojson::{FeatureCollection, GeoJson, Value as GjValue};
+use peaky_preset::GnisSourceConfig;
 use tracing::info;
 
 use crate::universe::RawCandidate;
 
-const DEFAULT_GNIS_REL: &str = "data/sources/Gazetteer_National.gdb";
-const NESTED_GNIS_GDB: &str = "Gazetteer_National_GDB.gdb";
-const GNIS_SUMMIT_LAYER: &str = "Gaz_Features";
-
-pub fn default_gnis_path(project_dir: &Path) -> PathBuf {
-    project_dir.join(DEFAULT_GNIS_REL)
-}
-
-pub fn resolve_gnis_gdb(project_dir: &Path) -> Option<PathBuf> {
-    let wrapper = default_gnis_path(project_dir);
-    let nested = wrapper.join(NESTED_GNIS_GDB);
-    if nested.is_dir() {
-        return Some(nested);
+pub fn resolve_gnis_gdb(project_dir: &Path, cfg: &GnisSourceConfig) -> Option<PathBuf> {
+    let wrapper = project_dir.join(&cfg.path);
+    if let Some(nested) = &cfg.nested_gdb {
+        let nested_path = wrapper.join(nested);
+        if nested_path.is_dir() {
+            return Some(nested_path);
+        }
     }
     if wrapper.is_dir() && ogrinfo_opens(&wrapper) {
         return Some(wrapper);
@@ -50,14 +45,15 @@ fn ogr2ogr_available() -> bool {
 
 pub fn load_gnis_candidates(
     project_dir: &Path,
+    cfg: &GnisSourceConfig,
     west: f64,
     south: f64,
     east: f64,
     north: f64,
 ) -> Result<Vec<RawCandidate>> {
-    let Some(gdb) = resolve_gnis_gdb(project_dir) else {
+    let Some(gdb) = resolve_gnis_gdb(project_dir, cfg) else {
         info!(
-            path = %default_gnis_path(project_dir).display(),
+            path = %project_dir.join(&cfg.path).display(),
             "peaks: GNIS GDB not found — skipping"
         );
         return Ok(Vec::new());
@@ -70,7 +66,7 @@ pub fn load_gnis_candidates(
     let tmp = tempfile::NamedTempFile::new().context("temp geojson")?;
     let out_path = tmp.path().with_extension("geojson");
     info!(
-        layer = GNIS_SUMMIT_LAYER,
+        layer = %cfg.layer,
         path = %gdb.display(),
         bbox = format!("{west:.4},{south:.4},{east:.4},{north:.4}"),
         "peaks: exporting GNIS summits…"
@@ -86,9 +82,9 @@ pub fn load_gnis_candidates(
         .arg(format!("{east}"))
         .arg(format!("{north}"))
         .arg("-where")
-        .arg("feature_class='Summit'")
+        .arg(&cfg.filter)
         .arg(&gdb)
-        .arg(GNIS_SUMMIT_LAYER)
+        .arg(&cfg.layer)
         .status()
         .context("run ogr2ogr for GNIS")?;
     if !status.success() {

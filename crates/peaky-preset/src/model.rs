@@ -126,11 +126,135 @@ pub fn resolved_viewshed_polygon_style(display: &DisplayConfig) -> ViewshedPolyg
     display.polygon.clone().unwrap_or_else(default_viewshed_polygon_style)
 }
 
+pub const DEFAULT_OSM_PBF_URL: &str =
+    "https://download.geofabrik.de/north-america/us/nevada-latest.osm.pbf";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SourcesConfig {
+    pub osm: OsmSourceConfig,
+    pub gnis: GnisSourceConfig,
+}
+
+impl Default for SourcesConfig {
+    fn default() -> Self {
+        Self {
+            osm: OsmSourceConfig::default(),
+            gnis: GnisSourceConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OsmSourceConfig {
+    pub pbf_url: String,
+    pub cache_name: String,
+}
+
+impl Default for OsmSourceConfig {
+    fn default() -> Self {
+        Self {
+            pbf_url: DEFAULT_OSM_PBF_URL.to_string(),
+            cache_name: "nevada-latest.osm.pbf".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GnisSourceConfig {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested_gdb: Option<String>,
+    pub layer: String,
+    pub filter: String,
+}
+
+impl Default for GnisSourceConfig {
+    fn default() -> Self {
+        Self {
+            path: "data/sources/Gazetteer_National.gdb".to_string(),
+            nested_gdb: Some("Gazetteer_National_GDB.gdb".to_string()),
+            layer: "Gaz_Features".to_string(),
+            filter: "feature_class='Summit'".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PeaksSeedConfig {
+    pub gnis: bool,
+    pub site_tags: Vec<String>,
+}
+
+impl Default for PeaksSeedConfig {
+    fn default() -> Self {
+        Self {
+            gnis: true,
+            site_tags: vec![
+                "eip".into(),
+                "alertwildfire".into(),
+                "installed".into(),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PeaksScanConfig {
+    #[serde(default = "default_max_road_search_m")]
+    pub max_road_search_m: f64,
+    pub hike_path_max_m: f64,
+    pub max_slope_grade_pct: f64,
+    pub min_prominence_m: f64,
+    pub summit_snap_m: f64,
+    pub candidate_dedup_m: f64,
+    pub site_dedup_m: f64,
+    pub max_jeep_m: f64,
+    #[serde(default = "default_jeep_highways")]
+    pub road_highways: Vec<String>,
+    #[serde(default = "default_paved_highways")]
+    pub paved_highways: Vec<String>,
+    pub profile_sample_m: f64,
+    pub road_sample_step_m: f64,
+    pub place_road_search_m: f64,
+    pub seeds: PeaksSeedConfig,
+}
+
+fn default_max_road_search_m() -> f64 {
+    805.0
+}
+
+impl Default for PeaksScanConfig {
+    fn default() -> Self {
+        Self {
+            max_road_search_m: default_max_road_search_m(),
+            hike_path_max_m: DEFAULT_HIKE_PATH_MAX_M,
+            max_slope_grade_pct: default_max_slope_grade_pct(),
+            min_prominence_m: 20.0,
+            summit_snap_m: 500.0,
+            candidate_dedup_m: 300.0,
+            site_dedup_m: 300.0,
+            max_jeep_m: DEFAULT_MAX_JEEP_M,
+            road_highways: default_jeep_highways(),
+            paved_highways: default_paved_highways(),
+            profile_sample_m: DEFAULT_ACCESS_PROFILE_SAMPLE_M,
+            road_sample_step_m: DEFAULT_OSM_ROAD_SAMPLE_STEP_M,
+            place_road_search_m: DEFAULT_PLACE_ROAD_SEARCH_M,
+            seeds: PeaksSeedConfig::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ScanConfig {
     pub peak_bin_size_m: f64,
     pub max_candidates: u32,
+    pub peaks: PeaksScanConfig,
 }
 
 impl Default for ScanConfig {
@@ -138,6 +262,7 @@ impl Default for ScanConfig {
         Self {
             peak_bin_size_m: 1500.0,
             max_candidates: 48,
+            peaks: PeaksScanConfig::default(),
         }
     }
 }
@@ -773,6 +898,8 @@ pub struct Preset {
     #[serde(default)]
     pub land: LandConfig,
     #[serde(default)]
+    pub sources: SourcesConfig,
+    #[serde(default)]
     pub scan: ScanConfig,
 }
 
@@ -786,7 +913,39 @@ impl Default for Preset {
             sites: HashMap::new(),
             links: Vec::new(),
             land: LandConfig::default(),
+            sources: SourcesConfig::default(),
             scan: ScanConfig::default(),
+        }
+    }
+}
+
+impl Preset {
+    /// Peak eligibility + access routing knobs from ``config.yaml`` → ``scan.peaks``.
+    pub fn peak_access_rules(&self) -> PeakAccessRules {
+        let p = &self.scan.peaks;
+        PeakAccessRules {
+            max_hike_m: p.max_road_search_m,
+            max_slope_grade_pct: p.max_slope_grade_pct,
+            max_slope_deg: (p.max_slope_grade_pct / 100.0).atan().to_degrees(),
+            road_highways: p.road_highways.clone(),
+            max_jeep_m: p.max_jeep_m,
+            paved_highways: p.paved_highways.clone(),
+            difficulty: DifficultyRules::default(),
+        }
+    }
+
+    /// Pathfinding stamp for ``access/_meta.yaml`` (synced by ``ensure_access_meta``).
+    pub fn resolved_access_meta(&self) -> AccessMeta {
+        let p = &self.scan.peaks;
+        AccessMeta {
+            algo_version: ACCESS_ALGO_VERSION,
+            profile_sample_m: p.profile_sample_m,
+            road_sample_step_m: p.road_sample_step_m,
+            max_jeep_m: p.max_jeep_m,
+            road_highways: p.road_highways.clone(),
+            paved_highways: p.paved_highways.clone(),
+            place_road_search_m: p.place_road_search_m,
+            hike_path_max_m: p.hike_path_max_m,
         }
     }
 }

@@ -33,19 +33,36 @@ use crate::corridor::{
 use crate::gnis::load_gnis_candidates;
 use crate::hike::{
     default_max_slope_deg, format_hike_report, haversine_m, neighbor_prominence_m, profile_hike,
-    profile_passes, snap_to_dem_local_max_filtered,     HikeProfile, HikeProfileDetailed, HikeSampleElev, DEFAULT_MAX_HIKE_M,
-    DEFAULT_MAX_SLOPE_GRADE_PCT, DEFAULT_SUMMIT_SNAP_M,
+    profile_passes, snap_to_dem_local_max_filtered, HikeProfile, HikeProfileDetailed, HikeSampleElev,
+    DEFAULT_MAX_HIKE_M,
 };
+use peaky_preset::PeaksScanConfig;
 use crate::access::build_access_from_park;
 use crate::osm::{build_osm_routing, ensure_osm_pbf, OsmRouting};
 use crate::park::select_park_and_hike;
 use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candidate, RawCandidate};
 
-const SITE_DEDUP_M: f64 = 300.0;
-const CANDIDATE_DEDUP_M: f64 = 300.0;
-const DEM_BIN_M: f64 = 1500.0;
 /// Upsert each peak+access file every N newly freshened/inserted peaks during a build.
 const PROGRESS_WRITE_EVERY: usize = 10;
+
+#[derive(Debug, Clone, Copy)]
+struct PeaksFilterParams {
+    site_dedup_m: f64,
+    candidate_dedup_m: f64,
+    summit_snap_m: f64,
+    min_prominence_m: f64,
+}
+
+impl From<&PeaksScanConfig> for PeaksFilterParams {
+    fn from(p: &PeaksScanConfig) -> Self {
+        Self {
+            site_dedup_m: p.site_dedup_m,
+            candidate_dedup_m: p.candidate_dedup_m,
+            summit_snap_m: p.summit_snap_m,
+            min_prominence_m: p.min_prominence_m,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FilterDrop {
@@ -151,8 +168,9 @@ fn filter_candidate(
     rules: &PeakAccessRules,
     profile_sample_m: f64,
     hike_path_max_m: f64,
+    filter: PeaksFilterParams,
 ) -> Result<FilterPass, FilterDrop> {
-    if is_near_any_site(cand.lat, cand.lon, site_locs, SITE_DEDUP_M) {
+    if is_near_any_site(cand.lat, cand.lon, site_locs, filter.site_dedup_m) {
         return Err(FilterDrop::SiteDedup);
     }
     let elev = SessionElev(session);
@@ -160,7 +178,7 @@ fn filter_candidate(
         &elev,
         cand.lat,
         cand.lon,
-        DEFAULT_SUMMIT_SNAP_M,
+        filter.summit_snap_m,
         15.0,
         |lat, lon| land.contains(lon, lat),
     ) else {
@@ -170,8 +188,7 @@ fn filter_candidate(
         return Err(FilterDrop::Region);
     }
     if cand.source == "dem"
-        && neighbor_prominence_m(&elev, peak_lat, peak_lon, 30.0)
-            < splatter::peaks::MIN_PEAK_PROMINENCE_M
+        && neighbor_prominence_m(&elev, peak_lat, peak_lon, 30.0) < filter.min_prominence_m
     {
         return Err(FilterDrop::Land);
     }
@@ -269,6 +286,10 @@ pub fn build_peaks_catalog(
         "peaks: eligible land ready"
     );
 
+    let peaks_cfg = preset.scan.peaks.clone();
+    let filter_params = PeaksFilterParams::from(&peaks_cfg);
+    let peak_bin_m = preset.scan.peak_bin_size_m;
+
     let pbf = ensure_osm_pbf(project_dir, opts.force_osm)?;
     let access_meta = ensure_access_meta(preset_path).context("access/_meta.yaml")?;
     let osm_opts = crate::osm::OsmRoutingOpts::from(&access_meta);
@@ -283,11 +304,7 @@ pub fn build_peaks_catalog(
         .ensure_tiles_for_bounds(bbox.west, bbox.south, bbox.east, bbox.north)
         .context("preload DEM for bbox")?;
 
-    let mut rules = PeakAccessRules::default();
-    rules.max_hike_m = DEFAULT_MAX_HIKE_M;
-    rules.max_slope_grade_pct = DEFAULT_MAX_SLOPE_GRADE_PCT;
-    rules.max_slope_deg = default_max_slope_deg();
-    access_meta.apply_to_peak_rules(&mut rules);
+    let rules = preset.peak_access_rules();
     let profile_sample_m = access_meta.profile_sample_m;
     let hike_path_max_m = access_meta.hike_path_max_m;
     info!(
@@ -301,19 +318,39 @@ pub fn build_peaks_catalog(
     );
 
     let mut universe: Vec<RawCandidate> = Vec::new();
-    let site_seeds = seed_candidates_from_sites(&preset);
+    let site_seeds = seed_candidates_from_sites(&preset, &peaks_cfg.seeds.site_tags);
     info!(
         count = site_seeds.len(),
-        "peaks: site seeds (eip/aw/installed)"
+        tags = ?peaks_cfg.seeds.site_tags,
+        "peaks: site seeds"
     );
     universe.extend(site_seeds.clone());
 
-    let gnis = load_gnis_candidates(project_dir, bbox.west, bbox.south, bbox.east, bbox.north)?;
+    let gnis = if peaks_cfg.seeds.gnis {
+        load_gnis_candidates(
+            project_dir,
+            &preset.sources.gnis,
+            bbox.west,
+            bbox.south,
+            bbox.east,
+            bbox.north,
+        )?
+    } else {
+        info!("peaks: GNIS seeds disabled in config");
+        Vec::new()
+    };
     info!(count = gnis.len(), "peaks: GNIS candidates");
     universe.extend(gnis.clone());
 
     let mask_dir = eligible_land_dem_mask_dir(preset_path, &land_parts.digest);
-    let dem_peaks = load_dem_candidates(&session, land_index.clone(), bbox, &mask_dir)?;
+    let dem_peaks = load_dem_candidates(
+        &session,
+        land_index.clone(),
+        bbox,
+        &mask_dir,
+        peak_bin_m,
+        peaks_cfg.min_prominence_m,
+    )?;
     info!(
         count = dem_peaks.len(),
         "peaks: DEM candidates on eligible land"
@@ -327,7 +364,7 @@ pub fn build_peaks_catalog(
         dropped = pre_region.saturating_sub(universe.len()),
         "peaks: universe after region clip"
     );
-    universe = dedup_nearby(universe, CANDIDATE_DEDUP_M);
+    universe = dedup_nearby(universe, filter_params.candidate_dedup_m);
     universe.sort_by(|a, b| {
         b.elev_m
             .unwrap_or(0.0)
@@ -413,10 +450,12 @@ pub fn build_peaks_catalog(
                 &rules,
                 profile_sample_m,
                 hike_path_max_m,
+                filter_params,
             ) {
                 Ok(pass) => {
                     if kept_centroids.iter().any(|(lat, lon)| {
-                        haversine_m(pass.peak_lat, pass.peak_lon, *lat, *lon) <= CANDIDATE_DEDUP_M
+                        haversine_m(pass.peak_lat, pass.peak_lon, *lat, *lon)
+                            <= filter_params.candidate_dedup_m
                     }) {
                         drops.dedup += 1;
                         continue;
@@ -497,6 +536,7 @@ pub fn build_peaks_catalog(
                         rules.as_ref(),
                         profile_sample_m,
                         hike_path_max_m,
+                        filter_params,
                     ) {
                         Ok(pass) => Some(pass),
                         Err(FilterDrop::SiteDedup) => {
@@ -554,7 +594,8 @@ pub fn build_peaks_catalog(
         let mut deduped: Vec<FilterPass> = Vec::new();
         for pass in survivors {
             if kept_centroids.iter().any(|(lat, lon)| {
-                haversine_m(pass.peak_lat, pass.peak_lon, *lat, *lon) <= CANDIDATE_DEDUP_M
+                haversine_m(pass.peak_lat, pass.peak_lon, *lat, *lon)
+                    <= filter_params.candidate_dedup_m
             }) {
                 drops.dedup += 1;
                 continue;
@@ -572,7 +613,12 @@ pub fn build_peaks_catalog(
     let mut skipped_deny = 0usize;
     let mut pending_write: Vec<(String, PeakCatalogEntry)> = Vec::new();
     for pass in deduped {
-        if near_denied(&catalog, pass.peak_lat, pass.peak_lon, CANDIDATE_DEDUP_M) {
+        if near_denied(
+            &catalog,
+            pass.peak_lat,
+            pass.peak_lon,
+            filter_params.candidate_dedup_m,
+        ) {
             skipped_deny += 1;
             continue;
         }
@@ -582,7 +628,12 @@ pub fn build_peaks_catalog(
         snapped.lon = pass.peak_lon;
         snapped.elev_m = elev_m;
         let (slug, is_freshen) =
-            match near_entry_slug(&catalog, pass.peak_lat, pass.peak_lon, CANDIDATE_DEDUP_M) {
+            match near_entry_slug(
+                &catalog,
+                pass.peak_lat,
+                pass.peak_lon,
+                filter_params.candidate_dedup_m,
+            ) {
                 Some(existing) => (existing, true),
                 None => {
                     let slug = slug_for_candidate(&snapped, &existing_slugs);
@@ -599,7 +650,7 @@ pub fn build_peaks_catalog(
                 &catalog.rules,
                 &access_meta,
                 &land_parts.digest,
-                DEFAULT_SUMMIT_SNAP_M,
+                filter_params.summit_snap_m,
             )),
             road_m: Some((pass.road_m * 10.0).round() / 10.0),
             road_loc: Some([pass.road_lat, pass.road_lon]),
@@ -780,6 +831,8 @@ fn load_dem_candidates(
     land: Arc<LandFilterIndex>,
     bbox: LonLatBBox,
     mask_dir: &Path,
+    bin_size_m: f64,
+    min_prominence_m: f64,
 ) -> Result<Vec<RawCandidate>> {
     let _ = std::fs::create_dir_all(mask_dir);
     let peaks = session
@@ -790,7 +843,8 @@ fn load_dem_candidates(
             bbox.north,
             land,
             Some(mask_dir),
-            DEM_BIN_M,
+            bin_size_m,
+            min_prominence_m,
             None,
         )
         .context("DEM peak scan")?;

@@ -99,8 +99,7 @@ impl From<&peaky_preset::AccessMeta> for OsmRoutingOpts {
     }
 }
 
-const GEOFABRIK_NV_URL: &str =
-    "https://download.geofabrik.de/north-america/us/nevada-latest.osm.pbf";
+use peaky_preset::{load_preset, DEFAULT_OSM_PBF_URL, OsmSourceConfig};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RoadPoint {
@@ -401,12 +400,30 @@ pub struct OsmRouting {
     pub paved: PavedAnchorIndex,
 }
 
-pub fn osm_cache_path(project_dir: &Path) -> PathBuf {
-    project_dir.join(".peaky/cache/osm/nevada-latest.osm.pbf")
+pub fn osm_cache_path(project_dir: &Path, cache_name: &str) -> PathBuf {
+    project_dir
+        .join(".peaky/cache/osm")
+        .join(cache_name)
+}
+
+fn resolved_osm_source(project_dir: &Path) -> OsmSourceConfig {
+    let config_path = project_dir.join("config.yaml");
+    load_preset(&config_path)
+        .map(|p| p.sources.osm)
+        .unwrap_or_default()
 }
 
 pub fn ensure_osm_pbf(project_dir: &Path, force: bool) -> Result<PathBuf> {
-    let path = osm_cache_path(project_dir);
+    let osm = resolved_osm_source(project_dir);
+    ensure_osm_pbf_with_source(project_dir, &osm, force)
+}
+
+pub fn ensure_osm_pbf_with_source(
+    project_dir: &Path,
+    osm: &OsmSourceConfig,
+    force: bool,
+) -> Result<PathBuf> {
+    let path = osm_cache_path(project_dir, &osm.cache_name);
     if path.is_file() && !force {
         info!(
             path = %path.display(),
@@ -418,14 +435,19 @@ pub fn ensure_osm_pbf(project_dir: &Path, force: bool) -> Result<PathBuf> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).context("create osm cache dir")?;
     }
-    info!(url = GEOFABRIK_NV_URL, "peaks: downloading OSM PBF…");
+    let url = if osm.pbf_url.is_empty() {
+        DEFAULT_OSM_PBF_URL
+    } else {
+        osm.pbf_url.as_str()
+    };
+    info!(url, "peaks: downloading OSM PBF…");
     let t0 = Instant::now();
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
         .build()
         .context("build HTTP client")?;
     let bytes = client
-        .get(GEOFABRIK_NV_URL)
+        .get(url)
         .send()
         .context("download OSM PBF")?
         .error_for_status()

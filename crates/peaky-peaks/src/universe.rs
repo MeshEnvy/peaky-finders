@@ -14,17 +14,11 @@ pub struct RawCandidate {
     pub seed_slug: Option<String>,
 }
 
-pub fn seed_candidates_from_sites(preset: &Preset) -> Vec<RawCandidate> {
+pub fn seed_candidates_from_sites(preset: &Preset, site_tags: &[String]) -> Vec<RawCandidate> {
     let mut out = Vec::new();
     for (slug, site) in &preset.sites {
         let tags: HashSet<&str> = site.tags.iter().map(String::as_str).collect();
-        let source = if tags.contains("eip") {
-            "eip"
-        } else if tags.contains("alertwildfire") {
-            "alertwildfire"
-        } else if tags.contains("installed") {
-            "installed"
-        } else {
+        let Some(source) = site_tags.iter().find(|t| tags.contains(t.as_str())) else {
             continue;
         };
         out.push(RawCandidate {
@@ -32,7 +26,7 @@ pub fn seed_candidates_from_sites(preset: &Preset) -> Vec<RawCandidate> {
             lat: site.lat(),
             lon: site.lon(),
             elev_m: None,
-            source: source.into(),
+            source: source.clone(),
             seed_slug: Some(slug.clone()),
         });
     }

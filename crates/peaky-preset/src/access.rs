@@ -5,6 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
+use crate::io::load_preset;
 use crate::model::{AccessMeta, PlaceAccess, ACCESS_ALGO_VERSION};
 use crate::project::ProjectLayout;
 use crate::yaml_io::{read_preset_document, write_preset_value};
@@ -36,14 +37,26 @@ pub fn load_access_meta(config_path: &Path) -> Result<AccessMeta> {
     serde_yaml::from_value(Value::Mapping(doc)).context("parse access/_meta.yaml")
 }
 
-/// Ensure ``access/_meta.yaml`` exists; bump ``algo_version`` when code is newer.
+/// Ensure ``access/_meta.yaml`` exists; sync routing knobs from ``config.yaml`` when present.
 pub fn ensure_access_meta(config_path: &Path) -> Result<AccessMeta> {
     let path = access_meta_path(config_path)?;
+    let from_preset = load_preset(config_path)
+        .ok()
+        .map(|p| p.resolved_access_meta());
     let mut meta = if path.is_file() {
         load_access_meta(config_path)?
     } else {
-        AccessMeta::default()
+        from_preset.clone().unwrap_or_default()
     };
+    if let Some(cfg) = from_preset {
+        meta.profile_sample_m = cfg.profile_sample_m;
+        meta.road_sample_step_m = cfg.road_sample_step_m;
+        meta.max_jeep_m = cfg.max_jeep_m;
+        meta.road_highways = cfg.road_highways;
+        meta.paved_highways = cfg.paved_highways;
+        meta.place_road_search_m = cfg.place_road_search_m;
+        meta.hike_path_max_m = cfg.hike_path_max_m;
+    }
     if meta.algo_version < ACCESS_ALGO_VERSION {
         meta.algo_version = ACCESS_ALGO_VERSION;
     }

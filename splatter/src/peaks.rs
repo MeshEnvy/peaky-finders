@@ -899,6 +899,7 @@ fn tile_local_maxima_from_usable(
     usable: &[Vec<bool>],
     log: bool,
     tile_name: &str,
+    min_prominence_m: f64,
 ) -> Vec<Peak> {
     let n = tile.n;
     if n < 3 {
@@ -948,7 +949,7 @@ fn tile_local_maxima_from_usable(
                     break;
                 }
             }
-            if !is_peak || max_drop < MIN_PEAK_PROMINENCE_M {
+            if !is_peak || max_drop < min_prominence_m {
                 continue;
             }
             let lat = north - (iy as f64 + 0.5) * spacing;
@@ -981,6 +982,7 @@ fn tile_local_maxima(
     verbose: bool,
     tile_name: &str,
     on_tile_scan: Option<&TileScanCallback>,
+    min_prominence_m: f64,
 ) -> Result<Vec<Peak>> {
     let n = tile.n;
     if n < 3 {
@@ -1062,7 +1064,13 @@ fn tile_local_maxima(
         );
         grid
     };
-    Ok(tile_local_maxima_from_usable(tile, &usable, log, tile_name))
+    Ok(tile_local_maxima_from_usable(
+        tile,
+        &usable,
+        log,
+        tile_name,
+        min_prominence_m,
+    ))
 }
 
 pub fn bin_peaks(raw: Vec<Peak>, bin_size_m: f64) -> Vec<Peak> {
@@ -1097,6 +1105,7 @@ fn binned_peaks_in_tile_names(
     land: Arc<LandFilterIndex>,
     mask_cache_dir: Option<&Path>,
     bin_size_m: f64,
+    min_prominence_m: f64,
     verbose: bool,
     log_label: &str,
     on_tile_scan: Option<TileScanCallback>,
@@ -1148,6 +1157,7 @@ fn binned_peaks_in_tile_names(
                 verbose,
                 name,
                 on_tile_scan.as_ref(),
+                min_prominence_m,
             )?;
             let peak_n = peaks.len();
             raw_peak_count.fetch_add(peak_n, Ordering::Relaxed);
@@ -1210,6 +1220,7 @@ pub fn binned_peaks_in_polygon(
         land,
         None,
         bin_size_m,
+        MIN_PEAK_PROMINENCE_M,
         verbose,
         "corridor peak scan",
         None,
@@ -1226,6 +1237,7 @@ pub fn binned_peaks_in_bounds(
     land: Arc<LandFilterIndex>,
     mask_cache_dir: Option<&Path>,
     bin_size_m: f64,
+    min_prominence_m: f64,
     verbose: bool,
     on_tile_scan: Option<TileScanCallback>,
 ) -> Result<Vec<Peak>> {
@@ -1236,6 +1248,7 @@ pub fn binned_peaks_in_bounds(
         land,
         mask_cache_dir,
         bin_size_m,
+        min_prominence_m,
         verbose,
         "corridor peak scan",
         on_tile_scan,
@@ -1416,7 +1429,16 @@ mod tests {
             vec![],
         )]);
         let land = LandFilterIndex::from_multipolygon(&poly);
-        let peaks = tile_local_maxima(&tile, &land, None, false, "test-tile", None).expect("peaks");
+        let peaks = tile_local_maxima(
+            &tile,
+            &land,
+            None,
+            false,
+            "test-tile",
+            None,
+            MIN_PEAK_PROMINENCE_M,
+        )
+        .expect("peaks");
         assert!(!peaks.is_empty());
         assert!(peaks.iter().any(|p| (p.elev_m - 2000.0).abs() < f64::EPSILON));
     }
@@ -1443,7 +1465,16 @@ mod tests {
             vec![],
         )]);
         let land = LandFilterIndex::from_multipolygon(&poly);
-        let peaks = tile_local_maxima(&tile, &land, None, false, "playa-tile", None).expect("peaks");
+        let peaks = tile_local_maxima(
+            &tile,
+            &land,
+            None,
+            false,
+            "playa-tile",
+            None,
+            MIN_PEAK_PROMINENCE_M,
+        )
+        .expect("peaks");
         assert!(
             peaks.is_empty(),
             "1 m playa bump must not be a catalog peak, got {peaks:?}"

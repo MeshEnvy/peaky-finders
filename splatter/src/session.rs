@@ -173,6 +173,7 @@ impl Session {
         land: std::sync::Arc<crate::peaks::LandFilterIndex>,
         mask_cache_dir: Option<&std::path::Path>,
         bin_size_m: f64,
+        min_prominence_m: f64,
         on_tile_scan: Option<crate::peaks::TileScanCallback>,
     ) -> Result<Vec<crate::peaks::Peak>> {
         let dem = self.dem.read().unwrap();
@@ -185,6 +186,7 @@ impl Session {
             land,
             mask_cache_dir,
             bin_size_m,
+            min_prominence_m,
             self.verbose,
             on_tile_scan,
         )
