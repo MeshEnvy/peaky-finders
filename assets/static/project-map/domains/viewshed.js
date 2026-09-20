@@ -11,6 +11,7 @@ import {
 } from '../constants.js'
 import { viewshedLayerId } from '../constants.js'
 import { coordsUsableForMarker } from '../geo.js'
+import { osmRoadsProgressLabel } from '../stores/access.js'
 import {
   buildViewshedPreviewSimQueryParams,
   buildViewshedSimQueryParams,
@@ -495,10 +496,7 @@ export function createViewshedDomain(opts) {
             ? progressFor(DRAFT_VIEWSHED_SLUG)
             : osmBusy
               ? {
-                  progressLabel:
-                    osm.step > 0 && osm.total > 0
-                      ? `roads ${osm.step}/${osm.total}`
-                      : 'roads…',
+                  progressLabel: osmRoadsProgressLabel(osm) || 'roads…',
                   progressFraction: Number(osm.fraction) > 0 ? Number(osm.fraction) : 0.12,
                 }
               : { progressLabel: 'access…', progressFraction: 0.9 }

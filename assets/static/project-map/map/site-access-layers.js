@@ -16,12 +16,17 @@ import {
   SITES_CIRCLE,
 } from '../constants.js'
 import {
+  expandAccessVariants,
   peaksAccessGeoJson,
   peaksJeepGeoJson,
   peaksPavedGeoJson,
   peaksRoadGeoJson,
   peaksTrailGeoJson,
   peaksTrailLeaveGeoJson,
+  VARIANT_LINE_OPACITY,
+  VARIANT_LINE_WIDTH_HIKE,
+  VARIANT_LINE_WIDTH_JEEP,
+  VARIANT_LINE_WIDTH_TRAIL,
 } from './peaks-layers.js'
 
 /**
@@ -67,8 +72,8 @@ export function ensureSiteAccessLayers(map, beforeId = beforeSitesCircle(map)) {
         source: SITES_JEEP_SOURCE,
         paint: {
           'line-color': '#ea580c',
-          'line-width': 3.5,
-          'line-opacity': 0.85,
+          'line-width': VARIANT_LINE_WIDTH_JEEP,
+          'line-opacity': VARIANT_LINE_OPACITY,
         },
       },
       beforeId,
@@ -85,8 +90,8 @@ export function ensureSiteAccessLayers(map, beforeId = beforeSitesCircle(map)) {
         source: SITES_TRAIL_SOURCE,
         paint: {
           'line-color': '#d4a574',
-          'line-width': 3.5,
-          'line-opacity': 0.9,
+          'line-width': VARIANT_LINE_WIDTH_TRAIL,
+          'line-opacity': VARIANT_LINE_OPACITY,
         },
       },
       beforeId,
@@ -101,8 +106,8 @@ export function ensureSiteAccessLayers(map, beforeId = beforeSitesCircle(map)) {
         source: SITES_ACCESS_SOURCE,
         paint: {
           'line-color': '#22c55e',
-          'line-width': 3,
-          'line-opacity': 0.9,
+          'line-width': VARIANT_LINE_WIDTH_HIKE,
+          'line-opacity': VARIANT_LINE_OPACITY,
           'line-dasharray': [1.5, 1.2],
         },
       },
@@ -170,22 +175,23 @@ export function ensureSiteAccessLayers(map, beforeId = beforeSitesCircle(map)) {
  * @param {object[]} places  // peak-shaped access rows with slug/lat/lon/hike/jeep/…
  */
 export function setSiteAccessLayerData(map, places) {
+  const routes = expandAccessVariants(places)
   if (map.getSource(SITES_JEEP_SOURCE)) {
-    map.getSource(SITES_JEEP_SOURCE).setData(peaksJeepGeoJson(places))
+    map.getSource(SITES_JEEP_SOURCE).setData(peaksJeepGeoJson(routes))
   }
   if (map.getSource(SITES_TRAIL_SOURCE)) {
-    map.getSource(SITES_TRAIL_SOURCE).setData(peaksTrailGeoJson(places))
+    map.getSource(SITES_TRAIL_SOURCE).setData(peaksTrailGeoJson(routes))
   }
   if (map.getSource(SITES_TRAIL_LEAVE_SOURCE)) {
-    map.getSource(SITES_TRAIL_LEAVE_SOURCE).setData(peaksTrailLeaveGeoJson(places))
+    map.getSource(SITES_TRAIL_LEAVE_SOURCE).setData(peaksTrailLeaveGeoJson(routes))
   }
   if (map.getSource(SITES_ACCESS_SOURCE)) {
-    map.getSource(SITES_ACCESS_SOURCE).setData(peaksAccessGeoJson(places))
+    map.getSource(SITES_ACCESS_SOURCE).setData(peaksAccessGeoJson(routes))
   }
   if (map.getSource(SITES_PAVED_SOURCE)) {
-    map.getSource(SITES_PAVED_SOURCE).setData(peaksPavedGeoJson(places))
+    map.getSource(SITES_PAVED_SOURCE).setData(peaksPavedGeoJson(routes))
   }
   if (map.getSource(SITES_PARK_SOURCE)) {
-    map.getSource(SITES_PARK_SOURCE).setData(peaksRoadGeoJson(places))
+    map.getSource(SITES_PARK_SOURCE).setData(peaksRoadGeoJson(routes))
   }
 }

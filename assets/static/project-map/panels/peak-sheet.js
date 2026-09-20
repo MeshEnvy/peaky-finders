@@ -1,7 +1,6 @@
 // @ts-check
 
 import { createApp, computed, ref, watch } from 'vue'
-import * as apiUrls from '../api/urls.js'
 import { AccessProfilesPanel } from './access-profiles.js'
 
 /**
@@ -50,43 +49,79 @@ export function mountPeakSheet(store, appApi) {
         return peak?.slug || 'Peak'
       })
 
+      /** @param {object|null|undefined} peak @param {string} slug @param {object} row */
+      function hikeDetailFromAccess(peak, slug, row) {
+        return {
+          ...(peak || {}),
+          slug,
+          name: row?.name || peak?.name,
+          hike: row?.hike || null,
+          jeep: row?.jeep || null,
+          trail: row?.trail || null,
+          road_lat: row?.road_lat,
+          road_lon: row?.road_lon,
+          trail_lat: row?.trail_lat,
+          trail_lon: row?.trail_lon,
+          paved_lat: row?.paved_lat,
+          paved_lon: row?.paved_lon,
+          eligible: row?.eligible,
+          budget: row?.budget || null,
+          budget_route: row?.budget_route || null,
+        }
+      }
+
+      /** @param {object|null|undefined} row */
+      function accessHasProfiles(row) {
+        if (appApi.accessHasRouteProfiles?.(row)) return true
+        const hikeProfile = row?.hike?.profile
+        const jeepProfile = row?.jeep?.profile
+        return (
+          (Array.isArray(hikeProfile) && hikeProfile.length >= 2) ||
+          (Array.isArray(jeepProfile) && jeepProfile.length >= 2)
+        )
+      }
+
       async function loadHike(slug) {
         if (!slug) {
           hikeDetail.value = null
           return
         }
         const peak = store.peaks.list.find((p) => p.slug === slug)
-        if (peak?.hike?.profile || peak?.jeep?.profile || peak?.trail?.profile) {
-          hikeDetail.value = {
-            ...peak,
-            hike: peak.hike,
-            jeep: peak.jeep || null,
-            trail: peak.trail || null,
-          }
+        const cached = store.access?.bySlug?.[slug]
+        if (accessHasProfiles(cached)) {
+          hikeDetail.value = hikeDetailFromAccess(peak, slug, cached)
           accessError.value = ''
+          loading.value = false
+          return
+        }
+        if (accessHasProfiles(peak)) {
+          hikeDetail.value = hikeDetailFromAccess(peak, slug, peak)
+          accessError.value = ''
+          loading.value = false
+          return
+        }
+        const lat = Number(peak?.lat)
+        const lon = Number(peak?.lon)
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          hikeDetail.value = null
+          accessError.value = 'Missing peak coordinates'
           loading.value = false
           return
         }
         loading.value = true
         accessError.value = ''
         try {
-          const resp = await fetch(apiUrls.placeAccessApiUrl(store.projectSlug, slug))
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-          const access = await resp.json()
-          hikeDetail.value = {
-            ...(peak || {}),
+          await appApi.ensurePlaceAccessProfiles?.(
             slug,
-            name: peak?.name,
-            hike: access.hike || null,
-            jeep: access.jeep || null,
-            trail: access.trail || null,
-            road_lat: access.road_lat,
-            road_lon: access.road_lon,
-            trail_lat: access.trail_lat,
-            trail_lon: access.trail_lon,
-            paved_lat: access.paved_lat,
-            paved_lon: access.paved_lon,
-          }
+            lat,
+            lon,
+            { slug, name: peak?.name || slug, lat, lon },
+            { isActive: () => store.ui.selectedPeakSlug === slug },
+          )
+          if (store.ui.selectedPeakSlug !== slug) return
+          const row = store.access?.bySlug?.[slug]
+          if (!accessHasProfiles(row)) throw new Error('Access profiles missing')
+          hikeDetail.value = hikeDetailFromAccess(peak, slug, row)
         } catch (err) {
           hikeDetail.value = null
           accessError.value = String(err?.message || err)
@@ -140,6 +175,9 @@ export function mountPeakSheet(store, appApi) {
       }
 
       const difficultyConfig = computed(() => store.peaks.rules?.difficulty || null)
+      const budgetRoute = computed(() => hikeDetail.value?.budget_route || null)
+      const budget = computed(() => hikeDetail.value?.budget || null)
+      const eligible = computed(() => hikeDetail.value?.eligible ?? true)
 
       return {
         panelVisible,
@@ -153,6 +191,9 @@ export function mountPeakSheet(store, appApi) {
         actionError,
         title,
         difficultyConfig,
+        budgetRoute,
+        budget,
+        eligible,
         closePanel,
         onAccessPointClick,
         addPeakAsSite,
@@ -182,6 +223,9 @@ export function mountPeakSheet(store, appApi) {
           :difficulty-config="difficultyConfig"
           hike-end-label="Summit"
           empty-text="No mapped OSM road"
+          :budget-route="budgetRoute"
+          :budget="budget"
+          :eligible="eligible"
           @point-click="onAccessPointClick"
         />
       </div>

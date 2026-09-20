@@ -103,7 +103,10 @@ export function mountPeaksPanel(store, appApi) {
     },
     template: `
       <div class="entity-panel__list-items">
-        <div v-if="!peaks.length" class="entity-panel__empty">
+        <div v-if="store.peaks.missingCatalog" class="entity-panel__empty">
+          {{ store.peaks.missingCatalogHint || 'Run peaky peaks build for this project.' }}
+        </div>
+        <div v-else-if="!peaks.length" class="entity-panel__empty">
           {{ store.peaks.list.length ? 'No peaks in view.' : 'No peaks in catalog yet.' }}
         </div>
         <div

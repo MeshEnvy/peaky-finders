@@ -266,9 +266,14 @@ export const AccessProfilesPanel = {
     hikeEndLabel: { type: String, default: 'Summit' },
     trailStartLabel: { type: String, default: 'Park' },
     trailEndLabel: { type: String, default: 'Leave trail' },
-    /** Optional override from `peaks/_meta.yaml` → `rules.difficulty`. */
+    /** Optional override from peaks index manifest → `rules.difficulty`. */
     difficultyConfig: { type: Object, default: null },
     emptyText: { type: String, default: 'No mapped OSM road' },
+    /** In-budget alternate when recommended differs from budget_route. */
+    budgetRoute: { type: Object, default: null },
+    /** Budget legs on the recommended route (used/cap/over_by). */
+    budget: { type: Object, default: null },
+    eligible: { type: Boolean, default: true },
   },
   emits: ['point-click'],
   setup(props, { emit }) {
@@ -316,6 +321,37 @@ export const AccessProfilesPanel = {
       deriveJeepDifficulty(props.jeep, props.difficultyConfig),
     )
 
+    const budgetNotes = computed(() => {
+      /** @type {string[]} */
+      const notes = []
+      const b = props.budget
+      if (!b || typeof b !== 'object') return notes
+      /** @param {string} label @param {object|undefined} leg */
+      const push = (label, leg) => {
+        if (!leg || !Number.isFinite(leg.over_by) || leg.over_by <= 0) return
+        notes.push(`${label} ${Math.round(leg.over_by)} m over cap (${Math.round(leg.used)} / ${Math.round(leg.cap)})`)
+      }
+      push('Jeep route', b.jeep_route)
+      push('Jeep class', b.jeep_class)
+      push('Hike path', b.hike_path)
+      push('Hike grade', b.hike_grade)
+      return notes
+    })
+
+    const showBudgetAlternate = computed(() => {
+      const br = props.budgetRoute
+      if (!br || typeof br !== 'object') return false
+      return (
+        (br.jeep?.profile?.length >= 2) ||
+        (br.hike?.profile?.length >= 2) ||
+        (br.trail?.profile?.length >= 2)
+      )
+    })
+
+    const budgetJeepM = computed(() => props.budgetRoute?.jeep_m)
+    const budgetHikeM = computed(() => props.budgetRoute?.hike_m)
+    const budgetTrailM = computed(() => props.budgetRoute?.trail_m)
+
     return {
       elevationChart,
       jeepElevationChart,
@@ -329,6 +365,11 @@ export const AccessProfilesPanel = {
       onRoadSnap,
       hikeDifficultyLabel,
       jeepDifficultyLabel,
+      budgetNotes,
+      showBudgetAlternate,
+      budgetJeepM,
+      budgetHikeM,
+      budgetTrailM,
       onChartClick,
       formatAccessDist,
       formatGainLoss,
@@ -338,6 +379,10 @@ export const AccessProfilesPanel = {
   },
   template: `
     <div class="access-profiles">
+      <wa-callout v-if="eligible === false" variant="warning">No route within segment budgets. Recommended route shown; peak is not catalog-eligible.</wa-callout>
+      <ul v-if="budgetNotes.length" class="pf-muted access-profiles__budget-notes">
+        <li v-for="(note, i) in budgetNotes" :key="i">{{ note }}</li>
+      </ul>
       <wa-callout v-if="error" variant="danger">{{ error }}</wa-callout>
       <p v-else-if="loading" class="pf-muted">{{ loadingLabel || 'Loading access profile…' }}</p>
       <template v-else-if="showHike || showJeep || showTrail">
@@ -613,6 +658,24 @@ export const AccessProfilesPanel = {
             </div>
           </div>
         </template>
+        <div v-if="showBudgetAlternate" class="site-panel__section access-profiles__budget-alt">
+          <span class="site-panel__label">In-budget alternate</span>
+          <p class="pf-muted">Fainter lines on the map show this route when it differs from the recommendation above.</p>
+          <dl class="access-profiles__stats">
+            <template v-if="budgetJeepM > 5">
+              <dt>Jeep</dt>
+              <dd>{{ formatAccessDist(budgetJeepM) }}</dd>
+            </template>
+            <template v-if="budgetTrailM > 5">
+              <dt>Trail</dt>
+              <dd>{{ formatAccessDist(budgetTrailM) }}</dd>
+            </template>
+            <template v-if="budgetHikeM > 5">
+              <dt>Bushwhack</dt>
+              <dd>{{ formatAccessDist(budgetHikeM) }}</dd>
+            </template>
+          </dl>
+        </div>
       </template>
       <p v-else-if="onRoadSnap" class="pf-muted">On road</p>
       <p v-else class="pf-muted">{{ emptyText }}</p>

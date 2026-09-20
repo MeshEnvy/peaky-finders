@@ -25,8 +25,6 @@ export function createSiteAccessDomain(opts) {
   const { store, projectSlug, getMap, getMapReady, getSites, raiseSiteLayers } = opts
 
   /** @type {Map<string, Promise<void>>} */
-  const inflight = new Map()
-  /** @type {Map<string, Promise<void>>} */
   const placeInflight = new Map()
 
   if (!store.access) {
@@ -83,6 +81,9 @@ export function createSiteAccessDomain(opts) {
       name: base.name || slug,
       lat: Number.isFinite(base.lat) ? base.lat : access.lat,
       lon: Number.isFinite(base.lon) ? base.lon : access.lon,
+      eligible: access.eligible ?? true,
+      budget: access.budget || null,
+      budget_route: access.budget_route || null,
       road_lat: access.road_lat,
       road_lon: access.road_lon,
       paved_lat: access.paved_lat,
@@ -116,7 +117,7 @@ export function createSiteAccessDomain(opts) {
       status: data.status || 'idle',
       phase: data.phase || '',
       step: Number(data.step) || 0,
-      total: Number(data.total) || 3,
+      total: Number(data.total) || 4,
       fraction: Number(data.fraction) || 0,
     }
     opts.updatePinOverlays?.()
@@ -216,27 +217,12 @@ export function createSiteAccessDomain(opts) {
       refreshLayers()
       return
     }
-    if (inflight.has(site.slug)) return
-    const task = (async () => {
-      try {
-        if (!siteAccessShowing(site.slug)) return
-        const resp = await fetch(
-          apiUrls.placeAccessApiUrl(projectSlug, site.slug, {
-            warm: true,
-            lat: site.lat,
-            lon: site.lon,
-          }),
-        )
-        if (!resp.ok) return
-        const access = await resp.json()
-        ingestAccess(site.slug, access, site)
-      } catch (err) {
-        console.warn('site access load failed', site.slug, err)
-      } finally {
-        inflight.delete(site.slug)
-      }
-    })()
-    inflight.set(site.slug, task)
+    const lat = Number(site.lat)
+    const lon = Number(site.lon)
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+    void ensurePlaceAccessProfiles(site.slug, lat, lon, site, {
+      isActive: () => siteAccessShowing(site.slug),
+    })
   }
 
   function ensureSitesAccess(sites) {

@@ -53,6 +53,25 @@ export function clearAccessPreviewFocus(store) {
 }
 
 /**
+ * Pin / sheet copy while the OSM+GTLF graph is loading.
+ * @param {{ status?: string, phase?: string, fraction?: number }|null|undefined} osm
+ */
+export function osmRoadsProgressLabel(osm) {
+  if (!osm || osm.status !== 'parsing') return ''
+  const phase = typeof osm.phase === 'string' ? osm.phase : ''
+  const pct = Math.round((Number(osm.fraction) || 0) * 100)
+  if (phase === 'BLM roads') {
+    return pct > 0 ? `Merging BLM roads ${pct}%` : 'Merging BLM roads'
+  }
+  if (phase === 'OSM graph') return 'Loading OSM graph'
+  if (phase === 'OSM nodes') return 'Reading OSM nodes'
+  if (phase === 'OSM roads') return 'Reading OSM roads'
+  if (phase === 'OSM index') return 'Indexing OSM roads'
+  if (pct > 0) return `Loading roads ${pct}%`
+  return 'Loading roads'
+}
+
+/**
  * Map jeep/hike lines for a site slug.
  * Hidden sites never paint (pin, viewshed, and access stay aligned).
  * Peak preview slugs are exempt — catalog peaks are not site rows.

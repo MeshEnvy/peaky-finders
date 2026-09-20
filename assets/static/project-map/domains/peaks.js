@@ -85,8 +85,16 @@ export function createPeaksDomain(opts) {
   }
 
   function peaksForMapLayers() {
-    // Route geometry paints via site-access for the focused peak only.
-    return visiblePeaksForMap(store).map(stripPeakRouteProfiles)
+    const focus = store.peaks.accessSlug || store.ui.selectedPeakSlug
+    return visiblePeaksForMap(store).map((peak) => {
+      if (
+        peak.slug === focus &&
+        siteAccessDomain?.accessHasRouteProfiles?.(peak)
+      ) {
+        return peak
+      }
+      return stripPeakRouteProfiles(peak)
+    })
   }
 
   function refreshPeakLayers() {
@@ -111,6 +119,9 @@ export function createPeaksDomain(opts) {
       hike: access.hike ?? store.peaks.list[idx].hike,
       jeep: access.jeep ?? store.peaks.list[idx].jeep,
       trail: access.trail ?? store.peaks.list[idx].trail,
+      eligible: access.eligible ?? store.peaks.list[idx].eligible,
+      budget: access.budget ?? store.peaks.list[idx].budget,
+      budget_route: access.budget_route ?? store.peaks.list[idx].budget_route,
     }
     store.peaks.list.splice(idx, 1, merged)
   }
@@ -336,6 +347,17 @@ export function createPeaksDomain(opts) {
       const resp = await fetch(apiUrls.peaksApiUrl(projectSlug))
       if (!resp.ok) return
       const data = await resp.json()
+      if (data.missing_catalog) {
+        store.peaks.list = []
+        store.peaks.rules = null
+        store.peaks.missingCatalog = true
+        store.peaks.missingCatalogHint =
+          'Peaks catalog not built. Run `peaky peaks build` for this project.'
+        bumpPeaksPanel()
+        return
+      }
+      store.peaks.missingCatalog = false
+      store.peaks.missingCatalogHint = ''
       store.peaks.list = data.peaks || []
       store.peaks.rules = data.rules || null
       pruneHiddenPeaks()

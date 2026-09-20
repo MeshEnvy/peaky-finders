@@ -120,7 +120,7 @@ export const VIEWSHED_OPACITY_DEFAULT = 0.75
 export const VIEWSHED_OVERLAY_BATCH = 4
 export const DRAFT_VIEWSHED_SLUG = '_draft'
 
-/** Preview slugs (`_draft`, `_peak`, …) — compute in memory, never write `access/<slug>.yaml`. */
+/** Preview slugs (`_draft`, `_peak`, …) — probe cache only, no git-tracked access files. */
 export function isEphemeralPlaceSlug(slug) {
   return typeof slug === 'string' && slug.startsWith('_')
 }

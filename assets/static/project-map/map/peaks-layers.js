@@ -65,6 +65,45 @@ export function peaksGeoJson(peaks, difficultyConfig) {
   }
 }
 
+/** Map paint opacity/width by route variant (recommended vs in-budget alternate). */
+export const VARIANT_LINE_OPACITY = ['case', ['==', ['get', 'variant'], 'budget'], 0.35, 0.95]
+export const VARIANT_LINE_WIDTH_JEEP = ['case', ['==', ['get', 'variant'], 'budget'], 2.5, 4]
+export const VARIANT_LINE_WIDTH_TRAIL = ['case', ['==', ['get', 'variant'], 'budget'], 2.5, 3.5]
+export const VARIANT_LINE_WIDTH_HIKE = ['case', ['==', ['get', 'variant'], 'budget'], 2, 3]
+export const VARIANT_CIRCLE_OPACITY = ['case', ['==', ['get', 'variant'], 'budget'], 0.4, 0.95]
+
+/**
+ * Expand access rows into recommended + optional budget_route rows for map layers.
+ * @param {object[]} places
+ */
+export function expandAccessVariants(places) {
+  /** @type {object[]} */
+  const out = []
+  for (const place of places) {
+    if (!place) continue
+    out.push({ ...place, variant: 'recommended' })
+    const br = place.budget_route
+    if (!br || typeof br !== 'object') continue
+    out.push({
+      ...place,
+      variant: 'budget',
+      road_lat: br.road_lat,
+      road_lon: br.road_lon,
+      paved_lat: br.paved_lat,
+      paved_lon: br.paved_lon,
+      hike_m: br.hike_m,
+      jeep_m: br.jeep_m,
+      trail_m: br.trail_m,
+      trail_lat: br.trail_lat,
+      trail_lon: br.trail_lon,
+      hike: br.hike || null,
+      jeep: br.jeep || null,
+      trail: br.trail || null,
+    })
+  }
+  return out
+}
+
 /** @param {object} peak */
 function hikePathCoordinates(peak) {
   const profile = peak.hike?.profile
@@ -108,6 +147,7 @@ export function peaksRoadGeoJson(peaks) {
         geometry: { type: 'Point', coordinates: [peak.road_lon, peak.road_lat] },
         properties: {
           slug: peak.slug || '',
+          variant: peak.variant || 'recommended',
           road_m: peak.road_m ?? null,
         },
       })),
@@ -130,6 +170,7 @@ export function peaksPavedGeoJson(peaks) {
         geometry: { type: 'Point', coordinates: [peak.paved_lon, peak.paved_lat] },
         properties: {
           slug: peak.slug || '',
+          variant: peak.variant || 'recommended',
           jeep_m: peak.jeep_m ?? null,
         },
       })),
@@ -150,6 +191,7 @@ export function peaksAccessGeoJson(peaks) {
         },
         properties: {
           slug: peak.slug || '',
+          variant: peak.variant || 'recommended',
           road_m: peak.road_m ?? null,
           hike_m: peak.hike_m ?? null,
           difficulty: peak.hike?.difficulty ?? null,
@@ -172,6 +214,7 @@ export function peaksTrailGeoJson(peaks) {
         },
         properties: {
           slug: peak.slug || '',
+          variant: peak.variant || 'recommended',
           trail_m: peak.trail_m ?? null,
         },
       })),
@@ -194,6 +237,7 @@ export function peaksTrailLeaveGeoJson(peaks) {
         geometry: { type: 'Point', coordinates: [peak.trail_lon, peak.trail_lat] },
         properties: {
           slug: peak.slug || '',
+          variant: peak.variant || 'recommended',
           trail_m: peak.trail_m ?? null,
         },
       })),
@@ -214,6 +258,7 @@ export function peaksJeepGeoJson(peaks) {
         },
         properties: {
           slug: peak.slug || '',
+          variant: peak.variant || 'recommended',
           jeep_m: peak.jeep_m ?? null,
           difficulty: peak.jeep?.difficulty ?? null,
         },
@@ -268,8 +313,8 @@ export async function ensurePeaksLayers(map) {
         source: PEAKS_JEEP_SOURCE,
         paint: {
           'line-color': '#ea580c',
-          'line-width': 4,
-          'line-opacity': 0.95,
+          'line-width': VARIANT_LINE_WIDTH_JEEP,
+          'line-opacity': VARIANT_LINE_OPACITY,
         },
         layout: {
           'line-cap': 'round',
@@ -288,8 +333,8 @@ export async function ensurePeaksLayers(map) {
         source: PEAKS_TRAIL_SOURCE,
         paint: {
           'line-color': '#d4a574',
-          'line-width': 3.5,
-          'line-opacity': 0.95,
+          'line-width': VARIANT_LINE_WIDTH_TRAIL,
+          'line-opacity': VARIANT_LINE_OPACITY,
         },
         layout: {
           'line-cap': 'round',
@@ -308,8 +353,8 @@ export async function ensurePeaksLayers(map) {
         source: PEAKS_ACCESS_SOURCE,
         paint: {
           'line-color': '#22c55e',
-          'line-width': 3,
-          'line-opacity': 0.95,
+          'line-width': VARIANT_LINE_WIDTH_HIKE,
+          'line-opacity': VARIANT_LINE_OPACITY,
           'line-dasharray': [2, 1.5],
         },
         layout: {
@@ -466,25 +511,26 @@ export function clearPeaksCursorPoint(map) {
 
 /** @param {maplibregl.Map} map @param {object[]} peaks @param {object|null|undefined} difficultyConfig */
 export function setPeaksLayerData(map, peaks, difficultyConfig) {
+  const routes = expandAccessVariants(peaks)
   if (map.getSource(PEAKS_SOURCE)) {
     map.getSource(PEAKS_SOURCE).setData(peaksGeoJson(peaks, difficultyConfig))
   }
   if (map.getSource(PEAKS_JEEP_SOURCE)) {
-    map.getSource(PEAKS_JEEP_SOURCE).setData(peaksJeepGeoJson(peaks))
+    map.getSource(PEAKS_JEEP_SOURCE).setData(peaksJeepGeoJson(routes))
   }
   if (map.getSource(PEAKS_TRAIL_SOURCE)) {
-    map.getSource(PEAKS_TRAIL_SOURCE).setData(peaksTrailGeoJson(peaks))
+    map.getSource(PEAKS_TRAIL_SOURCE).setData(peaksTrailGeoJson(routes))
   }
   if (map.getSource(PEAKS_TRAIL_LEAVE_SOURCE)) {
-    map.getSource(PEAKS_TRAIL_LEAVE_SOURCE).setData(peaksTrailLeaveGeoJson(peaks))
+    map.getSource(PEAKS_TRAIL_LEAVE_SOURCE).setData(peaksTrailLeaveGeoJson(routes))
   }
   if (map.getSource(PEAKS_ACCESS_SOURCE)) {
-    map.getSource(PEAKS_ACCESS_SOURCE).setData(peaksAccessGeoJson(peaks))
+    map.getSource(PEAKS_ACCESS_SOURCE).setData(peaksAccessGeoJson(routes))
   }
   if (map.getSource(PEAKS_PAVED_SOURCE)) {
-    map.getSource(PEAKS_PAVED_SOURCE).setData(peaksPavedGeoJson(peaks))
+    map.getSource(PEAKS_PAVED_SOURCE).setData(peaksPavedGeoJson(routes))
   }
   if (map.getSource(PEAKS_ROAD_SOURCE)) {
-    map.getSource(PEAKS_ROAD_SOURCE).setData(peaksRoadGeoJson(peaks))
+    map.getSource(PEAKS_ROAD_SOURCE).setData(peaksRoadGeoJson(routes))
   }
 }

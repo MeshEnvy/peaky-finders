@@ -777,6 +777,9 @@ export function runApp(ctx = {}) {
     isViewshedVisible: (slug) => viewshedDomain.isViewshedVisible(slug),
     isAccessVisible: (slug) => siteAccessDomain.isAccessVisible(slug),
     ensureSiteAccess: (site) => siteAccessDomain?.ensureSiteAccess(site),
+    ensurePlaceAccessProfiles: (...args) =>
+      siteAccessDomain?.ensurePlaceAccessProfiles(...args),
+    accessHasRouteProfiles: (row) => siteAccessDomain?.accessHasRouteProfiles(row),
     ingestSiteAccess: (...args) => siteAccessDomain?.ingestAccess(...args),
     copyCoordPair,
     getCreateCoordsLabel: () => placementDomain.getCreateCoordsLabel(),

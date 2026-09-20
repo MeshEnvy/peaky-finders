@@ -3,6 +3,7 @@
 import { createApp, computed, ref, watch } from 'vue'
 import { DRAFT_VIEWSHED_SLUG } from '../constants.js'
 import { formatCoord, formatElevLabel } from '../geo.js'
+import { osmRoadsProgressLabel } from '../stores/access.js'
 import { allProjectTags } from '../stores/sites.js'
 import { apiFetch } from '../api/client.js'
 import * as apiUrls from '../api/urls.js'
@@ -109,17 +110,24 @@ export function mountSiteSheet(store, appApi) {
         accessLoading.value = true
         accessError.value = ''
         try {
-          const resp = await fetch(
-            apiUrls.placeAccessApiUrl(store.projectSlug, site.slug, {
-              warm: true,
-              lat: site.lat,
-              lon: site.lon,
-            }),
+          const lat = Number(site.lat)
+          const lon = Number(site.lon)
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+            throw new Error('Missing site coordinates')
+          }
+          await appApi.ensurePlaceAccessProfiles?.(
+            site.slug,
+            lat,
+            lon,
+            site,
+            { isActive: () => store.ui.selectedSlug === site.slug },
           )
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-          const row = await resp.json()
+          if (store.ui.selectedSlug !== site.slug) return
+          const row = store.access?.bySlug?.[site.slug]
+          if (!row?.hike && !row?.jeep && !row?.trail) {
+            throw new Error('Access profiles missing')
+          }
           access.value = row
-          appApi.ingestSiteAccess?.(site.slug, row, site)
         } catch (err) {
           access.value = null
           accessError.value = String(err?.message || err)
@@ -219,16 +227,17 @@ export function mountSiteSheet(store, appApi) {
 
       const accessLoadingLabel = computed(() => {
         const osm = store.access?.osm
-        if (osm?.status === 'parsing' && osm.step > 0 && osm.total > 0) {
-          return `Loading roads ${osm.step}/${osm.total}…`
-        }
-        if (osm?.status === 'parsing') return 'Loading roads…'
+        const roads = osmRoadsProgressLabel(osm)
+        if (roads) return `${roads}…`
         return 'Loading access profile…'
       })
 
       const accessHike = computed(() => access.value?.hike || null)
       const accessJeep = computed(() => access.value?.jeep || null)
       const accessTrail = computed(() => access.value?.trail || null)
+      const accessBudgetRoute = computed(() => access.value?.budget_route || null)
+      const accessBudget = computed(() => access.value?.budget || null)
+      const accessEligible = computed(() => access.value?.eligible ?? true)
       const hikeStartLabel = computed(() => (accessTrail.value ? 'Leave trail' : 'Park'))
       const difficultyConfig = computed(() => store.peaks.rules?.difficulty || null)
 
@@ -492,6 +501,9 @@ export function mountSiteSheet(store, appApi) {
         accessHike,
         accessJeep,
         accessTrail,
+        accessBudgetRoute,
+        accessBudget,
+        accessEligible,
         hikeStartLabel,
         difficultyConfig,
         onAccessPointClick,
@@ -617,6 +629,9 @@ export function mountSiteSheet(store, appApi) {
               :difficulty-config="difficultyConfig"
               hike-end-label="Site"
               empty-text="No mapped OSM road"
+              :budget-route="accessBudgetRoute"
+              :budget="accessBudget"
+              :eligible="accessEligible"
               @point-click="onAccessPointClick"
             />
           </div>
@@ -707,6 +722,9 @@ export function mountSiteSheet(store, appApi) {
               :difficulty-config="difficultyConfig"
               hike-end-label="Site"
               empty-text="No mapped OSM road"
+              :budget-route="accessBudgetRoute"
+              :budget="accessBudget"
+              :eligible="accessEligible"
               @point-click="onAccessPointClick"
             />
           </div>

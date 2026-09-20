@@ -62,14 +62,6 @@ export function peaksApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/peaks`
 }
 
-export function peakHikeApiUrl(projectSlug, peakSlug) {
-  return `/api/p/${projectSlug}/peaks/${encodeURIComponent(peakSlug)}/hike`
-}
-
-export function peakJeepApiUrl(projectSlug, peakSlug) {
-  return `/api/p/${projectSlug}/peaks/${encodeURIComponent(peakSlug)}/jeep`
-}
-
 /** @param {string} projectSlug @param {string} placeSlug @param {{ warm?: boolean, lat?: number, lon?: number }} [opts] */
 export function placeAccessApiUrl(projectSlug, placeSlug, opts = {}) {
   const params = new URLSearchParams()
