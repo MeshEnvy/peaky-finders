@@ -7,6 +7,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use osmpbf::{Element, ElementReader};
 use rstar::{RTree, RTreeObject, AABB};
+use rayon::prelude::*;
 use tracing::info;
 
 use crate::hike::haversine_m;
@@ -420,10 +421,99 @@ impl PavedAnchorIndex {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct GraphNodePoint {
+    lat: f64,
+    lon: f64,
+    node_idx: u32,
+}
+
+impl RTreeObject for GraphNodePoint {
+    type Envelope = AABB<[f64; 2]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_point([self.lon, self.lat])
+    }
+}
+
+/// Spatial index for jeep graph nodes (endpoint snap during GTLF merge).
+pub struct GraphNodeIndex {
+    tree: RTree<GraphNodePoint>,
+}
+
+impl GraphNodeIndex {
+    pub fn from_graph(graph: &JeepRoadGraph) -> Self {
+        let points: Vec<GraphNodePoint> = graph
+            .nodes_slice()
+            .iter()
+            .enumerate()
+            .map(|(i, &(lat, lon))| GraphNodePoint {
+                lat,
+                lon,
+                node_idx: i as u32,
+            })
+            .collect();
+        Self {
+            tree: RTree::bulk_load(points),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            tree: RTree::new(),
+        }
+    }
+
+    pub fn insert_node(&mut self, lat: f64, lon: f64, node_idx: u32) {
+        self.tree.insert(GraphNodePoint {
+            lat,
+            lon,
+            node_idx,
+        });
+    }
+
+    pub fn nearest_node(&self, lat: f64, lon: f64, max_m: f64) -> Option<u32> {
+        if self.tree.size() == 0 {
+            return None;
+        }
+        let deg = (max_m / 111_000.0).max(0.002);
+        let envelope = AABB::from_corners([lon - deg, lat - deg], [lon + deg, lat + deg]);
+        let mut best: Option<(u32, f64)> = None;
+        for pt in self.tree.locate_in_envelope_intersecting(&envelope) {
+            let d = haversine_m(lat, lon, pt.lat, pt.lon);
+            if d <= max_m + 1.0 && best.map(|(_, bd)| d < bd).unwrap_or(true) {
+                best = Some((pt.node_idx, d));
+            }
+        }
+        best.map(|(idx, _)| idx)
+    }
+
+    /// Graph node indices within ``max_m`` crow distance of ``(lat, lon)``.
+    pub fn nodes_within(&self, lat: f64, lon: f64, max_m: f64) -> Vec<u32> {
+        if self.tree.size() == 0 {
+            return Vec::new();
+        }
+        let deg = (max_m / 111_000.0).max(0.002);
+        let envelope = AABB::from_corners([lon - deg, lat - deg], [lon + deg, lat + deg]);
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        for pt in self.tree.locate_in_envelope_intersecting(&envelope) {
+            if haversine_m(lat, lon, pt.lat, pt.lon) > max_m + 1.0 {
+                continue;
+            }
+            if seen.insert(pt.node_idx) {
+                out.push(pt.node_idx);
+            }
+        }
+        out
+    }
+}
+
 pub struct OsmRouting {
     pub jeep_roads: JeepRoadIndex,
     pub graph: JeepRoadGraph,
     pub paved: PavedAnchorIndex,
+    pub graph_nodes: GraphNodeIndex,
 }
 
 pub fn osm_cache_path(project_dir: &Path, cache_name: &str) -> PathBuf {
@@ -886,6 +976,7 @@ where
     );
     progress(OsmParsePhase::Ready, 1.0);
 
+    let graph_nodes = GraphNodeIndex::from_graph(&graph);
     Ok(OsmRouting {
         jeep_roads: JeepRoadIndex {
             tree: jeep_tree,
@@ -894,6 +985,7 @@ where
         },
         graph,
         paved: PavedAnchorIndex { tree: paved_tree },
+        graph_nodes,
     })
 }
 
@@ -911,9 +1003,11 @@ fn line_fully_covered(index: &JeepRoadIndex, coords: &[(f64, f64)]) -> bool {
     if coords.is_empty() {
         return true;
     }
-    coords.iter().all(|&(lat, lon)| {
+    // Dense GTLF vertices are overkill for 30 m dedup; subsample along the line.
+    let check_step_m = MERGE_DEDUP_M * 0.5;
+    sample_way(coords, check_step_m).iter().all(|pt| {
         index
-            .nearest_within(lat, lon, MERGE_DEDUP_M)
+            .nearest_within(pt.lat, pt.lon, MERGE_DEDUP_M)
             .is_some()
     })
 }
@@ -924,29 +1018,85 @@ pub fn merge_supplemental_jeep_lines(
     lines: &[SupplementalLine],
     sample_step_m: f64,
 ) {
+    let total = lines.len();
+    if total == 0 {
+        return;
+    }
+    info!(lines = total, "gtlf: merging supplemental jeep lines");
+    let merge_started = Instant::now();
     let mut graph_node_map: HashMap<i64, u32> = HashMap::new();
     let mut next_id: i64 = -1_000_000;
+    info!(
+        jeep_points = routing.jeep_roads.point_count,
+        "gtlf: cloning existing jeep samples for merge index"
+    );
+    let clone_started = Instant::now();
     let mut new_samples: Vec<RoadPoint> = routing.jeep_roads.sample_points();
-    let mut added_ways = 0usize;
+    info!(
+        jeep_points = new_samples.len(),
+        elapsed_secs = clone_started.elapsed().as_secs_f64(),
+        "gtlf: jeep sample clone ready"
+    );
+    let jeep_roads = &routing.jeep_roads;
+    let covered: Vec<bool> = lines
+        .par_iter()
+        .map(|line| {
+            line.coords.len() >= 2 && line_fully_covered(jeep_roads, &line.coords)
+        })
+        .collect();
+    let skipped_covered = covered.iter().filter(|&&c| c).count();
+    let to_add: Vec<usize> = covered
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &skip)| if skip { None } else { Some(idx) })
+        .collect();
+    info!(
+        total,
+        to_add = to_add.len(),
+        skipped_covered,
+        "gtlf: jeep merge coverage classified"
+    );
 
-    for line in lines {
-        if line.coords.len() < 2 {
-            continue;
+    let mut added_ways = 0usize;
+    let mut last_progress_log = Instant::now();
+    const MERGE_PROGRESS_LINES: usize = 250;
+
+    for (pass_idx, &idx) in to_add.iter().enumerate() {
+        let line = &lines[idx];
+        let should_log = pass_idx == 0
+            || pass_idx % MERGE_PROGRESS_LINES == 0
+            || last_progress_log.elapsed().as_secs() >= 10;
+        if should_log {
+            info!(
+                processed = pass_idx,
+                total = to_add.len(),
+                added = added_ways,
+                skipped_covered,
+                pct = if to_add.is_empty() {
+                    0
+                } else {
+                    (pass_idx * 100 / to_add.len()) as u32
+                },
+                elapsed_secs = merge_started.elapsed().as_secs_f64(),
+                "gtlf: jeep merge progress"
+            );
+            last_progress_log = Instant::now();
         }
-        if line_fully_covered(&routing.jeep_roads, &line.coords) {
+        if line.coords.len() < 2 {
             continue;
         }
         added_ways += 1;
         new_samples.extend(sample_way(&line.coords, sample_step_m));
 
         let mut coords = line.coords.clone();
-        if let Some(node) = routing
-            .graph
-            .nearest_node(coords[0].0, coords[0].1, MERGE_ENDPOINT_SNAP_M)
-        {
+        if let Some(node) = routing.graph_nodes.nearest_node(
+            coords[0].0,
+            coords[0].1,
+            MERGE_ENDPOINT_SNAP_M,
+        ) {
             coords[0] = routing.graph.node_coords(node);
         }
-        if let Some(node) = routing.graph.nearest_node(
+        if let Some(node) = routing.graph_nodes.nearest_node(
             coords.last().unwrap().0,
             coords.last().unwrap().1,
             MERGE_ENDPOINT_SNAP_M,
@@ -962,6 +1112,7 @@ pub fn merge_supplemental_jeep_lines(
             let n = routing
                 .graph
                 .get_or_insert_node_public(id, lat, lon, &mut graph_node_map);
+            routing.graph_nodes.insert_node(lat, lon, n);
             vert_nodes.push(n);
         }
         for i in 0..coords.len() - 1 {
@@ -983,9 +1134,33 @@ pub fn merge_supplemental_jeep_lines(
     }
 
     if added_ways == 0 {
+        info!(
+            total,
+            skipped_covered,
+            "gtlf: jeep merge skipped (all lines already covered)"
+        );
         return;
     }
-    routing.jeep_roads = JeepRoadIndex::from_samples(new_samples, routing.jeep_roads.way_count + added_ways);
+    info!(
+        total,
+        added = added_ways,
+        skipped_covered,
+        sample_points = new_samples.len(),
+        "gtlf: rebuilding jeep R-tree after merge"
+    );
+    let index_started = Instant::now();
+    routing.jeep_roads =
+        JeepRoadIndex::from_samples(new_samples, routing.jeep_roads.way_count + added_ways);
+    info!(
+        total,
+        added = added_ways,
+        skipped_covered,
+        jeep_ways = routing.jeep_roads.way_count,
+        jeep_points = routing.jeep_roads.point_count,
+        elapsed_secs = index_started.elapsed().as_secs_f64(),
+        merge_secs = merge_started.elapsed().as_secs_f64(),
+        "gtlf: jeep merge indexed"
+    );
 }
 
 /// Backward-compatible jeep-road index only.
@@ -1220,14 +1395,16 @@ mod tests {
 
     #[test]
     fn supplemental_ohv_track_merges_into_jeep_graph() {
+        let graph = JeepRoadGraph::new();
         let mut routing = OsmRouting {
             jeep_roads: JeepRoadIndex {
                 tree: RTree::bulk_load(vec![]),
                 point_count: 0,
                 way_count: 0,
             },
-            graph: JeepRoadGraph::new(),
+            graph,
             paved: PavedAnchorIndex::test_from_points(&[]),
+            graph_nodes: GraphNodeIndex::empty(),
         };
         let line = SupplementalLine {
             coords: vec![(38.0, -117.0), (38.01, -117.0)],

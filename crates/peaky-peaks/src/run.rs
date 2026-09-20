@@ -18,8 +18,10 @@ use peaky_preset::{
     write_peaks_list_disk_cache, PeakAccessRules, PeakCatalogEntry, PeakHikeProfile,
     PeakJeepProfile, PeaksCatalog, Preset,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use rayon::prelude::*;
 use splatter::peaks::LandFilterIndex;
@@ -44,6 +46,9 @@ use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candida
 
 /// Upsert each peak+access file every N newly freshened/inserted peaks during a build.
 const PROGRESS_WRITE_EVERY: usize = 10;
+const FILTER_PROGRESS_EVERY: usize = 25;
+const FILTER_HEARTBEAT_SECS: u64 = 10;
+const SURVIVOR_DEDUP_EVERY: usize = 500;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PeaksFilterParams {
@@ -282,6 +287,7 @@ pub fn build_peaks_catalog(
     let mut osm = build_osm_routing(
         &pbf, bbox.west, bbox.south, bbox.east, bbox.north, &osm_opts,
     )?;
+    info!("peaks: merging GTLF into OSM routing");
     let gtlf_bundle = apply_gtlf_to_routing(
         project_dir,
         &mut osm,
@@ -300,9 +306,22 @@ pub fn build_peaks_catalog(
     let mirror = resolved_skadi_mirror_dir_for_project(project_dir);
     let dem_workers = resolved_dem_fetch_max_workers(&preset);
     let session = Arc::new(Session::new(mirror, opts.verbose, dem_workers));
+    let missing_dem = session
+        .missing_tiles_for_bounds(bbox.west, bbox.south, bbox.east, bbox.north)
+        .context("count DEM tiles for bbox")?;
+    info!(
+        missing_tiles = missing_dem.len(),
+        workers = dem_workers,
+        "peaks: preloading DEM tiles"
+    );
+    let t_dem = Instant::now();
     session
         .ensure_tiles_for_bounds(bbox.west, bbox.south, bbox.east, bbox.north)
         .context("preload DEM for bbox")?;
+    info!(
+        elapsed_secs = t_dem.elapsed().as_secs_f64(),
+        "peaks: DEM preload done"
+    );
 
     let rules = preset.peak_access_rules();
     let profile_sample_m = access_meta.profile_sample_m;
@@ -343,6 +362,12 @@ pub fn build_peaks_catalog(
     universe.extend(gnis.clone());
 
     let mask_dir = eligible_land_dem_mask_dir(preset_path, &land_parts.digest);
+    info!(
+        bin_size_m = peak_bin_m,
+        min_prominence_m = peaks_cfg.min_prominence_m,
+        "peaks: scanning DEM peaks on eligible land"
+    );
+    let t_dem_scan = Instant::now();
     let dem_peaks = load_dem_candidates(
         &session,
         land_index.clone(),
@@ -353,6 +378,7 @@ pub fn build_peaks_catalog(
     )?;
     info!(
         count = dem_peaks.len(),
+        elapsed_secs = t_dem_scan.elapsed().as_secs_f64(),
         "peaks: DEM candidates on eligible land"
     );
     universe.extend(dem_peaks.clone());
@@ -425,17 +451,18 @@ pub fn build_peaks_catalog(
             if deduped.len() >= limit {
                 break;
             }
-            if (i + 1) % 500 == 0 {
+            if (i + 1) % FILTER_PROGRESS_EVERY == 0 || i + 1 == universe.len() {
                 info!(
-                    "[{}/{}] scanning… kept={} land={} road={} hike={} slope={} jeep={}",
-                    i + 1,
-                    universe.len(),
-                    deduped.len(),
-                    drops.land,
-                    drops.road,
-                    drops.hike,
-                    drops.slope,
-                    drops.jeep
+                    processed = i + 1,
+                    total = universe.len(),
+                    pct = ((i + 1) * 100 / universe.len().max(1)) as u32,
+                    kept = deduped.len(),
+                    land = drops.land,
+                    road = drops.road,
+                    hike = drops.hike,
+                    slope = drops.slope,
+                    jeep = drops.jeep,
+                    "peaks: serial filter progress"
                 );
             }
             match filter_candidate(
@@ -494,30 +521,75 @@ pub fn build_peaks_catalog(
 
         let scan_region = Arc::new(scan_region);
         let rules = Arc::new(rules);
-        let processed = AtomicUsize::new(0);
-        let drop_land = AtomicUsize::new(0);
-        let drop_region = AtomicUsize::new(0);
-        let drop_road = AtomicUsize::new(0);
-        let drop_hike = AtomicUsize::new(0);
-        let drop_slope = AtomicUsize::new(0);
-        let drop_jeep = AtomicUsize::new(0);
+        let processed = Arc::new(AtomicUsize::new(0));
+        let drop_land = Arc::new(AtomicUsize::new(0));
+        let drop_region = Arc::new(AtomicUsize::new(0));
+        let drop_road = Arc::new(AtomicUsize::new(0));
+        let drop_hike = Arc::new(AtomicUsize::new(0));
+        let drop_slope = Arc::new(AtomicUsize::new(0));
+        let drop_jeep = Arc::new(AtomicUsize::new(0));
         let universe_len = universe.len();
+        let filter_started = Instant::now();
+        let filter_done = Arc::new(AtomicBool::new(false));
+        let hb_done = Arc::clone(&filter_done);
+        let hb_processed = Arc::clone(&processed);
+        let hb_drop_land = Arc::clone(&drop_land);
+        let hb_drop_road = Arc::clone(&drop_road);
+        let hb_drop_hike = Arc::clone(&drop_hike);
+        let hb_drop_slope = Arc::clone(&drop_slope);
+        let hb_drop_jeep = Arc::clone(&drop_jeep);
+        let hb_total = universe_len;
+        let hb_started = filter_started;
+        let heartbeat = thread::spawn(move || {
+            while !hb_done.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_secs(FILTER_HEARTBEAT_SECS));
+                if hb_done.load(Ordering::Relaxed) {
+                    break;
+                }
+                let n = hb_processed.load(Ordering::Relaxed);
+                if n >= hb_total {
+                    break;
+                }
+                info!(
+                    processed = n,
+                    total = hb_total,
+                    pct = (n * 100 / hb_total.max(1)) as u32,
+                    land = hb_drop_land.load(Ordering::Relaxed),
+                    road = hb_drop_road.load(Ordering::Relaxed),
+                    hike = hb_drop_hike.load(Ordering::Relaxed),
+                    slope = hb_drop_slope.load(Ordering::Relaxed),
+                    jeep = hb_drop_jeep.load(Ordering::Relaxed),
+                    elapsed_secs = hb_started.elapsed().as_secs_f64(),
+                    "peaks: parallel filter heartbeat"
+                );
+            }
+        });
+
+        let processed_w = Arc::clone(&processed);
+        let drop_land_w = Arc::clone(&drop_land);
+        let drop_region_w = Arc::clone(&drop_region);
+        let drop_road_w = Arc::clone(&drop_road);
+        let drop_hike_w = Arc::clone(&drop_hike);
+        let drop_slope_w = Arc::clone(&drop_slope);
+        let drop_jeep_w = Arc::clone(&drop_jeep);
 
         let passes: Vec<FilterPass> = pool.install(|| {
             universe
                 .par_iter()
                 .filter_map(|cand| {
-                    let n = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                    if n % 500 == 0 || n == universe_len {
+                    let n = processed_w.fetch_add(1, Ordering::Relaxed) + 1;
+                    if n == 1 || n % FILTER_PROGRESS_EVERY == 0 || n == universe_len {
                         info!(
-                            "[{}/{}] filtering… land={} road={} hike={} slope={} jeep={}",
-                            n,
-                            universe_len,
-                            drop_land.load(Ordering::Relaxed),
-                            drop_road.load(Ordering::Relaxed),
-                            drop_hike.load(Ordering::Relaxed),
-                            drop_slope.load(Ordering::Relaxed),
-                            drop_jeep.load(Ordering::Relaxed),
+                            processed = n,
+                            total = universe_len,
+                            pct = (n * 100 / universe_len.max(1)) as u32,
+                            land = drop_land_w.load(Ordering::Relaxed),
+                            road = drop_road_w.load(Ordering::Relaxed),
+                            hike = drop_hike_w.load(Ordering::Relaxed),
+                            slope = drop_slope_w.load(Ordering::Relaxed),
+                            jeep = drop_jeep_w.load(Ordering::Relaxed),
+                            elapsed_secs = filter_started.elapsed().as_secs_f64(),
+                            "peaks: parallel filter progress"
                         );
                     }
 
@@ -535,33 +607,36 @@ pub fn build_peaks_catalog(
                     ) {
                         Ok(pass) => Some(pass),
                         Err(FilterDrop::Land) => {
-                            drop_land.fetch_add(1, Ordering::Relaxed);
+                            drop_land_w.fetch_add(1, Ordering::Relaxed);
                             None
                         }
                         Err(FilterDrop::Region) => {
-                            drop_region.fetch_add(1, Ordering::Relaxed);
+                            drop_region_w.fetch_add(1, Ordering::Relaxed);
                             None
                         }
                         Err(FilterDrop::Road) => {
-                            drop_road.fetch_add(1, Ordering::Relaxed);
+                            drop_road_w.fetch_add(1, Ordering::Relaxed);
                             None
                         }
                         Err(FilterDrop::Hike) => {
-                            drop_hike.fetch_add(1, Ordering::Relaxed);
+                            drop_hike_w.fetch_add(1, Ordering::Relaxed);
                             None
                         }
                         Err(FilterDrop::Slope) => {
-                            drop_slope.fetch_add(1, Ordering::Relaxed);
+                            drop_slope_w.fetch_add(1, Ordering::Relaxed);
                             None
                         }
                         Err(FilterDrop::Jeep) => {
-                            drop_jeep.fetch_add(1, Ordering::Relaxed);
+                            drop_jeep_w.fetch_add(1, Ordering::Relaxed);
                             None
                         }
                     }
                 })
                 .collect()
         });
+
+        filter_done.store(true, Ordering::Relaxed);
+        let _ = heartbeat.join();
 
         let mut survivors = passes;
         survivors.sort_by(|a, b| {
@@ -580,9 +655,32 @@ pub fn build_peaks_catalog(
             ..DropCounts::default()
         };
 
+        let survivor_total = survivors.len();
+        info!(
+            survivors = survivor_total,
+            "peaks: survivor dedup start"
+        );
+        let dedup_started = Instant::now();
+        let mut dedup_last_log = dedup_started;
         let mut kept_centroids: Vec<(f64, f64)> = Vec::new();
         let mut deduped: Vec<FilterPass> = Vec::new();
-        for pass in survivors {
+        for (i, pass) in survivors.into_iter().enumerate() {
+            let heartbeat = dedup_last_log.elapsed().as_secs() >= FILTER_HEARTBEAT_SECS;
+            if i == 0
+                || i % SURVIVOR_DEDUP_EVERY == 0
+                || i + 1 == survivor_total
+                || heartbeat
+            {
+                info!(
+                    processed = i,
+                    total = survivor_total,
+                    kept = deduped.len(),
+                    dropped = drops.dedup,
+                    elapsed_secs = dedup_started.elapsed().as_secs_f64(),
+                    "peaks: survivor dedup progress"
+                );
+                dedup_last_log = Instant::now();
+            }
             if kept_centroids.iter().any(|(lat, lon)| {
                 haversine_m(pass.peak_lat, pass.peak_lon, *lat, *lon)
                     <= filter_params.candidate_dedup_m
@@ -593,16 +691,47 @@ pub fn build_peaks_catalog(
             kept_centroids.push((pass.peak_lat, pass.peak_lon));
             deduped.push(pass);
         }
+        info!(
+            survivors = survivor_total,
+            kept = deduped.len(),
+            dropped = drops.dedup,
+            elapsed_secs = dedup_started.elapsed().as_secs_f64(),
+            "peaks: survivor dedup done"
+        );
         (drops, deduped)
     };
 
+    info!(
+        survivors = deduped.len(),
+        "peaks: writing catalog entries"
+    );
     let mut existing_slugs: HashSet<String> = place_slugs(preset_path).unwrap_or_default();
     existing_slugs.extend(catalog.entries.keys().cloned());
     let mut kept = 0usize;
     let mut freshened = 0usize;
     let mut skipped_deny = 0usize;
     let mut pending_write: Vec<(String, PeakCatalogEntry)> = Vec::new();
-    for pass in deduped {
+    let write_total = deduped.len();
+    let write_started = Instant::now();
+    let mut write_last_log = write_started;
+    for (write_i, pass) in deduped.into_iter().enumerate() {
+        let heartbeat = write_last_log.elapsed().as_secs() >= FILTER_HEARTBEAT_SECS;
+        if write_i == 0
+            || write_i % PROGRESS_WRITE_EVERY == 0
+            || write_i + 1 == write_total
+            || heartbeat
+        {
+            info!(
+                processed = write_i,
+                total = write_total,
+                kept,
+                freshened,
+                entries = catalog.entries.len(),
+                elapsed_secs = write_started.elapsed().as_secs_f64(),
+                "peaks: catalog write progress"
+            );
+            write_last_log = Instant::now();
+        }
         if near_denied(
             &catalog,
             pass.peak_lat,

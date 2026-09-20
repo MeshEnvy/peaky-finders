@@ -3,7 +3,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use geojson::{Feature, GeoJson, Geometry, Value as GeoValue};
@@ -105,6 +105,11 @@ fn ensure_layer_cached(
     let dest = dir.join(layer_cache_name(layer_url));
     let stale = file_age_days(&dest).unwrap_or(u64::MAX) >= GTLF_REFRESH_DAYS;
     if dest.is_file() && !force && !stale {
+        info!(
+            layer = layer_url,
+            path = %dest.display(),
+            "gtlf: cache hit"
+        );
         return Ok(dest);
     }
     info!(
@@ -217,13 +222,19 @@ fn load_jeep_lines(project_dir: &Path, gtlf: &GtlfSourceConfig, bbox: LonLatBBox
         if !path.is_file() {
             continue;
         }
+        let layer_id = url.trim_end_matches('/').rsplit('/').next().unwrap_or("?");
+        let t0 = Instant::now();
+        info!(layer = layer_id, path = %path.display(), "gtlf: reading jeep layer");
         let bytes = std::fs::read(&path)?;
-        let geo: GeoJson = serde_json::from_slice(&bytes)?;
+        let geo: GeoJson = serde_json::from_slice(&bytes).with_context(|| {
+            format!("parse gtlf jeep layer {layer_id}")
+        })?;
         let features = match geo {
             GeoJson::FeatureCollection(fc) => fc.features,
             GeoJson::Feature(f) => vec![f],
             _ => continue,
         };
+        let before = out.len();
         for f in features {
             let Some(geom) = f.geometry else { continue };
             let coords = extract_line_coords(&geom);
@@ -244,6 +255,13 @@ fn load_jeep_lines(project_dir: &Path, gtlf: &GtlfSourceConfig, bbox: LonLatBBox
                 tracktype,
             });
         }
+        info!(
+            layer = layer_id,
+            lines = out.len() - before,
+            total = out.len(),
+            elapsed_secs = t0.elapsed().as_secs_f64(),
+            "gtlf: jeep layer loaded"
+        );
     }
     Ok(out)
 }
@@ -255,11 +273,22 @@ fn load_foot_lines(project_dir: &Path, gtlf: &GtlfSourceConfig, bbox: LonLatBBox
         if !path.is_file() {
             continue;
         }
+        let layer_id = url.trim_end_matches('/').rsplit('/').next().unwrap_or("?");
+        let t0 = Instant::now();
+        info!(layer = layer_id, path = %path.display(), "gtlf: reading foot layer");
+        let before = out.len();
         for coords in parse_geojson_lines(&path)? {
             if coords_in_bbox(&coords, bbox.west, bbox.south, bbox.east, bbox.north) {
                 out.push(coords);
             }
         }
+        info!(
+            layer = layer_id,
+            lines = out.len() - before,
+            total = out.len(),
+            elapsed_secs = t0.elapsed().as_secs_f64(),
+            "gtlf: foot layer loaded"
+        );
     }
     Ok(out)
 }
@@ -283,10 +312,30 @@ pub fn apply_gtlf_to_routing(
     }
     ensure_gtlf_cache(project_dir, force_fetch)?;
     let fingerprint = gtlf_cache_fingerprint(project_dir, &gtlf);
+    info!(fingerprint = %fingerprint, "gtlf: loading jeep lines");
     let jeep_lines = load_jeep_lines(project_dir, &gtlf, LonLatBBox::new(west, south, east, north))?;
+    info!(
+        lines = jeep_lines.len(),
+        jeep_ways = routing.jeep_roads.way_count,
+        "gtlf: merging jeep lines into OSM graph"
+    );
+    let t_merge = Instant::now();
     merge_supplemental_jeep_lines(routing, &jeep_lines, opts.road_sample_step_m);
+    info!(
+        jeep_ways = routing.jeep_roads.way_count,
+        elapsed_secs = t_merge.elapsed().as_secs_f64(),
+        "gtlf: jeep merge done"
+    );
+    info!("gtlf: loading foot trails");
     let foot_lines = load_foot_lines(project_dir, &gtlf, LonLatBBox::new(west, south, east, north))?;
+    let t_trails = Instant::now();
     let foot_trails = build_trail_graph(&foot_lines, opts.road_sample_step_m);
+    info!(
+        lines = foot_lines.len(),
+        ways = foot_trails.samples.way_count,
+        elapsed_secs = t_trails.elapsed().as_secs_f64(),
+        "gtlf: foot trail graph ready"
+    );
     let _ = TRAIL_MAX_M;
     Ok(GtlfBundle {
         foot_trails,

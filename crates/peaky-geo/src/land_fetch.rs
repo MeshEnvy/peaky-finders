@@ -7,13 +7,13 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use geojson::{Feature, FeatureCollection};
 use peaky_preset::LandDownloadKind;
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
+use serde_json::Value;
 use zip::ZipArchive;
 
 const USER_AGENT: &str = "peaky-land-refresh/1";
+const FEATURESERVER_PAGE_SIZE: u32 = 500;
 
 fn client() -> Result<Client> {
     Client::builder()
@@ -34,48 +34,172 @@ fn format_bytes(n: u64) -> String {
     }
 }
 
-fn log_refresh_progress(
+fn log_page_progress(
     source_id: &str,
     path: &str,
     fetched: u32,
+    page_len: u32,
     total: Option<u64>,
-    last_logged_pct: &mut u8,
 ) {
-    match total {
-        Some(total) if total > 0 => {
-            let pct = ((fetched as u64 * 100) / total).min(100) as u8;
-            if *last_logged_pct == 0
-                || pct >= last_logged_pct.saturating_add(5)
-                || (pct == 100 && *last_logged_pct < 100)
-            {
-                tracing::info!(
-                    source_id = %source_id,
-                    path = %path,
-                    fetched,
-                    total,
-                    pct,
-                    "land refresh: progress"
-                );
-                *last_logged_pct = pct;
-            }
+    let pct = total.filter(|t| *t > 0).map(|t| ((fetched as u64 * 100) / t).min(100));
+    tracing::info!(
+        source_id = %source_id,
+        path = %path,
+        fetched,
+        page = page_len,
+        total,
+        pct,
+        "land refresh: progress"
+    );
+}
+
+fn featureserver_part_path(dest: &Path) -> PathBuf {
+    dest.with_extension("geojson.part")
+}
+
+fn featureserver_offset_path(dest: &Path) -> PathBuf {
+    dest.with_extension("geojson.offset")
+}
+
+fn read_featureserver_offset(path: &Path) -> Option<u32> {
+    let raw = fs::read_to_string(path).ok()?;
+    raw.trim().parse().ok()
+}
+
+fn write_featureserver_offset(path: &Path, offset: u32) -> Result<()> {
+    fs::write(path, format!("{offset}\n")).with_context(|| format!("write {}", path.display()))
+}
+
+struct StreamingGeoJsonWriter {
+    source_id: String,
+    rel_path: String,
+    part_path: PathBuf,
+    dest_path: PathBuf,
+    offset_path: PathBuf,
+    file: fs::File,
+    first_feature: bool,
+    feature_count: u32,
+}
+
+impl StreamingGeoJsonWriter {
+    fn create(source_id: &str, rel_path: &str, dest: &Path, name: &str) -> Result<Self> {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
         }
-        _ => {
-            let bucket = fetched / 5000;
-            if fetched <= 500 || bucket > (*last_logged_pct as u32) {
-                tracing::info!(
-                    source_id = %source_id,
-                    path = %path,
-                    fetched,
-                    "land refresh: progress"
-                );
-                *last_logged_pct = bucket.min(255) as u8;
-            }
+        let part_path = featureserver_part_path(dest);
+        let offset_path = featureserver_offset_path(dest);
+        let resume_offset = if part_path.is_file() {
+            read_featureserver_offset(&offset_path)
+        } else {
+            None
+        };
+
+        if let Some(offset) = resume_offset {
+            tracing::info!(
+                source_id = %source_id,
+                path = %rel_path,
+                offset,
+                dest = %dest.display(),
+                "land refresh: resume partial geojson"
+            );
+            let file = fs::OpenOptions::new()
+                .append(true)
+                .open(&part_path)
+                .with_context(|| format!("append {}", part_path.display()))?;
+            return Ok(Self {
+                source_id: source_id.to_string(),
+                rel_path: rel_path.to_string(),
+                part_path,
+                dest_path: dest.to_path_buf(),
+                offset_path,
+                file,
+                first_feature: false,
+                feature_count: offset,
+            });
         }
+
+        if part_path.is_file() {
+            fs::remove_file(&part_path)
+                .with_context(|| format!("remove stale {}", part_path.display()))?;
+        }
+        if offset_path.is_file() {
+            fs::remove_file(&offset_path)
+                .with_context(|| format!("remove stale {}", offset_path.display()))?;
+        }
+
+        tracing::info!(
+            source_id = %source_id,
+            path = %rel_path,
+            dest = %dest.display(),
+            "land refresh: writing geojson"
+        );
+        let mut file =
+            fs::File::create(&part_path).with_context(|| format!("create {}", part_path.display()))?;
+        let name_json = serde_json::to_string(name).context("serialize geojson name")?;
+        write!(
+            file,
+            r#"{{"type":"FeatureCollection","name":{name_json},"features":["#
+        )
+        .context("write geojson prefix")?;
+        file.flush().ok();
+
+        Ok(Self {
+            source_id: source_id.to_string(),
+            rel_path: rel_path.to_string(),
+            part_path,
+            dest_path: dest.to_path_buf(),
+            offset_path,
+            file,
+            first_feature: true,
+            feature_count: 0,
+        })
+    }
+
+    fn append_page(&mut self, features: &[Value]) -> Result<()> {
+        for feature in features {
+            if !self.first_feature {
+                write!(self.file, ",").context("write geojson feature separator")?;
+            }
+            serde_json::to_writer(&mut self.file, feature).context("write geojson feature")?;
+            self.first_feature = false;
+            self.feature_count += 1;
+        }
+        self.file.flush().context("flush geojson part")?;
+        write_featureserver_offset(&self.offset_path, self.feature_count)?;
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<u32> {
+        write!(self.file, "]}}\n").context("write geojson footer")?;
+        self.file
+            .sync_all()
+            .with_context(|| format!("sync {}", self.part_path.display()))?;
+        drop(self.file);
+        if self.dest_path.is_file() {
+            fs::remove_file(&self.dest_path)
+                .with_context(|| format!("replace {}", self.dest_path.display()))?;
+        }
+        fs::rename(&self.part_path, &self.dest_path)
+            .with_context(|| format!("rename {} -> {}", self.part_path.display(), self.dest_path.display()))?;
+        if self.offset_path.is_file() {
+            fs::remove_file(&self.offset_path).ok();
+        }
+        let size = fs::metadata(&self.dest_path)
+            .with_context(|| format!("stat {}", self.dest_path.display()))?
+            .len();
+        tracing::info!(
+            source_id = %self.source_id,
+            path = %self.rel_path,
+            features = self.feature_count,
+            size = %format_bytes(size),
+            "land refresh: write done"
+        );
+        Ok(self.feature_count)
     }
 }
 
-fn featureserver_total_features(query_base: &str, layer_base: &str) -> Option<u64> {
-    let http = client().ok()?;
+fn featureserver_total_features(client: &Client, query_base: &str, layer_base: &str) -> Option<u64> {
+    let http = client;
     let count_url = format!("{query_base}?where=1%3D1&returnCountOnly=true&f=json");
     if let Ok(resp) = http
         .get(&count_url)
@@ -243,65 +367,24 @@ pub fn install_filegdb_zip(
     Ok(())
 }
 
-fn write_feature_collection(
-    source_id: &str,
-    rel_path: &str,
-    dest: &Path,
-    features: &[Feature],
-    name: &str,
-) -> Result<()> {
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    tracing::info!(
-        source_id = %source_id,
-        path = %rel_path,
-        features = features.len(),
-        dest = %dest.display(),
-        "land refresh: writing geojson"
-    );
-    let fc = FeatureCollection {
-        bbox: None,
-        features: features.to_vec(),
-        foreign_members: None,
-    };
-    let mut value = serde_json::to_value(&fc).context("serialize FeatureCollection")?;
-    if let Value::Object(ref mut map) = value {
-        map.insert("name".to_string(), json!(name));
-    }
-    let mut file = fs::File::create(dest).with_context(|| format!("create {}", dest.display()))?;
-    serde_json::to_writer(&mut file, &value).context("write geojson")?;
-    file.write_all(b"\n").ok();
-    let size = fs::metadata(dest)
-        .with_context(|| format!("stat {}", dest.display()))?
-        .len();
-    tracing::info!(
-        source_id = %source_id,
-        path = %rel_path,
-        size = %format_bytes(size),
-        "land refresh: write done"
-    );
-    Ok(())
-}
-
 fn featureserver_layer_base(service_layer_url: &str) -> String {
     service_layer_url.trim_end_matches('/').to_string()
 }
 
 fn fetch_featureserver_page(
+    client: &Client,
     query_base: &str,
     url_suffix: &str,
     page_size: u32,
     offset: u32,
     verbose: bool,
-) -> Result<(Vec<Feature>, u32)> {
+) -> Result<(Vec<Value>, u32)> {
     let url = format!(
         "{query_base}?{url_suffix}&resultRecordCount={page_size}&resultOffset={offset}&outSR=4326"
     );
     let mut last_err: Option<anyhow::Error> = None;
     let mut page_size = page_size;
     for attempt in 0..4 {
-        let client = client()?;
         let full_url = format!(
             "{query_base}?{url_suffix}&resultRecordCount={page_size}&resultOffset={offset}&outSR=4326"
         );
@@ -328,9 +411,10 @@ fn fetch_featureserver_page(
                 let bytes = resp.bytes().context("read featureserver body")?;
                 let chunk: Value =
                     serde_json::from_slice(&bytes).context("parse featureserver JSON")?;
-                let batch: Vec<Feature> = chunk
+                let batch: Vec<Value> = chunk
                     .get("features")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.to_vec())
                     .unwrap_or_default();
                 return Ok((batch, page_size));
             }
@@ -341,15 +425,18 @@ fn fetch_featureserver_page(
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("featureserver fetch failed for {url}")))
 }
 
-fn paginate_featureserver(
+fn paginate_featureserver_to_path(
     source_id: &str,
     path: &str,
     query_base: &str,
     layer_base: &str,
     url_suffix: &str,
+    dest: &Path,
+    name: &str,
     verbose: bool,
-) -> Result<Vec<Feature>> {
-    let total = featureserver_total_features(query_base, layer_base);
+) -> Result<u32> {
+    let client = client()?;
+    let total = featureserver_total_features(&client, query_base, layer_base);
     match total {
         Some(count) => tracing::info!(
             source_id = %source_id,
@@ -364,13 +451,13 @@ fn paginate_featureserver(
         ),
     }
 
-    let mut page_size: u32 = 500;
-    let mut offset: u32 = 0;
-    let mut features: Vec<Feature> = Vec::new();
-    let mut last_logged_pct: u8 = 0;
+    let mut writer = StreamingGeoJsonWriter::create(source_id, path, dest, name)?;
+    let mut page_size: u32 = FEATURESERVER_PAGE_SIZE;
+    let mut offset = writer.feature_count;
 
     loop {
         let (batch, used_page) = fetch_featureserver_page(
+            &client,
             query_base,
             url_suffix,
             page_size,
@@ -381,29 +468,20 @@ fn paginate_featureserver(
         if batch.is_empty() {
             break;
         }
-        let batch_len = batch.len();
-        features.extend(batch);
-        offset += batch_len as u32;
-        log_refresh_progress(source_id, path, offset, total, &mut last_logged_pct);
+        let batch_len = batch.len() as u32;
+        writer.append_page(&batch)?;
+        offset += batch_len;
+        log_page_progress(source_id, path, offset, batch_len, total);
         if verbose {
             eprintln!("    fetched {offset} features");
         }
-        if (batch_len as u32) < page_size {
+        if batch_len < page_size {
             break;
         }
         thread::sleep(Duration::from_millis(150));
     }
 
-    if last_logged_pct < 100 {
-        log_refresh_progress(
-            source_id,
-            path,
-            offset,
-            total.or(Some(offset as u64)),
-            &mut last_logged_pct,
-        );
-    }
-    Ok(features)
+    writer.finish()
 }
 
 /// Bbox-clipped FeatureServer export (WGS-84 envelope).
@@ -435,19 +513,21 @@ pub fn download_featureserver_geojson_bbox(
     if verbose {
         eprintln!("  featureserver bbox: {base} [{west},{south},{east},{north}]");
     }
-    let features = paginate_featureserver(
+    let stem = dest
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("layer");
+    paginate_featureserver_to_path(
         source_id,
         path,
         &query_base,
         &base,
         &url_suffix,
+        dest,
+        stem,
         verbose,
     )?;
-    let stem = dest
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("layer");
-    write_feature_collection(source_id, path, dest, &features, stem)
+    Ok(())
 }
 
 pub fn download_featureserver_geojson(
@@ -462,19 +542,21 @@ pub fn download_featureserver_geojson(
     if verbose {
         eprintln!("  featureserver paginate: {base}");
     }
-    let features = paginate_featureserver(
+    let stem = dest
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("layer");
+    paginate_featureserver_to_path(
         source_id,
         path,
         &query_base,
         &base,
         "where=1%3D1&outFields=*&f=geojson",
+        dest,
+        stem,
         verbose,
     )?;
-    let stem = dest
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("layer");
-    write_feature_collection(source_id, path, dest, &features, stem)
+    Ok(())
 }
 
 pub fn refresh_land_source_file(
@@ -512,5 +594,67 @@ pub fn refresh_land_source_file(
             install_filegdb_zip(source_id, rel_path, &data, &dest)
         }
         LandDownloadKind::Manual => bail!("manual download kind cannot be refreshed automatically"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    #[test]
+    fn streaming_geojson_writer_roundtrip() -> Result<()> {
+        let dir = TempDir::new()?;
+        let dest = dir.path().join("layer.geojson");
+        let mut writer =
+            StreamingGeoJsonWriter::create("test", "layer.geojson", &dest, "layer")?;
+        writer.append_page(&[
+            json!({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [-117.0, 39.0]},
+                "properties": {"id": 1}
+            }),
+            json!({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [-117.1, 39.1]},
+                "properties": {"id": 2}
+            }),
+        ])?;
+        assert_eq!(writer.finish()?, 2);
+
+        let parsed: Value = serde_json::from_slice(&fs::read(&dest)?)?;
+        let features = parsed
+            .get("features")
+            .and_then(|v| v.as_array())
+            .expect("features array");
+        assert_eq!(features.len(), 2);
+        assert_eq!(parsed.get("name").and_then(|v| v.as_str()), Some("layer"));
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_geojson_writer_resumes_from_offset() -> Result<()> {
+        let dir = TempDir::new()?;
+        let dest = dir.path().join("layer.geojson");
+        let part = featureserver_part_path(&dest);
+        let offset = featureserver_offset_path(&dest);
+
+        fs::write(
+            &part,
+            r#"{"type":"FeatureCollection","name":"layer","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[-117.0,39.0]},"properties":{"id":1}}"#,
+        )?;
+        write_featureserver_offset(&offset, 1)?;
+
+        let mut writer =
+            StreamingGeoJsonWriter::create("test", "layer.geojson", &dest, "layer")?;
+        assert_eq!(writer.feature_count, 1);
+        writer.append_page(&[json!({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [-117.2, 39.2]},
+            "properties": {"id": 2}
+        })])?;
+        assert_eq!(writer.finish()?, 2);
+        Ok(())
     }
 }

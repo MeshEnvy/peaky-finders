@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::osm::{
-    GraphEdge, JeepRoadGraph, JeepRoadIndex, OsmRouting, OsmRoutingOpts, PavedAnchorIndex,
-    PavedPoint, RoadPoint,
+    GraphEdge, GraphNodeIndex, JeepRoadGraph, JeepRoadIndex, OsmRouting, OsmRoutingOpts,
+    PavedAnchorIndex, PavedPoint, RoadPoint,
 };
 
 pub const OSM_ROUTING_CACHE_VERSION: u32 = 1;
@@ -205,9 +205,11 @@ fn routing_from_disk(disk: OsmRoutingDisk) -> Result<OsmRouting> {
             node_idx: disk.paved_idx[i],
         });
     }
+    let graph = JeepRoadGraph::from_parts(nodes, adj);
     Ok(OsmRouting {
         jeep_roads: JeepRoadIndex::from_samples(jeep, disk.jeep_way_count as usize),
-        graph: JeepRoadGraph::from_parts(nodes, adj),
+        graph_nodes: GraphNodeIndex::from_graph(&graph),
+        graph,
         paved: PavedAnchorIndex::from_points(paved),
     })
 }

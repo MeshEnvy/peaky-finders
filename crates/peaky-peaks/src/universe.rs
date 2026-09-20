@@ -1,8 +1,10 @@
 //! Candidate peak universe before access filtering.
 
 use std::collections::HashSet;
+use std::time::Instant;
 
 use peaky_preset::{slugify_files_segment, Preset};
+use tracing::info;
 
 #[derive(Debug, Clone)]
 pub struct RawCandidate {
@@ -54,10 +56,28 @@ fn candidate_elev(c: &RawCandidate) -> f64 {
     c.elev_m.unwrap_or(0.0)
 }
 
+const DEDUP_PROGRESS_EVERY: usize = 2500;
+const DEDUP_HEARTBEAT_SECS: u64 = 10;
+
 /// Drop nearby duplicates; keep the higher-elevation row when two seeds share a mountain.
 pub fn dedup_nearby(candidates: Vec<RawCandidate>, min_m: f64) -> Vec<RawCandidate> {
+    let total = candidates.len();
+    let started = Instant::now();
+    let mut last_log = started;
     let mut kept: Vec<RawCandidate> = Vec::new();
-    for c in candidates {
+    for (i, c) in candidates.into_iter().enumerate() {
+        let heartbeat = last_log.elapsed().as_secs() >= DEDUP_HEARTBEAT_SECS;
+        if i == 0 || i % DEDUP_PROGRESS_EVERY == 0 || i + 1 == total || heartbeat {
+            info!(
+                processed = i,
+                total,
+                kept = kept.len(),
+                min_m,
+                elapsed_secs = started.elapsed().as_secs_f64(),
+                "peaks: dedup nearby progress"
+            );
+            last_log = Instant::now();
+        }
         if let Some(idx) = kept.iter().position(|k| {
             crate::hike::haversine_m(c.lat, c.lon, k.lat, k.lon) < min_m
         }) {
@@ -68,5 +88,12 @@ pub fn dedup_nearby(candidates: Vec<RawCandidate>, min_m: f64) -> Vec<RawCandida
             kept.push(c);
         }
     }
+    info!(
+        total,
+        kept = kept.len(),
+        min_m,
+        elapsed_secs = started.elapsed().as_secs_f64(),
+        "peaks: dedup nearby done"
+    );
     kept
 }

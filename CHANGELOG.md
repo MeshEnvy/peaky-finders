@@ -12,6 +12,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **FeatureServer land fetch** — paginate ArcGIS layers with one HTTP client, stream each page to `.geojson.part` (flush + offset checkpoint per page), then rename to the final cache file. Avoids holding whole GTLF layers in RAM; interrupted downloads resume from the saved offset.
+- **`peaky peaks build` progress** — logs GTLF cache hits, per-layer jeep/foot load, jeep merge every 250 lines (plus 10 s heartbeat), sample clone / R-tree rebuild stages, DEM tile preload, DEM peak scan, candidate dedup every 2500 (plus 10 s heartbeat), parallel filter every 25 plus a background 10 s heartbeat (fires even during long Dijkstra), survivor dedup, catalog write progress, and catalog write start.
+- **GTLF jeep merge perf** — coverage dedup subsamples lines at 15 m instead of every GTLF vertex; parallel coverage pass; graph endpoint snap uses an R-tree over 5M+ nodes instead of a linear scan (was ~5 lines/sec on one core).
+- **Catalog access routing perf** — park pick uses spatial graph-node search + targeted Dijkstra with early stop (not full-state flood fill); paved seeds start at 25 km crow before expanding; avoids scanning millions of reachable nodes per peak.
 - **Access routing (GTLF + three legs)** — jeep (OSM + BLM motorized roads/trails) → foot trail (GTLF layers 4–5) → bushwhack (DEM A* only). Park pick minimizes bushwhack, then trail+bushwhack, then jeep distance. `hike` / `hike_m` on access profiles are **bushwhack only**; new `trail` / `trail_m` / `trail_loc` for the foot-trail leg. Map: orange jeep, tan trail, green dashed bushwhack. `ACCESS_ALGO_VERSION` → **14**. Re-warm site/peak access after upgrade.
 
 ### Added
