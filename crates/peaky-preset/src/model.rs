@@ -129,11 +129,15 @@ pub fn resolved_viewshed_polygon_style(display: &DisplayConfig) -> ViewshedPolyg
 pub const DEFAULT_OSM_PBF_URL: &str =
     "https://download.geofabrik.de/north-america/us/nevada-latest.osm.pbf";
 
+pub const DEFAULT_GTLF_MAPSERVER: &str =
+    "https://gis.blm.gov/arcgis/rest/services/transportation/BLM_Natl_GTLF_Public_Display/MapServer";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SourcesConfig {
     pub osm: OsmSourceConfig,
     pub gnis: GnisSourceConfig,
+    pub gtlf: GtlfSourceConfig,
 }
 
 impl Default for SourcesConfig {
@@ -141,6 +145,34 @@ impl Default for SourcesConfig {
         Self {
             osm: OsmSourceConfig::default(),
             gnis: GnisSourceConfig::default(),
+            gtlf: GtlfSourceConfig::default(),
+        }
+    }
+}
+
+/// BLM Ground Transportation Linear Features (GTLF) for jeep + foot-trail routing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GtlfSourceConfig {
+    pub enabled: bool,
+    /// MapServer layer URLs merged into the jeep graph (roads + OHV trails).
+    pub jeep_layers: Vec<String>,
+    /// MapServer layer URLs for foot-only walk graph.
+    pub foot_layers: Vec<String>,
+}
+
+impl Default for GtlfSourceConfig {
+    fn default() -> Self {
+        let base = DEFAULT_GTLF_MAPSERVER;
+        Self {
+            enabled: false,
+            jeep_layers: vec![
+                format!("{base}/0"),
+                format!("{base}/1"),
+                format!("{base}/2"),
+                format!("{base}/3"),
+            ],
+            foot_layers: vec![format!("{base}/4"), format!("{base}/5")],
         }
     }
 }
@@ -577,7 +609,7 @@ impl Default for PeakAccessRules {
 
 /// Bump when hike/jeep routing or DEM profile semantics change (forces recompute).
 /// Written into ``access/_meta.yaml`` as ``algo_version``.
-pub const ACCESS_ALGO_VERSION: u32 = 13;
+pub const ACCESS_ALGO_VERSION: u32 = 14;
 
 /// Bump when peak eligibility / summit snap / universe filter semantics change.
 pub const PEAK_ALGO_VERSION: u32 = 8;
@@ -719,6 +751,14 @@ pub struct PlaceAccess {
     pub hike_m: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hike: Option<PeakHikeProfile>,
+    /// Leave-trail point before bushwhack `[lat, lon]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trail_loc: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trail_m: Option<f64>,
+    /// Foot-trail leg (park → leave-trail). Bushwhack is ``hike``.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trail: Option<PeakHikeProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_slope_deg: Option<f64>,
 }
@@ -754,6 +794,14 @@ pub struct PeakCatalogEntry {
     /// Full hike profile — carried in-memory / via ``access/``; omitted from thin peak rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hike: Option<PeakHikeProfile>,
+    /// Leave-trail point before bushwhack (access yaml only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trail_loc: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trail_m: Option<f64>,
+    /// Foot-trail leg profile (access yaml only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trail: Option<PeakHikeProfile>,
     /// Paved-road anchor `[lat, lon]` (also mirrored in access).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paved_loc: Option<[f64; 2]>,
@@ -794,6 +842,9 @@ impl PeakCatalogEntry {
             jeep: self.jeep.clone(),
             hike_m: self.hike_m,
             hike: self.hike.clone(),
+            trail_loc: self.trail_loc,
+            trail_m: self.trail_m,
+            trail: self.trail.clone(),
             max_slope_deg: self.max_slope_deg,
         }
     }
@@ -814,6 +865,9 @@ impl PeakCatalogEntry {
             hike_max_grade_pct: self.hike_max_grade_pct,
             max_slope_deg: self.max_slope_deg,
             hike: None,
+            trail_loc: None,
+            trail_m: None,
+            trail: None,
             paved_loc: self.paved_loc,
             jeep_m: self.jeep_m,
             jeep_highway: self.jeep_highway.clone(),
@@ -848,6 +902,9 @@ impl PeakCatalogEntry {
             hike_max_grade_pct: self.hike_max_grade_pct,
             max_slope_deg: access.max_slope_deg.or(self.max_slope_deg),
             hike: access.hike.clone().or_else(|| self.hike.clone()),
+            trail_loc: access.trail_loc.or(self.trail_loc),
+            trail_m: access.trail_m.or(self.trail_m),
+            trail: access.trail.clone().or_else(|| self.trail.clone()),
             paved_loc: access.paved_loc.or(self.paved_loc),
             jeep_m: access.jeep_m.or(self.jeep_m),
             jeep_highway: self.jeep_highway.clone(),

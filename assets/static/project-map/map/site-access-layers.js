@@ -5,6 +5,10 @@ import {
   SITES_ACCESS_SOURCE,
   SITES_JEEP_LINE,
   SITES_JEEP_SOURCE,
+  SITES_TRAIL_LEAVE_CIRCLE,
+  SITES_TRAIL_LEAVE_SOURCE,
+  SITES_TRAIL_LINE,
+  SITES_TRAIL_SOURCE,
   SITES_PARK_CIRCLE,
   SITES_PARK_SOURCE,
   SITES_PAVED_CIRCLE,
@@ -16,6 +20,8 @@ import {
   peaksJeepGeoJson,
   peaksPavedGeoJson,
   peaksRoadGeoJson,
+  peaksTrailGeoJson,
+  peaksTrailLeaveGeoJson,
 } from './peaks-layers.js'
 
 /**
@@ -36,6 +42,12 @@ function addLayerBefore(map, spec, beforeId) {
 export function ensureSiteAccessLayers(map, beforeId = beforeSitesCircle(map)) {
   if (!map.getSource(SITES_JEEP_SOURCE)) {
     map.addSource(SITES_JEEP_SOURCE, { type: 'geojson', data: peaksJeepGeoJson([]) })
+  }
+  if (!map.getSource(SITES_TRAIL_SOURCE)) {
+    map.addSource(SITES_TRAIL_SOURCE, { type: 'geojson', data: peaksTrailGeoJson([]) })
+  }
+  if (!map.getSource(SITES_TRAIL_LEAVE_SOURCE)) {
+    map.addSource(SITES_TRAIL_LEAVE_SOURCE, { type: 'geojson', data: peaksTrailLeaveGeoJson([]) })
   }
   if (!map.getSource(SITES_ACCESS_SOURCE)) {
     map.addSource(SITES_ACCESS_SOURCE, { type: 'geojson', data: peaksAccessGeoJson([]) })
@@ -63,6 +75,22 @@ export function ensureSiteAccessLayers(map, beforeId = beforeSitesCircle(map)) {
     )
   } else {
     map.setPaintProperty(SITES_JEEP_LINE, 'line-color', '#ea580c')
+  }
+  if (!map.getLayer(SITES_TRAIL_LINE)) {
+    addLayerBefore(
+      map,
+      {
+        id: SITES_TRAIL_LINE,
+        type: 'line',
+        source: SITES_TRAIL_SOURCE,
+        paint: {
+          'line-color': '#d4a574',
+          'line-width': 3.5,
+          'line-opacity': 0.9,
+        },
+      },
+      beforeId,
+    )
   }
   if (!map.getLayer(SITES_ACCESS_LINE)) {
     addLayerBefore(
@@ -118,6 +146,23 @@ export function ensureSiteAccessLayers(map, beforeId = beforeSitesCircle(map)) {
       beforeId,
     )
   }
+  if (!map.getLayer(SITES_TRAIL_LEAVE_CIRCLE)) {
+    addLayerBefore(
+      map,
+      {
+        id: SITES_TRAIL_LEAVE_CIRCLE,
+        type: 'circle',
+        source: SITES_TRAIL_LEAVE_SOURCE,
+        paint: {
+          'circle-radius': 5,
+          'circle-color': '#d4a574',
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': '#fef3c7',
+        },
+      },
+      beforeId,
+    )
+  }
 }
 
 /**
@@ -127,6 +172,12 @@ export function ensureSiteAccessLayers(map, beforeId = beforeSitesCircle(map)) {
 export function setSiteAccessLayerData(map, places) {
   if (map.getSource(SITES_JEEP_SOURCE)) {
     map.getSource(SITES_JEEP_SOURCE).setData(peaksJeepGeoJson(places))
+  }
+  if (map.getSource(SITES_TRAIL_SOURCE)) {
+    map.getSource(SITES_TRAIL_SOURCE).setData(peaksTrailGeoJson(places))
+  }
+  if (map.getSource(SITES_TRAIL_LEAVE_SOURCE)) {
+    map.getSource(SITES_TRAIL_LEAVE_SOURCE).setData(peaksTrailLeaveGeoJson(places))
   }
   if (map.getSource(SITES_ACCESS_SOURCE)) {
     map.getSource(SITES_ACCESS_SOURCE).setData(peaksAccessGeoJson(places))

@@ -41,6 +41,7 @@ use crate::land::{
     read_overlay_part_geojson_bytes, LandImportBody,
     LandPatchSourceBody, LandPreviewGeoJsonBody,
 };
+use crate::roads::gtlf_inventory_geojson_bytes;
 use crate::simulation::project_simulation_payload;
 use crate::viewshed::{
     coords_viewshed_overlay_if_ready, ensure_viewshed_png, read_coords_viewshed_png_if_ready,
@@ -103,6 +104,14 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/peaks/{peak_slug}/jeep", get(peak_jeep))
         .route("/api/p/{slug}/access/{place_slug}", get(place_access))
         .route("/api/p/{slug}/access/{place_slug}/warm", post(place_access_warm))
+        .route(
+            "/api/p/{slug}/roads/gtlf/geojson",
+            get(gtlf_jeep_inventory_geojson),
+        )
+        .route(
+            "/api/p/{slug}/roads/gtlf/trails/geojson",
+            get(gtlf_trail_inventory_geojson),
+        )
         .route("/api/p/{slug}/land", get(land_list))
         .route(
             "/api/p/{slug}/land/overlays/{kind}/geojson",
@@ -1052,6 +1061,50 @@ async fn land_overlay_part_geojson(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": "overlay response failed" })),
+            )
+        })
+}
+
+async fn gtlf_jeep_inventory_geojson(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    gtlf_inventory_geojson_response(state.preset_path(), false).await
+}
+
+async fn gtlf_trail_inventory_geojson(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    gtlf_inventory_geojson_response(state.preset_path(), true).await
+}
+
+async fn gtlf_inventory_geojson_response(
+    preset_path: std::path::PathBuf,
+    foot: bool,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let bytes = tokio::task::spawn_blocking(move || gtlf_inventory_geojson_bytes(&preset_path, foot))
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "gtlf task failed" })),
+            )
+        })?
+        .map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/geo+json")
+        .body(Body::from(bytes))
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "response build failed" })),
             )
         })
 }

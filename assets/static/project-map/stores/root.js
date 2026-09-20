@@ -45,6 +45,10 @@ export function createRootStore(config, savedMapState) {
       /** Catalog peak click preview — jeep/hike via site access layers */
       accessSlug: null,
     },
+    gtlf: {
+      roadsVisible: savedMapState?.gtlfRoadsVisible === true,
+      trailsVisible: savedMapState?.gtlfTrailsVisible === true,
+    },
     access: {
       bySlug: {},
       selected: null,

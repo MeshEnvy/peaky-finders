@@ -3,6 +3,7 @@
 mod access;
 mod access_warm;
 mod corridor;
+mod gtlf;
 mod gnis;
 mod hike;
 mod hike_route;
@@ -12,12 +13,20 @@ mod osm_cache;
 mod park;
 mod probe;
 mod run;
+mod trail;
 mod universe;
 
 pub use access_warm::{
     compute_place_access, load_routing_for_points, load_routing_for_points_progress,
-    load_routing_near, routing_bbox_for_points, routing_coverage_bbox, warm_place_access,
-    warm_place_access_with_routing, OSM_ROUTE_PAD_DEG,
+    load_routing_near, project_gtlf_fingerprint, routing_bbox_for_points, routing_coverage_bbox,
+    warm_place_access, warm_place_access_with_routing, ProjectRouting, OSM_ROUTE_PAD_DEG,
+};
+pub use gtlf::{
+    apply_gtlf_to_routing, ensure_gtlf_cache, gtlf_cache_dir, gtlf_cache_fingerprint,
+    read_gtlf_inventory_geojson, GtlfBundle,
+};
+pub use trail::{
+    build_trail_graph, route_trail_closest_approach, TrailRouting, TRAIL_MAX_M, TRAIL_PARK_SNAP_M,
 };
 pub use peaky_preset::{PLACE_ACCESS_ROAD_SEARCH_M, DEFAULT_MAX_JEEP_M as PLACE_ACCESS_MAX_JEEP_M};
 pub use hike::{

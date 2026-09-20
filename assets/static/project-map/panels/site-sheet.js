@@ -228,6 +228,8 @@ export function mountSiteSheet(store, appApi) {
 
       const accessHike = computed(() => access.value?.hike || null)
       const accessJeep = computed(() => access.value?.jeep || null)
+      const accessTrail = computed(() => access.value?.trail || null)
+      const hikeStartLabel = computed(() => (accessTrail.value ? 'Leave trail' : 'Park'))
       const difficultyConfig = computed(() => store.peaks.rules?.difficulty || null)
 
       /** @param {{ lat: number, lon: number }} pt */
@@ -489,6 +491,8 @@ export function mountSiteSheet(store, appApi) {
         accessError,
         accessHike,
         accessJeep,
+        accessTrail,
+        hikeStartLabel,
         difficultyConfig,
         onAccessPointClick,
         viewshedActive,
@@ -604,10 +608,12 @@ export function mountSiteSheet(store, appApi) {
             <AccessProfilesPanel
               :hike="accessHike"
               :jeep="accessJeep"
+              :trail="accessTrail"
               :loading="accessLoading"
               :loading-label="accessLoadingLabel"
               :error="accessError"
               :hike-end-elev-m="hikeEndElevM"
+              :hike-start-label="hikeStartLabel"
               :difficulty-config="difficultyConfig"
               hike-end-label="Site"
               empty-text="No mapped OSM road"
@@ -692,10 +698,12 @@ export function mountSiteSheet(store, appApi) {
             <AccessProfilesPanel
               :hike="accessHike"
               :jeep="accessJeep"
+              :trail="accessTrail"
               :loading="accessLoading"
               :loading-label="accessLoadingLabel"
               :error="accessError"
               :hike-end-elev-m="hikeEndElevM"
+              :hike-start-label="hikeStartLabel"
               :difficulty-config="difficultyConfig"
               hike-end-label="Site"
               empty-text="No mapped OSM road"

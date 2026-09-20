@@ -10,6 +10,10 @@ import {
   PEAKS_ICON_URL,
   PEAKS_JEEP_LINE,
   PEAKS_JEEP_SOURCE,
+  PEAKS_TRAIL_LEAVE_CIRCLE,
+  PEAKS_TRAIL_LEAVE_SOURCE,
+  PEAKS_TRAIL_LINE,
+  PEAKS_TRAIL_SOURCE,
   PEAKS_PAVED_CIRCLE,
   PEAKS_PAVED_SOURCE,
   PEAKS_RING_CIRCLE,
@@ -73,6 +77,15 @@ function hikePathCoordinates(peak) {
 /** @param {object} peak */
 function jeepPathCoordinates(peak) {
   const profile = peak.jeep?.profile
+  if (!Array.isArray(profile) || profile.length < 2) return null
+  return profile
+    .filter((p) => Number.isFinite(p.lon) && Number.isFinite(p.lat))
+    .map((p) => [p.lon, p.lat])
+}
+
+/** @param {object} peak */
+function trailPathCoordinates(peak) {
+  const profile = peak.trail?.profile
   if (!Array.isArray(profile) || profile.length < 2) return null
   return profile
     .filter((p) => Number.isFinite(p.lon) && Number.isFinite(p.lat))
@@ -146,6 +159,48 @@ export function peaksAccessGeoJson(peaks) {
 }
 
 /** @param {object[]} peaks */
+export function peaksTrailGeoJson(peaks) {
+  return {
+    type: 'FeatureCollection',
+    features: peaks
+      .filter((peak) => trailPathCoordinates(peak))
+      .map((peak) => ({
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: trailPathCoordinates(peak),
+        },
+        properties: {
+          slug: peak.slug || '',
+          trail_m: peak.trail_m ?? null,
+        },
+      })),
+  }
+}
+
+/** @param {object[]} peaks */
+export function peaksTrailLeaveGeoJson(peaks) {
+  return {
+    type: 'FeatureCollection',
+    features: peaks
+      .filter(
+        (peak) =>
+          trailPathCoordinates(peak) &&
+          Number.isFinite(peak.trail_lat) &&
+          Number.isFinite(peak.trail_lon),
+      )
+      .map((peak) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [peak.trail_lon, peak.trail_lat] },
+        properties: {
+          slug: peak.slug || '',
+          trail_m: peak.trail_m ?? null,
+        },
+      })),
+  }
+}
+
+/** @param {object[]} peaks */
 export function peaksJeepGeoJson(peaks) {
   return {
     type: 'FeatureCollection',
@@ -178,6 +233,12 @@ export async function ensurePeaksLayers(map) {
   await ensurePeaksIcon(map)
   if (!map.getSource(PEAKS_JEEP_SOURCE)) {
     map.addSource(PEAKS_JEEP_SOURCE, { type: 'geojson', data: peaksJeepGeoJson([]) })
+  }
+  if (!map.getSource(PEAKS_TRAIL_SOURCE)) {
+    map.addSource(PEAKS_TRAIL_SOURCE, { type: 'geojson', data: peaksTrailGeoJson([]) })
+  }
+  if (!map.getSource(PEAKS_TRAIL_LEAVE_SOURCE)) {
+    map.addSource(PEAKS_TRAIL_LEAVE_SOURCE, { type: 'geojson', data: peaksTrailLeaveGeoJson([]) })
   }
   if (!map.getSource(PEAKS_ACCESS_SOURCE)) {
     map.addSource(PEAKS_ACCESS_SOURCE, { type: 'geojson', data: peaksAccessGeoJson([]) })
@@ -218,6 +279,26 @@ export async function ensurePeaksLayers(map) {
       beforeId,
     )
   }
+  if (!map.getLayer(PEAKS_TRAIL_LINE)) {
+    addLayerBefore(
+      map,
+      {
+        id: PEAKS_TRAIL_LINE,
+        type: 'line',
+        source: PEAKS_TRAIL_SOURCE,
+        paint: {
+          'line-color': '#d4a574',
+          'line-width': 3.5,
+          'line-opacity': 0.95,
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+      },
+      beforeId,
+    )
+  }
   if (!map.getLayer(PEAKS_ACCESS_LINE)) {
     addLayerBefore(
       map,
@@ -229,6 +310,7 @@ export async function ensurePeaksLayers(map) {
           'line-color': '#22c55e',
           'line-width': 3,
           'line-opacity': 0.95,
+          'line-dasharray': [2, 1.5],
         },
         layout: {
           'line-cap': 'round',
@@ -320,6 +402,23 @@ export async function ensurePeaksLayers(map) {
       PEAKS_SYMBOL,
     )
   }
+  if (!map.getLayer(PEAKS_TRAIL_LEAVE_CIRCLE)) {
+    map.addLayer(
+      {
+        id: PEAKS_TRAIL_LEAVE_CIRCLE,
+        type: 'circle',
+        source: PEAKS_TRAIL_LEAVE_SOURCE,
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 4, 14, 7, 17, 10],
+          'circle-color': '#d4a574',
+          'circle-stroke-color': '#0f172a',
+          'circle-stroke-width': 1.5,
+          'circle-opacity': 0.95,
+        },
+      },
+      PEAKS_SYMBOL,
+    )
+  }
   if (!map.getLayer(PEAKS_CURSOR_CIRCLE)) {
     addLayerBefore(
       map,
@@ -372,6 +471,12 @@ export function setPeaksLayerData(map, peaks, difficultyConfig) {
   }
   if (map.getSource(PEAKS_JEEP_SOURCE)) {
     map.getSource(PEAKS_JEEP_SOURCE).setData(peaksJeepGeoJson(peaks))
+  }
+  if (map.getSource(PEAKS_TRAIL_SOURCE)) {
+    map.getSource(PEAKS_TRAIL_SOURCE).setData(peaksTrailGeoJson(peaks))
+  }
+  if (map.getSource(PEAKS_TRAIL_LEAVE_SOURCE)) {
+    map.getSource(PEAKS_TRAIL_LEAVE_SOURCE).setData(peaksTrailLeaveGeoJson(peaks))
   }
   if (map.getSource(PEAKS_ACCESS_SOURCE)) {
     map.getSource(PEAKS_ACCESS_SOURCE).setData(peaksAccessGeoJson(peaks))

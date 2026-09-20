@@ -83,6 +83,7 @@ pub fn access_compute_key(
     hike_path_max_m: f64,
     jeep_highways: &[String],
     paved_highways: &[String],
+    gtlf_fingerprint: &str,
 ) -> String {
     hash_parts(&[
         algo_version as u64,
@@ -94,11 +95,12 @@ pub fn access_compute_key(
         round_m(hike_path_max_m) as u64,
         hash_str(&sorted_joined(jeep_highways)),
         hash_str(&sorted_joined(paved_highways)),
+        hash_str(gtlf_fingerprint),
     ])
 }
 
 /// Key used by site/place warm (display routing, ungated).
-pub fn place_access_compute_key(meta: &AccessMeta) -> String {
+pub fn place_access_compute_key(meta: &AccessMeta, gtlf_fingerprint: &str) -> String {
     access_compute_key(
         meta.algo_version,
         "place",
@@ -109,13 +111,18 @@ pub fn place_access_compute_key(meta: &AccessMeta) -> String {
         meta.hike_path_max_m,
         &meta.road_highways,
         &meta.paved_highways,
+        gtlf_fingerprint,
     )
 }
 
 /// Key used when ``peaky peaks`` writes access for an eligible peak.
 ///
 /// ``road_search_m`` is the peak park-search radius (usually ``rules.max_hike_m``).
-pub fn peak_access_compute_key(meta: &AccessMeta, road_search_m: f64) -> String {
+pub fn peak_access_compute_key(
+    meta: &AccessMeta,
+    road_search_m: f64,
+    gtlf_fingerprint: &str,
+) -> String {
     access_compute_key(
         meta.algo_version,
         "peak",
@@ -126,6 +133,7 @@ pub fn peak_access_compute_key(meta: &AccessMeta, road_search_m: f64) -> String 
         meta.hike_path_max_m,
         &meta.road_highways,
         &meta.paved_highways,
+        gtlf_fingerprint,
     )
 }
 
@@ -135,6 +143,7 @@ pub fn peak_row_compute_key(
     access: &AccessMeta,
     land_digest: &str,
     summit_snap_m: f64,
+    gtlf_fingerprint: &str,
 ) -> String {
     hash_parts(&[
         PEAK_ALGO_VERSION as u64,
@@ -144,7 +153,11 @@ pub fn peak_row_compute_key(
         round_m(rules.max_slope_grade_pct) as u64,
         round_m(rules.max_slope_deg) as u64,
         difficulty_fingerprint(&rules.difficulty),
-        hash_str(&peak_access_compute_key(access, rules.max_hike_m)),
+        hash_str(&peak_access_compute_key(
+            access,
+            rules.max_hike_m,
+            gtlf_fingerprint,
+        )),
     ])
 }
 
@@ -173,8 +186,8 @@ mod tests {
         let meta = AccessMeta::default();
         let rules = PeakAccessRules::default();
         assert_ne!(
-            place_access_compute_key(&meta),
-            peak_access_compute_key(&meta, rules.max_hike_m)
+            place_access_compute_key(&meta, "disabled"),
+            peak_access_compute_key(&meta, rules.max_hike_m, "disabled")
         );
     }
 
@@ -183,7 +196,10 @@ mod tests {
         let a = AccessMeta::default();
         let mut b = a.clone();
         b.place_road_search_m = 25_000.0;
-        assert_ne!(place_access_compute_key(&a), place_access_compute_key(&b));
+        assert_ne!(
+            place_access_compute_key(&a, "disabled"),
+            place_access_compute_key(&b, "disabled")
+        );
     }
 
     #[test]
@@ -191,15 +207,18 @@ mod tests {
         let a = AccessMeta::default();
         let mut b = a.clone();
         b.hike_path_max_m = 2000.0;
-        assert_ne!(place_access_compute_key(&a), place_access_compute_key(&b));
+        assert_ne!(
+            place_access_compute_key(&a, "disabled"),
+            place_access_compute_key(&b, "disabled")
+        );
     }
 
     #[test]
     fn peak_road_search_moves_key() {
         let meta = AccessMeta::default();
         assert_ne!(
-            peak_access_compute_key(&meta, 805.0),
-            peak_access_compute_key(&meta, 900.0)
+            peak_access_compute_key(&meta, 805.0, "disabled"),
+            peak_access_compute_key(&meta, 900.0, "disabled")
         );
     }
 
@@ -208,8 +227,17 @@ mod tests {
         let rules = PeakAccessRules::default();
         let meta = AccessMeta::default();
         assert_ne!(
-            peak_row_compute_key(&rules, &meta, "land-a", 500.0),
-            peak_row_compute_key(&rules, &meta, "land-b", 500.0)
+            peak_row_compute_key(&rules, &meta, "land-a", 500.0, "disabled"),
+            peak_row_compute_key(&rules, &meta, "land-b", 500.0, "disabled")
+        );
+    }
+
+    #[test]
+    fn gtlf_fingerprint_moves_key() {
+        let meta = AccessMeta::default();
+        assert_ne!(
+            place_access_compute_key(&meta, "disabled"),
+            place_access_compute_key(&meta, "abc123")
         );
     }
 
@@ -218,7 +246,10 @@ mod tests {
         let a = AccessMeta::default();
         let mut b = a.clone();
         b.algo_version = a.algo_version + 1;
-        assert_ne!(place_access_compute_key(&a), place_access_compute_key(&b));
+        assert_ne!(
+            place_access_compute_key(&a, "disabled"),
+            place_access_compute_key(&b, "disabled")
+        );
     }
 
     #[test]
@@ -252,7 +283,7 @@ mod tests {
             compute_key: None,
             ..Default::default()
         };
-        let key = place_access_compute_key(&AccessMeta::default());
+        let key = place_access_compute_key(&AccessMeta::default(), "disabled");
         assert!(!place_access_is_fresh(&access, &[&key]));
     }
 

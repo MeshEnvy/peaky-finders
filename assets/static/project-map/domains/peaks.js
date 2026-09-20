@@ -4,6 +4,7 @@ import * as apiUrls from '../api/urls.js'
 import {
   PEAKS_ACCESS_LINE,
   PEAKS_JEEP_LINE,
+  PEAKS_TRAIL_LINE,
   PEAKS_SYMBOL,
   PEAK_VIEWSHED_SLUG,
 } from '../constants.js'
@@ -79,8 +80,8 @@ export function createPeaksDomain(opts) {
   }
 
   function stripPeakRouteProfiles(peak) {
-    if (!peak.hike && !peak.jeep) return peak
-    return { ...peak, hike: null, jeep: null }
+    if (!peak.hike && !peak.jeep && !peak.trail) return peak
+    return { ...peak, hike: null, jeep: null, trail: null }
   }
 
   function peaksForMapLayers() {
@@ -104,8 +105,12 @@ export function createPeaksDomain(opts) {
       paved_lon: access.paved_lon ?? store.peaks.list[idx].paved_lon,
       hike_m: access.hike_m ?? store.peaks.list[idx].hike_m,
       jeep_m: access.jeep_m ?? store.peaks.list[idx].jeep_m,
+      trail_m: access.trail_m ?? store.peaks.list[idx].trail_m,
+      trail_lat: access.trail_lat ?? store.peaks.list[idx].trail_lat,
+      trail_lon: access.trail_lon ?? store.peaks.list[idx].trail_lon,
       hike: access.hike ?? store.peaks.list[idx].hike,
       jeep: access.jeep ?? store.peaks.list[idx].jeep,
+      trail: access.trail ?? store.peaks.list[idx].trail,
     }
     store.peaks.list.splice(idx, 1, merged)
   }
@@ -166,6 +171,20 @@ export function createPeaksDomain(opts) {
         ['==', ['get', 'slug'], sel],
         '#fdba74',
         '#ea580c',
+      ])
+    }
+    if (map.getLayer(PEAKS_TRAIL_LINE)) {
+      map.setPaintProperty(PEAKS_TRAIL_LINE, 'line-width', [
+        'case',
+        ['==', ['get', 'slug'], sel],
+        5,
+        3.5,
+      ])
+      map.setPaintProperty(PEAKS_TRAIL_LINE, 'line-color', [
+        'case',
+        ['==', ['get', 'slug'], sel],
+        '#fde68a',
+        '#d4a574',
       ])
     }
   }

@@ -11,6 +11,10 @@ export const PEAKS_ROAD_SOURCE = 'eligible-peaks-road'
 export const PEAKS_ROAD_CIRCLE = 'eligible-peaks-road-circle'
 export const PEAKS_JEEP_SOURCE = 'eligible-peaks-jeep'
 export const PEAKS_JEEP_LINE = 'eligible-peaks-jeep-line'
+export const PEAKS_TRAIL_SOURCE = 'eligible-peaks-trail'
+export const PEAKS_TRAIL_LINE = 'eligible-peaks-trail-line'
+export const PEAKS_TRAIL_LEAVE_SOURCE = 'eligible-peaks-trail-leave'
+export const PEAKS_TRAIL_LEAVE_CIRCLE = 'eligible-peaks-trail-leave-circle'
 export const PEAKS_PAVED_SOURCE = 'eligible-peaks-paved'
 export const PEAKS_PAVED_CIRCLE = 'eligible-peaks-paved-circle'
 export const PEAKS_CURSOR_SOURCE = 'eligible-peaks-cursor'
@@ -23,6 +27,10 @@ export const SITES_ACCESS_SOURCE = 'sites-access'
 export const SITES_ACCESS_LINE = 'sites-access-line'
 export const SITES_JEEP_SOURCE = 'sites-jeep'
 export const SITES_JEEP_LINE = 'sites-jeep-line'
+export const SITES_TRAIL_SOURCE = 'sites-trail'
+export const SITES_TRAIL_LINE = 'sites-trail-line'
+export const SITES_TRAIL_LEAVE_SOURCE = 'sites-trail-leave'
+export const SITES_TRAIL_LEAVE_CIRCLE = 'sites-trail-leave-circle'
 export const SITES_PAVED_SOURCE = 'sites-paved'
 export const SITES_PAVED_CIRCLE = 'sites-paved-circle'
 export const SITES_PARK_SOURCE = 'sites-park'
@@ -55,13 +63,21 @@ export const FORTIFY_CANDIDATES_LABELS_LAYER = 'fortify-candidates-label'
 export const FORTIFY_LINES_SOURCE = 'fortify-candidate-lines'
 export const FORTIFY_LINES_LAYER = 'fortify-candidate-lines-line'
 export const FORTIFY_LINES_LABELS_LAYER = 'fortify-candidate-lines-label'
+export const GTLF_ROADS_INVENTORY_SOURCE = 'gtlf-roads-inventory'
+export const GTLF_ROADS_INVENTORY_LINE = 'gtlf-roads-inventory-line'
+export const GTLF_TRAILS_INVENTORY_SOURCE = 'gtlf-trails-inventory'
+export const GTLF_TRAILS_INVENTORY_LINE = 'gtlf-trails-inventory-line'
 
 /** Top-of-stack paint order after a basemap or overlay change. Peaks stay under sites and RF. */
 export const SITE_STACK_RAISE_IDS = [
+  GTLF_ROADS_INVENTORY_LINE,
+  GTLF_TRAILS_INVENTORY_LINE,
   PEAKS_JEEP_LINE,
+  PEAKS_TRAIL_LINE,
   PEAKS_ACCESS_LINE,
   PEAKS_PAVED_CIRCLE,
   PEAKS_ROAD_CIRCLE,
+  PEAKS_TRAIL_LEAVE_CIRCLE,
   PEAKS_RING_CIRCLE,
   PEAKS_SYMBOL,
   PEAKS_CURSOR_CIRCLE,
@@ -84,9 +100,11 @@ export const SITE_STACK_RAISE_IDS = [
   SITES_LABELS,
   SITES_SELECTED,
   SITES_JEEP_LINE,
+  SITES_TRAIL_LINE,
   SITES_ACCESS_LINE,
   SITES_PAVED_CIRCLE,
   SITES_PARK_CIRCLE,
+  SITES_TRAIL_LEAVE_CIRCLE,
 ]
 export const PEAK_BIN_MIN_M = 500
 export const PEAK_BIN_MAX_M = 1500

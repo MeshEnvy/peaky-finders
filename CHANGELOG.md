@@ -12,6 +12,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **Access routing (GTLF + three legs)** — jeep (OSM + BLM motorized roads/trails) → foot trail (GTLF layers 4–5) → bushwhack (DEM A* only). Park pick minimizes bushwhack, then trail+bushwhack, then jeep distance. `hike` / `hike_m` on access profiles are **bushwhack only**; new `trail` / `trail_m` / `trail_loc` for the foot-trail leg. Map: orange jeep, tan trail, green dashed bushwhack. `ACCESS_ALGO_VERSION` → **14**. Re-warm site/peak access after upgrade.
+
+### Added
+
+- **BLM GTLF road source** — `sources.gtlf` in project `config.yaml` (jeep layers 0–3, foot layers 4–5). Bbox-clipped MapServer fetch caches under `.peaky/cache/roads/` (gitignored). Merged into the jeep graph after OSM cache load; foot trails stay a separate walk graph. Serve inventory: `GET …/roads/gtlf/geojson` and `…/trails/geojson`.
+
+### Changed
+
 - **Peak catalog jeep** — same paved-first closest approach as site pins, plus predictor-only caps: overall `jeep.extreme.max_route_m` and per-class `jeep.extreme.max_class_m` (untagged `unclassified`/`track` count as grade5). Drops the 805 m road pre-check. `PEAK_ALGO_VERSION` → **8**. Re-run `peaky peaks build`.
 - **Site/pin access display** — jeep starts at the nearest OSM paved highway and drives the connected graph as close as it can get, then the walk is the remainder. Catalog slope/distance/jeep gates stay off. Empty state is **No mapped OSM road** (or **On road** when snapped). `ACCESS_ALGO_VERSION` → **13**.
 - **Peak catalog density** — DEM bin size is **500 m** (was 1.5 km). Catalog no longer drops candidates near booked sites; `candidate_dedup_m` (300 m) only collapses nearby eligible peaks. `PEAK_ALGO_VERSION` → **7**. Re-run `peaky peaks build`.

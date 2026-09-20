@@ -308,6 +308,9 @@ pub fn upsert_peak_with_access(
         if access.hike.is_none() {
             access.hike = existing.hike;
         }
+        if access.trail.is_none() {
+            access.trail = existing.trail;
+        }
         if access.jeep.is_none() {
             access.jeep = existing.jeep;
         }
@@ -323,6 +326,12 @@ pub fn upsert_peak_with_access(
         if access.hike_m.is_none() {
             access.hike_m = existing.hike_m;
         }
+        if access.trail_loc.is_none() {
+            access.trail_loc = existing.trail_loc;
+        }
+        if access.trail_m.is_none() {
+            access.trail_m = existing.trail_m;
+        }
         if access.max_slope_deg.is_none() {
             access.max_slope_deg = existing.max_slope_deg;
         }
@@ -333,10 +342,13 @@ pub fn upsert_peak_with_access(
     if brought_profiles {
         let access_meta = load_access_meta(config_path).unwrap_or_default();
         let peak_meta = load_peaks_meta(config_path).unwrap_or_default();
-        access.compute_key = Some(crate::compute_key::peak_access_compute_key(
-            &access_meta,
-            peak_meta.rules.max_hike_m,
-        ));
+        if access.compute_key.is_none() {
+            access.compute_key = Some(crate::compute_key::peak_access_compute_key(
+                &access_meta,
+                peak_meta.rules.max_hike_m,
+                "disabled",
+            ));
+        }
     } else if access.compute_key.is_none()
         && (access.hike.is_some() || access.jeep.is_some())
     {
@@ -345,6 +357,7 @@ pub fn upsert_peak_with_access(
         access.compute_key = Some(crate::compute_key::peak_access_compute_key(
             &access_meta,
             peak_meta.rules.max_hike_m,
+            "disabled",
         ));
     }
     upsert_peak(config_path, slug, &entry.with_access(&access))?;
@@ -494,6 +507,9 @@ mod tests {
                     hike_max_grade_pct: None,
                     max_slope_deg: Some(12.0),
                     hike: None,
+                    trail_loc: None,
+                    trail_m: None,
+                    trail: None,
                     paved_loc: Some([37.99, -117.02]),
                     jeep_m: Some(1500.0),
                     jeep_highway: None,
@@ -575,6 +591,9 @@ peaks:
                 }],
                 histogram: vec![],
             }),
+            trail_loc: None,
+            trail_m: None,
+            trail: None,
             paved_loc: Some([37.99, -117.02]),
             jeep_m: Some(1500.0),
             jeep_highway: None,
@@ -625,6 +644,9 @@ peaks:
                 hike_max_grade_pct: None,
                 max_slope_deg: None,
                 hike: None,
+                trail_loc: None,
+                trail_m: None,
+                trail: None,
                 paved_loc: None,
                 jeep_m: None,
                 jeep_highway: None,
@@ -656,6 +678,9 @@ peaks:
                 hike_max_grade_pct: None,
                 max_slope_deg: Some(12.0),
                 hike: None,
+                trail_loc: None,
+                trail_m: None,
+                trail: None,
                 paved_loc: None,
                 jeep_m: None,
                 jeep_highway: None,
@@ -710,6 +735,9 @@ peaks:
                 }],
                 histogram: vec![],
             }),
+            trail_loc: None,
+            trail_m: None,
+            trail: None,
             paved_loc: None,
             jeep_m: None,
             jeep_highway: None,
@@ -771,6 +799,9 @@ peaks:
                 }],
                 histogram: vec![],
             }),
+            trail_loc: None,
+            trail_m: None,
+            trail: None,
             paved_loc: None,
             jeep_m: None,
             jeep_highway: None,
@@ -831,6 +862,9 @@ peaks:
             hike_max_grade_pct: None,
             max_slope_deg: Some(5.0),
             hike: None,
+            trail_loc: None,
+            trail_m: None,
+            trail: None,
             paved_loc: None,
             jeep_m: None,
             jeep_highway: None,
@@ -853,6 +887,7 @@ peaks:
                 hike_m: Some(20.0),
                 hike: None,
                 max_slope_deg: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -868,6 +903,7 @@ peaks:
                 hike_m: None,
                 hike: None,
                 max_slope_deg: None,
+                ..Default::default()
             },
         )
         .unwrap();

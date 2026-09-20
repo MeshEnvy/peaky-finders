@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use peaky_peaks::{
     load_routing_for_points_progress, routing_bbox_for_points, routing_coverage_bbox,
-    warm_place_access_with_routing, OsmParsePhase, OsmRouting, OsmRoutingOpts, OSM_ROUTE_PAD_DEG,
+    warm_place_access_with_routing, OsmParsePhase, OsmRoutingOpts, ProjectRouting, OSM_ROUTE_PAD_DEG,
 };
 use peaky_preset::{
     ensure_access_meta, load_access, load_preset, resolved_viewshed_root, BoardViewshedResolver,
@@ -48,7 +48,7 @@ const LINKS_REFRESH_DEBOUNCE_MS: u64 = 2000;
 const OSM_COVER_PAD_DEG: f64 = 0.35;
 
 struct CachedOsmRouting {
-    routing: Arc<OsmRouting>,
+    routing: Arc<ProjectRouting>,
     west: f64,
     south: f64,
     east: f64,
@@ -549,7 +549,7 @@ impl WarmHub {
         self.events.publish(&self.project_slug, "osm", payload);
     }
 
-    fn cached_osm_if_covers(&self, extra: &[(f64, f64)]) -> Option<Arc<OsmRouting>> {
+    fn cached_osm_if_covers(&self, extra: &[(f64, f64)]) -> Option<Arc<ProjectRouting>> {
         let guard = self.osm_routing.lock().unwrap();
         let cached = guard.as_ref()?;
         if extra.is_empty() || extra.iter().all(|&(lat, lon)| cached.covers(lat, lon, OSM_COVER_PAD_DEG))
@@ -566,7 +566,7 @@ impl WarmHub {
         &self,
         preset_path: &Path,
         extra: &[(f64, f64)],
-    ) -> Result<Arc<OsmRouting>> {
+    ) -> Result<Arc<ProjectRouting>> {
         if let Some(routing) = self.cached_osm_if_covers(extra) {
             return Ok(routing);
         }
@@ -625,7 +625,7 @@ impl WarmHub {
         &self,
         preset_path: &Path,
         _preset: &Preset,
-    ) -> Result<Arc<OsmRouting>> {
+    ) -> Result<Arc<ProjectRouting>> {
         self.ensure_osm_covering(preset_path, &[])
     }
 

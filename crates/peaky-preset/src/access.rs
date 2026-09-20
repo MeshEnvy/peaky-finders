@@ -159,6 +159,7 @@ mod tests {
                 histogram: vec![],
             }),
             max_slope_deg: Some(10.0),
+            ..Default::default()
         };
         upsert_access(&config, "spencer-peak", &access).unwrap();
         let loaded = load_access(&config, "spencer-peak").unwrap().unwrap();

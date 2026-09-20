@@ -32,14 +32,16 @@ function hasAccessLeg(leg) {
   return leg != null && Number.isFinite(leg.horiz_m) && leg.horiz_m > LEG_MIN_M
 }
 
-/** @param {object|null|undefined} hike @param {object|null|undefined} jeep */
-function isOnRoadSnap(hike, jeep) {
-  if (!hike && !jeep) return false
+/** @param {object|null|undefined} hike @param {object|null|undefined} jeep @param {object|null|undefined} trail */
+function isOnRoadSnap(hike, jeep, trail) {
+  if (!hike && !jeep && !trail) return false
   const noHike =
     !hike || !Number.isFinite(hike.horiz_m) || hike.horiz_m <= LEG_MIN_M
   const noJeep =
     !jeep || !Number.isFinite(jeep.horiz_m) || jeep.horiz_m <= LEG_MIN_M
-  return noHike && noJeep
+  const noTrail =
+    !trail || !Number.isFinite(trail.horiz_m) || trail.horiz_m <= LEG_MIN_M
+  return noHike && noJeep && noTrail
 }
 
 /** Keep chart segments wide enough to show grade colors (long jeep routes). */
@@ -254,13 +256,16 @@ export const AccessProfilesPanel = {
   props: {
     hike: { type: Object, default: null },
     jeep: { type: Object, default: null },
+    trail: { type: Object, default: null },
     loading: { type: Boolean, default: false },
     loadingLabel: { type: String, default: '' },
     error: { type: String, default: '' },
     /** Optional catalog elev for hike end snap (peaks). */
     hikeEndElevM: { type: Number, default: undefined },
-    hikeStartLabel: { type: String, default: 'Road' },
+    hikeStartLabel: { type: String, default: 'Leave trail' },
     hikeEndLabel: { type: String, default: 'Summit' },
+    trailStartLabel: { type: String, default: 'Park' },
+    trailEndLabel: { type: String, default: 'Leave trail' },
     /** Optional override from `peaks/_meta.yaml` → `rules.difficulty`. */
     difficultyConfig: { type: Object, default: null },
     emptyText: { type: String, default: 'No mapped OSM road' },
@@ -272,6 +277,9 @@ export const AccessProfilesPanel = {
     )
     const jeepElevationChart = computed(() =>
       buildElevationChart(prepareDisplayProfile(props.jeep?.profile)),
+    )
+    const trailElevationChart = computed(() =>
+      buildElevationChart(prepareDisplayProfile(props.trail?.profile)),
     )
 
     const netDownhillNote = computed(() => {
@@ -299,7 +307,8 @@ export const AccessProfilesPanel = {
     })
     const showHike = computed(() => hasAccessLeg(props.hike))
     const showJeep = computed(() => hasAccessLeg(props.jeep))
-    const onRoadSnap = computed(() => isOnRoadSnap(props.hike, props.jeep))
+    const showTrail = computed(() => hasAccessLeg(props.trail))
+    const onRoadSnap = computed(() => isOnRoadSnap(props.hike, props.jeep, props.trail))
     const hikeDifficultyLabel = computed(() =>
       deriveHikeDifficulty(props.hike, props.difficultyConfig),
     )
@@ -310,11 +319,13 @@ export const AccessProfilesPanel = {
     return {
       elevationChart,
       jeepElevationChart,
+      trailElevationChart,
       netDownhillNote,
       osmRoadClass,
       osmRoadHint,
       showHike,
       showJeep,
+      showTrail,
       onRoadSnap,
       hikeDifficultyLabel,
       jeepDifficultyLabel,
@@ -329,97 +340,7 @@ export const AccessProfilesPanel = {
     <div class="access-profiles">
       <wa-callout v-if="error" variant="danger">{{ error }}</wa-callout>
       <p v-else-if="loading" class="pf-muted">{{ loadingLabel || 'Loading access profile…' }}</p>
-      <template v-else-if="showHike || showJeep">
-        <template v-if="showHike">
-          <div class="peak-sheet__rating">
-            <span
-              v-if="hikeDifficultyLabel"
-              class="peak-difficulty"
-              :class="difficultyClass(hikeDifficultyLabel)"
-            >{{ hikeDifficultyLabel }}</span>
-            <span class="pf-muted">hike</span>
-          </div>
-          <wa-callout v-if="netDownhillNote" variant="neutral" class="peak-sheet__note">{{ netDownhillNote }}</wa-callout>
-          <div class="site-panel__facts">
-            <div class="site-panel__fact">
-              <span class="site-panel__label">Hike distance</span>
-              <p class="site-panel__value">{{ formatAccessDist(hike.horiz_m) }}</p>
-            </div>
-            <div class="site-panel__fact">
-              <span class="site-panel__label">Elevation gain</span>
-              <p class="site-panel__value">{{ formatGainLoss(hike.gain_m) }}</p>
-            </div>
-            <div class="site-panel__fact">
-              <span class="site-panel__label">Max grade</span>
-              <p class="site-panel__value">{{ formatGradePct(hike.max_grade_pct) }}</p>
-            </div>
-            <div class="site-panel__fact">
-              <span class="site-panel__label">Avg grade</span>
-              <p class="site-panel__value">{{ formatGradePct(hike.avg_grade_pct) }}</p>
-            </div>
-          </div>
-          <div v-if="elevationChart" class="site-panel__section peak-elev-map">
-            <span class="site-panel__label">Elevation profile</span>
-            <div class="peak-elev-map__wrap">
-              <svg
-                class="peak-elev-map__chart peak-elev-map__chart--interactive"
-                :viewBox="'0 0 ' + elevationChart.width + ' ' + elevationChart.height"
-                role="img"
-                :aria-label="'Elevation profile colored by grade, ' + hikeStartLabel + ' to ' + hikeEndLabel + '. Click to pan the map to that spot.'"
-                @click="onChartClick($event, elevationChart)"
-              >
-                <rect x="0" y="0" :width="elevationChart.width" :height="elevationChart.height" class="peak-elev-map__bg" />
-                <line
-                  v-for="(grid, i) in elevationChart.gridLines"
-                  :key="'g' + i"
-                  :x1="12"
-                  :x2="elevationChart.width - 12"
-                  :y1="grid.y"
-                  :y2="grid.y"
-                  class="peak-elev-map__grid"
-                />
-                <path
-                  v-for="(seg, i) in elevationChart.segments"
-                  :key="i"
-                  :d="seg.path"
-                  :fill="seg.color"
-                  class="peak-elev-map__segment"
-                />
-                <path
-                  v-if="elevationChart.outline"
-                  :d="elevationChart.outline"
-                  class="peak-elev-map__outline"
-                />
-                <circle :cx="elevationChart.start.x" :cy="elevationChart.start.y" r="3" class="peak-elev-map__dot peak-elev-map__dot--start" />
-                <circle :cx="elevationChart.end.x" :cy="elevationChart.end.y" r="3" class="peak-elev-map__dot peak-elev-map__dot--end" />
-                <text
-                  :x="elevationChart.start.x"
-                  :y="elevationChart.start.y - 7"
-                  text-anchor="start"
-                  class="peak-elev-map__elev-label"
-                >{{ elevationChart.start.elev }}</text>
-                <text
-                  :x="elevationChart.end.x"
-                  :y="elevationChart.end.y - 7"
-                  text-anchor="end"
-                  class="peak-elev-map__elev-label"
-                >{{ elevationChart.end.elev }}</text>
-                <text
-                  :x="elevationChart.start.x"
-                  :y="elevationChart.baseline + 14"
-                  text-anchor="start"
-                  class="peak-elev-map__axis-label"
-                >{{ hikeStartLabel }}</text>
-                <text
-                  :x="elevationChart.end.x"
-                  :y="elevationChart.baseline + 14"
-                  text-anchor="end"
-                  class="peak-elev-map__axis-label"
-                >{{ hikeEndLabel }}</text>
-              </svg>
-            </div>
-          </div>
-        </template>
+      <template v-else-if="showHike || showJeep || showTrail">
         <template v-if="showJeep">
           <div class="site-panel__section peak-sheet__jeep-header">
             <span class="site-panel__label">Jeep access</span>
@@ -513,6 +434,181 @@ export const AccessProfilesPanel = {
                   text-anchor="end"
                   class="peak-elev-map__axis-label"
                 >Park</text>
+              </svg>
+            </div>
+          </div>
+        </template>
+        <template v-if="showTrail">
+          <div class="site-panel__section peak-sheet__jeep-header">
+            <span class="site-panel__label">Foot trail</span>
+            <span class="pf-muted">walk</span>
+          </div>
+          <div class="site-panel__facts">
+            <div class="site-panel__fact">
+              <span class="site-panel__label">Trail distance</span>
+              <p class="site-panel__value">{{ formatAccessDist(trail.horiz_m) }}</p>
+            </div>
+            <div class="site-panel__fact">
+              <span class="site-panel__label">Elevation gain</span>
+              <p class="site-panel__value">{{ formatGainLoss(trail.gain_m) }}</p>
+            </div>
+            <div class="site-panel__fact">
+              <span class="site-panel__label">Max grade</span>
+              <p class="site-panel__value">{{ formatGradePct(trail.max_grade_pct) }}</p>
+            </div>
+            <div class="site-panel__fact">
+              <span class="site-panel__label">Avg grade</span>
+              <p class="site-panel__value">{{ formatGradePct(trail.avg_grade_pct) }}</p>
+            </div>
+          </div>
+          <div v-if="trailElevationChart" class="site-panel__section peak-elev-map">
+            <span class="site-panel__label">Trail elevation profile</span>
+            <div class="peak-elev-map__wrap">
+              <svg
+                class="peak-elev-map__chart peak-elev-map__chart--interactive"
+                :viewBox="'0 0 ' + trailElevationChart.width + ' ' + trailElevationChart.height"
+                role="img"
+                :aria-label="'Trail elevation profile, ' + trailStartLabel + ' to ' + trailEndLabel + '. Click to pan the map to that spot.'"
+                @click="onChartClick($event, trailElevationChart)"
+              >
+                <rect x="0" y="0" :width="trailElevationChart.width" :height="trailElevationChart.height" class="peak-elev-map__bg" />
+                <line
+                  v-for="(grid, i) in trailElevationChart.gridLines"
+                  :key="'tg' + i"
+                  :x1="12"
+                  :x2="trailElevationChart.width - 12"
+                  :y1="grid.y"
+                  :y2="grid.y"
+                  class="peak-elev-map__grid"
+                />
+                <path
+                  v-for="(seg, i) in trailElevationChart.segments"
+                  :key="'ts' + i"
+                  :d="seg.path"
+                  :fill="seg.color"
+                  class="peak-elev-map__segment"
+                />
+                <path
+                  v-if="trailElevationChart.outline"
+                  :d="trailElevationChart.outline"
+                  class="peak-elev-map__outline"
+                />
+                <circle :cx="trailElevationChart.start.x" :cy="trailElevationChart.start.y" r="3" class="peak-elev-map__dot peak-elev-map__dot--park" />
+                <circle :cx="trailElevationChart.end.x" :cy="trailElevationChart.end.y" r="3" class="peak-elev-map__dot peak-elev-map__dot--start" />
+                <text
+                  :x="trailElevationChart.start.x"
+                  :y="trailElevationChart.start.y - 7"
+                  text-anchor="start"
+                  class="peak-elev-map__elev-label"
+                >{{ trailElevationChart.start.elev }}</text>
+                <text
+                  :x="trailElevationChart.end.x"
+                  :y="trailElevationChart.end.y - 7"
+                  text-anchor="end"
+                  class="peak-elev-map__elev-label"
+                >{{ trailElevationChart.end.elev }}</text>
+                <text
+                  :x="trailElevationChart.start.x"
+                  :y="trailElevationChart.baseline + 14"
+                  text-anchor="start"
+                  class="peak-elev-map__axis-label"
+                >{{ trailStartLabel }}</text>
+                <text
+                  :x="trailElevationChart.end.x"
+                  :y="trailElevationChart.baseline + 14"
+                  text-anchor="end"
+                  class="peak-elev-map__axis-label"
+                >{{ trailEndLabel }}</text>
+              </svg>
+            </div>
+          </div>
+        </template>
+        <template v-if="showHike">
+          <div class="peak-sheet__rating">
+            <span
+              v-if="hikeDifficultyLabel"
+              class="peak-difficulty"
+              :class="difficultyClass(hikeDifficultyLabel)"
+            >{{ hikeDifficultyLabel }}</span>
+            <span class="pf-muted">bushwhack</span>
+          </div>
+          <wa-callout v-if="netDownhillNote" variant="neutral" class="peak-sheet__note">{{ netDownhillNote }}</wa-callout>
+          <div class="site-panel__facts">
+            <div class="site-panel__fact">
+              <span class="site-panel__label">Bushwhack distance</span>
+              <p class="site-panel__value">{{ formatAccessDist(hike.horiz_m) }}</p>
+            </div>
+            <div class="site-panel__fact">
+              <span class="site-panel__label">Elevation gain</span>
+              <p class="site-panel__value">{{ formatGainLoss(hike.gain_m) }}</p>
+            </div>
+            <div class="site-panel__fact">
+              <span class="site-panel__label">Max grade</span>
+              <p class="site-panel__value">{{ formatGradePct(hike.max_grade_pct) }}</p>
+            </div>
+            <div class="site-panel__fact">
+              <span class="site-panel__label">Avg grade</span>
+              <p class="site-panel__value">{{ formatGradePct(hike.avg_grade_pct) }}</p>
+            </div>
+          </div>
+          <div v-if="elevationChart" class="site-panel__section peak-elev-map">
+            <span class="site-panel__label">Elevation profile</span>
+            <div class="peak-elev-map__wrap">
+              <svg
+                class="peak-elev-map__chart peak-elev-map__chart--interactive"
+                :viewBox="'0 0 ' + elevationChart.width + ' ' + elevationChart.height"
+                role="img"
+                :aria-label="'Elevation profile colored by grade, ' + hikeStartLabel + ' to ' + hikeEndLabel + '. Click to pan the map to that spot.'"
+                @click="onChartClick($event, elevationChart)"
+              >
+                <rect x="0" y="0" :width="elevationChart.width" :height="elevationChart.height" class="peak-elev-map__bg" />
+                <line
+                  v-for="(grid, i) in elevationChart.gridLines"
+                  :key="'g' + i"
+                  :x1="12"
+                  :x2="elevationChart.width - 12"
+                  :y1="grid.y"
+                  :y2="grid.y"
+                  class="peak-elev-map__grid"
+                />
+                <path
+                  v-for="(seg, i) in elevationChart.segments"
+                  :key="i"
+                  :d="seg.path"
+                  :fill="seg.color"
+                  class="peak-elev-map__segment"
+                />
+                <path
+                  v-if="elevationChart.outline"
+                  :d="elevationChart.outline"
+                  class="peak-elev-map__outline"
+                />
+                <circle :cx="elevationChart.start.x" :cy="elevationChart.start.y" r="3" class="peak-elev-map__dot peak-elev-map__dot--start" />
+                <circle :cx="elevationChart.end.x" :cy="elevationChart.end.y" r="3" class="peak-elev-map__dot peak-elev-map__dot--end" />
+                <text
+                  :x="elevationChart.start.x"
+                  :y="elevationChart.start.y - 7"
+                  text-anchor="start"
+                  class="peak-elev-map__elev-label"
+                >{{ elevationChart.start.elev }}</text>
+                <text
+                  :x="elevationChart.end.x"
+                  :y="elevationChart.end.y - 7"
+                  text-anchor="end"
+                  class="peak-elev-map__elev-label"
+                >{{ elevationChart.end.elev }}</text>
+                <text
+                  :x="elevationChart.start.x"
+                  :y="elevationChart.baseline + 14"
+                  text-anchor="start"
+                  class="peak-elev-map__axis-label"
+                >{{ hikeStartLabel }}</text>
+                <text
+                  :x="elevationChart.end.x"
+                  :y="elevationChart.baseline + 14"
+                  text-anchor="end"
+                  class="peak-elev-map__axis-label"
+                >{{ hikeEndLabel }}</text>
               </svg>
             </div>
           </div>

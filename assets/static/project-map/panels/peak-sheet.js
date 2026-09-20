@@ -36,6 +36,8 @@ export function mountPeakSheet(store, appApi) {
 
       const hike = computed(() => hikeDetail.value?.hike || selectedPeak.value?.hike || null)
       const jeep = computed(() => hikeDetail.value?.jeep || selectedPeak.value?.jeep || null)
+      const trail = computed(() => hikeDetail.value?.trail || selectedPeak.value?.trail || null)
+      const hikeStartLabel = computed(() => (trail.value ? 'Leave trail' : 'Park'))
 
       const title = computed(() => {
         const peak = selectedPeak.value
@@ -54,8 +56,13 @@ export function mountPeakSheet(store, appApi) {
           return
         }
         const peak = store.peaks.list.find((p) => p.slug === slug)
-        if (peak?.hike?.profile || peak?.jeep?.profile) {
-          hikeDetail.value = { ...peak, hike: peak.hike, jeep: peak.jeep || null }
+        if (peak?.hike?.profile || peak?.jeep?.profile || peak?.trail?.profile) {
+          hikeDetail.value = {
+            ...peak,
+            hike: peak.hike,
+            jeep: peak.jeep || null,
+            trail: peak.trail || null,
+          }
           accessError.value = ''
           loading.value = false
           return
@@ -72,8 +79,11 @@ export function mountPeakSheet(store, appApi) {
             name: peak?.name,
             hike: access.hike || null,
             jeep: access.jeep || null,
+            trail: access.trail || null,
             road_lat: access.road_lat,
             road_lon: access.road_lon,
+            trail_lat: access.trail_lat,
+            trail_lon: access.trail_lon,
             paved_lat: access.paved_lat,
             paved_lon: access.paved_lon,
           }
@@ -136,6 +146,8 @@ export function mountPeakSheet(store, appApi) {
         selectedPeak,
         hike,
         jeep,
+        trail,
+        hikeStartLabel,
         loading,
         accessError,
         actionError,
@@ -162,9 +174,11 @@ export function mountPeakSheet(store, appApi) {
         <AccessProfilesPanel
           :hike="hike"
           :jeep="jeep"
+          :trail="trail"
           :loading="loading"
           :error="accessError"
           :hike-end-elev-m="selectedPeak?.elev_m"
+          :hike-start-label="hikeStartLabel"
           :difficulty-config="difficultyConfig"
           hike-end-label="Summit"
           empty-text="No mapped OSM road"

@@ -13,6 +13,7 @@ mod land;
 mod link_solver;
 mod peaks;
 mod peaks_cache;
+mod roads;
 mod query_params;
 mod links;
 pub mod rf;

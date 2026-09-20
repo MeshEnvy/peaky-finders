@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use peaky_peaks::{
-    profile_along_polyline, resolve_hike, warm_place_access, warm_place_access_with_routing,
-    HikeSampleElev, OsmRouting,
+    profile_along_polyline, project_gtlf_fingerprint, resolve_hike, warm_place_access,
+    warm_place_access_with_routing, HikeSampleElev, ProjectRouting,
 };
 use crate::peaks_cache::cached_peaks_list;
 use peaky_preset::{
@@ -80,6 +80,10 @@ fn access_json(slug: &str, access: &PlaceAccess) -> Value {
         "hike_m": access.hike_m,
         "max_slope_deg": access.max_slope_deg,
         "hike": access.hike.as_ref().map(slim_hike),
+        "trail_lat": access.trail_loc.map(|loc| loc[0]),
+        "trail_lon": access.trail_loc.map(|loc| loc[1]),
+        "trail_m": access.trail_m,
+        "trail": access.trail.as_ref().map(slim_hike),
         "jeep_m": access.jeep_m,
         "jeep": access.jeep.as_ref().map(jeep_access_json),
     })
@@ -88,11 +92,13 @@ fn access_json(slug: &str, access: &PlaceAccess) -> Value {
 /// Keys that count as fresh for display (site warm or peak-built).
 fn expected_access_keys(preset_path: &Path) -> Vec<String> {
     let access_meta = ensure_access_meta(preset_path).unwrap_or_default();
-    let mut keys = vec![place_access_compute_key(&access_meta)];
+    let project_dir = preset_path.parent().unwrap_or(preset_path);
+    let gtlf = project_gtlf_fingerprint(project_dir);
+    let mut keys = vec![place_access_compute_key(&access_meta, &gtlf)];
     let road_search = load_peaks_rules(preset_path)
         .map(|r| r.max_hike_m)
         .unwrap_or_else(|_| peaky_preset::PeakAccessRules::default().max_hike_m);
-    keys.push(peak_access_compute_key(&access_meta, road_search));
+    keys.push(peak_access_compute_key(&access_meta, road_search, &gtlf));
     keys
 }
 
@@ -114,7 +120,7 @@ pub fn list_peaks_payload(preset_path: &Path) -> Result<Value> {
 fn warm_place(
     preset_path: &Path,
     session: &Arc<Session>,
-    routing: Option<&OsmRouting>,
+    routing: Option<&ProjectRouting>,
     slug: &str,
     lat: f64,
     lon: f64,
@@ -134,7 +140,7 @@ pub fn place_access_payload(
     warm_if_missing: bool,
     warm_lat: Option<f64>,
     warm_lon: Option<f64>,
-    routing: Option<&OsmRouting>,
+    routing: Option<&ProjectRouting>,
 ) -> Result<Value> {
     if let Some(access) = load_access(preset_path, place_slug)? {
         if access_fresh_on_disk(preset_path, &access) || !warm_if_missing {

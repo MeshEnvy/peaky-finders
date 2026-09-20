@@ -256,6 +256,16 @@ impl JeepRoadGraph {
         idx
     }
 
+    pub(crate) fn get_or_insert_node_public(
+        &mut self,
+        osm_id: i64,
+        lat: f64,
+        lon: f64,
+        map: &mut HashMap<i64, u32>,
+    ) -> u32 {
+        self.get_or_insert_node(osm_id, lat, lon, map)
+    }
+
     fn add_way_segment(
         &mut self,
         a: u32,
@@ -298,6 +308,22 @@ impl JeepRoadGraph {
                 fourwd_only,
             },
         );
+    }
+
+    pub(crate) fn add_way_segment_public(
+        &mut self,
+        a: u32,
+        b: u32,
+        lat1: f64,
+        lon1: f64,
+        lat2: f64,
+        lon2: f64,
+        highway: &str,
+        tracktype: Option<&str>,
+        surface: Option<&str>,
+        fourwd_only: bool,
+    ) {
+        self.add_way_segment(a, b, lat1, lon1, lat2, lon2, highway, tracktype, surface, fourwd_only);
     }
 }
 
@@ -570,6 +596,10 @@ fn is_paved_anchor(tags: WayTags<'_>, paved_tags: &HashSet<&str>) -> bool {
             | "primary_link"
             | "secondary_link"
     )
+}
+
+pub(crate) fn sample_way_public(nodes: &[(f64, f64)], step_m: f64) -> Vec<RoadPoint> {
+    sample_way(nodes, step_m)
 }
 
 fn sample_way(nodes: &[(f64, f64)], step_m: f64) -> Vec<RoadPoint> {
@@ -867,6 +897,97 @@ where
     })
 }
 
+/// Supplemental line for jeep graph merge (GTLF roads / OHV trails).
+pub struct SupplementalLine {
+    pub coords: Vec<(f64, f64)>,
+    pub highway: String,
+    pub tracktype: Option<String>,
+}
+
+const MERGE_ENDPOINT_SNAP_M: f64 = 40.0;
+const MERGE_DEDUP_M: f64 = 30.0;
+
+fn line_fully_covered(index: &JeepRoadIndex, coords: &[(f64, f64)]) -> bool {
+    if coords.is_empty() {
+        return true;
+    }
+    coords.iter().all(|&(lat, lon)| {
+        index
+            .nearest_within(lat, lon, MERGE_DEDUP_M)
+            .is_some()
+    })
+}
+
+/// Merge driveable GTLF lines into an OSM routing graph (snap endpoints, dedup).
+pub fn merge_supplemental_jeep_lines(
+    routing: &mut OsmRouting,
+    lines: &[SupplementalLine],
+    sample_step_m: f64,
+) {
+    let mut graph_node_map: HashMap<i64, u32> = HashMap::new();
+    let mut next_id: i64 = -1_000_000;
+    let mut new_samples: Vec<RoadPoint> = routing.jeep_roads.sample_points();
+    let mut added_ways = 0usize;
+
+    for line in lines {
+        if line.coords.len() < 2 {
+            continue;
+        }
+        if line_fully_covered(&routing.jeep_roads, &line.coords) {
+            continue;
+        }
+        added_ways += 1;
+        new_samples.extend(sample_way(&line.coords, sample_step_m));
+
+        let mut coords = line.coords.clone();
+        if let Some(node) = routing
+            .graph
+            .nearest_node(coords[0].0, coords[0].1, MERGE_ENDPOINT_SNAP_M)
+        {
+            coords[0] = routing.graph.node_coords(node);
+        }
+        if let Some(node) = routing.graph.nearest_node(
+            coords.last().unwrap().0,
+            coords.last().unwrap().1,
+            MERGE_ENDPOINT_SNAP_M,
+        ) {
+            let last = coords.len() - 1;
+            coords[last] = routing.graph.node_coords(node);
+        }
+
+        let mut vert_nodes = Vec::with_capacity(coords.len());
+        for &(lat, lon) in &coords {
+            let id = next_id;
+            next_id -= 1;
+            let n = routing
+                .graph
+                .get_or_insert_node_public(id, lat, lon, &mut graph_node_map);
+            vert_nodes.push(n);
+        }
+        for i in 0..coords.len() - 1 {
+            let (lat1, lon1) = coords[i];
+            let (lat2, lon2) = coords[i + 1];
+            routing.graph.add_way_segment_public(
+                vert_nodes[i],
+                vert_nodes[i + 1],
+                lat1,
+                lon1,
+                lat2,
+                lon2,
+                &line.highway,
+                line.tracktype.as_deref(),
+                None,
+                false,
+            );
+        }
+    }
+
+    if added_ways == 0 {
+        return;
+    }
+    routing.jeep_roads = JeepRoadIndex::from_samples(new_samples, routing.jeep_roads.way_count + added_ways);
+}
+
 /// Backward-compatible jeep-road index only.
 pub fn build_jeep_road_index(
     pbf_path: &Path,
@@ -1095,5 +1216,26 @@ mod tests {
         let flat = FlatElev(2000.0);
         let profile = profile_hike(&flat, rlat, rlon, peak_lat, peak_lon, 30.0).unwrap();
         assert!(profile_passes(&profile, 45.0));
+    }
+
+    #[test]
+    fn supplemental_ohv_track_merges_into_jeep_graph() {
+        let mut routing = OsmRouting {
+            jeep_roads: JeepRoadIndex {
+                tree: RTree::bulk_load(vec![]),
+                point_count: 0,
+                way_count: 0,
+            },
+            graph: JeepRoadGraph::new(),
+            paved: PavedAnchorIndex::test_from_points(&[]),
+        };
+        let line = SupplementalLine {
+            coords: vec![(38.0, -117.0), (38.01, -117.0)],
+            highway: "track".to_string(),
+            tracktype: Some("grade3".to_string()),
+        };
+        merge_supplemental_jeep_lines(&mut routing, &[line], 30.0);
+        assert!(routing.jeep_roads.point_count >= 2);
+        assert!(routing.graph.node_count() >= 2);
     }
 }

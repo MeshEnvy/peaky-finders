@@ -33,6 +33,7 @@ import { createMapInteractionsDomain } from './map-interactions.js'
 import { createSiteLayersDomain } from './site-layers.js'
 import { createPeaksDomain } from './peaks.js'
 import { createSiteAccessDomain } from './site-access.js'
+import { createGtlfDomain } from './gtlf.js'
 import { createEntityChromeDomain } from './entity-chrome.js'
 import { bootProjectMap, createMapChromeDomain } from './map-chrome.js'
 
@@ -78,6 +79,8 @@ export function runApp(ctx = {}) {
   let peaksDomain = null
   /** @type {ReturnType<typeof createSiteAccessDomain>|null} */
   let siteAccessDomain = null
+  /** @type {ReturnType<typeof createGtlfDomain>|null} */
+  let gtlfDomain = null
   /** @type {ReturnType<typeof createEntityChromeDomain>|null} */
   let entityChrome = null
   /** @type {ReturnType<typeof createMapChromeDomain>|null} */
@@ -135,6 +138,15 @@ export function runApp(ctx = {}) {
     isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
     raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
     updatePinOverlays: () => viewshedDomain?.updatePinOverlays(),
+  })
+
+  gtlfDomain = createGtlfDomain({
+    store,
+    projectSlug: String(store.projectSlug || projectSlug || ''),
+    getMap: () => map,
+    getMapReady: () => store.ui.mapReady,
+    raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
+    scheduleSaveMapState: () => mapChrome?.scheduleSaveMapState(),
   })
 
   peaksDomain = createPeaksDomain({
@@ -644,6 +656,7 @@ export function runApp(ctx = {}) {
       mapChrome.fitSites()
     }
     void landDomain.refreshLandMapLayers()
+    void gtlfDomain?.refreshOnMapLoad()
     const bootLink = parseDeepLink()
     if (bootLink.site || bootLink.peak) {
       void applyDeepLinkSelection(bootLink, { replaceHistory: true })

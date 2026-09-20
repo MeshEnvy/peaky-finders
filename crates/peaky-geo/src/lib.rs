@@ -72,6 +72,7 @@ pub use land_pipeline::{
     warm_land_pipeline_caches_for_preset,
     LandPipelineWarmCache, LandPipelineWarmStats,
 };
+pub use land_fetch::download_featureserver_geojson_bbox;
 pub use land_refresh::{
     audit_land_refresh_for_preset, prepare_land_at_boot, LandRefreshFailure, LandRefreshReport,
     LandRefreshRunSummary, LandRefreshStatusKind, LandSourceRefreshRow,

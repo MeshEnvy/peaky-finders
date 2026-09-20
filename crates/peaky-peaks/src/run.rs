@@ -37,7 +37,9 @@ use crate::hike::{
 };
 use peaky_preset::PeaksScanConfig;
 use crate::access::{build_access_catalog, CatalogBuildDrop};
+use crate::gtlf::apply_gtlf_to_routing;
 use crate::osm::{build_osm_routing, ensure_osm_pbf, OsmRouting};
+use crate::trail::TrailRouting;
 use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candidate, RawCandidate};
 
 /// Upsert each peak+access file every N newly freshened/inserted peaks during a build.
@@ -87,6 +89,10 @@ pub(crate) struct FilterPass {
     pub paved_lon: f64,
     pub jeep_m: f64,
     pub jeep: PeakJeepProfile,
+    pub trail_lat: f64,
+    pub trail_lon: f64,
+    pub trail_m: f64,
+    pub trail: PeakHikeProfile,
 }
 
 fn peaks_filter_workers() -> usize {
@@ -158,6 +164,7 @@ pub(crate) fn filter_candidate(
     session: &Session,
     land: &LandFilterIndex,
     routing: &OsmRouting,
+    trails: Option<&TrailRouting>,
     scan_region: &ScanRegion,
     rules: &PeakAccessRules,
     profile_sample_m: f64,
@@ -186,6 +193,7 @@ pub(crate) fn filter_candidate(
     let built = build_access_catalog(
         &elev,
         routing,
+        trails,
         peak_lat,
         peak_lon,
         &rules.difficulty.jeep.extreme,
@@ -222,6 +230,10 @@ pub(crate) fn filter_candidate(
         paved_lon: built.paved_lon,
         jeep_m: built.jeep_m,
         jeep: built.jeep,
+        trail_lat: built.trail_lat,
+        trail_lon: built.trail_lon,
+        trail_m: built.trail_m,
+        trail: built.trail,
     })
 }
 
@@ -267,9 +279,23 @@ pub fn build_peaks_catalog(
     let pbf = ensure_osm_pbf(project_dir, opts.force_osm)?;
     let access_meta = ensure_access_meta(preset_path).context("access/_meta.yaml")?;
     let osm_opts = crate::osm::OsmRoutingOpts::from(&access_meta);
-    let routing = Arc::new(build_osm_routing(
+    let mut osm = build_osm_routing(
         &pbf, bbox.west, bbox.south, bbox.east, bbox.north, &osm_opts,
-    )?);
+    )?;
+    let gtlf_bundle = apply_gtlf_to_routing(
+        project_dir,
+        &mut osm,
+        &osm_opts,
+        bbox.west,
+        bbox.south,
+        bbox.east,
+        bbox.north,
+        opts.force_osm,
+    )?;
+    let gtlf_fingerprint = gtlf_bundle.fingerprint;
+    let routing = Arc::new(osm);
+    let trails = Arc::new(gtlf_bundle.foot_trails);
+    info!(gtlf = %gtlf_fingerprint, "peaks: GTLF merged");
 
     let mirror = resolved_skadi_mirror_dir_for_project(project_dir);
     let dem_workers = resolved_dem_fetch_max_workers(&preset);
@@ -417,6 +443,7 @@ pub fn build_peaks_catalog(
                 session.as_ref(),
                 land_index.as_ref(),
                 routing.as_ref(),
+                Some(trails.as_ref()),
                 &scan_region,
                 &rules,
                 profile_sample_m,
@@ -499,6 +526,7 @@ pub fn build_peaks_catalog(
                         session.as_ref(),
                         land_index.as_ref(),
                         routing.as_ref(),
+                        Some(trails.as_ref()),
                         scan_region.as_ref(),
                         rules.as_ref(),
                         profile_sample_m,
@@ -613,6 +641,7 @@ pub fn build_peaks_catalog(
                 &access_meta,
                 &land_parts.digest,
                 filter_params.summit_snap_m,
+                &gtlf_fingerprint,
             )),
             road_m: Some((pass.road_m * 10.0).round() / 10.0),
             road_loc: Some([pass.road_lat, pass.road_lon]),
@@ -622,6 +651,21 @@ pub fn build_peaks_catalog(
             hike_max_grade_pct: None,
             max_slope_deg: Some((pass.max_slope_deg * 10.0).round() / 10.0),
             hike: Some(pass.hike),
+            trail_loc: if pass.trail_m > crate::access::LEG_MIN_M {
+                Some([pass.trail_lat, pass.trail_lon])
+            } else {
+                None
+            },
+            trail_m: if pass.trail_m > crate::access::LEG_MIN_M {
+                Some((pass.trail_m * 10.0).round() / 10.0)
+            } else {
+                None
+            },
+            trail: if pass.trail_m > crate::access::LEG_MIN_M {
+                Some(pass.trail.clone())
+            } else {
+                None
+            },
             paved_loc: Some([pass.paved_lat, pass.paved_lon]),
             jeep_m: Some((pass.jeep_m * 10.0).round() / 10.0),
             jeep_highway: None,
@@ -745,8 +789,9 @@ fn near_denied(catalog: &PeaksCatalog, lat: f64, lon: f64, max_m: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hike::HikeSampleElev;
+    use crate::hike::{default_max_slope_deg, profile_hike, HikeSampleElev};
     use crate::osm::test_index_from_points;
+    const ROAD_SEARCH_M: f64 = 805.0;
 
     struct FlatElev(f64);
 
@@ -761,7 +806,7 @@ mod tests {
         let roads = test_index_from_points(&[(38.0, -117.0)]);
         let peak_lat = 38.0087;
         let peak_lon = -117.0;
-        let road = roads.nearest_within(peak_lat, peak_lon, DEFAULT_MAX_HIKE_M);
+        let road = roads.nearest_within(peak_lat, peak_lon, ROAD_SEARCH_M);
         assert!(road.is_none(), "0.6 mi from road should exceed 805 m cap");
     }
 
@@ -771,7 +816,7 @@ mod tests {
         let peak_lat = 38.003;
         let peak_lon = -117.0;
         let (rlat, rlon, _) = roads
-            .nearest_within(peak_lat, peak_lon, DEFAULT_MAX_HIKE_M)
+            .nearest_within(peak_lat, peak_lon, ROAD_SEARCH_M)
             .unwrap();
         struct SteepRamp {
             base_lat: f64,
@@ -794,7 +839,7 @@ mod tests {
         let peak_lat = 38.0003;
         let peak_lon = -117.0;
         let (rlat, rlon, road_m) = roads
-            .nearest_within(peak_lat, peak_lon, DEFAULT_MAX_HIKE_M)
+            .nearest_within(peak_lat, peak_lon, ROAD_SEARCH_M)
             .unwrap();
         assert!(road_m < 100.0);
         let flat = FlatElev(2000.0);

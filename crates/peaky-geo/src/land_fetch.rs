@@ -284,30 +284,83 @@ fn write_feature_collection(
     Ok(())
 }
 
-pub fn download_featureserver_geojson(
+fn featureserver_layer_base(service_layer_url: &str) -> String {
+    service_layer_url.trim_end_matches('/').to_string()
+}
+
+fn fetch_featureserver_page(
+    query_base: &str,
+    url_suffix: &str,
+    page_size: u32,
+    offset: u32,
+    verbose: bool,
+) -> Result<(Vec<Feature>, u32)> {
+    let url = format!(
+        "{query_base}?{url_suffix}&resultRecordCount={page_size}&resultOffset={offset}&outSR=4326"
+    );
+    let mut last_err: Option<anyhow::Error> = None;
+    let mut page_size = page_size;
+    for attempt in 0..4 {
+        let client = client()?;
+        let full_url = format!(
+            "{query_base}?{url_suffix}&resultRecordCount={page_size}&resultOffset={offset}&outSR=4326"
+        );
+        match client
+            .get(&full_url)
+            .timeout(Duration::from_secs(600))
+            .send()
+        {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.as_u16() == 500 && page_size > 100 {
+                    page_size = (page_size / 2).max(100);
+                    if verbose {
+                        eprintln!("    HTTP 500 at offset {offset}; retry page_size={page_size}");
+                    }
+                    thread::sleep(Duration::from_millis(500 * (attempt as u64 + 1)));
+                    continue;
+                }
+                if !status.is_success() {
+                    last_err = Some(anyhow::anyhow!("HTTP {status} for {full_url}"));
+                    thread::sleep(Duration::from_millis(500 * (attempt as u64 + 1)));
+                    continue;
+                }
+                let bytes = resp.bytes().context("read featureserver body")?;
+                let chunk: Value =
+                    serde_json::from_slice(&bytes).context("parse featureserver JSON")?;
+                let batch: Vec<Feature> = chunk
+                    .get("features")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                return Ok((batch, page_size));
+            }
+            Err(e) => last_err = Some(e.into()),
+        }
+        thread::sleep(Duration::from_millis(500 * (attempt as u64 + 1)));
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("featureserver fetch failed for {url}")))
+}
+
+fn paginate_featureserver(
     source_id: &str,
     path: &str,
-    service_layer_url: &str,
-    dest: &Path,
+    query_base: &str,
+    layer_base: &str,
+    url_suffix: &str,
     verbose: bool,
-) -> Result<()> {
-    let mut base = service_layer_url.trim_end_matches('/').to_string();
-    if !base.ends_with("/0") {
-        base.push_str("/0");
-    }
-    let query_base = format!("{base}/query");
-    let total = featureserver_total_features(&query_base, &base);
+) -> Result<Vec<Feature>> {
+    let total = featureserver_total_features(query_base, layer_base);
     match total {
         Some(count) => tracing::info!(
             source_id = %source_id,
             path = %path,
             total = count,
-            "land refresh: feature count"
+            "gtlf fetch: feature count"
         ),
         None => tracing::info!(
             source_id = %source_id,
             path = %path,
-            "land refresh: feature count unknown"
+            "gtlf fetch: feature count unknown"
         ),
     }
 
@@ -316,62 +369,15 @@ pub fn download_featureserver_geojson(
     let mut features: Vec<Feature> = Vec::new();
     let mut last_logged_pct: u8 = 0;
 
-    if verbose {
-        eprintln!("  featureserver paginate: {base}");
-    }
-
     loop {
-        let url = format!(
-            "{query_base}?where=1%3D1&outFields=*&f=geojson&resultRecordCount={page_size}&resultOffset={offset}&outSR=4326"
-        );
-        let mut last_err: Option<anyhow::Error> = None;
-        let mut chunk: Option<Value> = None;
-        for attempt in 0..4 {
-            let client = client()?;
-            match client
-                .get(&url)
-                .timeout(Duration::from_secs(600))
-                .send()
-            {
-                Ok(resp) => {
-                    let status = resp.status();
-                    if status.as_u16() == 500 && page_size > 100 {
-                        page_size = (page_size / 2).max(100);
-                        if verbose {
-                            eprintln!("    HTTP 500 at offset {offset}; retry page_size={page_size}");
-                        }
-                        thread::sleep(Duration::from_millis(500 * (attempt as u64 + 1)));
-                        continue;
-                    }
-                    if !status.is_success() {
-                        last_err = Some(anyhow::anyhow!("HTTP {status} for {url}"));
-                        thread::sleep(Duration::from_millis(500 * (attempt as u64 + 1)));
-                        continue;
-                    }
-                    match resp.bytes() {
-                        Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
-                            Ok(parsed) => {
-                                chunk = Some(parsed);
-                                last_err = None;
-                                break;
-                            }
-                            Err(e) => last_err = Some(e.into()),
-                        },
-                        Err(e) => last_err = Some(e.into()),
-                    }
-                }
-                Err(e) => last_err = Some(e.into()),
-            }
-            thread::sleep(Duration::from_millis(500 * (attempt as u64 + 1)));
-        }
-        if let Some(err) = last_err {
-            return Err(err);
-        }
-        let chunk = chunk.context("empty featureserver response")?;
-        let batch: Vec<Feature> = chunk
-            .get("features")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
+        let (batch, used_page) = fetch_featureserver_page(
+            query_base,
+            url_suffix,
+            page_size,
+            offset,
+            verbose,
+        )?;
+        page_size = used_page;
         if batch.is_empty() {
             break;
         }
@@ -389,9 +395,81 @@ pub fn download_featureserver_geojson(
     }
 
     if last_logged_pct < 100 {
-        log_refresh_progress(source_id, path, offset, total.or(Some(offset as u64)), &mut last_logged_pct);
+        log_refresh_progress(
+            source_id,
+            path,
+            offset,
+            total.or(Some(offset as u64)),
+            &mut last_logged_pct,
+        );
     }
+    Ok(features)
+}
 
+/// Bbox-clipped FeatureServer export (WGS-84 envelope).
+pub fn download_featureserver_geojson_bbox(
+    source_id: &str,
+    path: &str,
+    service_layer_url: &str,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    dest: &Path,
+    verbose: bool,
+) -> Result<()> {
+    let base = featureserver_layer_base(service_layer_url);
+    let query_base = format!("{base}/query");
+    let geometry = serde_json::json!({
+        "xmin": west,
+        "ymin": south,
+        "xmax": east,
+        "ymax": north,
+        "spatialReference": { "wkid": 4326 }
+    });
+    let geometry_json = geometry.to_string();
+    let geom_enc = urlencoding::encode(&geometry_json);
+    let url_suffix = format!(
+        "geometry={geom_enc}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&where=1%3D1&outFields=*&f=geojson"
+    );
+    if verbose {
+        eprintln!("  featureserver bbox: {base} [{west},{south},{east},{north}]");
+    }
+    let features = paginate_featureserver(
+        source_id,
+        path,
+        &query_base,
+        &base,
+        &url_suffix,
+        verbose,
+    )?;
+    let stem = dest
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("layer");
+    write_feature_collection(source_id, path, dest, &features, stem)
+}
+
+pub fn download_featureserver_geojson(
+    source_id: &str,
+    path: &str,
+    service_layer_url: &str,
+    dest: &Path,
+    verbose: bool,
+) -> Result<()> {
+    let base = featureserver_layer_base(service_layer_url);
+    let query_base = format!("{base}/query");
+    if verbose {
+        eprintln!("  featureserver paginate: {base}");
+    }
+    let features = paginate_featureserver(
+        source_id,
+        path,
+        &query_base,
+        &base,
+        "where=1%3D1&outFields=*&f=geojson",
+        verbose,
+    )?;
     let stem = dest
         .file_stem()
         .and_then(|s| s.to_str())

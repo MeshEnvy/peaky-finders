@@ -119,6 +119,14 @@ export function landLayerGeoJsonUrl(projectSlug, sourceId, layer) {
   return `/api/p/${projectSlug}/land/sources/${encodeURIComponent(sourceId)}/layers/${encodeURIComponent(layer)}/geojson`
 }
 
+export function gtlfRoadsInventoryGeoJsonUrl(projectSlug) {
+  return `/api/p/${projectSlug}/roads/gtlf/geojson`
+}
+
+export function gtlfTrailsInventoryGeoJsonUrl(projectSlug) {
+  return `/api/p/${projectSlug}/roads/gtlf/trails/geojson`
+}
+
 export function landOverlayGeoJsonUrl(projectSlug, kind) {
   return `/api/p/${projectSlug}/land/overlays/${encodeURIComponent(kind)}/geojson`
 }

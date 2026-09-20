@@ -174,7 +174,7 @@ impl Ord for HeapState {
     }
 }
 
-fn reconstruct_route(
+pub fn reconstruct_jeep_route(
     graph: &JeepRoadGraph,
     prev: &HashMap<u32, (u32, crate::osm::GraphEdge)>,
     dest_node: u32,
@@ -212,7 +212,7 @@ fn reconstruct_route(
     }
 }
 
-fn dijkstra_from_paved(
+pub fn dijkstra_from_paved(
     graph: &JeepRoadGraph,
     sources: &[(f64, f64, u32)],
     max_jeep_m: f64,
@@ -301,7 +301,7 @@ pub fn route_jeep_detailed(
         return None;
     }
     if sources.iter().any(|&(_, _, node)| node == dest) {
-        return Some(reconstruct_route(graph, &HashMap::new(), dest));
+        return Some(reconstruct_jeep_route(graph, &HashMap::new(), dest));
     }
 
     let (dist_cost, _dist_horiz, prev) =
@@ -309,7 +309,7 @@ pub fn route_jeep_detailed(
     if !dist_cost.contains_key(&dest) {
         return None;
     }
-    Some(reconstruct_route(graph, &prev, dest))
+    Some(reconstruct_jeep_route(graph, &prev, dest))
 }
 
 /// Drive from pavement along the OSM graph; stop at the reachable node closest to dest.
@@ -348,7 +348,7 @@ pub fn route_jeep_closest_approach(
         }
     }
     let (dest_node, _) = best?;
-    Some(reconstruct_route(graph, &prev, dest_node))
+    Some(reconstruct_jeep_route(graph, &prev, dest_node))
 }
 
 /// DEM elevation profile along a routed polyline.

@@ -89,8 +89,12 @@ export function createSiteAccessDomain(opts) {
       paved_lon: access.paved_lon,
       hike_m: access.hike_m,
       jeep_m: access.jeep_m,
+      trail_m: access.trail_m,
+      trail_lat: access.trail_lat,
+      trail_lon: access.trail_lon,
       hike: access.hike || null,
       jeep: access.jeep || null,
+      trail: access.trail || null,
     }
     if (store.ui.selectedSlug === slug) {
       store.access.selected = store.access.bySlug[slug]

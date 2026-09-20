@@ -20,5 +20,6 @@ splatter.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 quick-xml.workspace = true
+urlencoding = "2"
 zip.workspace = true
 i_overlay = "8.1.0"
