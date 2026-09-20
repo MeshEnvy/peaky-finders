@@ -22,30 +22,31 @@ pub enum OsmParsePhase {
     Nodes,
     Ways,
     Index,
+    Gtlf,
     Ready,
 }
 
 impl OsmParsePhase {
     pub fn step(self) -> u32 {
         match self {
-            Self::Cache => 1,
-            Self::Nodes => 1,
+            Self::Cache | Self::Nodes => 1,
             Self::Ways => 2,
             Self::Index => 3,
-            Self::Ready => 3,
+            Self::Gtlf | Self::Ready => 4,
         }
     }
 
     pub fn total(self) -> u32 {
-        3
+        4
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Cache => "cache",
-            Self::Nodes => "nodes",
-            Self::Ways => "roads",
-            Self::Index => "index",
+            Self::Cache => "OSM graph",
+            Self::Nodes => "OSM nodes",
+            Self::Ways => "OSM roads",
+            Self::Index => "OSM index",
+            Self::Gtlf => "BLM roads",
             Self::Ready => "ready",
         }
     }
@@ -69,7 +70,7 @@ pub const PAVED_HIGHWAY_TAGS: &[&str] = &[
     "residential",
 ];
 
-/// Options for OSM jeep/paved indexing (from ``access/_meta.yaml``).
+/// Options for OSM jeep/paved indexing (from ``Preset::resolved_access_meta()``).
 #[derive(Debug, Clone)]
 pub struct OsmRoutingOpts {
     pub road_sample_step_m: f64,
@@ -125,6 +126,9 @@ pub struct JeepRoadIndex {
 impl JeepRoadIndex {
     pub(crate) fn from_samples(samples: Vec<RoadPoint>, way_count: usize) -> Self {
         let point_count = samples.len();
+        if point_count >= 1_000_000 {
+            info!(jeep_points = point_count, "peaks: building jeep R-tree");
+        }
         Self {
             tree: RTree::bulk_load(samples),
             point_count,
@@ -418,6 +422,14 @@ impl PavedAnchorIndex {
             }
         }
         out
+    }
+
+    /// Every paved anchor as a Dijkstra source `(lat, lon, node_idx)`.
+    pub fn all_sources(&self) -> Vec<(f64, f64, u32)> {
+        self.tree
+            .iter()
+            .map(|pt| (pt.lat, pt.lon, pt.node_idx))
+            .collect()
     }
 }
 
@@ -1018,10 +1030,24 @@ pub fn merge_supplemental_jeep_lines(
     lines: &[SupplementalLine],
     sample_step_m: f64,
 ) {
+    merge_supplemental_jeep_lines_progress(routing, lines, sample_step_m, &mut |_| {});
+}
+
+/// Same as [`merge_supplemental_jeep_lines`], reporting 0.0–1.0 merge fraction.
+pub fn merge_supplemental_jeep_lines_progress<F>(
+    routing: &mut OsmRouting,
+    lines: &[SupplementalLine],
+    sample_step_m: f64,
+    progress: &mut F,
+) where
+    F: FnMut(f64),
+{
     let total = lines.len();
     if total == 0 {
+        progress(1.0);
         return;
     }
+    progress(0.02);
     info!(lines = total, "gtlf: merging supplemental jeep lines");
     let merge_started = Instant::now();
     let mut graph_node_map: HashMap<i64, u32> = HashMap::new();
@@ -1056,6 +1082,7 @@ pub fn merge_supplemental_jeep_lines(
         skipped_covered,
         "gtlf: jeep merge coverage classified"
     );
+    progress(0.12);
 
     let mut added_ways = 0usize;
     let mut last_progress_log = Instant::now();
@@ -1067,6 +1094,12 @@ pub fn merge_supplemental_jeep_lines(
             || pass_idx % MERGE_PROGRESS_LINES == 0
             || last_progress_log.elapsed().as_secs() >= 10;
         if should_log {
+            let frac = if to_add.is_empty() {
+                0.12
+            } else {
+                0.12 + 0.73 * (pass_idx as f64 / to_add.len() as f64)
+            };
+            progress(frac);
             info!(
                 processed = pass_idx,
                 total = to_add.len(),
@@ -1139,6 +1172,7 @@ pub fn merge_supplemental_jeep_lines(
             skipped_covered,
             "gtlf: jeep merge skipped (all lines already covered)"
         );
+        progress(1.0);
         return;
     }
     info!(
@@ -1148,6 +1182,7 @@ pub fn merge_supplemental_jeep_lines(
         sample_points = new_samples.len(),
         "gtlf: rebuilding jeep R-tree after merge"
     );
+    progress(0.88);
     let index_started = Instant::now();
     routing.jeep_roads =
         JeepRoadIndex::from_samples(new_samples, routing.jeep_roads.way_count + added_ways);
@@ -1161,6 +1196,7 @@ pub fn merge_supplemental_jeep_lines(
         merge_secs = merge_started.elapsed().as_secs_f64(),
         "gtlf: jeep merge indexed"
     );
+    progress(1.0);
 }
 
 /// Backward-compatible jeep-road index only.
@@ -1228,6 +1264,13 @@ pub(crate) fn test_index_from_points(points: &[(f64, f64)]) -> JeepRoadIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_phase_labels_name_the_work() {
+        assert_eq!(OsmParsePhase::Cache.label(), "OSM graph");
+        assert_eq!(OsmParsePhase::Gtlf.label(), "BLM roads");
+        assert_eq!(OsmParsePhase::Gtlf.total(), 4);
+    }
 
     #[test]
     fn jeep_highway_accepts_track_and_rejects_footway() {

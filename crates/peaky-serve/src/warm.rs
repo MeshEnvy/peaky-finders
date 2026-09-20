@@ -14,9 +14,7 @@ use peaky_peaks::{
     warm_place_access_with_routing, OsmParsePhase, OsmRoutingOpts, ProjectRouting, OSM_ROUTE_PAD_DEG,
 };
 use peaky_preset::{
-    ensure_access_meta, load_access, load_preset, resolved_viewshed_root, BoardViewshedResolver,
-    Preset,
-    SiteEntry,
+    load_preset, resolved_viewshed_root, BoardViewshedResolver, Preset, SiteEntry,
 };
 use serde_json::{json, Value};
 use splatter::{propagate::required_tile_names_for_points, PRIORITY_DEM_BACKGROUND, PRIORITY_DEM_VIEWPORT, Session};
@@ -25,7 +23,7 @@ use crate::events::ServeEventHub;
 use crate::links::{
     store_project_site_links_cache, warm_project_site_links,
 };
-use crate::peaks::{access_fresh_on_disk, access_payload_json};
+use crate::peaks::access_payload_json;
 use crate::rf::{max_hop_range_m, preset_to_request_with_sim, viewshed_workspace_digest};
 use crate::viewshed::{
     coords_viewshed_overlay_if_ready, ensure_viewshed_progressive_for_coords_blocking,
@@ -80,7 +78,7 @@ impl Default for OsmStatus {
             status: "idle".into(),
             phase: String::new(),
             step: 0,
-            total: 3,
+            total: 4,
             fraction: 0.0,
             error: None,
         }
@@ -537,7 +535,7 @@ impl WarmHub {
             status: "error".into(),
             phase: "error".into(),
             step: 0,
-            total: 3,
+            total: 4,
             fraction: 0.0,
             error: Some(error.to_string()),
         };
@@ -580,7 +578,7 @@ impl WarmHub {
         let project_dir = preset_path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("preset path has no parent"))?;
-        let meta = ensure_access_meta(preset_path)?;
+        let meta = preset.resolved_access_meta();
         let opts = OsmRoutingOpts::from(&meta);
         let (west, south, east, north) = routing_bbox_for_points(&points, OSM_ROUTE_PAD_DEG)
             .ok_or_else(|| anyhow::anyhow!("no points for OSM routing"))?;
@@ -637,16 +635,6 @@ impl WarmHub {
         site: &SiteEntry,
         preset: &Preset,
     ) {
-        if let Ok(Some(access)) = load_access(preset_path, site_slug) {
-            if access_fresh_on_disk(preset_path, &access) {
-                let mut payload = access_payload_json(site_slug, &access);
-                if let Some(obj) = payload.as_object_mut() {
-                    obj.insert("project".into(), json!(project_slug));
-                }
-                self.events.publish(project_slug, "access", payload);
-                return;
-            }
-        }
         let routing = match self.ensure_project_osm_routing(preset_path, preset) {
             Ok(r) => r,
             Err(e) => {
@@ -664,29 +652,12 @@ impl WarmHub {
                 return;
             }
         };
-        let meta = match ensure_access_meta(preset_path) {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!("access warm {project_slug}/{site_slug}: meta {e:#}");
-                self.events.publish(
-                    project_slug,
-                    "access",
-                    json!({
-                        "project": project_slug,
-                        "slug": site_slug,
-                        "status": "error",
-                        "error": e.to_string(),
-                    }),
-                );
-                return;
-            }
-        };
+        let meta = preset.resolved_access_meta();
         match warm_place_access_with_routing(
             preset_path,
             &self.session,
             routing.as_ref(),
             &meta,
-            site_slug,
             site.lat(),
             site.lon(),
         ) {

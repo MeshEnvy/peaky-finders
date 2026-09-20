@@ -31,7 +31,7 @@ use crate::fortify::parse_fortify_request;
 use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
 use crate::state::AppState;
 use crate::peaks::{
-    list_peaks_payload, peak_hike_payload, peak_jeep_payload, place_access_payload,
+    list_peaks_payload, place_access_payload,
 };
 use crate::land::{
     land_data_gdbs_payload, land_delete_source, land_import_preview_payload, land_import_source,
@@ -100,8 +100,6 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/warm/status", get(warm_status))
         .route("/api/p/{slug}/events", get(project_events))
         .route("/api/p/{slug}/peaks", get(peaks_list))
-        .route("/api/p/{slug}/peaks/{peak_slug}/hike", get(peak_hike))
-        .route("/api/p/{slug}/peaks/{peak_slug}/jeep", get(peak_jeep))
         .route("/api/p/{slug}/access/{place_slug}", get(place_access))
         .route("/api/p/{slug}/access/{place_slug}/warm", post(place_access_warm))
         .route(
@@ -190,7 +188,7 @@ struct AddSiteBody {
     #[serde(default)]
     tags: Vec<String>,
     height_m: Option<f64>,
-    /// When promoting a peak, keep this slug so `access/<slug>.yaml` carries over.
+    /// When promoting a peak, reuse this slug (access resolves by point via probe cache).
     #[serde(default)]
     preferred_slug: Option<String>,
 }
@@ -752,24 +750,6 @@ async fn peaks_list(
         .map_err(|_| StatusCode::NOT_FOUND)
 }
 
-async fn peak_hike(
-    State(state): State<AppState>,
-    Path((_slug, peak_slug)): Path<(String, String)>,
-) -> Result<Json<Value>, StatusCode> {
-    peak_hike_payload(&state.preset_path(), &state.session, &peak_slug)
-        .map(Json)
-        .map_err(|_| StatusCode::NOT_FOUND)
-}
-
-async fn peak_jeep(
-    State(state): State<AppState>,
-    Path((_slug, peak_slug)): Path<(String, String)>,
-) -> Result<Json<Value>, StatusCode> {
-    peak_jeep_payload(&state.preset_path(), &state.session, &peak_slug)
-        .map(Json)
-        .map_err(|_| StatusCode::NOT_FOUND)
-}
-
 async fn place_access(
     State(state): State<AppState>,
     Path((_slug, place_slug)): Path<(String, String)>,
@@ -811,6 +791,14 @@ async fn place_access_resolved(
     lon: Option<f64>,
 ) -> Result<Value, anyhow::Error> {
     tokio::task::spawn_blocking(move || {
+        if let Some(cached) = crate::peaks::place_access_from_probe_cache(
+            &state.preset_path(),
+            &place_slug,
+            lat,
+            lon,
+        )? {
+            return Ok(cached);
+        }
         let routing = if warm {
             let extra = match (lat, lon) {
                 (Some(la), Some(lo)) => vec![(la, lo)],

@@ -1,11 +1,13 @@
 //! Foot-trail graph routing (GTLF layers 4+5).
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
 
-use crate::hike::haversine_m;
-use crate::jeep::JeepRouteResult;
-use crate::osm::{GraphEdge, JeepRoadGraph, JeepRoadIndex, RoadPoint};
+use std::collections::{BinaryHeap, HashMap, HashSet};
+
+use crate::hike::{haversine_m, HikeSampleElev};
+use crate::hike_route::resolve_hike;
+use crate::jeep::{JeepRouteResult, PavedReachTree};
+use crate::osm::{GraphEdge, JeepRoadGraph, JeepRoadIndex, OsmRouting, RoadPoint};
 
 /// Snap jeep park to a foot-trail node within this radius (m).
 pub const TRAIL_PARK_SNAP_M: f64 = 80.0;
@@ -133,6 +135,90 @@ pub fn route_trail_closest_approach(
     }
     let (dest_node, _) = best?;
     Some(reconstruct_trail_route(&trails.graph, &prev, dest_node))
+}
+
+/// Destination-first trail discovery: trail nodes within hike reach of dest, then
+/// outward along the foot graph to nodes that snap to paved-reachable jeep parks.
+pub fn trail_park_candidates<E: HikeSampleElev>(
+    trails: &TrailRouting,
+    routing: &OsmRouting,
+    tree: &PavedReachTree,
+    dest_lat: f64,
+    dest_lon: f64,
+    hike_path_max_m: f64,
+    max_slope_deg: f64,
+    elev: &E,
+) -> Vec<u32> {
+    if trails.graph.is_empty() {
+        return Vec::new();
+    }
+
+    let mut seeds = HashSet::<u32>::new();
+    for (lat, lon, crow) in trails.samples.points_within(dest_lat, dest_lon, hike_path_max_m) {
+        let path_max = hike_path_max_m.max(crow * 2.0 + 500.0);
+        if resolve_hike(
+            elev,
+            lat,
+            lon,
+            dest_lat,
+            dest_lon,
+            max_slope_deg,
+            path_max,
+            30.0,
+            false,
+        )
+        .is_none()
+        {
+            continue;
+        }
+        if let Some(node) = trails.graph.nearest_node(lat, lon, TRAIL_PARK_SNAP_M) {
+            seeds.insert(node);
+        }
+    }
+    if seeds.is_empty() {
+        return Vec::new();
+    }
+
+    let mut dist = HashMap::<u32, f64>::new();
+    let mut heap = BinaryHeap::new();
+    for &node in &seeds {
+        dist.insert(node, 0.0);
+        heap.push(HeapState { cost: 0.0, node });
+    }
+
+    while let Some(HeapState { cost, node }) = heap.pop() {
+        if cost > *dist.get(&node).unwrap_or(&f64::INFINITY) + 1e-9 {
+            continue;
+        }
+        for edge in trails.graph.edges(node) {
+            let next = cost + edge.length_m;
+            if next > TRAIL_MAX_M + 1.0 {
+                continue;
+            }
+            let cur = dist.get(&edge.to).copied().unwrap_or(f64::INFINITY);
+            if next + 1e-9 < cur {
+                dist.insert(edge.to, next);
+                heap.push(HeapState {
+                    cost: next,
+                    node: edge.to,
+                });
+            }
+        }
+    }
+
+    let mut parks = HashSet::<u32>::new();
+    for &trail_node in dist.keys() {
+        let (tlat, tlon) = trails.graph.node_coords(trail_node);
+        for jeep_node in routing
+            .graph_nodes
+            .nodes_within(tlat, tlon, TRAIL_PARK_SNAP_M)
+        {
+            if tree.contains(jeep_node) {
+                parks.insert(jeep_node);
+            }
+        }
+    }
+    parks.into_iter().collect()
 }
 
 pub fn build_trail_graph(

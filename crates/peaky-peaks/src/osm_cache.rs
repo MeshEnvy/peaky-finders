@@ -15,6 +15,7 @@ use crate::osm::{
 };
 
 pub const OSM_ROUTING_CACHE_VERSION: u32 = 1;
+pub const MERGED_ROUTING_CACHE_VERSION: u32 = 1;
 
 const NONE: u8 = 255;
 
@@ -50,11 +51,25 @@ struct OsmRoutingDisk {
     paved_idx: Vec<u32>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct MergedRoutingDisk {
+    version: u32,
+    gtlf_fingerprint: String,
+    inner: OsmRoutingDisk,
+}
+
 fn cache_path(pbf_path: &Path) -> std::path::PathBuf {
     pbf_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("routing-v1.bin")
+}
+
+fn merged_cache_path(pbf_path: &Path) -> std::path::PathBuf {
+    pbf_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("routing-merged.bin")
 }
 
 fn pbf_fingerprint(pbf_path: &Path) -> Result<(u64, u64)> {
@@ -117,6 +132,7 @@ pub fn try_load_osm_routing_cache(
 ) -> Option<OsmRouting> {
     let path = cache_path(pbf_path);
     let file = File::open(&path).ok()?;
+    info!(path = %path.display(), "peaks: OSM routing cache load start");
     let disk: OsmRoutingDisk = match bincode::deserialize_from(BufReader::new(file)) {
         Ok(d) => d,
         Err(e) => {
@@ -124,6 +140,11 @@ pub fn try_load_osm_routing_cache(
             return None;
         }
     };
+    info!(
+        path = %path.display(),
+        jeep_points = disk.jeep_lat.len(),
+        "peaks: OSM routing cache deserialized, building indexes"
+    );
     if disk.version != OSM_ROUTING_CACHE_VERSION {
         return None;
     }
@@ -214,8 +235,7 @@ fn routing_from_disk(disk: OsmRoutingDisk) -> Result<OsmRouting> {
     })
 }
 
-/// Write the parsed graph next to the PBF. Overwrites any previous cache.
-pub fn save_osm_routing_cache(
+fn routing_to_disk(
     pbf_path: &Path,
     west: f64,
     south: f64,
@@ -223,7 +243,7 @@ pub fn save_osm_routing_cache(
     north: f64,
     opts: &OsmRoutingOpts,
     routing: &OsmRouting,
-) -> Result<()> {
+) -> Result<OsmRoutingDisk> {
     let (pbf_len, pbf_mtime) = pbf_fingerprint(pbf_path)?;
     let jeep = routing.jeep_roads.sample_points();
     let mut jeep_lat = Vec::with_capacity(jeep.len());
@@ -269,7 +289,7 @@ pub fn save_osm_routing_cache(
         paved_lon.push(pt.lon as f32);
         paved_idx.push(pt.node_idx);
     }
-    let disk = OsmRoutingDisk {
+    Ok(OsmRoutingDisk {
         version: OSM_ROUTING_CACHE_VERSION,
         pbf_len,
         pbf_mtime,
@@ -298,18 +318,193 @@ pub fn save_osm_routing_cache(
         paved_lat,
         paved_lon,
         paved_idx,
-    };
-    let path = cache_path(pbf_path);
+    })
+}
+
+fn write_bincode<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("bin.tmp");
     {
         let file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
-        bincode::serialize_into(BufWriter::new(file), &disk)
+        bincode::serialize_into(BufWriter::new(file), value)
             .with_context(|| format!("write {}", tmp.display()))?;
     }
-    std::fs::rename(&tmp, &path).with_context(|| format!("rename {}", path.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("rename {}", path.display()))?;
+    Ok(())
+}
+
+fn disk_matches_request(
+    disk: &OsmRoutingDisk,
+    pbf_path: &Path,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    opts: &OsmRoutingOpts,
+) -> bool {
+    if disk.version != OSM_ROUTING_CACHE_VERSION {
+        return false;
+    }
+    let Ok((pbf_len, pbf_mtime)) = pbf_fingerprint(pbf_path) else {
+        return false;
+    };
+    if disk.pbf_len != pbf_len || disk.pbf_mtime != pbf_mtime {
+        return false;
+    }
+    if (disk.sample_step_m - opts.road_sample_step_m).abs() > 0.01 {
+        return false;
+    }
+    if disk.jeep_highways != opts.jeep_highways || disk.paved_highways != opts.paved_highways {
+        return false;
+    }
+    bbox_covers((disk.west, disk.south, disk.east, disk.north), west, south, east, north)
+}
+
+/// Write the parsed OSM-only graph next to the PBF. Overwrites any previous cache.
+pub fn save_osm_routing_cache(
+    pbf_path: &Path,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    opts: &OsmRoutingOpts,
+    routing: &OsmRouting,
+) -> Result<()> {
+    let disk = routing_to_disk(pbf_path, west, south, east, north, opts, routing)?;
+    let path = cache_path(pbf_path);
+    write_bincode(&path, &disk)?;
     info!(path = %path.display(), "peaks: OSM routing cache written");
     Ok(())
+}
+
+/// Write OSM+GTLF jeep graph, keyed by GTLF layer fingerprint.
+pub fn save_merged_routing_cache(
+    pbf_path: &Path,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    opts: &OsmRoutingOpts,
+    routing: &OsmRouting,
+    gtlf_fingerprint: &str,
+) -> Result<()> {
+    let inner = routing_to_disk(pbf_path, west, south, east, north, opts, routing)?;
+    let disk = MergedRoutingDisk {
+        version: MERGED_ROUTING_CACHE_VERSION,
+        gtlf_fingerprint: gtlf_fingerprint.to_string(),
+        inner,
+    };
+    let path = merged_cache_path(pbf_path);
+    write_bincode(&path, &disk)?;
+    info!(
+        path = %path.display(),
+        fingerprint = %gtlf_fingerprint,
+        "peaks: merged routing cache written"
+    );
+    Ok(())
+}
+
+/// Load a GTLF-merged graph if PBF, opts, bbox, and GTLF fingerprint match.
+pub fn try_load_merged_routing_cache(
+    pbf_path: &Path,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    opts: &OsmRoutingOpts,
+    gtlf_fingerprint: &str,
+) -> Option<OsmRouting> {
+    if gtlf_fingerprint.is_empty() || gtlf_fingerprint == "disabled" {
+        return None;
+    }
+    let path = merged_cache_path(pbf_path);
+    let file = File::open(&path).ok()?;
+    info!(path = %path.display(), "peaks: merged routing cache load start");
+    let disk: MergedRoutingDisk = match bincode::deserialize_from(BufReader::new(file)) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!(path = %path.display(), error = %e, "merged routing cache unreadable");
+            return None;
+        }
+    };
+    if disk.version != MERGED_ROUTING_CACHE_VERSION {
+        return None;
+    }
+    if disk.gtlf_fingerprint != gtlf_fingerprint {
+        info!(
+            cached = %disk.gtlf_fingerprint,
+            want = %gtlf_fingerprint,
+            "peaks: merged routing cache fingerprint miss"
+        );
+        return None;
+    }
+    if !disk_matches_request(&disk.inner, pbf_path, west, south, east, north, opts) {
+        return None;
+    }
+    info!(
+        path = %path.display(),
+        jeep_points = disk.inner.jeep_lat.len(),
+        "peaks: merged routing cache deserialized, building indexes"
+    );
+    match routing_from_disk(disk.inner) {
+        Ok(routing) => {
+            info!(path = %path.display(), "peaks: merged routing cache hit");
+            Some(routing)
+        }
+        Err(e) => {
+            warn!(path = %path.display(), error = %e, "merged routing cache rebuild failed");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::osm::{
+        GraphNodeIndex, JeepRoadGraph, JeepRoadIndex, OsmRouting, PavedAnchorIndex,
+    };
+
+    fn empty_routing() -> OsmRouting {
+        let graph = JeepRoadGraph::new();
+        OsmRouting {
+            jeep_roads: JeepRoadIndex::from_samples(Vec::new(), 0),
+            graph_nodes: GraphNodeIndex::from_graph(&graph),
+            graph,
+            paved: PavedAnchorIndex::from_points(Vec::new()),
+        }
+    }
+
+    fn test_opts() -> OsmRoutingOpts {
+        OsmRoutingOpts {
+            road_sample_step_m: 30.0,
+            jeep_highways: vec!["track".into()],
+            paved_highways: vec!["primary".into()],
+        }
+    }
+
+    #[test]
+    fn merged_cache_hits_matching_fingerprint() {
+        let dir = tempfile::tempdir().unwrap();
+        let pbf = dir.path().join("nevada-latest.osm.pbf");
+        std::fs::write(&pbf, b"fake-pbf").unwrap();
+        let opts = test_opts();
+        let routing = empty_routing();
+        save_merged_routing_cache(&pbf, -120.0, 36.0, -114.0, 42.0, &opts, &routing, "abc123")
+            .unwrap();
+        assert!(try_load_merged_routing_cache(
+            &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "abc123"
+        )
+        .is_some());
+        assert!(try_load_merged_routing_cache(
+            &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "other"
+        )
+        .is_none());
+        assert!(try_load_merged_routing_cache(
+            &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "disabled"
+        )
+        .is_none());
+    }
 }

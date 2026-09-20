@@ -1063,11 +1063,11 @@ fn load_link_solver_body(
 
     let catalog = cached_peaks_catalog_thin(&req.preset_path)
         .map_err(|e| LinkSolverRunError::User(format!("load peaks catalog: {e}"), 422))?;
-    let n_catalog = catalog.entries.len();
+    let n_catalog = catalog.peaks.len();
 
     let mut peak_nodes: Vec<GraphNode> = Vec::new();
-    for (slug, entry) in &catalog.entries {
-        if entry.deny.unwrap_or(false) {
+    for (slug, entry) in &catalog.peaks {
+        if !entry.eligible {
             continue;
         }
         if req.exclude_peaks.contains(slug.as_str()) {
@@ -1087,7 +1087,7 @@ fn load_link_solver_body(
             continue;
         }
         let (hike_difficulty, jeep_difficulty, access_difficulty) =
-            catalog_peak_difficulty(entry, Some(&catalog.rules.difficulty));
+            catalog_peak_difficulty(entry, Some(&catalog.manifest.rules.difficulty));
         peak_nodes.push(GraphNode {
             role: NodeRole::Peak,
             slug: slug.clone(),
@@ -1379,7 +1379,7 @@ pub fn accept_link_solver_route(
     for (i, hop) in body.hops.iter().enumerate() {
         let catalog_name = cached_peaks_catalog_thin(preset_path)
             .ok()
-            .and_then(|c| c.entries.get(&hop.peak_slug).and_then(|e| e.name.clone()));
+            .and_then(|c| c.peaks.get(&hop.peak_slug).and_then(|e| e.name.clone()));
         let name = hop.name.clone().or(catalog_name).unwrap_or_else(|| {
             format!("{}–{} relay {}", site_a.name, site_b.name, i + 1)
         });

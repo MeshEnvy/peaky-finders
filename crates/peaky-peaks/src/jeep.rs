@@ -11,7 +11,7 @@ use crate::hike::{
     grade_histogram, haversine_m, slope_deg_to_grade_pct, HikeProfilePoint, HikeSampleElev,
     HikeSegment, GradeHistogramBucket,
 };
-use crate::osm::{JeepRoadGraph, PavedAnchorIndex};
+use crate::osm::{JeepRoadGraph, OsmRouting, PavedAnchorIndex};
 
 const SNAP_PARK_M: f64 = 250.0;
 
@@ -224,6 +224,7 @@ pub fn dijkstra_from_paved(
     HashMap<u32, (u32, crate::osm::GraphEdge)>,
 ) {
     let overall_cap = budget.map(|b| b.overall_m).unwrap_or(max_jeep_m);
+    let budgeted = budget.is_some();
     let mut dist_cost = HashMap::<u32, f64>::new();
     let mut dist_horiz = HashMap::<u32, f64>::new();
     let mut class_at: HashMap<u32, HashMap<String, f64>> = HashMap::new();
@@ -233,7 +234,9 @@ pub fn dijkstra_from_paved(
     for &(_lat, _lon, node) in sources {
         dist_cost.insert(node, 0.0);
         dist_horiz.insert(node, 0.0);
-        class_at.insert(node, HashMap::new());
+        if budgeted {
+            class_at.insert(node, HashMap::new());
+        }
         heap.push(HeapState { cost: 0.0, node });
     }
 
@@ -245,20 +248,10 @@ pub fn dijkstra_from_paved(
             break;
         }
         let horiz_base = dist_horiz.get(&node).copied().unwrap_or(0.0);
-        let class_base = class_at.get(&node).cloned().unwrap_or_default();
         for edge in graph.edges(node) {
             let horiz = horiz_base + edge.length_m;
             if horiz > overall_cap + 1.0 {
                 continue;
-            }
-            let mut new_class = class_base.clone();
-            if let Some(b) = budget {
-                let key = jeep_budget_class_key(&edge.highway, edge.tracktype.as_deref());
-                let used = new_class.entry(key).or_insert(0.0);
-                *used += edge.length_m;
-                if *used > b.class_cap(&edge.highway, edge.tracktype.as_deref()) + 1.0 {
-                    continue;
-                }
             }
             let mult = edge_cost_multiplier(
                 &edge.highway,
@@ -267,11 +260,24 @@ pub fn dijkstra_from_paved(
                 edge.fourwd_only,
             );
             let next_cost = cost + edge.length_m * mult;
+            let mut new_class = None;
+            if let Some(b) = budget {
+                let mut classes = class_at.get(&node).cloned().unwrap_or_default();
+                let key = jeep_budget_class_key(&edge.highway, edge.tracktype.as_deref());
+                let used = classes.entry(key).or_insert(0.0);
+                *used += edge.length_m;
+                if *used > b.class_cap(&edge.highway, edge.tracktype.as_deref()) + 1.0 {
+                    continue;
+                }
+                new_class = Some(classes);
+            }
             let cur = dist_cost.get(&edge.to).copied().unwrap_or(f64::INFINITY);
             if next_cost + 1e-9 < cur {
                 dist_cost.insert(edge.to, next_cost);
                 dist_horiz.insert(edge.to, horiz);
-                class_at.insert(edge.to, new_class);
+                if let Some(classes) = new_class {
+                    class_at.insert(edge.to, classes);
+                }
                 prev.insert(edge.to, (node, edge.clone()));
                 heap.push(HeapState {
                     cost: next_cost,
@@ -281,6 +287,94 @@ pub fn dijkstra_from_paved(
         }
     }
     (dist_cost, dist_horiz, prev)
+}
+
+const REACHABLE_PARK_RINGS_M: [f64; 6] = [2_500.0, 5_000.0, 10_000.0, 20_000.0, 40_000.0, 80_000.0];
+
+/// Paved-anchor Dijkstra flood retained for park-candidate lookup.
+#[derive(Debug, Clone)]
+pub struct PavedReachTree {
+    dist_cost: HashMap<u32, f64>,
+    dist_horiz: HashMap<u32, f64>,
+    prev: HashMap<u32, (u32, crate::osm::GraphEdge)>,
+}
+
+impl PavedReachTree {
+    pub fn build(
+        graph: &JeepRoadGraph,
+        paved: &PavedAnchorIndex,
+        max_jeep_m: f64,
+        budget: Option<&JeepLengthBudget>,
+    ) -> Self {
+        let sources = paved.all_sources();
+        let (dist_cost, dist_horiz, prev) =
+            dijkstra_from_paved(graph, &sources, max_jeep_m, None, budget);
+        Self {
+            dist_cost,
+            dist_horiz,
+            prev,
+        }
+    }
+
+    pub fn dist_horiz(&self, node: u32) -> Option<f64> {
+        self.dist_horiz.get(&node).copied()
+    }
+
+    pub fn prev(&self) -> &HashMap<u32, (u32, crate::osm::GraphEdge)> {
+        &self.prev
+    }
+
+    pub fn contains(&self, node: u32) -> bool {
+        self.dist_cost.contains_key(&node)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.dist_cost.is_empty()
+    }
+
+    pub fn reachable_nodes(&self) -> impl Iterator<Item = u32> + '_ {
+        self.dist_cost.keys().copied()
+    }
+
+    /// Closest paved-reachable jeep graph nodes near ``dest``, by crow rings.
+    pub fn park_candidates(
+        &self,
+        routing: &OsmRouting,
+        dest_lat: f64,
+        dest_lon: f64,
+        max_search_m: f64,
+    ) -> Vec<u32> {
+        if self.dist_cost.is_empty() {
+            return Vec::new();
+        }
+        for &ring_m in &REACHABLE_PARK_RINGS_M {
+            let ring_m = ring_m.min(max_search_m);
+            let mut found: Vec<(u32, f64)> = routing
+                .graph_nodes
+                .nodes_within(dest_lat, dest_lon, ring_m)
+                .into_iter()
+                .filter(|n| self.dist_cost.contains_key(n))
+                .map(|n| {
+                    let (lat, lon) = routing.graph.node_coords(n);
+                    (n, haversine_m(lat, lon, dest_lat, dest_lon))
+                })
+                .collect();
+            if found.is_empty() {
+                if ring_m >= max_search_m {
+                    break;
+                }
+                continue;
+            }
+            found.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            let best = found[0].1;
+            return found
+                .into_iter()
+                .filter(|(_, crow)| *crow <= best + 0.5)
+                .map(|(n, _)| n)
+                .collect();
+        }
+        Vec::new()
+    }
 }
 
 /// Route from nearest paved anchor to park point (``road_lat``/``road_lon``).

@@ -13,7 +13,7 @@ use peaky_preset::{load_preset, GtlfSourceConfig};
 use crate::osm::OsmRoutingOpts;
 use tracing::info;
 
-use crate::osm::{merge_supplemental_jeep_lines, OsmRouting, SupplementalLine};
+use crate::osm::{merge_supplemental_jeep_lines_progress, OsmRouting, SupplementalLine};
 use crate::trail::{build_trail_graph, TrailRouting, TRAIL_MAX_M};
 use crate::OSM_BUILD_PAD_DEG;
 
@@ -304,28 +304,71 @@ pub fn apply_gtlf_to_routing(
     north: f64,
     force_fetch: bool,
 ) -> Result<GtlfBundle> {
+    apply_gtlf_to_routing_progress(
+        project_dir,
+        routing,
+        opts,
+        west,
+        south,
+        east,
+        north,
+        force_fetch,
+        false,
+        &mut |_| {},
+    )
+}
+
+/// Same as [`apply_gtlf_to_routing`]. ``skip_jeep_merge`` loads foot trails only
+/// (jeep graph already came from the merged-routing cache).
+pub fn apply_gtlf_to_routing_progress<F>(
+    project_dir: &Path,
+    routing: &mut OsmRouting,
+    opts: &OsmRoutingOpts,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    force_fetch: bool,
+    skip_jeep_merge: bool,
+    progress: &mut F,
+) -> Result<GtlfBundle>
+where
+    F: FnMut(f64),
+{
     let preset_path = project_dir.join("config.yaml");
     let preset = load_preset(&preset_path)?;
     let gtlf = preset.sources.gtlf.clone();
     if !gtlf.enabled {
+        progress(1.0);
         return Ok(GtlfBundle::empty());
     }
     ensure_gtlf_cache(project_dir, force_fetch)?;
     let fingerprint = gtlf_cache_fingerprint(project_dir, &gtlf);
-    info!(fingerprint = %fingerprint, "gtlf: loading jeep lines");
-    let jeep_lines = load_jeep_lines(project_dir, &gtlf, LonLatBBox::new(west, south, east, north))?;
-    info!(
-        lines = jeep_lines.len(),
-        jeep_ways = routing.jeep_roads.way_count,
-        "gtlf: merging jeep lines into OSM graph"
-    );
-    let t_merge = Instant::now();
-    merge_supplemental_jeep_lines(routing, &jeep_lines, opts.road_sample_step_m);
-    info!(
-        jeep_ways = routing.jeep_roads.way_count,
-        elapsed_secs = t_merge.elapsed().as_secs_f64(),
-        "gtlf: jeep merge done"
-    );
+    if !skip_jeep_merge {
+        info!(fingerprint = %fingerprint, "gtlf: loading jeep lines");
+        progress(0.04);
+        let jeep_lines = load_jeep_lines(project_dir, &gtlf, LonLatBBox::new(west, south, east, north))?;
+        info!(
+            lines = jeep_lines.len(),
+            jeep_ways = routing.jeep_roads.way_count,
+            "gtlf: merging jeep lines into OSM graph"
+        );
+        let t_merge = Instant::now();
+        merge_supplemental_jeep_lines_progress(
+            routing,
+            &jeep_lines,
+            opts.road_sample_step_m,
+            &mut |frac| progress(0.08 + 0.84 * frac.clamp(0.0, 1.0)),
+        );
+        info!(
+            jeep_ways = routing.jeep_roads.way_count,
+            elapsed_secs = t_merge.elapsed().as_secs_f64(),
+            "gtlf: jeep merge done"
+        );
+    } else {
+        info!(fingerprint = %fingerprint, "gtlf: jeep merge skipped (merged cache)");
+        progress(0.92);
+    }
     info!("gtlf: loading foot trails");
     let foot_lines = load_foot_lines(project_dir, &gtlf, LonLatBBox::new(west, south, east, north))?;
     let t_trails = Instant::now();
@@ -337,6 +380,7 @@ pub fn apply_gtlf_to_routing(
         "gtlf: foot trail graph ready"
     );
     let _ = TRAIL_MAX_M;
+    progress(1.0);
     Ok(GtlfBundle {
         foot_trails,
         fingerprint,

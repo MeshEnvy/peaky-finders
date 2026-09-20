@@ -1,13 +1,15 @@
 //! Compute fingerprints for peak rows and access profiles.
 //!
-//! Settings + ``algo_version`` live in ``access/_meta.yaml`` (and eligibility in
-//! ``peaks/_meta.yaml``). Bump ``ACCESS_ALGO_VERSION`` / ``PEAK_ALGO_VERSION`` in
-//! ``model`` when algorithms change for the same numeric settings.
+//! Probe cache prefs keys fingerprint pathfinding settings from config
+//! (``Preset::resolved_access_meta()``) plus scan bbox and road-source fingerprints.
+//! Bump ``ACCESS_ALGO_VERSION`` / ``PEAK_ALGO_VERSION`` in ``model`` when algorithms change.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crate::model::{AccessMeta, PeakAccessRules, PeaksDifficultyConfig, PlaceAccess};
+use crate::model::{
+    AccessMeta, AccessPreferenceConfig, PeaksDifficultyConfig, PeaksScanConfig,
+};
 
 pub use crate::model::{
     ACCESS_ALGO_VERSION, PEAK_ALGO_VERSION,
@@ -18,6 +20,10 @@ pub use crate::model::{
 
 fn round_m(v: f64) -> i64 {
     (v * 1000.0).round() as i64
+}
+
+fn round_coord(v: f64) -> i64 {
+    (v * 1_000_000.0).round() as i64
 }
 
 fn hash_parts(parts: &[u64]) -> String {
@@ -72,109 +78,58 @@ fn difficulty_fingerprint(difficulty: &PeaksDifficultyConfig) -> u64 {
     hash_str(&parts)
 }
 
-/// Fingerprint for paved→park→pad path compute (stored on ``access/<slug>.yaml``).
-pub fn access_compute_key(
-    algo_version: u32,
-    mode: &str,
-    road_search_m: f64,
-    max_jeep_m: f64,
-    profile_sample_m: f64,
-    road_sample_step_m: f64,
-    hike_path_max_m: f64,
-    jeep_highways: &[String],
-    paved_highways: &[String],
-    gtlf_fingerprint: &str,
-) -> String {
-    hash_parts(&[
-        algo_version as u64,
-        hash_str(mode),
-        round_m(road_search_m) as u64,
-        round_m(max_jeep_m) as u64,
-        round_m(profile_sample_m) as u64,
-        round_m(road_sample_step_m) as u64,
-        round_m(hike_path_max_m) as u64,
-        hash_str(&sorted_joined(jeep_highways)),
-        hash_str(&sorted_joined(paved_highways)),
-        hash_str(gtlf_fingerprint),
-    ])
+fn preference_fingerprint(preference: &AccessPreferenceConfig) -> u64 {
+    let parts = format!(
+        "{:.6},{:.6},{:.6},{:.6}",
+        preference.w_hike, preference.w_trail, preference.w_jeep, preference.w_difficulty
+    );
+    hash_str(&parts)
 }
 
-/// Key used by site/place warm (display routing, ungated).
-pub fn place_access_compute_key(meta: &AccessMeta, gtlf_fingerprint: &str) -> String {
-    access_compute_key(
-        meta.algo_version,
-        "place",
-        meta.place_road_search_m,
-        meta.max_jeep_m,
-        meta.profile_sample_m,
-        meta.road_sample_step_m,
-        meta.hike_path_max_m,
-        &meta.road_highways,
-        &meta.paved_highways,
-        gtlf_fingerprint,
-    )
-}
-
-/// Key used when ``peaky peaks`` writes access for an eligible peak.
-///
-/// ``road_search_m`` is the peak park-search radius (usually ``rules.max_hike_m``).
-pub fn peak_access_compute_key(
+/// Settings fingerprint shared by all probes with the same routing prefs.
+pub fn probe_prefs_key(
     meta: &AccessMeta,
-    road_search_m: f64,
-    gtlf_fingerprint: &str,
-) -> String {
-    access_compute_key(
-        meta.algo_version,
-        "peak",
-        road_search_m,
-        meta.max_jeep_m,
-        meta.profile_sample_m,
-        meta.road_sample_step_m,
-        meta.hike_path_max_m,
-        &meta.road_highways,
-        &meta.paved_highways,
-        gtlf_fingerprint,
-    )
-}
-
-/// Fingerprint for a peak catalog row (eligibility + snap + land + access algo).
-pub fn peak_row_compute_key(
-    rules: &PeakAccessRules,
-    access: &AccessMeta,
-    land_digest: &str,
-    summit_snap_m: f64,
-    gtlf_fingerprint: &str,
+    scan: &PeaksScanConfig,
+    gtlf_fp: &str,
+    pbf_fp: &str,
 ) -> String {
     hash_parts(&[
-        PEAK_ALGO_VERSION as u64,
-        hash_str(land_digest),
-        round_m(summit_snap_m) as u64,
-        round_m(rules.max_hike_m) as u64,
-        round_m(rules.max_slope_grade_pct) as u64,
-        round_m(rules.max_slope_deg) as u64,
-        difficulty_fingerprint(&rules.difficulty),
-        hash_str(&peak_access_compute_key(
-            access,
-            rules.max_hike_m,
-            gtlf_fingerprint,
-        )),
+        meta.algo_version as u64,
+        round_m(meta.profile_sample_m) as u64,
+        round_m(meta.road_sample_step_m) as u64,
+        round_m(meta.max_jeep_m) as u64,
+        round_m(meta.place_road_search_m) as u64,
+        round_m(meta.hike_path_max_m) as u64,
+        hash_str(&sorted_joined(&meta.road_highways)),
+        hash_str(&sorted_joined(&meta.paved_highways)),
+        round_m(scan.max_road_search_m) as u64,
+        round_m(scan.hike_path_max_m) as u64,
+        difficulty_fingerprint(&scan.difficulty),
+        preference_fingerprint(&scan.preference),
+        hash_str(gtlf_fp),
+        hash_str(pbf_fp),
     ])
 }
 
-/// Full hike+jeep profiles present (scalars alone are incomplete / stale).
-pub fn place_access_has_profiles(access: &PlaceAccess) -> bool {
-    access.hike.is_some() && access.jeep.is_some()
+/// Point-specific probe fingerprint (lat/lon + prefs stamp).
+pub fn probe_point_key(lat: f64, lon: f64, prefs_key: &str) -> String {
+    hash_parts(&[
+        hash_str(prefs_key),
+        round_coord(lat) as u64,
+        round_coord(lon) as u64,
+    ])
 }
 
-/// True when profiles exist and ``compute_key`` matches one of ``expected``.
-pub fn place_access_is_fresh(access: &PlaceAccess, expected: &[&str]) -> bool {
-    if !place_access_has_profiles(access) {
-        return false;
-    }
-    let Some(key) = access.compute_key.as_deref() else {
-        return false;
-    };
-    expected.iter().any(|e| *e == key)
+/// Full access probe fingerprint for a coordinate.
+pub fn probe_key(
+    lat: f64,
+    lon: f64,
+    meta: &AccessMeta,
+    scan: &PeaksScanConfig,
+    gtlf_fp: &str,
+    pbf_fp: &str,
+) -> String {
+    probe_point_key(lat, lon, &probe_prefs_key(meta, scan, gtlf_fp, pbf_fp))
 }
 
 #[cfg(test)]
@@ -182,109 +137,113 @@ mod tests {
     use super::*;
 
     #[test]
-    fn place_and_peak_keys_differ() {
+    fn prefs_and_point_keys_differ() {
         let meta = AccessMeta::default();
-        let rules = PeakAccessRules::default();
-        assert_ne!(
-            place_access_compute_key(&meta, "disabled"),
-            peak_access_compute_key(&meta, rules.max_hike_m, "disabled")
+        let scan = PeaksScanConfig::default();
+        let prefs = probe_prefs_key(&meta, &scan, "disabled", "");
+        assert_ne!(prefs, probe_point_key(38.0, -117.0, &prefs));
+    }
+
+    #[test]
+    fn probe_key_matches_point_key() {
+        let meta = AccessMeta::default();
+        let scan = PeaksScanConfig::default();
+        let prefs = probe_prefs_key(&meta, &scan, "disabled", "");
+        assert_eq!(
+            probe_key(38.0, -117.0, &meta, &scan, "disabled", ""),
+            probe_point_key(38.0, -117.0, &prefs)
         );
     }
 
     #[test]
-    fn settings_change_moves_key() {
+    fn settings_change_moves_prefs_key() {
         let a = AccessMeta::default();
         let mut b = a.clone();
         b.place_road_search_m = 25_000.0;
+        let scan = PeaksScanConfig::default();
         assert_ne!(
-            place_access_compute_key(&a, "disabled"),
-            place_access_compute_key(&b, "disabled")
+            probe_prefs_key(&a, &scan, "disabled", ""),
+            probe_prefs_key(&b, &scan, "disabled", "")
         );
     }
 
     #[test]
-    fn hike_path_max_moves_key() {
+    fn preference_change_moves_prefs_key() {
+        let meta = AccessMeta::default();
+        let a = PeaksScanConfig::default();
+        let mut b = a.clone();
+        b.preference.w_hike = 2.0;
+        assert_ne!(
+            probe_prefs_key(&meta, &a, "disabled", ""),
+            probe_prefs_key(&meta, &b, "disabled", "")
+        );
+    }
+
+    #[test]
+    fn hike_path_max_moves_prefs_key() {
         let a = AccessMeta::default();
         let mut b = a.clone();
         b.hike_path_max_m = 2000.0;
+        let scan = PeaksScanConfig::default();
         assert_ne!(
-            place_access_compute_key(&a, "disabled"),
-            place_access_compute_key(&b, "disabled")
+            probe_prefs_key(&a, &scan, "disabled", ""),
+            probe_prefs_key(&b, &scan, "disabled", "")
         );
     }
 
     #[test]
-    fn peak_road_search_moves_key() {
+    fn peak_road_search_moves_prefs_key() {
         let meta = AccessMeta::default();
+        let mut a = PeaksScanConfig::default();
+        a.max_road_search_m = 805.0;
+        let mut b = a.clone();
+        b.max_road_search_m = 900.0;
         assert_ne!(
-            peak_access_compute_key(&meta, 805.0, "disabled"),
-            peak_access_compute_key(&meta, 900.0, "disabled")
+            probe_prefs_key(&meta, &a, "disabled", ""),
+            probe_prefs_key(&meta, &b, "disabled", "")
         );
     }
 
     #[test]
-    fn land_digest_moves_peak_row_key() {
-        let rules = PeakAccessRules::default();
+    fn gtlf_fingerprint_moves_prefs_key() {
         let meta = AccessMeta::default();
+        let scan = PeaksScanConfig::default();
         assert_ne!(
-            peak_row_compute_key(&rules, &meta, "land-a", 500.0, "disabled"),
-            peak_row_compute_key(&rules, &meta, "land-b", 500.0, "disabled")
+            probe_prefs_key(&meta, &scan, "disabled", ""),
+            probe_prefs_key(&meta, &scan, "abc123", "")
         );
     }
 
     #[test]
-    fn gtlf_fingerprint_moves_key() {
+    fn pbf_fingerprint_moves_prefs_key() {
         let meta = AccessMeta::default();
+        let scan = PeaksScanConfig::default();
         assert_ne!(
-            place_access_compute_key(&meta, "disabled"),
-            place_access_compute_key(&meta, "abc123")
+            probe_prefs_key(&meta, &scan, "disabled", ""),
+            probe_prefs_key(&meta, &scan, "disabled", "pbf-v2")
         );
     }
 
     #[test]
-    fn algo_version_in_meta_moves_key() {
+    fn lat_lon_moves_probe_key() {
+        let meta = AccessMeta::default();
+        let scan = PeaksScanConfig::default();
+        assert_ne!(
+            probe_key(38.0, -117.0, &meta, &scan, "disabled", ""),
+            probe_key(38.1, -117.0, &meta, &scan, "disabled", "")
+        );
+    }
+
+    #[test]
+    fn algo_version_in_meta_moves_prefs_key() {
         let a = AccessMeta::default();
         let mut b = a.clone();
         b.algo_version = a.algo_version + 1;
+        let scan = PeaksScanConfig::default();
         assert_ne!(
-            place_access_compute_key(&a, "disabled"),
-            place_access_compute_key(&b, "disabled")
+            probe_prefs_key(&a, &scan, "disabled", ""),
+            probe_prefs_key(&b, &scan, "disabled", "")
         );
-    }
-
-    #[test]
-    fn missing_key_is_stale() {
-        let access = PlaceAccess {
-            hike: Some(crate::model::PeakHikeProfile {
-                hike_m_3d: 1.0,
-                horiz_m: 1.0,
-                gain_m: 0.0,
-                loss_m: 0.0,
-                max_slope_deg: 0.0,
-                max_grade_pct: 0.0,
-                avg_grade_pct: 0.0,
-                difficulty: "easy".into(),
-                profile: vec![],
-                histogram: vec![],
-            }),
-            jeep: Some(crate::model::PeakJeepProfile {
-                jeep_m_3d: 1.0,
-                horiz_m: 1.0,
-                gain_m: 0.0,
-                loss_m: 0.0,
-                max_slope_deg: 0.0,
-                max_grade_pct: 0.0,
-                avg_grade_pct: 0.0,
-                difficulty: "easy".into(),
-                profile: vec![],
-                histogram: vec![],
-                segments: vec![],
-            }),
-            compute_key: None,
-            ..Default::default()
-        };
-        let key = place_access_compute_key(&AccessMeta::default(), "disabled");
-        assert!(!place_access_is_fresh(&access, &[&key]));
     }
 
     #[test]

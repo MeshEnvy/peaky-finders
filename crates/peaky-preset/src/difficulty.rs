@@ -1,9 +1,10 @@
 //! Access difficulty labels (easy / medium / difficult / extreme).
 
 use crate::model::{
-    HikeDifficultyBands, JeepDifficultyBands, PeakCatalogEntry, PeakHikeProfile, PeakJeepProfile,
+    HikeDifficultyBands, JeepDifficultyBands, PeakHikeProfile, PeakJeepProfile,
     PeakJeepRoadSegment, PeaksDifficultyConfig,
 };
+use crate::peaks_index::PeakIndexRow;
 
 pub fn difficulty_rank(label: &str) -> u8 {
     match label {
@@ -205,59 +206,6 @@ pub fn jeep_class_reason(segments: &[PeakJeepRoadSegment]) -> Option<JeepClassRe
     jeep_class_reason_with_bands(segments, &default_jeep_bands())
 }
 
-pub fn copy_hike_facts_from_profile(entry: &mut PeakCatalogEntry, h: &PeakHikeProfile) {
-    entry.hike_gain_m = Some(h.gain_m);
-    entry.hike_avg_grade_pct = Some(h.avg_grade_pct);
-    entry.hike_max_grade_pct = Some(h.max_grade_pct);
-    if entry.hike_m.is_none() {
-        entry.hike_m = Some(h.horiz_m);
-    }
-    if entry.max_slope_deg.is_none() {
-        entry.max_slope_deg = Some(h.max_slope_deg);
-    }
-    if !h.difficulty.is_empty() {
-        entry.hike_difficulty = Some(h.difficulty.clone());
-    }
-}
-
-pub fn copy_jeep_facts_from_profile(entry: &mut PeakCatalogEntry, j: &PeakJeepProfile) {
-    copy_jeep_facts_from_profile_with_bands(entry, j, &default_jeep_bands());
-}
-
-pub fn copy_jeep_facts_from_profile_with_bands(
-    entry: &mut PeakCatalogEntry,
-    j: &PeakJeepProfile,
-    bands: &JeepDifficultyBands,
-) {
-    if let Some(reason) = jeep_class_reason_with_bands(&j.segments, bands) {
-        entry.jeep_highway = Some(reason.highway);
-        entry.jeep_tracktype = reason.tracktype;
-    }
-    if !j.difficulty.is_empty() {
-        entry.jeep_difficulty = Some(j.difficulty.clone());
-    }
-}
-
-pub fn stamp_peak_difficulties(
-    entry: &mut PeakCatalogEntry,
-    difficulty: &PeaksDifficultyConfig,
-) {
-    if let Some(ref h) = entry.hike {
-        let label = classify_hike(
-            h.max_grade_pct,
-            h.avg_grade_pct,
-            h.gain_m,
-            &difficulty.hike,
-        )
-        .to_string();
-        entry.hike_difficulty = Some(label);
-    }
-    if let Some(ref j) = entry.jeep {
-        let label = classify_jeep(&j.segments, &difficulty.jeep).to_string();
-        entry.jeep_difficulty = Some(label);
-    }
-}
-
 pub fn access_difficulty_from_stored(
     hike: Option<&str>,
     jeep: Option<&str>,
@@ -272,42 +220,17 @@ pub fn access_difficulty_from_stored(
     }
 }
 
-fn legacy_classify_hike(entry: &PeakCatalogEntry, bands: &HikeDifficultyBands) -> Option<String> {
-    if let (Some(gain), Some(avg), Some(max)) = (
-        entry.hike_gain_m,
-        entry.hike_avg_grade_pct,
-        entry.hike_max_grade_pct,
-    ) {
-        return Some(
-            classify_hike(max, avg, gain, bands).to_string(),
-        );
-    }
-    if let Some(h) = entry.hike.as_ref() {
-        return Some(
-            classify_hike(h.max_grade_pct, h.avg_grade_pct, h.gain_m, bands).to_string(),
-        );
-    }
-    if let (Some(_hike_m), Some(max_deg)) = (entry.hike_m, entry.max_slope_deg) {
-        let max_grade = max_deg.to_radians().tan() * 100.0;
-        return Some(classify_hike(max_grade, 0.0, 0.0, bands).to_string());
-    }
+fn legacy_classify_hike(_entry: &PeakIndexRow, _bands: &HikeDifficultyBands) -> Option<String> {
     None
 }
 
-fn legacy_classify_jeep(entry: &PeakCatalogEntry, bands: &JeepDifficultyBands) -> Option<String> {
-    if let Some(hw) = entry.jeep_highway.as_deref() {
-        let rank = jeep_segment_rank(hw, entry.jeep_tracktype.as_deref(), bands);
-        return Some(difficulty_label(rank).to_string());
-    }
-    if let Some(j) = entry.jeep.as_ref() {
-        return Some(classify_jeep(&j.segments, bands).to_string());
-    }
+fn legacy_classify_jeep(_entry: &PeakIndexRow, _bands: &JeepDifficultyBands) -> Option<String> {
     None
 }
 
-/// Stored hike label; legacy rows fall back to classifying from facts.
+/// Stored hike label from index row.
 pub fn stored_hike_difficulty(
-    entry: &PeakCatalogEntry,
+    entry: &PeakIndexRow,
     bands: Option<&HikeDifficultyBands>,
 ) -> Option<String> {
     if let Some(ref s) = entry.hike_difficulty {
@@ -320,7 +243,7 @@ pub fn stored_hike_difficulty(
 
 /// Stored jeep label; legacy rows fall back to classifying from facts.
 pub fn stored_jeep_difficulty(
-    entry: &PeakCatalogEntry,
+    entry: &PeakIndexRow,
     bands: Option<&JeepDifficultyBands>,
 ) -> Option<String> {
     if let Some(ref s) = entry.jeep_difficulty {
@@ -332,7 +255,7 @@ pub fn stored_jeep_difficulty(
 }
 
 pub fn stored_access_difficulty(
-    entry: &PeakCatalogEntry,
+    entry: &PeakIndexRow,
     difficulty: Option<&PeaksDifficultyConfig>,
 ) -> Option<String> {
     let hike_bands = difficulty.map(|d| &d.hike);
@@ -344,19 +267,19 @@ pub fn stored_access_difficulty(
 }
 
 #[deprecated(note = "use stored_hike_difficulty")]
-pub fn derived_hike_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
+pub fn derived_hike_difficulty(entry: &PeakIndexRow) -> Option<String> {
     stored_hike_difficulty(entry, None)
 }
 
 #[deprecated(note = "use stored_jeep_difficulty")]
-pub fn derived_jeep_difficulty(entry: &PeakCatalogEntry) -> Option<String> {
+pub fn derived_jeep_difficulty(entry: &PeakIndexRow) -> Option<String> {
     stored_jeep_difficulty(entry, None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::PeakCatalogEntry;
+    use crate::peaks_index::PeakIndexRow;
 
     fn seg(highway: &str, tracktype: Option<&str>, dist_m: f64) -> PeakJeepRoadSegment {
         PeakJeepRoadSegment {
@@ -423,62 +346,46 @@ mod tests {
 
     #[test]
     fn stored_hike_prefers_stamped_label() {
-        let entry = PeakCatalogEntry {
+        let entry = PeakIndexRow {
             name: None,
             loc: [37.28, -115.64],
             elev_m: Some(1625.0),
             source: "dem".into(),
-            compute_key: None,
+            kind: crate::peaks_index::PeakKind::Peak,
+            point_key: None,
             road_m: None,
             road_loc: None,
             hike_m: Some(224.0),
-            hike_gain_m: Some(36.0),
-            hike_avg_grade_pct: Some(16.0),
-            hike_max_grade_pct: Some(29.3),
-            max_slope_deg: None,
-            hike: None,
-            trail_loc: None,
-            trail_m: None,
-            trail: None,
-            paved_loc: None,
             jeep_m: None,
-            jeep_highway: None,
-            jeep_tracktype: None,
-            jeep: None,
+            trail_m: None,
+            paved_loc: None,
             hike_difficulty: Some("extreme".into()),
             jeep_difficulty: None,
-            deny: None,
+            access_difficulty: None,
+            eligible: true,
         };
         assert_eq!(stored_hike_difficulty(&entry, None).as_deref(), Some("extreme"));
     }
 
     #[test]
-    fn stored_jeep_uses_osm_facts_when_unstamped() {
-        let entry = PeakCatalogEntry {
+    fn stored_jeep_returns_stamped_label() {
+        let entry = PeakIndexRow {
             name: None,
             loc: [38.0, -117.0],
             elev_m: None,
             source: "dem".into(),
-            compute_key: None,
+            kind: crate::peaks_index::PeakKind::Peak,
+            point_key: None,
             road_m: None,
             road_loc: None,
             hike_m: None,
-            hike_gain_m: None,
-            hike_avg_grade_pct: None,
-            hike_max_grade_pct: None,
-            max_slope_deg: None,
-            hike: None,
-            trail_loc: None,
-            trail_m: None,
-            trail: None,
-            paved_loc: None,
             jeep_m: None,
-            jeep_highway: Some("track".into()),
-            jeep_tracktype: Some("grade4".into()),
-            jeep: None,
+            trail_m: None,
+            paved_loc: None,
             hike_difficulty: None,
-            jeep_difficulty: None,
-            deny: None,
+            jeep_difficulty: Some("difficult".into()),
+            access_difficulty: None,
+            eligible: true,
         };
         assert_eq!(stored_jeep_difficulty(&entry, None).as_deref(), Some("difficult"));
     }

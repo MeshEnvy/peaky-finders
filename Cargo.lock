@@ -1658,6 +1658,7 @@ dependencies = [
  "peaky-peaks",
  "peaky-preset",
  "peaky-serve",
+ "serde_yaml",
  "tokio",
  "tracing",
  "tracing-subscriber",

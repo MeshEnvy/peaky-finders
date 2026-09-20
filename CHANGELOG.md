@@ -10,16 +10,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Added
+
+- **`peaky peaks gc`** — reclaims stale `.peaky/cache/probe/<prefs_key>/` and `.peaky/cache/peaks/<prefs_key>/` dirs (default: keep current prefs key only; `--keep N`, `--dry-run`). Build summary prints index path and hints when other prefs dirs remain.
+- **Unified access probe** — one `probe()` path for `peaky peaks probe`, `peaky peaks build`, site/draft pins, and peak re-warm. Returns `AccessProbe` YAML with `recommended` route (preference-ranked, ungated) and optional full `budget_route` when a different park fits segment caps. `eligible` means an in-budget route exists; recommended may exceed caps with numeric `budget.*.over_by` on each leg. Disk cache: `.peaky/cache/probe/<prefs_key>/<lat5>_<lon5>.json`. Map paints both routes (fainter ghost for in-budget alternate). `scan.peaks.preference` weights hike cost, trail m, jeep m, and difficulty rank. `ACCESS_ALGO_VERSION` → **16**, `PEAK_ALGO_VERSION` → **10**. Re-run `peaky peaks build`.
+
+### Changed
+
+- **Peaks catalog in cache** — git-tracked `peaks/` and `access/` are removed. Operator decisions live in **`peaks.yaml`** (`overrides:` deny-by-point). Eligible catalog is derived **`.peaky/cache/peaks/<prefs_key>/index.json`**; probe results are the only persisted access under **`.peaky/cache/probe/`** (compact JSON). Serve returns `missing_catalog: true` when no index exists. `--clean` on build ignores the existing index for the current prefs key (no file deletion). Legacy `.yaml` probe files are ignored; run **`peaky peaks gc`** to reclaim space.
+
+### Fixed
+
+- **Draft/site jeep from pavement** — pin access flood-fills the connected jeep graph from all paved anchors in the display pad, then parks at the closest *reachable* node. Nearby orphan dirt (common with GTLF) no longer wins and hide the orange jeep. `ACCESS_ALGO_VERSION` → **15** (re-warm site/draft access).
+- **Roads boot progress** — pin/sheet no longer say `roads 1/3`. Labels name the work (`Loading OSM graph`, `Merging BLM roads 45%`). Serve writes `.peaky/cache/osm/routing-merged.bin` after the GTLF jeep merge so the next boot skips the ~2 min rematch.
+
 ### Changed
 
 - **FeatureServer land fetch** — paginate ArcGIS layers with one HTTP client, stream each page to `.geojson.part` (flush + offset checkpoint per page), then rename to the final cache file. Avoids holding whole GTLF layers in RAM; interrupted downloads resume from the saved offset.
 - **`peaky peaks build` progress** — logs GTLF cache hits, per-layer jeep/foot load, jeep merge every 250 lines (plus 10 s heartbeat), sample clone / R-tree rebuild stages, DEM tile preload, DEM peak scan, candidate dedup every 2500 (plus 10 s heartbeat), parallel filter every 25 plus a background 10 s heartbeat (fires even during long Dijkstra), survivor dedup, catalog write progress, and catalog write start.
 - **GTLF jeep merge perf** — coverage dedup subsamples lines at 15 m instead of every GTLF vertex; parallel coverage pass; graph endpoint snap uses an R-tree over 5M+ nodes instead of a linear scan (was ~5 lines/sec on one core).
 - **Catalog access routing perf** — park pick uses spatial graph-node search + targeted Dijkstra with early stop (not full-state flood fill); paved seeds start at 25 km crow before expanding; avoids scanning millions of reachable nodes per peak.
-- **Access routing (GTLF + three legs)** — jeep (OSM + BLM motorized roads/trails) → foot trail (GTLF layers 4–5) → bushwhack (DEM A* only). Park pick minimizes bushwhack, then trail+bushwhack, then jeep distance. `hike` / `hike_m` on access profiles are **bushwhack only**; new `trail` / `trail_m` / `trail_loc` for the foot-trail leg. Map: orange jeep, tan trail, green dashed bushwhack. `ACCESS_ALGO_VERSION` → **14**. Re-warm site/peak access after upgrade.
+- **Access routing (GTLF + three legs)** — jeep (OSM + BLM motorized roads/trails) → foot trail (GTLF layers 4–5) → bushwhack (DEM A* only). Park pick minimizes bushwhack, then trail+bushwhack, then jeep distance. `hike` / `hike_m` on access profiles are **bushwhack only**; new `trail` / `trail_m` / `trail_loc` for the foot-trail leg. Map: orange jeep, tan trail, green dashed bushwhack. `ACCESS_ALGO_VERSION` → **15**. Re-warm site/peak access after upgrade.
 
 ### Added
 
+- **`peaky peaks probe --corridor`** — same region flags as `peaks build` (`--corridor`, `--corridor-sites`, `--bbox`, `--polygon`). Lists every candidate in the clip (DEM / GNIS / site seeds) as PASS / DROP / DEDUP with a reason (snap, prominence, jeep, slope, region, or who won dedup). Default corridor width is **20 mi**.
 - **BLM GTLF road source** — `sources.gtlf` in project `config.yaml` (jeep layers 0–3, foot layers 4–5). Bbox-clipped MapServer fetch caches under `.peaky/cache/roads/` (gitignored). Merged into the jeep graph after OSM cache load; foot trails stay a separate walk graph. Serve inventory: `GET …/roads/gtlf/geojson` and `…/trails/geojson`.
 
 ### Changed

@@ -5,6 +5,7 @@ mod find;
 mod freeze;
 mod map_export;
 mod peaks;
+mod probe;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -116,7 +117,7 @@ enum MapCommands {
 
 #[derive(Subcommand)]
 enum PeaksCommands {
-    /// Build eligible-peaks catalog (peaks/ + access/)
+    /// Build eligible-peaks index under .peaky/cache/
     Build {
         /// Project directory (or path to config.yaml)
         #[arg(value_name = "PROJECT")]
@@ -158,18 +159,65 @@ enum PeaksCommands {
         /// Stop after N qualifying peaks (serial scan; prints hike profile for each)
         #[arg(long)]
         stop_after: Option<usize>,
-        /// Wipe peaks/ + access/ and rebuild from this scan only (default: merge/freshen)
+        /// Ignore existing index for this prefs_key (default: merge/freshen)
         #[arg(long)]
         clean: bool,
     },
-    /// Stage-by-stage eligibility report for one lat,lon
+    /// Remove stale probe/peaks cache dirs for other prefs keys
+    Gc {
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
+        /// Keep this many recent stale dirs in addition to the current prefs key
+        #[arg(long, default_value_t = 1)]
+        keep: usize,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Eligibility report: one lat,lon or every candidate in a scan region
     Probe {
         /// Project directory (or path to config.yaml)
         #[arg(value_name = "PROJECT")]
         project: PathBuf,
-        /// Latitude,longitude (e.g. 39.922869,-117.128549)
+        /// Single-point probe (omit when using --corridor / --bbox / --polygon)
         #[arg(value_name = "LAT,LON", allow_hyphen_values = true)]
-        lat_lon: String,
+        lat_lon: Option<String>,
+        /// Scan bbox west,south,east,north
+        #[arg(
+            long,
+            value_name = "W,S,E,N",
+            allow_hyphen_values = true,
+            conflicts_with_all = ["polygon", "corridor", "corridor_sites"]
+        )]
+        bbox: Option<String>,
+        /// Clip scan to a GeoJSON polygon file
+        #[arg(long, value_name = "PATH", conflicts_with_all = ["bbox", "corridor", "corridor_sites"])]
+        polygon: Option<PathBuf>,
+        /// Corridor from_lat,from_lon,to_lat,to_lon
+        #[arg(
+            long,
+            value_name = "LAT,LON,LAT,LON",
+            allow_hyphen_values = true,
+            conflicts_with_all = ["bbox", "polygon", "corridor_sites"]
+        )]
+        corridor: Option<String>,
+        /// Corridor from site slug to site slug
+        #[arg(
+            long,
+            value_name = "FROM,TO",
+            conflicts_with_all = ["bbox", "polygon", "corridor"]
+        )]
+        corridor_sites: Option<String>,
+        /// Total corridor width in miles (probe default 20)
+        #[arg(long, default_value_t = 20.0)]
+        corridor_width_mi: f64,
+        /// Re-download OSM PBF even if cached
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        verbose: bool,
+        /// Print scored park candidates (single-point probe only)
+        #[arg(long)]
+        explain: bool,
     },
 }
 
@@ -280,8 +328,37 @@ async fn main() -> Result<()> {
                     clean,
                 )?;
             }
-            PeaksCommands::Probe { project, lat_lon } => {
-                peaks::run_probe(project, lat_lon)?;
+            PeaksCommands::Gc {
+                project,
+                keep,
+                dry_run,
+            } => {
+                peaks::run_gc(project, keep, dry_run)?;
+            }
+            PeaksCommands::Probe {
+                project,
+                lat_lon,
+                bbox,
+                polygon,
+                corridor,
+                corridor_sites,
+                corridor_width_mi,
+                force,
+                verbose,
+                explain,
+            } => {
+                peaks::run_probe(
+                    project,
+                    lat_lon,
+                    bbox,
+                    polygon,
+                    corridor,
+                    corridor_sites,
+                    corridor_width_mi,
+                    force,
+                    verbose,
+                    explain,
+                )?;
             }
         },
         Commands::Export {

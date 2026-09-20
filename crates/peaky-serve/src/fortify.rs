@@ -415,18 +415,18 @@ fn load_fortify_body(
 
     let catalog = cached_peaks_catalog_thin(&req.preset_path)
         .map_err(|e| FortifyRunError::User(format!("load peaks catalog: {e}"), 422))?;
-    let n_catalog_peaks = catalog.entries.len();
+    let n_catalog_peaks = catalog.peaks.len();
     if n_catalog_peaks == 0 {
         return Err(FortifyRunError::User(
-            "peaks catalog is empty; run peaky peaks to build peaks/".into(),
+            "peaks catalog is empty; run peaky peaks build".into(),
             422,
         ));
     }
 
     let mut peaks: Vec<CatalogPeak> = catalog
-        .entries
+        .peaks
         .iter()
-        .filter(|(_, entry)| !entry.deny.unwrap_or(false))
+        .filter(|(_, entry)| entry.eligible)
         .filter(|(slug, _)| !req.exclude_peaks.contains(slug.as_str()))
         .filter_map(|(slug, entry)| {
             let lat = entry.lat();
@@ -435,7 +435,7 @@ fn load_fortify_body(
                 return None;
             }
             let (hike_difficulty, jeep_difficulty, access_difficulty) =
-                catalog_peak_difficulty(entry, Some(&catalog.rules.difficulty));
+                catalog_peak_difficulty(entry, Some(&catalog.manifest.rules.difficulty));
             Some(CatalogPeak {
                 slug: slug.clone(),
                 name: entry

@@ -77,6 +77,32 @@ fn round_coord(v: f64) -> f64 {
     (v * 1e7).round() / 1e7
 }
 
+/// Rehydrate a stored hike profile for reporting (segments/histogram omitted).
+pub fn hike_detail_from_stored(h: &peaky_preset::PeakHikeProfile) -> HikeProfileDetailed {
+    HikeProfileDetailed {
+        hike_m_3d: h.hike_m_3d,
+        horiz_m: h.horiz_m,
+        gain_m: h.gain_m,
+        loss_m: h.loss_m,
+        max_slope_deg: h.max_slope_deg,
+        max_grade_pct: h.max_grade_pct,
+        avg_grade_pct: h.avg_grade_pct,
+        difficulty: h.difficulty.clone(),
+        segments: Vec::new(),
+        profile: h
+            .profile
+            .iter()
+            .map(|p| HikeProfilePoint {
+                dist_m: p.dist_m,
+                elev_m: p.elev_m,
+                lat: p.lat,
+                lon: p.lon,
+            })
+            .collect(),
+        histogram: Vec::new(),
+    }
+}
+
 /// Serialize a detailed profile into the catalog ``hike`` block.
 pub fn stored_peak_hike(detail: &HikeProfileDetailed) -> peaky_preset::PeakHikeProfile {
     peaky_preset::PeakHikeProfile {
