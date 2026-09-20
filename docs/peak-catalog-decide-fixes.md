@@ -12,14 +12,11 @@ Probe + audit inform **separate** tuning decisions. Raising hike gate to 110% se
 
 ### 2. Draft/site park scoring vs catalog eligibility
 
-- **Today:** Catalog uses `select_park_and_hike` with `gate_eligibility=true` and **gentlest hike wins** among sector candidates.
-- **Draft pins:** Same picker with `gate_eligibility=false` still prefers gentlest, not nearest road.
-- **Fix (product choice):** For draft/site access only, rank by road distance first when within slope gate; keep gentlest-for-catalog for eligibility scan.
+- **Shipped 2026-09-19 / 2026-09-20:** Site clicks and draft pins use **ungated display routing** (`compute_place_access`): jeep from pavement along the connected OSM graph to the closest reachable node, then hike. No catalog slope/jeep gates; difficulty labels are informational only. Catalog build still uses `select_park_and_hike` + `gate_eligibility=true`.
 
 ### 3. DEM bin / seeding for ridge pins
 
-- **Today:** 1500 m bins + 20 m prominence + summit snap can miss ridge-top pins that never enter the DEM universe.
-- **Fix:** Optional seed from operator pins; smaller bins in high-relief AOIs; or corridor-merge reseed for grandfathered slugs near known sites.
+- **Shipped 2026-09-19:** `scan.peak_bin_size_m` **500**, no site-vs-peak dedup. Remaining miss mode is 20 m prominence + 500 m summit snap (a pad that is not a local max still never enters).
 
 ## Probe: draft pin 39.922869,-117.128549 (2026-09-19)
 

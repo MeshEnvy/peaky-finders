@@ -32,14 +32,12 @@ use crate::corridor::{
 };
 use crate::gnis::load_gnis_candidates;
 use crate::hike::{
-    default_max_slope_deg, format_hike_report, haversine_m, neighbor_prominence_m, profile_hike,
-    profile_passes, snap_to_dem_local_max_filtered, HikeProfile, HikeProfileDetailed, HikeSampleElev,
-    DEFAULT_MAX_HIKE_M,
+    format_hike_report, haversine_m, neighbor_prominence_m, profile_passes,
+    snap_to_dem_local_max_filtered, HikeProfile, HikeProfileDetailed, HikeSampleElev,
 };
 use peaky_preset::PeaksScanConfig;
-use crate::access::build_access_from_park;
+use crate::access::{build_access_catalog, CatalogBuildDrop};
 use crate::osm::{build_osm_routing, ensure_osm_pbf, OsmRouting};
-use crate::park::select_park_and_hike;
 use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candidate, RawCandidate};
 
 /// Upsert each peak+access file every N newly freshened/inserted peaks during a build.
@@ -47,7 +45,6 @@ const PROGRESS_WRITE_EVERY: usize = 10;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PeaksFilterParams {
-    pub site_dedup_m: f64,
     pub candidate_dedup_m: f64,
     pub summit_snap_m: f64,
     pub min_prominence_m: f64,
@@ -56,7 +53,6 @@ pub(crate) struct PeaksFilterParams {
 impl From<&PeaksScanConfig> for PeaksFilterParams {
     fn from(p: &PeaksScanConfig) -> Self {
         Self {
-            site_dedup_m: p.site_dedup_m,
             candidate_dedup_m: p.candidate_dedup_m,
             summit_snap_m: p.summit_snap_m,
             min_prominence_m: p.min_prominence_m,
@@ -66,7 +62,6 @@ impl From<&PeaksScanConfig> for PeaksFilterParams {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterDrop {
-    SiteDedup,
     Land,
     Region,
     Road,
@@ -164,15 +159,11 @@ pub(crate) fn filter_candidate(
     land: &LandFilterIndex,
     routing: &OsmRouting,
     scan_region: &ScanRegion,
-    site_locs: &[(f64, f64)],
     rules: &PeakAccessRules,
     profile_sample_m: f64,
     hike_path_max_m: f64,
     filter: PeaksFilterParams,
 ) -> Result<FilterPass, FilterDrop> {
-    if is_near_any_site(cand.lat, cand.lon, site_locs, filter.site_dedup_m) {
-        return Err(FilterDrop::SiteDedup);
-    }
     let elev = SessionElev(session);
     let Some((peak_lat, peak_lon, peak_elev)) = snap_to_dem_local_max_filtered(
         &elev,
@@ -192,38 +183,21 @@ pub(crate) fn filter_candidate(
     {
         return Err(FilterDrop::Land);
     }
-    let jeep_near = routing
-        .jeep_roads
-        .nearest_within(peak_lat, peak_lon, rules.max_hike_m);
-    let paved_near = routing
-        .paved
-        .nearest_within(peak_lat, peak_lon, rules.max_hike_m);
-    if jeep_near.is_none() && paved_near.is_none() {
-        return Err(FilterDrop::Road);
-    }
-    let Some(picked) = select_park_and_hike(
+    let built = build_access_catalog(
         &elev,
-        &routing.jeep_roads,
-        Some(&routing.paved),
+        routing,
         peak_lat,
         peak_lon,
-        hike_path_max_m,
+        &rules.difficulty.jeep.extreme,
         rules.max_slope_deg,
         hike_path_max_m,
         profile_sample_m,
-        true,
-    ) else {
-        return Err(FilterDrop::Slope);
-    };
-    let built = build_access_from_park(
-        &elev,
-        routing,
-        &picked,
-        rules.max_jeep_m,
-        profile_sample_m,
     )
-    .ok_or(FilterDrop::Jeep)?;
-    let detail = picked.hike.clone();
+    .map_err(|d| match d {
+        CatalogBuildDrop::Jeep => FilterDrop::Jeep,
+        CatalogBuildDrop::Slope => FilterDrop::Slope,
+    })?;
+    let detail = built.hike_detail.clone();
     let profile = HikeProfile {
         hike_m_3d: detail.hike_m_3d,
         max_slope_deg: detail.max_slope_deg,
@@ -373,8 +347,6 @@ pub fn build_peaks_catalog(
     });
     info!(count = universe.len(), "peaks: universe after dedup");
 
-    let site_locs: Vec<(f64, f64)> = preset.sites.values().map(|s| (s.lat(), s.lon())).collect();
-
     let previous = load_peaks_catalog(preset_path)?;
     let full_aoi = is_full_aoi_scan(&opts);
     let replace_catalog = opts.clean || full_aoi;
@@ -446,7 +418,6 @@ pub fn build_peaks_catalog(
                 land_index.as_ref(),
                 routing.as_ref(),
                 &scan_region,
-                &site_locs,
                 &rules,
                 profile_sample_m,
                 hike_path_max_m,
@@ -472,7 +443,6 @@ pub fn build_peaks_catalog(
                     );
                     deduped.push(pass);
                 }
-                Err(FilterDrop::SiteDedup) => drops.dedup += 1,
                 Err(FilterDrop::Land) => drops.land += 1,
                 Err(FilterDrop::Region) => drops.region += 1,
                 Err(FilterDrop::Road) => drops.road += 1,
@@ -497,9 +467,7 @@ pub fn build_peaks_catalog(
 
         let scan_region = Arc::new(scan_region);
         let rules = Arc::new(rules);
-        let site_locs = Arc::new(site_locs);
         let processed = AtomicUsize::new(0);
-        let drop_site = AtomicUsize::new(0);
         let drop_land = AtomicUsize::new(0);
         let drop_region = AtomicUsize::new(0);
         let drop_road = AtomicUsize::new(0);
@@ -532,17 +500,12 @@ pub fn build_peaks_catalog(
                         land_index.as_ref(),
                         routing.as_ref(),
                         scan_region.as_ref(),
-                        site_locs.as_ref(),
                         rules.as_ref(),
                         profile_sample_m,
                         hike_path_max_m,
                         filter_params,
                     ) {
                         Ok(pass) => Some(pass),
-                        Err(FilterDrop::SiteDedup) => {
-                            drop_site.fetch_add(1, Ordering::Relaxed);
-                            None
-                        }
                         Err(FilterDrop::Land) => {
                             drop_land.fetch_add(1, Ordering::Relaxed);
                             None
@@ -586,7 +549,6 @@ pub fn build_peaks_catalog(
             slope: drop_slope.load(Ordering::Relaxed),
             jeep: drop_jeep.load(Ordering::Relaxed),
             region: drop_region.load(Ordering::Relaxed),
-            dedup: drop_site.load(Ordering::Relaxed),
             ..DropCounts::default()
         };
 
@@ -939,12 +901,6 @@ pub fn resolve_corridor_from_opts(
         return Ok(Some(parse_corridor_coords(raw)?));
     }
     Ok(None)
-}
-
-fn is_near_any_site(lat: f64, lon: f64, sites: &[(f64, f64)], min_m: f64) -> bool {
-    sites
-        .iter()
-        .any(|(slat, slon)| crate::hike::haversine_m(lat, lon, *slat, *slon) <= min_m)
 }
 
 fn chrono_date() -> String {

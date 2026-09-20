@@ -167,7 +167,7 @@ export function mountPeakSheet(store, appApi) {
           :hike-end-elev-m="selectedPeak?.elev_m"
           :difficulty-config="difficultyConfig"
           hike-end-label="Summit"
-          empty-text="No access route yet"
+          empty-text="No mapped OSM road"
           @point-click="onAccessPointClick"
         />
       </div>

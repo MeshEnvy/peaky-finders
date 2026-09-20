@@ -15,14 +15,14 @@ use peaky_preset::{
 };
 use splatter::Session;
 
-use crate::access::build_access_from_park;
+use crate::access::{build_access_from_park_display, build_access_from_paved_approach};
 use crate::hike::{default_max_slope_deg, HikeSampleElev};
 use crate::osm::{
     build_osm_routing, build_osm_routing_with_progress, ensure_osm_pbf, OsmParsePhase, OsmRouting,
     OsmRoutingOpts, OSM_BUILD_PAD_DEG,
 };
 use crate::osm_cache::{save_osm_routing_cache, try_load_osm_routing_cache};
-use crate::park::{nearest_park_hike, select_park_and_hike};
+use crate::park::nearest_park_hike;
 
 struct SessionElev<'a>(&'a Session);
 
@@ -32,10 +32,29 @@ impl HikeSampleElev for SessionElev<'_> {
     }
 }
 
+/// Jeep budget for site/pin display: the loaded OSM pad, not the catalog 20 km search.
+pub fn display_jeep_max_m() -> f64 {
+    OSM_ROUTE_PAD_DEG * 111_320.0
+}
+
+fn place_from_built(meta: &AccessMeta, built: crate::access::BuiltAccess) -> PlaceAccess {
+    PlaceAccess {
+        compute_key: Some(place_access_compute_key(meta)),
+        paved_loc: Some([built.paved_lat, built.paved_lon]),
+        road_loc: Some([built.road_lat, built.road_lon]),
+        jeep_m: Some((built.jeep_m * 10.0).round() / 10.0),
+        jeep: Some(built.jeep),
+        hike_m: Some((built.hike_m * 10.0).round() / 10.0),
+        hike: Some(built.hike),
+        max_slope_deg: Some((built.max_slope_deg * 10.0).round() / 10.0),
+    }
+}
+
 /// Compute access for ``(lat, lon)`` using OSM + DEM and ``access`` meta.
 ///
-/// No peak eligibility gates: long/steep hikes are still stored and drawn.
-/// Returns ``None`` only when no jeep road / hike profile / jeep route can be built.
+/// Display routing: jeep from pavement along the connected OSM graph as close
+/// as it can get, then hike. No catalog slope/jeep gates.
+/// Returns ``None`` only when the loaded graph has neither paved nor jeep roads.
 pub fn compute_place_access(
     _project_dir: &Path,
     session: &Session,
@@ -45,50 +64,38 @@ pub fn compute_place_access(
     lon: f64,
 ) -> Option<PlaceAccess> {
     let elev = SessionElev(session);
-    let park_search = meta.hike_path_max_m.min(meta.place_road_search_m);
-    let picked = select_park_and_hike(
+    let jeep_max = display_jeep_max_m();
+    if let Some(built) = build_access_from_paved_approach(
+        &elev,
+        routing,
+        lat,
+        lon,
+        jeep_max,
+        jeep_max,
+        meta.profile_sample_m,
+    ) {
+        return Some(place_from_built(meta, built));
+    }
+    let picked = nearest_park_hike(
         &elev,
         &routing.jeep_roads,
         Some(&routing.paved),
         lat,
         lon,
-        park_search,
+        jeep_max,
         default_max_slope_deg(),
-        meta.hike_path_max_m,
+        jeep_max,
         meta.profile_sample_m,
         false,
-    )
-    .or_else(|| {
-        nearest_park_hike(
-            &elev,
-            &routing.jeep_roads,
-            Some(&routing.paved),
-            lat,
-            lon,
-            meta.place_road_search_m,
-            default_max_slope_deg(),
-            meta.hike_path_max_m,
-            meta.profile_sample_m,
-            false,
-        )
-    })?;
-    let built = build_access_from_park(
+    )?;
+    let built = build_access_from_park_display(
         &elev,
         routing,
         &picked,
-        meta.max_jeep_m,
+        jeep_max,
         meta.profile_sample_m,
-    )?;
-    Some(PlaceAccess {
-        compute_key: Some(place_access_compute_key(meta)),
-        paved_loc: Some([built.paved_lat, built.paved_lon]),
-        road_loc: Some([built.road_lat, built.road_lon]),
-        jeep_m: Some((built.jeep_m * 10.0).round() / 10.0),
-        jeep: Some(built.jeep),
-        hike_m: Some((built.hike_m * 10.0).round() / 10.0),
-        hike: Some(built.hike),
-        max_slope_deg: Some((built.max_slope_deg * 10.0).round() / 10.0),
-    })
+    );
+    Some(place_from_built(meta, built))
 }
 
 /// Pad around a place for jeep routing (~55 km). Used by serve cache + warm.

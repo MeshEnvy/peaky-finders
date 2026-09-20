@@ -40,11 +40,20 @@ fn sorted_joined(items: &[String]) -> String {
     v.join(",")
 }
 
+fn sorted_class_m(map: &std::collections::HashMap<String, f64>) -> String {
+    let mut keys: Vec<&String> = map.keys().collect();
+    keys.sort_unstable();
+    keys.iter()
+        .map(|k| format!("{k}={:.0}", map[*k]))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
 fn difficulty_fingerprint(difficulty: &PeaksDifficultyConfig) -> u64 {
     let hike = &difficulty.hike;
     let jeep = &difficulty.jeep;
     let parts = format!(
-        "h:{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0}|j:{},{},{},{},{:.0}",
+        "h:{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0}|j:{},{},{},{},{:.0}|c:{}",
         hike.medium.min_max_grade_pct,
         hike.medium.min_avg_grade_pct,
         hike.medium.min_gain_m,
@@ -58,6 +67,7 @@ fn difficulty_fingerprint(difficulty: &PeaksDifficultyConfig) -> u64 {
         sorted_joined(&jeep.difficult.tracktypes),
         sorted_joined(&jeep.extreme.tracktypes),
         jeep.extreme.max_route_m,
+        sorted_class_m(&jeep.extreme.max_class_m),
     );
     hash_str(&parts)
 }

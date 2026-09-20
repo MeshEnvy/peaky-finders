@@ -5,7 +5,7 @@ use std::collections::{BinaryHeap, HashMap};
 
 use serde::Serialize;
 
-use peaky_preset::PeakJeepProfile;
+use peaky_preset::{jeep_budget_class_key, JeepExtremeBands, PeakJeepProfile};
 
 use crate::hike::{
     grade_histogram, haversine_m, slope_deg_to_grade_pct, HikeProfilePoint, HikeSampleElev,
@@ -14,6 +14,57 @@ use crate::hike::{
 use crate::osm::{JeepRoadGraph, PavedAnchorIndex};
 
 const SNAP_PARK_M: f64 = 250.0;
+
+/// Catalog-only jeep length caps (overall + per OSM class).
+#[derive(Debug, Clone)]
+pub struct JeepLengthBudget {
+    pub overall_m: f64,
+    class_m: HashMap<String, f64>,
+}
+
+impl JeepLengthBudget {
+    pub fn from_extreme(ext: &JeepExtremeBands) -> Self {
+        Self {
+            overall_m: ext.max_route_m,
+            class_m: ext.max_class_m.clone(),
+        }
+    }
+
+    pub fn class_cap(&self, highway: &str, tracktype: Option<&str>) -> f64 {
+        let key = jeep_budget_class_key(highway, tracktype);
+        self.class_m
+            .get(&key)
+            .or_else(|| self.class_m.get("grade5"))
+            .copied()
+            .unwrap_or(self.overall_m)
+    }
+}
+
+/// Per-class horizontal usage on a jeep route (for probe diagnostics).
+pub fn jeep_class_usage(
+    segments: &[JeepRoadSegment],
+    budget: &JeepLengthBudget,
+) -> Vec<(String, f64, f64)> {
+    let mut totals = HashMap::<String, f64>::new();
+    for s in segments {
+        let key = jeep_budget_class_key(&s.highway, s.tracktype.as_deref());
+        *totals.entry(key).or_insert(0.0) += s.dist_m;
+    }
+    let mut keys: Vec<_> = totals.keys().cloned().collect();
+    keys.sort();
+    keys.into_iter()
+        .map(|k| {
+            let used = totals[&k];
+            let cap = budget
+                .class_m
+                .get(&k)
+                .or_else(|| budget.class_m.get("grade5"))
+                .copied()
+                .unwrap_or(budget.overall_m);
+            (k, used, cap)
+        })
+        .collect()
+}
 
 fn jeep_difficulty_from_osm(segments: &[JeepRoadSegment]) -> &'static str {
     let mapped: Vec<peaky_preset::PeakJeepRoadSegment> = segments
@@ -123,80 +174,11 @@ impl Ord for HeapState {
     }
 }
 
-/// Route from nearest paved anchor to park point (``road_lat``/``road_lon``).
-pub fn route_jeep_detailed(
+fn reconstruct_route(
     graph: &JeepRoadGraph,
-    paved: &PavedAnchorIndex,
-    road_lat: f64,
-    road_lon: f64,
-    max_jeep_m: f64,
-) -> Option<JeepRouteResult> {
-    if graph.is_empty() {
-        return None;
-    }
-    let dest = graph.nearest_node(road_lat, road_lon, SNAP_PARK_M)?;
-    let sources = paved.sources_within(road_lat, road_lon, max_jeep_m + 5000.0);
-    if sources.is_empty() {
-        return None;
-    }
-    if sources.iter().any(|&(_, _, node)| node == dest) {
-        let (plat, plon) = graph.node_coords(dest);
-        return Some(JeepRouteResult {
-            paved_lat: plat,
-            paved_lon: plon,
-            coords: vec![(plat, plon)],
-            horiz_m: 0.0,
-            road_segments: vec![],
-        });
-    }
-
-    let mut dist_cost = HashMap::<u32, f64>::new();
-    let mut dist_horiz = HashMap::<u32, f64>::new();
-    let mut prev: HashMap<u32, (u32, crate::osm::GraphEdge)> = HashMap::new();
-    let mut heap = BinaryHeap::new();
-
-    for &(_lat, _lon, node) in &sources {
-        dist_cost.insert(node, 0.0);
-        dist_horiz.insert(node, 0.0);
-        heap.push(HeapState { cost: 0.0, node });
-    }
-
-    while let Some(HeapState { cost, node }) = heap.pop() {
-        if cost > *dist_cost.get(&node).unwrap_or(&f64::INFINITY) + 1e-9 {
-            continue;
-        }
-        if node == dest {
-            break;
-        }
-        for edge in graph.edges(node) {
-            let horiz = dist_horiz.get(&node).copied().unwrap_or(0.0) + edge.length_m;
-            if horiz > max_jeep_m + 1.0 {
-                continue;
-            }
-            let mult = edge_cost_multiplier(
-                &edge.highway,
-                edge.tracktype.as_deref(),
-                edge.surface.as_deref(),
-                edge.fourwd_only,
-            );
-            let next_cost = cost + edge.length_m * mult;
-            let cur = dist_cost.get(&edge.to).copied().unwrap_or(f64::INFINITY);
-            if next_cost + 1e-9 < cur {
-                dist_cost.insert(edge.to, next_cost);
-                dist_horiz.insert(edge.to, horiz);
-                prev.insert(edge.to, (node, edge.clone()));
-                heap.push(HeapState {
-                    cost: next_cost,
-                    node: edge.to,
-                });
-            }
-        }
-    }
-
-    if !dist_cost.contains_key(&dest) {
-        return None;
-    }
-    let dest_node = dest;
+    prev: &HashMap<u32, (u32, crate::osm::GraphEdge)>,
+    dest_node: u32,
+) -> JeepRouteResult {
     let mut path_nodes = vec![dest_node];
     let mut road_segments = Vec::new();
     let mut node = dest_node;
@@ -221,13 +203,152 @@ pub fn route_jeep_detailed(
         .collect();
     let horiz_m: f64 = road_segments.iter().map(|s| s.dist_m).sum();
 
-    Some(JeepRouteResult {
+    JeepRouteResult {
         paved_lat,
         paved_lon,
         coords,
         horiz_m,
         road_segments,
-    })
+    }
+}
+
+fn dijkstra_from_paved(
+    graph: &JeepRoadGraph,
+    sources: &[(f64, f64, u32)],
+    max_jeep_m: f64,
+    stop_at: Option<u32>,
+    budget: Option<&JeepLengthBudget>,
+) -> (
+    HashMap<u32, f64>,
+    HashMap<u32, f64>,
+    HashMap<u32, (u32, crate::osm::GraphEdge)>,
+) {
+    let overall_cap = budget.map(|b| b.overall_m).unwrap_or(max_jeep_m);
+    let mut dist_cost = HashMap::<u32, f64>::new();
+    let mut dist_horiz = HashMap::<u32, f64>::new();
+    let mut class_at: HashMap<u32, HashMap<String, f64>> = HashMap::new();
+    let mut prev: HashMap<u32, (u32, crate::osm::GraphEdge)> = HashMap::new();
+    let mut heap = BinaryHeap::new();
+
+    for &(_lat, _lon, node) in sources {
+        dist_cost.insert(node, 0.0);
+        dist_horiz.insert(node, 0.0);
+        class_at.insert(node, HashMap::new());
+        heap.push(HeapState { cost: 0.0, node });
+    }
+
+    while let Some(HeapState { cost, node }) = heap.pop() {
+        if cost > *dist_cost.get(&node).unwrap_or(&f64::INFINITY) + 1e-9 {
+            continue;
+        }
+        if stop_at == Some(node) {
+            break;
+        }
+        let horiz_base = dist_horiz.get(&node).copied().unwrap_or(0.0);
+        let class_base = class_at.get(&node).cloned().unwrap_or_default();
+        for edge in graph.edges(node) {
+            let horiz = horiz_base + edge.length_m;
+            if horiz > overall_cap + 1.0 {
+                continue;
+            }
+            let mut new_class = class_base.clone();
+            if let Some(b) = budget {
+                let key = jeep_budget_class_key(&edge.highway, edge.tracktype.as_deref());
+                let used = new_class.entry(key).or_insert(0.0);
+                *used += edge.length_m;
+                if *used > b.class_cap(&edge.highway, edge.tracktype.as_deref()) + 1.0 {
+                    continue;
+                }
+            }
+            let mult = edge_cost_multiplier(
+                &edge.highway,
+                edge.tracktype.as_deref(),
+                edge.surface.as_deref(),
+                edge.fourwd_only,
+            );
+            let next_cost = cost + edge.length_m * mult;
+            let cur = dist_cost.get(&edge.to).copied().unwrap_or(f64::INFINITY);
+            if next_cost + 1e-9 < cur {
+                dist_cost.insert(edge.to, next_cost);
+                dist_horiz.insert(edge.to, horiz);
+                class_at.insert(edge.to, new_class);
+                prev.insert(edge.to, (node, edge.clone()));
+                heap.push(HeapState {
+                    cost: next_cost,
+                    node: edge.to,
+                });
+            }
+        }
+    }
+    (dist_cost, dist_horiz, prev)
+}
+
+/// Route from nearest paved anchor to park point (``road_lat``/``road_lon``).
+pub fn route_jeep_detailed(
+    graph: &JeepRoadGraph,
+    paved: &PavedAnchorIndex,
+    road_lat: f64,
+    road_lon: f64,
+    max_jeep_m: f64,
+    budget: Option<&JeepLengthBudget>,
+) -> Option<JeepRouteResult> {
+    if graph.is_empty() {
+        return None;
+    }
+    let dest = graph.nearest_node(road_lat, road_lon, SNAP_PARK_M)?;
+    let sources = paved.sources_within(road_lat, road_lon, max_jeep_m + 5000.0);
+    if sources.is_empty() {
+        return None;
+    }
+    if sources.iter().any(|&(_, _, node)| node == dest) {
+        return Some(reconstruct_route(graph, &HashMap::new(), dest));
+    }
+
+    let (dist_cost, _dist_horiz, prev) =
+        dijkstra_from_paved(graph, &sources, max_jeep_m, Some(dest), budget);
+    if !dist_cost.contains_key(&dest) {
+        return None;
+    }
+    Some(reconstruct_route(graph, &prev, dest))
+}
+
+/// Drive from pavement along the OSM graph; stop at the reachable node closest to dest.
+///
+/// Display passes ``budget=None`` (ungated). Catalog passes ``Some`` for class/overall caps.
+pub fn route_jeep_closest_approach(
+    graph: &JeepRoadGraph,
+    paved: &PavedAnchorIndex,
+    dest_lat: f64,
+    dest_lon: f64,
+    max_jeep_m: f64,
+    budget: Option<&JeepLengthBudget>,
+) -> Option<JeepRouteResult> {
+    if graph.is_empty() {
+        return None;
+    }
+    let sources = paved.sources_within(dest_lat, dest_lon, max_jeep_m + 5000.0);
+    if sources.is_empty() {
+        return None;
+    }
+
+    let (dist_cost, dist_horiz, prev) =
+        dijkstra_from_paved(graph, &sources, max_jeep_m, None, budget);
+    let mut best: Option<(u32, f64)> = None;
+    for &node in dist_cost.keys() {
+        let (nlat, nlon) = graph.node_coords(node);
+        let crow = haversine_m(nlat, nlon, dest_lat, dest_lon);
+        if budget.is_some() {
+            let jeep_horiz = dist_horiz.get(&node).copied().unwrap_or(0.0);
+            if jeep_horiz <= 5.0 && crow > SNAP_PARK_M {
+                continue;
+            }
+        }
+        if best.map(|(_, d)| crow + 0.5 < d).unwrap_or(true) {
+            best = Some((node, crow));
+        }
+    }
+    let (dest_node, _) = best?;
+    Some(reconstruct_route(graph, &prev, dest_node))
 }
 
 /// DEM elevation profile along a routed polyline.
@@ -459,7 +580,8 @@ mod tests {
         let (graph, paved) = test_graph_easy_detour();
         let dest_lat = 38.008;
         let dest_lon = -117.0;
-        let route = route_jeep_detailed(&graph, &paved, dest_lat, dest_lon, 5000.0).unwrap();
+        let route =
+            route_jeep_detailed(&graph, &paved, dest_lat, dest_lon, 5000.0, None).unwrap();
         assert!(route.horiz_m >= 1100.0);
         assert!(route.horiz_m <= 1300.0);
     }
@@ -467,19 +589,158 @@ mod tests {
     #[test]
     fn max_jeep_length_rejects_distant_paved() {
         let (graph, paved) = test_graph_easy_detour();
-        assert!(route_jeep_detailed(&graph, &paved, 38.05, -117.0, 500.0).is_none());
+        assert!(route_jeep_detailed(&graph, &paved, 38.05, -117.0, 500.0, None).is_none());
     }
 
     #[test]
     fn already_on_paved_is_zero_jeep() {
         let (graph, paved) = test_graph_easy_detour();
-        let route = route_jeep_detailed(&graph, &paved, 38.0, -117.0, 5000.0).unwrap();
+        let route = route_jeep_detailed(&graph, &paved, 38.0, -117.0, 5000.0, None).unwrap();
         assert_eq!(route.horiz_m, 0.0);
         assert!(route.road_segments.is_empty());
         let flat = FlatElev(2000.0);
         let detail = profile_along_polyline(&flat, &route.coords, 30.0, &route.road_segments).unwrap();
         assert_eq!(detail.horiz_m, 0.0);
         assert_eq!(detail.difficulty, "easy");
+    }
+
+    fn paved_plus_disconnected_dirt() -> (JeepRoadGraph, PavedAnchorIndex) {
+        let mut g = JeepRoadGraph::new();
+        let n0 = g.insert_node(38.0, -117.0);
+        let n1 = g.insert_node(38.012, -117.0);
+        let n2 = g.insert_node(38.018, -117.0);
+        let len = haversine_m(38.0, -117.0, 38.012, -117.0);
+        g.add_edge(
+            n0,
+            GraphEdge {
+                to: n1,
+                length_m: len,
+                highway: "track".into(),
+                tracktype: None,
+                surface: None,
+                fourwd_only: false,
+            },
+        );
+        g.add_edge(
+            n1,
+            GraphEdge {
+                to: n0,
+                length_m: len,
+                highway: "track".into(),
+                tracktype: None,
+                surface: None,
+                fourwd_only: false,
+            },
+        );
+        let _ = n2;
+        let paved = PavedAnchorIndex::from_nodes(&g, &[(n0, 38.0, -117.0)]);
+        (g, paved)
+    }
+
+    #[test]
+    fn closest_approach_stops_on_connected_road() {
+        let (graph, paved) = paved_plus_disconnected_dirt();
+        let route =
+            route_jeep_closest_approach(&graph, &paved, 38.019, -117.0, 20_000.0, None).unwrap();
+        let end = *route.coords.last().unwrap();
+        assert!((end.0 - 38.012).abs() < 0.0002);
+        assert!(route.horiz_m > 1000.0);
+        assert!((route.paved_lat - 38.0).abs() < 0.0002);
+    }
+
+    #[test]
+    fn closest_approach_needs_paved() {
+        let (graph, _) = paved_plus_disconnected_dirt();
+        let empty = PavedAnchorIndex::from_nodes(&graph, &[]);
+        assert!(route_jeep_closest_approach(&graph, &empty, 38.019, -117.0, 20_000.0, None).is_none());
+    }
+
+    fn paved_long_track(
+        len_m: f64,
+        highway: &str,
+        tracktype: Option<&str>,
+    ) -> (JeepRoadGraph, PavedAnchorIndex) {
+        let mut g = JeepRoadGraph::new();
+        let n0 = g.insert_node(38.0, -117.0);
+        let n1 = g.insert_node(38.09, -117.0);
+        let edge = GraphEdge {
+            to: n1,
+            length_m: len_m,
+            highway: highway.into(),
+            tracktype: tracktype.map(str::to_string),
+            surface: None,
+            fourwd_only: false,
+        };
+        let rev = GraphEdge {
+            to: n0,
+            length_m: len_m,
+            highway: highway.into(),
+            tracktype: tracktype.map(str::to_string),
+            surface: None,
+            fourwd_only: false,
+        };
+        g.add_edge(n0, edge);
+        g.add_edge(n1, rev);
+        let paved = PavedAnchorIndex::from_nodes(&g, &[(n0, 38.0, -117.0)]);
+        (g, paved)
+    }
+
+    #[test]
+    fn catalog_budget_rejects_six_mi_unclassified() {
+        const SIX_MI: f64 = 9656.0;
+        let (graph, paved) = paved_long_track(SIX_MI, "unclassified", None);
+        let budget = JeepLengthBudget::from_extreme(&JeepExtremeBands::default());
+        assert!(route_jeep_closest_approach(
+            &graph,
+            &paved,
+            38.09,
+            -117.0,
+            budget.overall_m,
+            Some(&budget),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn catalog_budget_rejects_six_mi_grade5() {
+        const SIX_MI: f64 = 9656.0;
+        let (graph, paved) = paved_long_track(SIX_MI, "track", Some("grade5"));
+        let budget = JeepLengthBudget::from_extreme(&JeepExtremeBands::default());
+        assert!(route_jeep_closest_approach(
+            &graph,
+            &paved,
+            38.09,
+            -117.0,
+            budget.overall_m,
+            Some(&budget),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn catalog_budget_allows_six_mi_grade1() {
+        const SIX_MI: f64 = 9656.0;
+        let (graph, paved) = paved_long_track(SIX_MI, "track", Some("grade1"));
+        let budget = JeepLengthBudget::from_extreme(&JeepExtremeBands::default());
+        let route = route_jeep_closest_approach(
+            &graph,
+            &paved,
+            38.09,
+            -117.0,
+            budget.overall_m,
+            Some(&budget),
+        )
+        .expect("grade1 under overall and class caps");
+        assert!(route.horiz_m >= SIX_MI - 1.0);
+    }
+
+    #[test]
+    fn display_ungated_allows_long_unclassified() {
+        const SIX_MI: f64 = 9656.0;
+        let (graph, paved) = paved_long_track(SIX_MI, "unclassified", None);
+        let route = route_jeep_closest_approach(&graph, &paved, 38.09, -117.0, 80_467.0, None)
+            .expect("display has no per-class caps");
+        assert!(route.horiz_m >= SIX_MI - 1.0);
     }
 
     #[test]

@@ -610,7 +610,7 @@ export function mountSiteSheet(store, appApi) {
               :hike-end-elev-m="hikeEndElevM"
               :difficulty-config="difficultyConfig"
               hike-end-label="Site"
-              empty-text="No access route yet"
+              empty-text="No mapped OSM road"
               @point-click="onAccessPointClick"
             />
           </div>
@@ -698,7 +698,7 @@ export function mountSiteSheet(store, appApi) {
               :hike-end-elev-m="hikeEndElevM"
               :difficulty-config="difficultyConfig"
               hike-end-label="Site"
-              empty-text="No access route yet"
+              empty-text="No mapped OSM road"
               @point-click="onAccessPointClick"
             />
           </div>

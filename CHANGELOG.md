@@ -10,6 +10,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Changed
+
+- **Peak catalog jeep** — same paved-first closest approach as site pins, plus predictor-only caps: overall `jeep.extreme.max_route_m` and per-class `jeep.extreme.max_class_m` (untagged `unclassified`/`track` count as grade5). Drops the 805 m road pre-check. `PEAK_ALGO_VERSION` → **8**. Re-run `peaky peaks build`.
+- **Site/pin access display** — jeep starts at the nearest OSM paved highway and drives the connected graph as close as it can get, then the walk is the remainder. Catalog slope/distance/jeep gates stay off. Empty state is **No mapped OSM road** (or **On road** when snapped). `ACCESS_ALGO_VERSION` → **13**.
+- **Peak catalog density** — DEM bin size is **500 m** (was 1.5 km). Catalog no longer drops candidates near booked sites; `candidate_dedup_m` (300 m) only collapses nearby eligible peaks. `PEAK_ALGO_VERSION` → **7**. Re-run `peaky peaks build`.
+
 ### Added
 
 - **One YAML for peak grade and gate** — `scan.peaks.difficulty.hike` and `.jeep` band tables with separate extremes (hike A* cap = `hike.extreme.max_segment_grade_pct` default **110%**; jeep reject = `jeep.extreme.max_route_m`). Scan stamps `hike_difficulty` and `jeep_difficulty` on thin rows and access profiles; serve/list/map read stored labels. `PEAK_ALGO_VERSION` → **6**. Re-run `peaky peaks build`.

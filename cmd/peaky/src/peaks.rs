@@ -80,6 +80,16 @@ pub fn run_build(
     Ok(())
 }
 
+fn parse_lat_lon(lat_lon: &str) -> Result<(f64, f64)> {
+    let parts: Vec<&str> = lat_lon.split(',').map(str::trim).collect();
+    if parts.len() != 2 {
+        anyhow::bail!("expected lat,lon (e.g. 39.922869,-117.128549)");
+    }
+    let lat: f64 = parts[0].parse().context("parse latitude")?;
+    let lon: f64 = parts[1].parse().context("parse longitude")?;
+    Ok((lat, lon))
+}
+
 pub fn run_probe(project: PathBuf, lat_lon: String) -> Result<()> {
     let preset_path = resolve_preset_path(&project.to_string_lossy());
     if !preset_path.is_file() {
@@ -88,12 +98,7 @@ pub fn run_probe(project: PathBuf, lat_lon: String) -> Result<()> {
             preset_path.display()
         );
     }
-    let parts: Vec<&str> = lat_lon.split(',').map(str::trim).collect();
-    if parts.len() != 2 {
-        anyhow::bail!("expected lat,lon (e.g. 39.922869,-117.128549)");
-    }
-    let lat: f64 = parts[0].parse().context("parse latitude")?;
-    let lon: f64 = parts[1].parse().context("parse longitude")?;
+    let (lat, lon) = parse_lat_lon(&lat_lon)?;
     println!("probe {lat:.6},{lon:.6} project={}", preset_path.display());
     probe_peak(&preset_path, lat, lon)
 }

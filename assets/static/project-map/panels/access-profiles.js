@@ -32,6 +32,16 @@ function hasAccessLeg(leg) {
   return leg != null && Number.isFinite(leg.horiz_m) && leg.horiz_m > LEG_MIN_M
 }
 
+/** @param {object|null|undefined} hike @param {object|null|undefined} jeep */
+function isOnRoadSnap(hike, jeep) {
+  if (!hike && !jeep) return false
+  const noHike =
+    !hike || !Number.isFinite(hike.horiz_m) || hike.horiz_m <= LEG_MIN_M
+  const noJeep =
+    !jeep || !Number.isFinite(jeep.horiz_m) || jeep.horiz_m <= LEG_MIN_M
+  return noHike && noJeep
+}
+
 /** Keep chart segments wide enough to show grade colors (long jeep routes). */
 const CHART_MAX_DRAW_POINTS = 96
 
@@ -253,7 +263,7 @@ export const AccessProfilesPanel = {
     hikeEndLabel: { type: String, default: 'Summit' },
     /** Optional override from `peaks/_meta.yaml` → `rules.difficulty`. */
     difficultyConfig: { type: Object, default: null },
-    emptyText: { type: String, default: 'No access route yet' },
+    emptyText: { type: String, default: 'No mapped OSM road' },
   },
   emits: ['point-click'],
   setup(props, { emit }) {
@@ -289,6 +299,7 @@ export const AccessProfilesPanel = {
     })
     const showHike = computed(() => hasAccessLeg(props.hike))
     const showJeep = computed(() => hasAccessLeg(props.jeep))
+    const onRoadSnap = computed(() => isOnRoadSnap(props.hike, props.jeep))
     const hikeDifficultyLabel = computed(() =>
       deriveHikeDifficulty(props.hike, props.difficultyConfig),
     )
@@ -304,6 +315,7 @@ export const AccessProfilesPanel = {
       osmRoadHint,
       showHike,
       showJeep,
+      onRoadSnap,
       hikeDifficultyLabel,
       jeepDifficultyLabel,
       onChartClick,
@@ -506,6 +518,7 @@ export const AccessProfilesPanel = {
           </div>
         </template>
       </template>
+      <p v-else-if="onRoadSnap" class="pf-muted">On road</p>
       <p v-else class="pf-muted">{{ emptyText }}</p>
     </div>
   `,

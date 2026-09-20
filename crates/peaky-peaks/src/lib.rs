@@ -25,7 +25,10 @@ pub use hike::{
     HikeProfile, HikeProfileDetailed, HikeSampleElev, profile_hike_detailed,
 };
 pub use hike_route::{profile_polyline_detailed, resolve_hike, route_hike_coords};
-pub use jeep::{profile_along_polyline, route_jeep_detailed, stored_peak_jeep, JeepProfileDetailed};
+pub use jeep::{
+    profile_along_polyline, route_jeep_closest_approach, route_jeep_detailed, stored_peak_jeep,
+    JeepProfileDetailed,
+};
 pub use osm::{
     build_osm_routing, JeepRoadIndex, OsmParsePhase, OsmRouting, OsmRoutingOpts, JEEP_HIGHWAY_TAGS,
     OSM_BUILD_PAD_DEG, PAVED_HIGHWAY_TAGS,

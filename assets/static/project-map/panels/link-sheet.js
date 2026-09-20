@@ -455,7 +455,7 @@ export function mountLinkSheet(store, appApi) {
               :difficulty-config="difficultyConfig"
               :hike-end-elev-m="selectedCandidate.elevM"
               hike-end-label="Summit"
-              empty-text="No access route yet"
+              empty-text="No mapped OSM road"
               @point-click="onAccessPointClick"
             />
           </div>

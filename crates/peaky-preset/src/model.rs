@@ -307,12 +307,56 @@ impl Default for JeepDifficultBands {
     }
 }
 
+fn default_jeep_max_class_m() -> std::collections::HashMap<String, f64> {
+    [
+        ("grade1", 80_467.0),
+        ("grade2", 32_187.0),
+        ("grade3", 16_093.0),
+        ("grade4", 8_047.0),
+        ("grade5", 8_047.0),
+        ("unclassified", 8_047.0),
+        ("track", 8_047.0),
+        ("residential", 32_187.0),
+        ("service", 8_047.0),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect()
+}
+
+/// Pessimistic OSM class key for catalog jeep length budgets.
+pub fn jeep_budget_class_key(highway: &str, tracktype: Option<&str>) -> String {
+    if let Some(tt) = tracktype {
+        if !tt.is_empty() {
+            return tt.to_string();
+        }
+    }
+    match highway {
+        "unclassified" | "track" => "grade5".to_string(),
+        other => other.to_string(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct JeepExtremeBands {
     pub tracktypes: Vec<String>,
     /// Jeep gate: paved→park route longer than this is reject (20 mi default).
     pub max_route_m: f64,
+    /// Per-class horizontal caps on the jeep leg (m). Missing key → grade5 cap.
+    #[serde(default = "default_jeep_max_class_m")]
+    pub max_class_m: std::collections::HashMap<String, f64>,
+}
+
+impl JeepExtremeBands {
+    pub fn class_cap_m(&self, highway: &str, tracktype: Option<&str>) -> f64 {
+        let key = jeep_budget_class_key(highway, tracktype);
+        self.max_class_m
+            .get(&key)
+            .or_else(|| self.max_class_m.get("grade5"))
+            .copied()
+            .unwrap_or(self.max_route_m)
+    }
 }
 
 impl Default for JeepExtremeBands {
@@ -320,6 +364,7 @@ impl Default for JeepExtremeBands {
         Self {
             tracktypes: vec!["grade5".into()],
             max_route_m: DEFAULT_MAX_JEEP_M,
+            max_class_m: default_jeep_max_class_m(),
         }
     }
 }
@@ -368,7 +413,6 @@ pub struct PeaksScanConfig {
     pub min_prominence_m: f64,
     pub summit_snap_m: f64,
     pub candidate_dedup_m: f64,
-    pub site_dedup_m: f64,
     pub difficulty: PeaksDifficultyConfig,
     #[serde(default, skip_serializing, rename = "max_slope_grade_pct")]
     legacy_max_slope_grade_pct: Option<f64>,
@@ -416,7 +460,6 @@ impl Default for PeaksScanConfig {
             min_prominence_m: 20.0,
             summit_snap_m: 500.0,
             candidate_dedup_m: 300.0,
-            site_dedup_m: 300.0,
             difficulty: PeaksDifficultyConfig::default(),
             legacy_max_slope_grade_pct: None,
             legacy_max_jeep_m: None,
@@ -441,7 +484,7 @@ pub struct ScanConfig {
 impl Default for ScanConfig {
     fn default() -> Self {
         Self {
-            peak_bin_size_m: 1500.0,
+            peak_bin_size_m: 500.0,
             max_candidates: 48,
             peaks: PeaksScanConfig::default(),
         }
@@ -534,10 +577,10 @@ impl Default for PeakAccessRules {
 
 /// Bump when hike/jeep routing or DEM profile semantics change (forces recompute).
 /// Written into ``access/_meta.yaml`` as ``algo_version``.
-pub const ACCESS_ALGO_VERSION: u32 = 11;
+pub const ACCESS_ALGO_VERSION: u32 = 13;
 
 /// Bump when peak eligibility / summit snap / universe filter semantics change.
-pub const PEAK_ALGO_VERSION: u32 = 6;
+pub const PEAK_ALGO_VERSION: u32 = 8;
 
 /// Pathfinding settings in ``access/_meta.yaml`` (jeep/hike routing + algo stamp).
 ///
