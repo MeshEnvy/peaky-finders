@@ -19,6 +19,7 @@ export function createPlacementDomain(ctx) {
     getSiteBySlug,
     registerSite,
     applySiteRowUpdate,
+    applySiteTagChange,
     unregisterSite,
     applySiteLayerFilters,
     refreshFilteredLinks,
@@ -248,6 +249,9 @@ export function createPlacementDomain(ctx) {
       registerSite(site)
     } else if (site) {
       applySiteRowUpdate(site)
+    }
+    if (site && Object.hasOwn(body, 'tags')) {
+      applySiteTagChange?.(site.slug)
     }
     if (site && (body.lat != null || body.lon != null)) {
       viewshedVisible?.set?.(site.slug, true)

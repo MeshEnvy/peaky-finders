@@ -7,6 +7,7 @@ import {
   bulkTagInitialCounts,
   bulkTagVisualState,
   computeBulkTagOps,
+  clearManualSiteVisibility,
   visibleSidebarSites,
   syncTagFilterVisibility,
   toggleTag,
@@ -473,6 +474,7 @@ export function createSiteModalsDomain(ctx) {
         store.ui.tagFilters.clear()
         store.ui.tagFilters.add(firstTag)
       }
+      clearManualSiteVisibility(store)
       syncTagFilterVisibility(store)
       applyEntityVisibility?.()
       renderEntityPanel?.()

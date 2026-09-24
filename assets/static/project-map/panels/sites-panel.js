@@ -93,6 +93,7 @@ export function mountSitesPanel(store, appApi) {
       }
 
       function setTagFilterMode(mode) {
+        if (store.ui.tagFilterMode === mode) return
         store.ui.tagFilterMode = mode
         appApi.onTagFilterChange?.()
       }

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { syncTagFilterVisibility } from '../stores/sites.js'
+import { clearManualSiteVisibility, syncTagFilterVisibility } from '../stores/sites.js'
 
 /**
  * Entity sidebar chrome: open/close, Sites/Land tabs, tag-filter apply.
@@ -101,6 +101,7 @@ export function createEntityChromeDomain(ctx) {
   }
 
   function applyTagFilterVisibility() {
+    clearManualSiteVisibility(store)
     syncTagFilterVisibility(store)
     applyEntityVisibility()
     ensureViewshedsForNewlyVisibleSites?.()

@@ -377,6 +377,7 @@ export function runApp(ctx = {}) {
         getSiteBySlug: (slug) => siteBySlug.get(slug),
         registerSite: (site) => siteLayers.registerSite(site),
         applySiteRowUpdate: (...args) => siteLayers.applySiteRowUpdate(...args),
+        applySiteTagChange: (slug) => siteLayers.applySiteTagChange(slug),
         unregisterSite: (slug) => siteLayers.unregisterSite(slug),
         applySiteLayerFilters: () => siteLayers.applySiteLayerFilters(),
         refreshFilteredLinks: () => linksDomain?.refreshFilteredLinks(),

@@ -76,6 +76,16 @@ export function tagChipChoices(projectTags, selected = []) {
 }
 
 /**
+ * Drop per-site eye overrides. Tag-filter changes call this so the chips
+ * decide visibility again. Eye toggles stay until the next chip or mode change.
+ * @param {object} store
+ */
+export function clearManualSiteVisibility(store) {
+  store?.sites?.manualHidden?.clear?.()
+  store?.sites?.manualShown?.clear?.()
+}
+
+/**
  * Rebuild sites.hidden from manualHidden, manualShown, and active tag filters.
  * @param {object} store
  */
