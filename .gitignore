@@ -5,3 +5,4 @@
 .idea
 .vscode
 attic
+/local-run.sh
