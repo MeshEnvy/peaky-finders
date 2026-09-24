@@ -33,7 +33,6 @@ import { setPendingCoords } from '../stores/viewshed.js'
  * @param {() => maplibregl.Map} opts.getMap
  * @param {() => boolean} opts.getMapReady
  * @param {() => void} [opts.deselectSite]
- * @param {() => void} [opts.syncMapViewport]
  * @param {() => void} [opts.clearLinkSelection]
  * @param {() => object|null|undefined} [opts.getViewshed]
  * @param {(slug: string) => boolean} [opts.isSiteMapHidden]
@@ -48,7 +47,6 @@ export function createPeaksDomain(opts) {
     getMap,
     getMapReady,
     deselectSite,
-    syncMapViewport,
     clearLinkSelection,
     getViewshed,
     isSiteMapHidden,
@@ -381,7 +379,6 @@ export function createPeaksDomain(opts) {
     if (panel) panel.hidden = false
     updatePeakHighlight(slug)
     if (getMapReady()) clearPeaksCursorPoint(getMap())
-    syncMapViewport?.()
     showPeakRfPreview(peak)
     if (syncDeepLink) syncDeepLinkToUrl({ replace: false })
   }
@@ -446,7 +443,6 @@ export function createPeaksDomain(opts) {
       zoom: Math.max(map.getZoom(), 12),
       duration: 600,
     })
-    syncMapViewport?.()
   }
 
   function deselectPeak({ syncDeepLink = true } = {}) {
@@ -456,7 +452,6 @@ export function createPeaksDomain(opts) {
     if (panel) panel.hidden = true
     updatePeakHighlight(null)
     if (getMapReady()) clearPeaksCursorPoint(getMap())
-    syncMapViewport?.()
     if (syncDeepLink) syncDeepLinkToUrl({ replace: false })
   }
 
@@ -473,7 +468,6 @@ export function createPeaksDomain(opts) {
       zoom,
       duration: 600,
     })
-    syncMapViewport?.()
   }
 
   return {

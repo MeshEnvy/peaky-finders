@@ -2,6 +2,7 @@
 
 import * as apiUrls from '../api/urls.js'
 import { DRAFT_VIEWSHED_SLUG, isEphemeralPlaceSlug } from '../constants.js'
+import { coordsMatchPair } from '../geo.js'
 import { ensureSiteAccessLayers, setSiteAccessLayerData } from '../map/site-access-layers.js'
 import {
   isAccessVisible as isAccessVisibleInStore,
@@ -141,6 +142,21 @@ export function createSiteAccessDomain(opts) {
     return accessHasRouteProfiles(row)
   }
 
+  /** @param {object|null|undefined} row @param {number} lat @param {number} lon */
+  function accessRowMatchesCoords(row, lat, lon) {
+    if (!accessRowLoaded(row)) return false
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return true
+    return coordsMatchPair(Number(row.lat), Number(row.lon), lat, lon)
+  }
+
+  function clearPlaceAccess(slug) {
+    if (!slug) return
+    delete store.access.bySlug[slug]
+    placeInflight.delete(slug)
+    if (store.access.selected?.slug === slug) store.access.selected = null
+    refreshLayers()
+  }
+
   /**
    * Cache-first access load for peaks / solver previews. GET disk cache, then POST warm.
    * @param {string} slug
@@ -155,17 +171,19 @@ export function createSiteAccessDomain(opts) {
     const meta = siteMeta || { slug, lat, lon, name: slug }
 
     const cached = store.access.bySlug[slug]
-    if (accessHasRouteProfiles(cached)) {
+    if (accessRowMatchesCoords(cached, lat, lon)) {
       if (!opts.prefetchOnly && active()) opts.onReady?.()
       return
     }
+    if (cached) delete store.access.bySlug[slug]
 
     if (placeInflight.has(slug)) {
       await placeInflight.get(slug)
-      if (accessHasRouteProfiles(store.access.bySlug[slug])) {
+      if (accessRowMatchesCoords(store.access.bySlug[slug], lat, lon)) {
         if (!opts.prefetchOnly && active()) opts.onReady?.()
+        return
       }
-      return
+      delete store.access.bySlug[slug]
     }
 
     const task = (async () => {
@@ -213,12 +231,12 @@ export function createSiteAccessDomain(opts) {
   function ensureSiteAccess(site) {
     if (!site?.slug) return
     if (!siteAccessShowing(site.slug)) return
-    if (accessRowLoaded(store.access.bySlug[site.slug])) {
+    const lat = Number(site.lat)
+    const lon = Number(site.lon)
+    if (accessRowMatchesCoords(store.access.bySlug[site.slug], lat, lon)) {
       refreshLayers()
       return
     }
-    const lat = Number(site.lat)
-    const lon = Number(site.lon)
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
     void ensurePlaceAccessProfiles(site.slug, lat, lon, site, {
       isActive: () => siteAccessShowing(site.slug),
@@ -311,6 +329,7 @@ export function createSiteAccessDomain(opts) {
     ensureSiteAccess,
     ensureDraftAccess,
     clearDraftAccess,
+    clearPlaceAccess,
     ensurePlaceAccessProfiles,
     ensureSitesAccess,
     ensureAccessForVisibleSites,

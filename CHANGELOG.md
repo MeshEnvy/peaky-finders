@@ -18,12 +18,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **Pin sheets overlay the map** — selecting a site, peak, or link no longer shrinks the MapLibre canvas. Detail cards float on the map; zoom controls slide aside so the viewport stays put.
+- **Relocate hides viewshed** — target mode turns off the site viewshed so the terrain is visible; dropping the pin turns it back on at the new spot.
 - **Peaks catalog in cache** — git-tracked `peaks/` and `access/` are removed. Operator decisions live in **`peaks.yaml`** (`overrides:` deny-by-point). Eligible catalog is derived **`.peaky/cache/peaks/<prefs_key>/index.json`**; probe results are the only persisted access under **`.peaky/cache/probe/`** (compact JSON). Serve returns `missing_catalog: true` when no index exists. `--clean` on build ignores the existing index for the current prefs key (no file deletion). Legacy `.yaml` probe files are ignored; run **`peaky peaks gc`** to reclaim space.
 
 ### Fixed
 
 - **Tag filter resets site eyes** — changing a tag chip or intersect/union drops manual show/hide. A site forced visible stays up only until the next filter change.
 - **Tag edits drop RF links** — removing the tags that kept a site on the map also drops its RF legs. The pin and the mesh hide together.
+- **Relocate stale overlays** — moving a site drops the old jeep/trail and RF link immediately, then re-warms access and mesh at the new coords. The pin no longer sticks on `warm…` (commit no longer races a draft prefetch; `_draft` SSE remaps via pending coords). The site sheet clears the old jeep/hike stats and shows loading until the new probe lands.
 - **Draft/site jeep from pavement** — pin access flood-fills the connected jeep graph from all paved anchors in the display pad, then parks at the closest *reachable* node. Nearby orphan dirt (common with GTLF) no longer wins and hide the orange jeep. `ACCESS_ALGO_VERSION` → **15** (re-warm site/draft access).
 - **Roads boot progress** — pin/sheet no longer say `roads 1/3`. Labels name the work (`Loading OSM graph`, `Merging BLM roads 45%`). Serve writes `.peaky/cache/osm/routing-merged.bin` after the GTLF jeep merge so the next boot skips the ~2 min rematch.
 

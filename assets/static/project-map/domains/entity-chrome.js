@@ -13,9 +13,6 @@ export function createEntityChromeDomain(ctx) {
     getMapReady,
     getSites,
     mapShell,
-    sitePanel,
-    peakPanel,
-    linkPanel,
     entityPanel,
     entityPanelToggle,
     entityPanelSitesPane,
@@ -41,14 +38,6 @@ export function createEntityChromeDomain(ctx) {
     const active = !!store.ui.entityPanelOpen
     mapToolSites.classList.toggle('active', active)
     mapToolSites.setAttribute('aria-pressed', active ? 'true' : 'false')
-  }
-
-  function syncMapViewport() {
-    if (!mapShell) return
-    const siteOpen = !!(sitePanel && !sitePanel.hidden)
-    const peakOpen = !!(peakPanel && !peakPanel.hidden)
-    const linkOpen = !!(linkPanel && !linkPanel.hidden)
-    mapShell.classList.toggle('site-panel-open', siteOpen || peakOpen || linkOpen)
   }
 
   function setEntityTab(tab) {
@@ -159,7 +148,6 @@ export function createEntityChromeDomain(ctx) {
 
   return {
     syncEntityPanelToggles,
-    syncMapViewport,
     setEntityTab,
     setEntityPanelOpen,
     toggleEntityPanel,

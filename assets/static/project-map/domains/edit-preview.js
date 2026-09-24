@@ -1,6 +1,6 @@
 // @ts-check
 
-import { COORD_PREFETCH_MS, DRAFT_VIEWSHED_SLUG, viewshedLayerId } from '../constants.js'
+import { COORD_PREFETCH_MS, DRAFT_VIEWSHED_SLUG } from '../constants.js'
 import * as apiUrls from '../api/urls.js'
 import {
   applyDraftLinksLayer,
@@ -41,6 +41,7 @@ export function createEditPreviewDomain(ctx) {
   let editPrefetchTimer = null
   let editPrefetchGen = 0
   let editHiddenViewshedSlug = null
+  let editHiddenViewshedWasVisible = false
   /** @type {import('geojson').FeatureCollection|null} */
   let draftLinksGeojson = null
 
@@ -283,20 +284,23 @@ export function createEditPreviewDomain(ctx) {
   }
 
   function restoreEditHiddenViewshed() {
-    if (editHiddenViewshedSlug) {
-      applyViewshedVisibilityForSite?.(editHiddenViewshedSlug)
-      editHiddenViewshedSlug = null
-    }
+    if (!editHiddenViewshedSlug) return
+    const slug = editHiddenViewshedSlug
+    const wasVisible = editHiddenViewshedWasVisible
+    editHiddenViewshedSlug = null
+    editHiddenViewshedWasVisible = false
+    viewshedVisible.set(slug, wasVisible)
+    applyViewshedVisibilityForSite?.(slug)
   }
 
   function hideViewshedLayerForEdit(slug) {
-    const map = getMap()
-    if (!map || !slug) return
-    const layerId = viewshedLayerId(slug)
-    if (map.getLayer(layerId)) {
-      map.setLayoutProperty(layerId, 'visibility', 'none')
+    if (!slug) return
+    if (editHiddenViewshedSlug !== slug) {
+      editHiddenViewshedWasVisible = isViewshedVisible?.(slug) !== false
       editHiddenViewshedSlug = slug
     }
+    viewshedVisible.set(slug, false)
+    applyViewshedVisibilityForSite?.(slug)
   }
 
   function loadEditDraftViewshedAt(lat, lon) {
@@ -307,6 +311,7 @@ export function createEditPreviewDomain(ctx) {
   }
 
   async function runEditPrefetchAt(lat, lon) {
+    if (!store.ui.relocateMode) return
     const gen = ++editPrefetchGen
     const atOriginal = coordsMatchEditSnapshot(lat, lon)
     removeDraftLinksLayer?.()
@@ -316,7 +321,6 @@ export function createEditPreviewDomain(ctx) {
     if (store.ui.relocateMode) {
       if (atOriginal) {
         removeDraftViewshed()
-        restoreEditHiddenViewshed()
       } else {
         loadEditDraftViewshedAt(lat, lon)
       }
@@ -372,6 +376,7 @@ export function createEditPreviewDomain(ctx) {
   function startEditSession(entity) {
     editSnapshot = { ...entity }
     cancelPrefetch()
+    hideViewshedLayerForEdit(entity.slug)
     applySiteLayerFilters?.()
     refreshFilteredLinks?.()
     void runEditPrefetchAt(entity.lat, entity.lon)
@@ -386,6 +391,7 @@ export function createEditPreviewDomain(ctx) {
 
   function cleanupEditSave() {
     editHiddenViewshedSlug = null
+    editHiddenViewshedWasVisible = false
     cancelPrefetch()
     editSnapshot = null
   }

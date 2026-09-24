@@ -43,7 +43,6 @@ export function createMapInteractionsDomain(ctx) {
     getLinks,
     syncMapCursor,
     setRelocateDraftCoords,
-    onRelocateCoordsChanged,
     commitRelocateAt,
     setAddPlacementMode,
     selectSite,
@@ -256,7 +255,6 @@ export function createMapInteractionsDomain(ctx) {
     map.on('click', (ev) => {
       if (store.ui.relocateMode) {
         setRelocateDraftCoords(ev.lngLat.lat, ev.lngLat.lng)
-        onRelocateCoordsChanged()
         void commitRelocateAt(ev.lngLat.lat, ev.lngLat.lng)
         return
       }

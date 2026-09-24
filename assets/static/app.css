@@ -231,25 +231,29 @@ body.wide .project-toolbar {
   min-height: 0;
   border-top: 1px solid var(--wa-color-surface-border);
   --pf-entity-panel-width: 24rem;
-  --pf-site-panel-inset: calc(var(--pf-entity-panel-width) + 0.75rem);
+  --pf-site-panel-width: 20rem;
 }
 
 body.wide #map {
   position: absolute;
   inset: 0;
-  transition: left 0.2s ease-out, right 0.2s ease-out;
+  transition: left 0.2s ease-out;
 }
 
 .map-shell.entity-panel-open #map {
   left: var(--pf-entity-panel-width);
 }
 
-.map-shell.site-panel-open #map {
-  right: var(--pf-site-panel-inset);
+.map-shell:has(#site-panel:not([hidden]), #peak-panel:not([hidden]), #link-panel:not([hidden]))
+  .maplibregl-ctrl-top-right,
+.map-shell:has(#site-panel:not([hidden]), #peak-panel:not([hidden]), #link-panel:not([hidden]))
+  .maplibregl-ctrl-bottom-right {
+  right: calc(var(--pf-site-panel-width) + 1.5rem);
 }
 
-.peak-panel {
-  z-index: 3;
+.maplibregl-ctrl-top-right,
+.maplibregl-ctrl-bottom-right {
+  transition: right 0.2s ease-out;
 }
 
 .peak-sheet {
@@ -497,9 +501,9 @@ body.wide #map {
   top: 0.75rem;
   right: 0.75rem;
   bottom: 0.75rem;
-  width: 20rem;
+  width: var(--pf-site-panel-width);
   max-width: calc(100% - 1.5rem);
-  z-index: 2;
+  z-index: 4;
   overflow-y: auto;
   background: var(--wa-color-surface-raised);
   border: 1px solid var(--wa-color-surface-border);

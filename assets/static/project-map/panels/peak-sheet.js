@@ -162,7 +162,6 @@ export function mountPeakSheet(store, appApi) {
 
       watch(panelVisible, (visible) => {
         panel.hidden = !visible
-        if (visible) appApi.syncMapViewport?.()
       })
 
       function closePanel() {

@@ -36,7 +36,6 @@ const WARM_VIEWPORT_SLUG_CAP = 48
  * @param {(slug: string) => boolean} opts.isSiteOutboundLinksReady
  * @param {() => void} opts.renderSelectedPanel
  * @param {(slug: string) => object|undefined} opts.getSiteBySlug
- * @param {() => void} [opts.syncMapViewport]
  * @param {() => void} [opts.deselectSite]
  * @param {() => void} [opts.deselectPeak]
  * @param {(site: object|undefined) => void} [opts.ensureSiteAccess]
@@ -48,7 +47,6 @@ export function createLinksDomain(opts) {
     map,
     projectSlug,
     getMapReady,
-    syncMapViewport,
     deselectSite,
     deselectPeak,
     ensureSiteAccess,
@@ -195,12 +193,10 @@ export function createLinksDomain(opts) {
     ensureSiteAccess?.(getSiteBySlug(a))
     ensureSiteAccess?.(getSiteBySlug(b))
     refreshSiteAccessLayers?.()
-    syncMapViewport?.()
   }
 
   function deselectLink() {
     clearLinkSelection()
-    syncMapViewport?.()
   }
 
   /** @param {import('maplibregl').MapMouseEvent} ev */

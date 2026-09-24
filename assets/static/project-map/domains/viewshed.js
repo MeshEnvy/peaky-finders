@@ -41,6 +41,7 @@ import {
   setViewshedVisible as setViewshedVisibleInStore,
   clearViewshedLoadingState as clearViewshedLoadingStateInStore,
   clearPendingEpoch as clearPendingEpochInStore,
+  setPendingCoords as setPendingCoordsInStore,
   bumpLoadEpoch as bumpLoadEpochInStore,
   clearViewshedLoading as clearViewshedLoadingInStore,
 } from '../stores/viewshed.js'
@@ -561,8 +562,16 @@ export function createViewshedDomain(opts) {
 
   async function tryLoadViewshedFromCache(slug, coords) {
     try {
+      const lat = Number(coords?.lat)
+      const lon = Number(coords?.lon)
       const resp = await fetch(
-        apiUrls.viewshedMetaUrl(projectSlug, slug, coords || {}, viewshedSimQueryParams()),
+        apiUrls.viewshedMetaUrl(
+          projectSlug,
+          slug,
+          viewshedSimQueryParams(),
+          Number.isFinite(lat) ? lat : undefined,
+          Number.isFinite(lon) ? lon : undefined,
+        ),
       )
       if (!resp.ok) return false
       const overlay = await resp.json()
@@ -646,6 +655,11 @@ export function createViewshedDomain(opts) {
     resetSiteProgress(site.slug)
     viewshedLoading.add(site.slug)
     viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch)
+    const lat = Number(site.lat)
+    const lon = Number(site.lon)
+    if (store && Number.isFinite(lat) && Number.isFinite(lon)) {
+      setPendingCoordsInStore(store, site.slug, lat, lon)
+    }
     updatePinOverlays()
     if (site.slug === store.ui.selectedSlug) syncViewshedCheckbox()
     const priority =

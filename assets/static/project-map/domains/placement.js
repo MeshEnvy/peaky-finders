@@ -25,12 +25,13 @@ export function createPlacementDomain(ctx) {
     refreshFilteredLinks,
     updateSelectedLayer,
     raiseSiteLayers,
-    syncMapViewport,
     syncMapCursor,
     syncWarmPriorities,
     loadSingleSiteLinks,
     loadSiteLinks,
+    purgeSiteLinksForSlug,
     ensureSiteAccess,
+    clearPlaceAccess,
     ensureDraftAccess,
     clearDraftAccess,
     ingestAccess,
@@ -169,7 +170,6 @@ export function createPlacementDomain(ctx) {
     placeDraftMarker(lat, lon)
     const panel = sitePanelEl()
     if (panel) panel.hidden = false
-    syncMapViewport?.()
     showPanelCreate()
     deselectPeak?.({ syncDeepLink: false })
     clearLinkSelection?.()
@@ -190,11 +190,9 @@ export function createPlacementDomain(ctx) {
     const selected = selectedSlug()
     if (selected) {
       if (panel) panel.hidden = false
-      syncMapViewport?.()
       showPanelView()
     } else {
       if (panel) panel.hidden = true
-      syncMapViewport?.()
     }
   }
 
@@ -255,8 +253,11 @@ export function createPlacementDomain(ctx) {
     }
     if (site && (body.lat != null || body.lon != null)) {
       viewshedVisible?.set?.(site.slug, true)
+      purgeSiteLinksForSlug?.(site.slug)
+      clearPlaceAccess?.(site.slug)
       scheduleViewshedLoad?.(site)
       void loadSiteLinks?.()
+      ensureSiteAccess?.(site)
     }
     return site
   }
@@ -304,7 +305,6 @@ export function createPlacementDomain(ctx) {
     assignSelectedSlug(slug)
     const panel = sitePanelEl()
     if (panel) panel.hidden = false
-    syncMapViewport?.()
     showPanelView()
     updateSelectedLayer?.()
     raiseSiteLayers?.()
@@ -326,7 +326,6 @@ export function createPlacementDomain(ctx) {
     assignSelectedSlug(null)
     const panel = sitePanelEl()
     if (panel) panel.hidden = true
-    syncMapViewport?.()
     updateSelectedLayer?.()
     refreshSiteAccessLayers?.()
     if (syncDeepLink) syncDeepLinkToUrl({ replace: false })
@@ -381,7 +380,6 @@ export function createPlacementDomain(ctx) {
     assignSelectedSlug(null)
     const panel = sitePanelEl()
     if (panel) panel.hidden = true
-    syncMapViewport?.()
     updateSelectedLayer?.()
     return { ok: true }
   }

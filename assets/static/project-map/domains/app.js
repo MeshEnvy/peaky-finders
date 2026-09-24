@@ -155,7 +155,6 @@ export function runApp(ctx = {}) {
     getMap: () => map,
     getMapReady: () => store.ui.mapReady,
     deselectSite: (...args) => placementDomain?.deselectSite(...args),
-    syncMapViewport: () => entityChrome?.syncMapViewport(),
     clearLinkSelection: () => linksDomain?.clearLinkSelection(),
     getViewshed: () => viewshedDomain,
     isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
@@ -205,7 +204,6 @@ export function runApp(ctx = {}) {
         viewshedDomain?.isSiteOutboundLinksReady(slug) ?? false,
       renderSelectedPanel: () => {},
       getSiteBySlug: (slug) => siteBySlug.get(slug),
-      syncMapViewport: () => entityChrome?.syncMapViewport(),
       deselectSite: () => placementDomain?.deselectSite(),
       deselectPeak: () => peaksDomain?.deselectPeak(),
       ensureSiteAccess: (site) => site && siteAccessDomain?.ensureSiteAccess(site),
@@ -277,18 +275,12 @@ export function runApp(ctx = {}) {
   })
 
   const mapShell = document.querySelector('.map-shell')
-  const sitePanel = document.getElementById('site-panel')
-  const peakPanel = document.getElementById('peak-panel')
-  const linkPanel = document.getElementById('link-panel')
   entityChrome = createEntityChromeDomain({
     store,
     getMap: () => map,
     getMapReady: () => store.ui.mapReady,
     getSites: () => sites,
     mapShell,
-    sitePanel,
-    peakPanel,
-    linkPanel,
     entityPanel: document.getElementById('entity-panel'),
     entityPanelToggle: document.getElementById('entity-panel-toggle'),
     entityPanelSitesPane: document.getElementById('entity-panel-sites-pane'),
@@ -383,12 +375,13 @@ export function runApp(ctx = {}) {
         refreshFilteredLinks: () => linksDomain?.refreshFilteredLinks(),
         updateSelectedLayer: () => siteLayers.updateSelectedLayer(),
         raiseSiteLayers: () => mapChrome.raiseSiteLayers(),
-        syncMapViewport: () => entityChrome.syncMapViewport(),
         syncMapCursor,
         syncWarmPriorities: () => linksDomain?.syncWarmPriorities(),
         loadSingleSiteLinks: (slug) => linksDomain?.loadSingleSiteLinks(slug),
         loadSiteLinks: () => linksDomain?.loadSiteLinks(),
+        purgeSiteLinksForSlug: (slug) => linksDomain?.purgeSiteLinksForSlug(slug),
         ensureSiteAccess: (site) => siteAccessDomain?.ensureSiteAccess(site),
+        clearPlaceAccess: (slug) => siteAccessDomain?.clearPlaceAccess(slug),
         ensureDraftAccess: (lat, lon) => siteAccessDomain?.ensureDraftAccess(lat, lon),
         clearDraftAccess: () => siteAccessDomain?.clearDraftAccess(),
         ingestAccess: (...args) => siteAccessDomain?.ingestAccess(...args),
@@ -523,7 +516,6 @@ export function runApp(ctx = {}) {
         getSiteBySlug: (slug) => siteBySlug.get(slug),
         syncMapCursor,
         setRelocateDraftCoords: (...args) => placementDomain.setRelocateDraftCoords(...args),
-        onRelocateCoordsChanged: () => editPreviewDomain.onEditCoordsChanged(),
         commitRelocateAt: (...args) => placementDomain.commitRelocateAt(...args),
         setAddPlacementMode: (...args) => placementDomain.setAddPlacementMode(...args),
         selectSite: (...args) => placementDomain.selectSite(...args),
@@ -638,7 +630,6 @@ export function runApp(ctx = {}) {
 
   map.on('load', () => {
     store.ui.mapReady = true
-    entityChrome.syncMapViewport()
     map.resize()
     siteLayers.addSiteLayers()
     siteAccessDomain?.refreshLayers()
@@ -762,7 +753,6 @@ export function runApp(ctx = {}) {
     patchSiteField: (slug, body) => placementDomain.patchSiteField(slug, body),
     saveCreate: (payload) => placementDomain.saveCreateFromSheet(payload),
     deleteSelectedSite: () => placementDomain.deleteSelectedSite(),
-    syncMapViewport: () => entityChrome.syncMapViewport(),
     toggleViewshedForSelected() {
       const slug = store.ui.selectedSlug
       if (!slug) return

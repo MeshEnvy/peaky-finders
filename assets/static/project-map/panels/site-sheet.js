@@ -96,6 +96,7 @@ export function mountSiteSheet(store, appApi) {
       async function loadSiteAccess(site) {
         if (!site?.slug) {
           access.value = null
+          accessLoading.value = false
           accessError.value = ''
           return
         }
@@ -107,6 +108,7 @@ export function mountSiteSheet(store, appApi) {
           appApi.ensureSiteAccess?.(site)
           return
         }
+        access.value = null
         accessLoading.value = true
         accessError.value = ''
         try {
@@ -140,6 +142,9 @@ export function mountSiteSheet(store, appApi) {
         () => [
           store.ui.selectedSlug,
           store.ui.createMode,
+          selectedSite.value?.lat,
+          selectedSite.value?.lon,
+          store.access?.bySlug?.[store.ui.selectedSlug],
           store.access?.bySlug?.[DRAFT_VIEWSHED_SLUG],
           store.access?.draftLoading,
           store.access?.osm?.status,
@@ -171,8 +176,16 @@ export function mountSiteSheet(store, appApi) {
           return slug ? store.access?.bySlug?.[slug] : null
         },
         (row) => {
-          if (!row || store.ui.createMode) return
-          if (row.hike || row.jeep) {
+          if (store.ui.createMode) return
+          if (!row) {
+            if (store.ui.selectedSlug) {
+              access.value = null
+              accessLoading.value = true
+              accessError.value = ''
+            }
+            return
+          }
+          if (row.hike || row.jeep || row.trail) {
             access.value = row
             accessLoading.value = false
             accessError.value = ''
@@ -222,7 +235,6 @@ export function mountSiteSheet(store, appApi) {
 
       watch(panelVisible, (visible) => {
         panel.hidden = !visible
-        if (visible) appApi.syncMapViewport?.()
       })
 
       const accessLoadingLabel = computed(() => {
