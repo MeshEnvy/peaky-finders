@@ -21,6 +21,7 @@ mod scan_progress;
 mod sites;
 mod simulation;
 mod site_prefetch;
+pub mod site_kmz;
 mod state;
 mod static_files;
 pub mod viewshed;

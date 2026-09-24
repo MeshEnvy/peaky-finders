@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **Site KMZ export** — `peaky export` and map **Export** download KMZ (not flat KML): per-site folder with tagged pin, viewshed overlay, and hike/jeep access lines. Missing viewshed/access is resolved on export (serve warm paths; cache hits reused).
 - **`peaky peaks gc`** — reclaims stale `.peaky/cache/probe/<prefs_key>/` and `.peaky/cache/peaks/<prefs_key>/` dirs (default: keep current prefs key only; `--keep N`, `--dry-run`). Build summary prints index path and hints when other prefs dirs remain.
 - **Unified access probe** — one `probe()` path for `peaky peaks probe`, `peaky peaks build`, site/draft pins, and peak re-warm. Returns `AccessProbe` YAML with `recommended` route (preference-ranked, ungated) and optional full `budget_route` when a different park fits segment caps. `eligible` means an in-budget route exists; recommended may exceed caps with numeric `budget.*.over_by` on each leg. Disk cache: `.peaky/cache/probe/<prefs_key>/<lat5>_<lon5>.json`. Map paints both routes (fainter ghost for in-budget alternate). `scan.peaks.preference` weights hike cost, trail m, jeep m, and difficulty rank. `ACCESS_ALGO_VERSION` → **16**, `PEAK_ALGO_VERSION` → **10**. Re-run `peaky peaks build`.
 

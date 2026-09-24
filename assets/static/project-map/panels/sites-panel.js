@@ -232,12 +232,14 @@ export function mountSitesPanel(store, appApi) {
   bulkTagBtn?.addEventListener('click', () => appApi.openBulkTagModal?.())
   addSiteBtn?.addEventListener('click', () => appApi.openAddSiteModal?.())
   exportBtn?.addEventListener('click', () => {
-    try {
-      appApi.exportViewportSitesKml?.()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Export failed'
-      window.alert(message)
-    }
+    void (async () => {
+      try {
+        await appApi.exportViewportSitesKml?.()
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Export failed'
+        window.alert(message)
+      }
+    })()
   })
   importBtn?.addEventListener('click', () => appApi.openImportSitesModal?.())
 

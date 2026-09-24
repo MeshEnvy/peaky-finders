@@ -51,6 +51,7 @@ use crate::link_solver::{
     accept_link_solver_route, link_solver_progress_key, parse_link_solver_request,
     routes_like_from_json, LinkSolverError,
 };
+use crate::site_kmz::export_sites_kmz_blocking;
 use crate::viewshed_index::{build_viewshed_index, site_viewshed_overlay_if_ready, viewshed_cache_png_api_path};
 use crate::viewshed_sim::{parse_lat_lon_params, parse_viewshed_sim_params, sim_status_from_err};
 
@@ -65,6 +66,7 @@ pub fn router() -> Router<AppState> {
             patch(patch_site).delete(delete_site),
         )
         .route("/api/p/{slug}/sites/tags/bulk", post(bulk_tags))
+        .route("/api/p/{slug}/sites/export/kmz", post(sites_export_kmz))
         .route(
             "/api/p/{slug}/sites/import/preview",
             post(import_preview),
@@ -326,6 +328,74 @@ struct BulkTagsBody {
     add_tags: Vec<String>,
     #[serde(default)]
     remove_tags: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct SitesExportKmzBody {
+    slugs: Vec<String>,
+    #[serde(default)]
+    document_name: Option<String>,
+}
+
+async fn sites_export_kmz(
+    State(state): State<AppState>,
+    Path(project_slug): Path<String>,
+    Json(body): Json<SitesExportKmzBody>,
+) -> Result<Response, (StatusCode, String)> {
+    if body.slugs.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "slugs must be a non-empty list".to_string(),
+        ));
+    }
+    let preset_path = state.preset_path();
+    let preset = load_preset(&preset_path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+    let mut sites: Vec<(String, SiteEntry)> = Vec::with_capacity(body.slugs.len());
+    for slug in &body.slugs {
+        let site = preset
+            .sites
+            .get(slug)
+            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("site not found: {slug}")))?;
+        sites.push((slug.clone(), site.clone()));
+    }
+    let document_name = body
+        .document_name
+        .unwrap_or_else(|| format!("{project_slug}-viewport"));
+    let routing = state
+        .warm
+        .ensure_osm_covering(&preset_path, &[])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let session = state.session.clone();
+    let board_viewshed = (*state.board_viewshed).clone();
+    let verbose = state.verbose;
+    let kmz = tokio::task::spawn_blocking(move || {
+        export_sites_kmz_blocking(
+            session,
+            &preset_path,
+            &board_viewshed,
+            routing.as_ref(),
+            &sites,
+            &document_name,
+            verbose,
+        )
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let filename = format!("{project_slug}-viewport.kmz");
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            header::CONTENT_TYPE,
+            "application/vnd.google-earth.kmz",
+        )
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        )
+        .body(Body::from(kmz))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?)
 }
 
 async fn bulk_tags(State(state): State<AppState>,

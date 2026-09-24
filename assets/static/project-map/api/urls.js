@@ -45,6 +45,10 @@ export function sitesTagsBulkApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/sites/tags/bulk`
 }
 
+export function sitesExportKmzApiUrl(projectSlug) {
+  return `/api/p/${projectSlug}/sites/export/kmz`
+}
+
 export function siteApiUrl(projectSlug, slug) {
   return `/api/p/${projectSlug}/sites/${encodeURIComponent(slug)}`
 }

@@ -84,3 +84,34 @@ export function downloadKmlFile(kml, fileName) {
 export function downloadSitesKml(sites, fileName, documentName = 'viewport') {
   downloadKmlFile(buildSitesKml(documentName, sites), fileName)
 }
+
+/**
+ * @param {string} projectSlug
+ * @param {object[]} sites
+ * @param {string} fileName
+ */
+export async function downloadViewportSitesKmz(projectSlug, sites, fileName) {
+  const slugs = sites.map((site) => String(site.slug || '')).filter(Boolean)
+  if (!slugs.length) {
+    throw new Error('No sites to export')
+  }
+  const res = await fetch(`/api/p/${projectSlug}/sites/export/kmz`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slugs }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text.trim() || `Export failed (${res.status})`)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = fileName
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}

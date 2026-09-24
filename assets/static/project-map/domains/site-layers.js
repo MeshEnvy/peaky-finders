@@ -23,7 +23,7 @@ import {
   ensureSiteLayers,
   setSitesSourceData,
 } from '../map/sites-layers.js'
-import { downloadSitesKml } from '../kml-export.js'
+import { downloadViewportSitesKmz } from '../kml-export.js'
 import { coordVisibleInMapViewport as coordVisibleInMapViewportAt } from '../map/viewport.js'
 
 /**
@@ -242,11 +242,16 @@ export function createSiteLayersDomain(ctx) {
   function viewportExportableSites() {
     return sites()
       .filter((site) => siteVisibleInMap(site) && !isSiteMapHidden(site.slug))
-      .sort((a, b) => b.lat - a.lat || String(a.slug).localeCompare(String(b.slug)))
+      .sort(
+        (a, b) =>
+          String(a.name || a.slug).localeCompare(String(b.name || b.slug), undefined, {
+            sensitivity: 'base',
+          }) || String(a.slug).localeCompare(String(b.slug)),
+      )
   }
 
   /** @param {string} [projectSlug] */
-  function exportViewportSitesKml(projectSlug) {
+  async function exportViewportSitesKml(projectSlug) {
     if (!getMapReady() || !getMap()) {
       throw new Error('Map not ready')
     }
@@ -255,7 +260,7 @@ export function createSiteLayersDomain(ctx) {
       throw new Error('No sites in the current map view')
     }
     const slug = projectSlug || 'viewport'
-    downloadSitesKml(visible, `${slug}-viewport.kml`, 'viewport')
+    await downloadViewportSitesKmz(projectSlug || slug, visible, `${slug}-viewport.kmz`)
     return visible.length
   }
 

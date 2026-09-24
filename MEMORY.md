@@ -68,14 +68,14 @@ Paths: CLI takes a project dir (or `config.yaml`). Optional slug fallback: `$PEA
 **CLI** — tag-filtered corridor/stake lists:
 
 ```bash
-peaky export <project> --tag reno-vegas [--exclude-tag optional] [-o out.kml]
+peaky export <project> --tag reno-vegas [--exclude-tag optional] [-o out.kmz]
 ```
 
-Loads merged preset, keeps sites whose tags match any `--tag` (OR), drops any with `--exclude-tag`, sorts north→south. Default output `{first-tag}.kml`.
+Loads merged preset, keeps sites whose tags match any `--tag` (OR), drops any with `--exclude-tag`, sorts A→Z by site name (slug tie-break). Resolves each site’s viewshed PNG + hike/jeep access (same warm paths as serve; cache hits reused). Default output `{first-tag}.kmz`. Map and CLI KMZ use the same folder order.
 
-**Map UI** — Sites sidebar lists all scoped sites (viewport when **In view** is on; canvas projection, including pitched); tag chips drive map visibility via `sites.hidden`, not list filtering. Per-site eye toggles invert effective visibility: `manualHidden` forces hide, `manualShown` force-shows past active tag chips; tag sync fills in the rest. Any tag-chip or intersect/union change clears those overrides so visibility follows the filter again. Hidden sites drop pin, viewshed, RF links, and jeep/hike access lines together. Peaks tab has the same **In view** checkbox (shared `filterByViewport`; Land tab unchanged). **Peak click preview** — catalog peak, Fortify relay, and link-solver hop clicks paint viewshed + jeep/hike access + RF legs (draft mesh for catalog peaks; scan legs for Fortify/solver). **Bulk tag** applies only to map-visible sites in the current sidebar scope (same hide rules as Export). **Export** (beside Import): KML for map-visible sites in the viewport (respects hide state; ignores sidebar In view). Filename `{project}-viewport.kml`.
+**Map UI** — Sites sidebar lists all scoped sites (viewport when **In view** is on; canvas projection, including pitched); tag chips drive map visibility via `sites.hidden`, not list filtering. Per-site eye toggles invert effective visibility: `manualHidden` forces hide, `manualShown` force-shows past active tag chips; tag sync fills in the rest. Any tag-chip or intersect/union change clears those overrides so visibility follows the filter again. Hidden sites drop pin, viewshed, RF links, and jeep/hike access lines together. Peaks tab has the same **In view** checkbox (shared `filterByViewport`; Land tab unchanged). **Peak click preview** — catalog peak, Fortify relay, and link-solver hop clicks paint viewshed + jeep/hike access + RF legs (draft mesh for catalog peaks; scan legs for Fortify/solver). **Bulk tag** applies only to map-visible sites in the current sidebar scope (same hide rules as Export). **Export** (beside Import): POST visible slugs to `…/sites/export/kmz`; server returns KMZ for map-visible sites in the viewport (respects hide state; ignores sidebar In view). Filename `{project}-viewport.kmz`. Large exports wait on viewshed/access resolution.
 
-Both write KML 2.2 Point placemarks: name `{site.name} ({slug})`, description with slug/tags/node. Staked coords are copied manually from onX into the book after the trip (no auto write-back).
+Both exporters write **KMZ** (`doc.kml` + `files/`): one folder per site with placemark **pin** (tags in `ExtendedData`), **viewshed** GroundOverlay, **hike** / **jeep** LineStrings when ≥2 profile points. Staked coords are copied manually from onX into the book after the trip (no auto write-back).
 
 ## Auto-finder (`peaky find path`)
 

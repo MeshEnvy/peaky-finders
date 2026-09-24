@@ -46,7 +46,7 @@ enum Commands {
         #[command(subcommand)]
         command: PeaksCommands,
     },
-    /// Export tag-filtered sites as KML points (onX field clipboard)
+    /// Export tag-filtered sites as KMZ (pin, viewshed, access)
     Export {
         /// Project directory (or path to config.yaml)
         #[arg(value_name = "PROJECT")]
@@ -57,7 +57,7 @@ enum Commands {
         /// Exclude sites that have any of these tags
         #[arg(long)]
         exclude_tag: Vec<String>,
-        /// Output KML path (default: {first-tag}.kml)
+        /// Output KMZ path (default: {first-tag}.kmz)
         #[arg(short, long, value_name = "PATH")]
         output: Option<PathBuf>,
         #[arg(long)]

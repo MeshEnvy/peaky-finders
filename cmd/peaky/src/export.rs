@@ -1,13 +1,12 @@
-//! ``peaky export`` subcommand — tag-filtered KML for onX field clipboard.
+//! ``peaky export`` subcommand — tag-filtered KMZ for onX / Google Earth.
 
 use std::collections::HashSet;
-use std::fs::File;
-use std::io::BufWriter;
+use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use peaky_geo::{write_kml_point_document, KmlPointPlacemark};
-use peaky_preset::{load_preset, resolve_preset_path, SiteEntry};
+use peaky_preset::{load_preset, resolve_preset_path, resolve_project_dir, SiteEntry};
+use peaky_serve::site_kmz::export_sites_kmz_for_cli;
 
 pub fn run(
     project: PathBuf,
@@ -37,26 +36,27 @@ pub fn run(
         anyhow::bail!("no sites matched tag(s): {}", tags.join(", "));
     }
 
-    sort_sites_north_to_south(&mut matched);
+    sort_sites_alphabetical(&mut matched);
 
-    let placemarks: Vec<KmlPointPlacemark> = matched
-        .iter()
-        .map(|(slug, site)| site_to_placemark(slug, site))
+    let sites: Vec<(String, SiteEntry)> = matched
+        .into_iter()
+        .map(|(slug, site)| (slug.to_string(), site.clone()))
         .collect();
 
     let document_name = tags.join("+");
-    let output_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.kml", tags[0])));
+    let output_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.kmz", tags[0])));
 
-    let file = File::create(&output_path)
-        .with_context(|| format!("create {}", output_path.display()))?;
-    let mut writer = BufWriter::new(file);
-    write_kml_point_document(&document_name, &placemarks, &mut writer)
-        .context("write KML")?;
+    let project_dir = resolve_project_dir(&project.to_string_lossy());
+    let kmz = export_sites_kmz_for_cli(&project_dir, &sites, &document_name, verbose)
+        .context("build KMZ")?;
+
+    fs::write(&output_path, &kmz)
+        .with_context(|| format!("write {}", output_path.display()))?;
 
     if verbose {
         eprintln!(
             "[peaky export] {} site(s) → {}",
-            placemarks.len(),
+            sites.len(),
             output_path.display()
         );
     } else {
@@ -90,38 +90,13 @@ fn filter_sites_by_tag<'a>(
         .collect()
 }
 
-fn sort_sites_north_to_south(sites: &mut [(&str, &SiteEntry)]) {
+fn sort_sites_alphabetical(sites: &mut [(&str, &SiteEntry)]) {
     sites.sort_by(|(slug_a, site_a), (slug_b, site_b)| {
-        site_b
-            .lat()
-            .partial_cmp(&site_a.lat())
-            .unwrap_or(std::cmp::Ordering::Equal)
+        site_a
+            .name
+            .cmp(&site_b.name)
             .then_with(|| slug_a.cmp(slug_b))
     });
-}
-
-fn site_to_placemark(slug: &str, site: &SiteEntry) -> KmlPointPlacemark {
-    let name = format!("{} ({})", site.name, slug);
-    let mut desc_lines = vec![format!("slug: {slug}")];
-    if !site.tags.is_empty() {
-        desc_lines.push(format!("tags: {}", site.tags.join(", ")));
-    }
-    if let Some(node) = &site.node {
-        desc_lines.push(format!("node: {node}"));
-    }
-    if let Some(description) = &site.description {
-        if !description.trim().is_empty() {
-            desc_lines.push(description.trim().to_string());
-        }
-    }
-
-    KmlPointPlacemark {
-        name,
-        lat: site.lat(),
-        lon: site.lon(),
-        altitude: site.height_m.unwrap_or(0.0),
-        description: Some(desc_lines.join("\n")),
-    }
 }
 
 #[cfg(test)]
