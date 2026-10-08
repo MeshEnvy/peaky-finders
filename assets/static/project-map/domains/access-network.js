@@ -32,6 +32,8 @@ export function createAccessNetworkDomain(opts) {
   const layerFetchTier = { paved: null, jeep: null, hiking: null }
   /** @type {Record<'paved'|'jeep'|'hiking', Promise<void>|null>} */
   const inflight = { paved: null, jeep: null, hiking: null }
+  /** @type {Promise<void>|null} */
+  let driveInflight = null
   let moveHookInstalled = false
   let moveDebounceTimer = 0
   let layersRaised = false
@@ -71,15 +73,15 @@ export function createAccessNetworkDomain(opts) {
     )
   }
 
-  /**
-   * @param {'paved'|'jeep'|'hiking'} kind
-   */
   function currentZoomTier() {
     const map = getMap()
     if (!map) return null
     return networkZoomTier(map.getZoom())
   }
 
+  /**
+   * @param {'paved'|'jeep'|'hiking'} kind
+   */
   function needsRefetch(kind) {
     const current = viewBBox()
     const fetched = layerFetchBBox[kind]
@@ -87,6 +89,18 @@ export function createAccessNetworkDomain(opts) {
     if (!current || !fetched || !layerCache[kind] || tier == null) return true
     if (layerFetchTier[kind] !== tier) return true
     return !bboxContains(fetched, current)
+  }
+
+  function driveLayersNeedRefetch() {
+    return needsRefetch('paved') || needsRefetch('jeep')
+  }
+
+  function markDriveFetched(bbox, tier) {
+    const box = { ...bbox }
+    layerFetchBBox.paved = box
+    layerFetchBBox.jeep = box
+    layerFetchTier.paved = tier
+    layerFetchTier.jeep = tier
   }
 
   function syncVisibility() {
@@ -141,6 +155,51 @@ export function createAccessNetworkDomain(opts) {
   }
 
   /**
+   * @param {{ west: number, south: number, east: number, north: number }} bbox
+   */
+  async function fetchDriveForBBox(bbox, zoom) {
+    if (driveInflight) {
+      await driveInflight
+      return
+    }
+    const tier = networkZoomTier(zoom)
+    const url = apiUrls.roadsNetworkDriveGeoJsonUrl(projectSlug, bbox, zoom)
+    driveInflight = (async () => {
+      try {
+        const resp = await fetch(url)
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        const body = await resp.json()
+        layerCache.paved = body.paved ?? { type: 'FeatureCollection', features: [] }
+        layerCache.jeep = body.jeep ?? { type: 'FeatureCollection', features: [] }
+        markDriveFetched(bbox, tier)
+      } catch (err) {
+        console.warn('access network drive fetch failed', err)
+        const empty = { type: 'FeatureCollection', features: [] }
+        layerCache.paved = empty
+        layerCache.jeep = empty
+        markDriveFetched(bbox, tier)
+      } finally {
+        driveInflight = null
+      }
+    })()
+    await driveInflight
+  }
+
+  function paintCachedLayer(kind) {
+    const map = getMap()
+    if (!map || !layerCache[kind] || needsRefetch(kind)) return
+    ensureAccessNetworkLayers(map)
+    setAccessNetworkLayerData(map, kind, layerCache[kind])
+  }
+
+  function afterLayerPaint() {
+    if (!layersRaised) {
+      layersRaised = true
+      raiseSiteLayers?.()
+    }
+  }
+
+  /**
    * @param {'paved'|'jeep'|'hiking'} kind
    * @param {boolean} [force]
    */
@@ -154,17 +213,40 @@ export function createAccessNetworkDomain(opts) {
     ensureAccessNetworkLayers(map)
     const geo = await fetchLayerForBBox(kind, bbox, map.getZoom())
     setAccessNetworkLayerData(map, kind, geo)
-    if (!layersRaised) {
-      layersRaised = true
-      raiseSiteLayers?.()
+    afterLayerPaint()
+  }
+
+  /**
+   * @param {boolean} [force]
+   */
+  async function reloadDriveLayers(force = false) {
+    if (!getMapReady()) return
+    if (!force && !driveLayersNeedRefetch()) return
+    const bbox = viewBBox()
+    if (!bbox) return
+    const map = getMap()
+    if (!map) return
+    ensureAccessNetworkLayers(map)
+    await fetchDriveForBBox(bbox, map.getZoom())
+    const v = visState()
+    if (v.pavedVisible && layerCache.paved) {
+      setAccessNetworkLayerData(map, 'paved', layerCache.paved)
     }
+    if (v.jeepVisible && layerCache.jeep) {
+      setAccessNetworkLayerData(map, 'jeep', layerCache.jeep)
+    }
+    afterLayerPaint()
   }
 
   async function refreshVisibleLayers(force = false) {
     const v = visState()
     const jobs = []
-    if (v.pavedVisible) jobs.push(reloadLayer('paved', force))
-    if (v.jeepVisible) jobs.push(reloadLayer('jeep', force))
+    if (v.pavedVisible && v.jeepVisible) {
+      jobs.push(reloadDriveLayers(force))
+    } else {
+      if (v.pavedVisible) jobs.push(reloadLayer('paved', force))
+      if (v.jeepVisible) jobs.push(reloadLayer('jeep', force))
+    }
     if (v.hikingVisible) jobs.push(reloadLayer('hiking', force))
     if (jobs.length) await Promise.all(jobs)
   }
@@ -199,7 +281,8 @@ export function createAccessNetworkDomain(opts) {
     else store.accessNetwork.hikingVisible = visible
     if (visible && getMapReady()) {
       installMapMoveHook()
-      await reloadLayer(kind, true)
+      paintCachedLayer(kind)
+      await refreshVisibleLayers(false)
     }
     syncVisibility()
     scheduleSaveMapState?.()

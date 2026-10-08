@@ -14,6 +14,7 @@ geojson.workspace = true
 peaky-geo.workspace = true
 peaky-peaks.workspace = true
 peaky-preset.workspace = true
+lru = "0.12"
 parking_lot = "0.12"
 rust-embed.workspace = true
 serde.workspace = true

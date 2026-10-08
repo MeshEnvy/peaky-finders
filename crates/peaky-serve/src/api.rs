@@ -41,7 +41,7 @@ use crate::land::{
     read_overlay_part_geojson_bytes, LandImportBody,
     LandPatchSourceBody, LandPreviewGeoJsonBody,
 };
-use crate::roads::roads_network_layer_geojson_bytes;
+use crate::roads::{roads_network_drive_geojson_bytes, roads_network_layer_geojson_bytes};
 use peaky_peaks::{NetworkLayer, NetworkViewBBox};
 use crate::simulation::project_simulation_payload;
 use crate::viewshed::{
@@ -105,6 +105,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/peaks", get(peaks_list))
         .route("/api/p/{slug}/access/{place_slug}", get(place_access))
         .route("/api/p/{slug}/access/{place_slug}/warm", post(place_access_warm))
+        .route(
+            "/api/p/{slug}/roads/network/drive/geojson",
+            get(roads_network_drive_geojson),
+        )
         .route(
             "/api/p/{slug}/roads/network/{layer}/geojson",
             get(roads_network_layer_geojson),
@@ -1134,6 +1138,37 @@ struct NetworkViewQuery {
     z: f64,
 }
 
+async fn roads_network_drive_geojson(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(q): Query<NetworkViewQuery>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let view = match network_view_from_query(&q) {
+        Ok(v) => v,
+        Err(e) => return Err(e),
+    };
+    let warm = state.warm.clone();
+    let preset_path = state.preset_path();
+    let zoom = network_zoom_from_query(&q);
+    let bytes = tokio::task::spawn_blocking(move || {
+        roads_network_drive_geojson_bytes(&warm, &preset_path, view, zoom)
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "roads network task failed" })),
+        )
+    })?
+    .map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })?;
+    network_geojson_response(bytes)
+}
+
 async fn roads_network_layer_geojson(
     State(state): State<AppState>,
     Path((_slug, layer)): Path<(String, String)>,
@@ -1145,6 +1180,43 @@ async fn roads_network_layer_geojson(
             Json(json!({ "error": "layer must be paved, jeep, or hiking" })),
         ));
     };
+    let view = match network_view_from_query(&q) {
+        Ok(v) => v,
+        Err(e) => return Err(e),
+    };
+    let warm = state.warm.clone();
+    let preset_path = state.preset_path();
+    let zoom = network_zoom_from_query(&q);
+    let bytes = tokio::task::spawn_blocking(move || {
+        roads_network_layer_geojson_bytes(&warm, &preset_path, layer, view, zoom)
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "roads network task failed" })),
+        )
+    })?
+    .map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })?;
+    network_geojson_response(bytes)
+}
+
+fn network_zoom_from_query(q: &NetworkViewQuery) -> f64 {
+    if q.z.is_finite() {
+        q.z
+    } else {
+        default_network_zoom()
+    }
+}
+
+fn network_view_from_query(
+    q: &NetworkViewQuery,
+) -> Result<NetworkViewBBox, (StatusCode, Json<Value>)> {
     if !(q.west.is_finite()
         && q.south.is_finite()
         && q.east.is_finite()
@@ -1157,31 +1229,15 @@ async fn roads_network_layer_geojson(
             Json(json!({ "error": "invalid west,south,east,north" })),
         ));
     }
-    let view = NetworkViewBBox {
+    Ok(NetworkViewBBox {
         west: q.west,
         south: q.south,
         east: q.east,
         north: q.north,
-    };
-    let warm = state.warm.clone();
-    let preset_path = state.preset_path();
-    let zoom = if q.z.is_finite() { q.z } else { default_network_zoom() };
-    let bytes = tokio::task::spawn_blocking(move || {
-        roads_network_layer_geojson_bytes(&warm, &preset_path, layer, view, zoom)
     })
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "roads network task failed" })),
-            )
-        })?
-        .map_err(|e| {
-            (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({ "error": e.to_string() })),
-            )
-        })?;
+}
+
+fn network_geojson_response(bytes: Vec<u8>) -> Result<Response, (StatusCode, Json<Value>)> {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/geo+json")

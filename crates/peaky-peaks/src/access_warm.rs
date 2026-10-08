@@ -30,6 +30,7 @@ use crate::osm_cache::{
     save_merged_routing_cache, save_osm_routing_cache, try_load_merged_routing_cache,
     try_load_osm_routing_cache,
 };
+use crate::network_index::GraphEdgeIndex;
 use crate::trail::TrailRouting;
 
 struct SessionElev<'a>(&'a Session);
@@ -53,6 +54,8 @@ pub struct ProjectRouting {
     pub trails: TrailRouting,
     pub gtlf_fingerprint: String,
     trees: OnceLock<RoutingTrees>,
+    drive_edge_index: OnceLock<GraphEdgeIndex>,
+    trail_edge_index: OnceLock<GraphEdgeIndex>,
 }
 
 impl ProjectRouting {
@@ -62,7 +65,19 @@ impl ProjectRouting {
             trails: TrailRouting::empty(),
             gtlf_fingerprint: "disabled".to_string(),
             trees: OnceLock::new(),
+            drive_edge_index: OnceLock::new(),
+            trail_edge_index: OnceLock::new(),
         }
+    }
+
+    pub(crate) fn drive_edge_index(&self) -> &GraphEdgeIndex {
+        self.drive_edge_index
+            .get_or_init(|| GraphEdgeIndex::build(&self.osm.graph))
+    }
+
+    pub(crate) fn trail_edge_index(&self) -> &GraphEdgeIndex {
+        self.trail_edge_index
+            .get_or_init(|| GraphEdgeIndex::build(&self.trails.graph))
     }
 
     pub fn osm(&self) -> &OsmRouting {
@@ -128,6 +143,8 @@ where
         trails: bundle.foot_trails,
         gtlf_fingerprint: bundle.fingerprint,
         trees: OnceLock::new(),
+        drive_edge_index: OnceLock::new(),
+        trail_edge_index: OnceLock::new(),
     })
 }
 

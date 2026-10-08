@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use peaky_peaks::{
     load_routing_for_points_progress, osm_routing_opts_from_preset, routing_bbox_for_points,
-    routing_coverage_bbox, routing_network_layer_geojson_bytes, warm_place_access_with_routing,
-    NetworkLayer, NetworkViewBBox, OsmParsePhase, OsmRoutingOpts, ProjectRouting,
+    routing_coverage_bbox, routing_network_drive_geojson_bytes,
+    routing_network_layer_geojson_bytes, warm_place_access_with_routing, NetworkLayer,
+    NetworkViewBBox, NetworkViewCacheKey, OsmParsePhase, OsmRoutingOpts, ProjectRouting,
     OSM_ROUTE_PAD_DEG,
 };
 use peaky_preset::{
@@ -34,6 +35,7 @@ use crate::viewshed::{
 };
 use crate::viewshed_index::site_viewshed_overlay_if_ready;
 use crate::viewshed_log::viewshed_progress_log;
+use crate::network_geo_cache::NetworkGeoByteCache;
 use crate::viewshed_sim::ViewshedSimOverrides;
 
 pub const PRIORITY_INTERACTIVE: i32 = 0;
@@ -279,6 +281,7 @@ pub struct WarmHub {
     osm_last_pub: Arc<Mutex<Option<Instant>>>,
     project_slug: String,
     board_viewshed: Arc<BoardViewshedResolver>,
+    network_geo_cache: Arc<Mutex<NetworkGeoByteCache>>,
 }
 
 impl WarmHub {
@@ -303,6 +306,7 @@ impl WarmHub {
             osm_last_pub: Arc::new(Mutex::new(None)),
             project_slug,
             board_viewshed,
+            network_geo_cache: Arc::new(Mutex::new(NetworkGeoByteCache::new())),
         }
     }
 
@@ -315,9 +319,52 @@ impl WarmHub {
         zoom: f64,
     ) -> Result<Vec<u8>> {
         let routing = self.ensure_osm_covering(preset_path, &[])?;
+        let cache_key =
+            NetworkViewCacheKey::from_view(view.west, view.south, view.east, view.north, zoom);
+        if let Some(hit) = self
+            .network_geo_cache
+            .lock()
+            .unwrap()
+            .get_layer(&routing, layer, cache_key)
+        {
+            return Ok((*hit).clone());
+        }
         let opts = osm_routing_opts_from_preset(preset_path);
-        routing_network_layer_geojson_bytes(&routing, &opts, layer, view, zoom)
-            .map_err(anyhow::Error::msg)
+        let bytes = routing_network_layer_geojson_bytes(&routing, &opts, layer, view, zoom)
+            .map_err(anyhow::Error::msg)?;
+        self.network_geo_cache
+            .lock()
+            .unwrap()
+            .put_layer(&routing, layer, cache_key, bytes.clone());
+        Ok(bytes)
+    }
+
+    /// Paved + jeep GeoJSON in one response body (`{ "paved", "jeep" }`).
+    pub fn roads_network_drive_geojson_bytes(
+        &self,
+        preset_path: &Path,
+        view: NetworkViewBBox,
+        zoom: f64,
+    ) -> Result<Vec<u8>> {
+        let routing = self.ensure_osm_covering(preset_path, &[])?;
+        let cache_key =
+            NetworkViewCacheKey::from_view(view.west, view.south, view.east, view.north, zoom);
+        if let Some(hit) = self
+            .network_geo_cache
+            .lock()
+            .unwrap()
+            .get_drive(&routing, cache_key)
+        {
+            return Ok((*hit).clone());
+        }
+        let opts = osm_routing_opts_from_preset(preset_path);
+        let bytes = routing_network_drive_geojson_bytes(&routing, &opts, view, zoom)
+            .map_err(anyhow::Error::msg)?;
+        self.network_geo_cache
+            .lock()
+            .unwrap()
+            .put_drive(&routing, cache_key, bytes.clone());
+        Ok(bytes)
     }
 
     fn ensure_workers(&self, queue: Arc<CoverageQueue>) {

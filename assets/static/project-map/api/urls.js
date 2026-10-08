@@ -127,6 +127,18 @@ export function roadsNetworkLayerGeoJsonUrl(projectSlug, layer, bbox, zoom) {
   return `/api/p/${projectSlug}/roads/network/${layer}/geojson?${q}`
 }
 
+/** Combined paved + jeep from one drive-graph pass. */
+export function roadsNetworkDriveGeoJsonUrl(projectSlug, bbox, zoom) {
+  const q = new URLSearchParams({
+    west: String(bbox.west),
+    south: String(bbox.south),
+    east: String(bbox.east),
+    north: String(bbox.north),
+    z: String(Math.round(zoom)),
+  })
+  return `/api/p/${projectSlug}/roads/network/drive/geojson?${q}`
+}
+
 export function landOverlayGeoJsonUrl(projectSlug, kind) {
   return `/api/p/${projectSlug}/land/overlays/${encodeURIComponent(kind)}/geojson`
 }

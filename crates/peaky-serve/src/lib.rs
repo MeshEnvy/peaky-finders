@@ -28,6 +28,7 @@ pub mod viewshed;
 pub mod viewshed_index;
 mod viewshed_log;
 mod viewshed_sim;
+mod network_geo_cache;
 mod warm;
 
 pub use app::{router, run_server};

@@ -17,6 +17,7 @@ mod probe;
 mod run;
 mod trail;
 mod network_geojson;
+mod network_index;
 mod universe;
 
 pub use access_warm::{
@@ -37,9 +38,11 @@ pub use trail::{
     TRAIL_MAX_M, TRAIL_PARK_SNAP_M,
 };
 pub use network_geojson::{
-    osm_routing_opts_from_preset, routing_network_layer_geojson,
-    routing_network_layer_geojson_bytes, NetworkLayer, NetworkViewBBox,
+    osm_routing_opts_from_preset, routing_network_drive_geojson_bytes,
+    routing_network_layer_geojson, routing_network_layer_geojson_bytes, NetworkLayer,
+    NetworkViewBBox,
 };
+pub use network_index::NetworkViewCacheKey;
 pub use peaky_preset::{PLACE_ACCESS_ROAD_SEARCH_M, DEFAULT_MAX_JEEP_M as PLACE_ACCESS_MAX_JEEP_M};
 pub use hike::{
     default_max_slope_deg, format_hike_report, grade_pct_to_deg, hike_difficulty, stored_peak_hike,

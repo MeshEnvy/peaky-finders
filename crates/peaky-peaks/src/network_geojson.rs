@@ -7,6 +7,7 @@ use peaky_preset::load_preset;
 
 use crate::access_warm::ProjectRouting;
 use crate::hike::haversine_m;
+use crate::network_index::GraphEdgeIndex;
 use crate::osm::{graph_edge_is_paved_anchor, GraphEdge, JeepRoadGraph, OsmRoutingOpts};
 use crate::trail::TrailRouting;
 
@@ -16,6 +17,8 @@ const SIMPLIFY_PX: f64 = 1.5;
 const MIN_DRAW_PX: f64 = 12.0;
 /// Parallel tracks closer than this share one corridor (longest original line wins).
 const MERGE_PX: f64 = 8.0;
+/// At a junction, continue only if a leg is within this many degrees of straight-through.
+const STROKE_CONTINUE_MAX_DEG: f64 = 50.0;
 
 /// Web Mercator meters per screen pixel (256 px world at z=0).
 fn meters_per_pixel(z: f64, lat_deg: f64) -> f64 {
@@ -123,7 +126,7 @@ impl NetworkViewBBox {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum NetworkLayer {
     Paved,
     Jeep,
@@ -172,37 +175,33 @@ fn edge_in_view(graph: &JeepRoadGraph, a: u32, b: u32, view: NetworkViewBBox) ->
 
 fn collect_drive_edges(
     graph: &JeepRoadGraph,
+    index: &GraphEdgeIndex,
     paved_tags: &HashSet<&str>,
     view: NetworkViewBBox,
 ) -> HashMap<(u32, u32), DriveRole> {
     let mut out = HashMap::new();
-    for from in 0..graph.node_count() as u32 {
-        for edge in graph.edges(from) {
-            let to = edge.to;
-            if from >= to || !edge_in_view(graph, from, to, view) {
-                continue;
-            }
-            let role = overlay_drive_role(edge, paved_tags);
-            out.insert((from, to), role);
+    for (a, b) in index.undirected_edges_in_bbox(view.west, view.south, view.east, view.north) {
+        if !edge_in_view(graph, a, b, view) {
+            continue;
         }
+        let Some(edge) = graph.edges(a).iter().find(|e| e.to == b) else {
+            continue;
+        };
+        out.insert((a, b), overlay_drive_role(edge, paved_tags));
     }
     out
 }
 
 fn collect_all_undirected_edges(
     graph: &JeepRoadGraph,
+    index: &GraphEdgeIndex,
     view: NetworkViewBBox,
 ) -> HashSet<(u32, u32)> {
-    let mut out = HashSet::new();
-    for from in 0..graph.node_count() as u32 {
-        for edge in graph.edges(from) {
-            let to = edge.to;
-            if edge_in_view(graph, from, to, view) {
-                out.insert(undir_key(from, to));
-            }
-        }
-    }
-    out
+    index
+        .undirected_edges_in_bbox(view.west, view.south, view.east, view.north)
+        .into_iter()
+        .filter(|&(a, b)| edge_in_view(graph, a, b, view))
+        .collect()
 }
 
 fn filter_drive_edges_for_zoom(
@@ -360,6 +359,82 @@ fn generalize_lines(
     best.into_values().filter_map(|(_, line)| finish(line)).collect()
 }
 
+fn node_bearing(graph: &JeepRoadGraph, from: u32, to: u32) -> f64 {
+    let (lat1, lon1) = graph.node_coords(from);
+    let (lat2, lon2) = graph.node_coords(to);
+    let dx = (lon2 - lon1) * lat1.to_radians().cos();
+    let dy = lat2 - lat1;
+    dy.atan2(dx).to_degrees()
+}
+
+fn bearing_delta_deg(a: f64, b: f64) -> f64 {
+    let mut d = (b - a).abs() % 360.0;
+    if d > 180.0 {
+        d = 360.0 - d;
+    }
+    d
+}
+
+fn stroke_continue_neighbor(
+    graph: &JeepRoadGraph,
+    cur: u32,
+    came_from: u32,
+    neighbors: &[u32],
+    visited: &HashSet<(u32, u32)>,
+) -> Option<u32> {
+    let incoming = node_bearing(graph, came_from, cur);
+    let mut best: Option<(u32, f64)> = None;
+    for &n in neighbors {
+        if n == came_from {
+            continue;
+        }
+        let ek = undir_key(cur, n);
+        if visited.contains(&ek) {
+            continue;
+        }
+        if neighbors.len() == 2 {
+            return Some(n);
+        }
+        let outgoing = node_bearing(graph, cur, n);
+        let delta = bearing_delta_deg(incoming, outgoing);
+        if delta <= STROKE_CONTINUE_MAX_DEG {
+            if best.map(|(_, bd)| delta < bd).unwrap_or(true) {
+                best = Some((n, delta));
+            }
+        }
+    }
+    best.map(|(n, _)| n)
+}
+
+fn extend_stroke(
+    graph: &JeepRoadGraph,
+    adj: &HashMap<u32, Vec<u32>>,
+    visited: &mut HashSet<(u32, u32)>,
+    path: &mut Vec<u32>,
+    at_front: bool,
+) {
+    loop {
+        let (cur, came_from) = if at_front {
+            (path[0], path[1])
+        } else {
+            let len = path.len();
+            (path[len - 1], path[len - 2])
+        };
+        let Some(neighbors) = adj.get(&cur) else {
+            break;
+        };
+        let Some(other) = stroke_continue_neighbor(graph, cur, came_from, neighbors, visited) else {
+            break;
+        };
+        visited.insert(undir_key(cur, other));
+        if at_front {
+            path.insert(0, other);
+        } else {
+            path.push(other);
+        }
+    }
+}
+
 fn chain_edges(
     graph: &JeepRoadGraph,
     edges: HashSet<(u32, u32)>,
@@ -382,49 +457,8 @@ fn chain_edges(
         }
         let mut path = vec![a, b];
         visited.insert(key);
-
-        loop {
-            let cur = path[0];
-            let next = path[1];
-            let Some(neighbors) = adj.get(&cur) else {
-                break;
-            };
-            if neighbors.len() != 2 {
-                break;
-            }
-            let other = match neighbors.iter().find(|&&n| n != next) {
-                Some(&n) => n,
-                None => break,
-            };
-            let ek = undir_key(cur, other);
-            if visited.contains(&ek) {
-                break;
-            }
-            visited.insert(ek);
-            path.insert(0, other);
-        }
-
-        loop {
-            let len = path.len();
-            let cur = path[len - 1];
-            let prev = path[len - 2];
-            let Some(neighbors) = adj.get(&cur) else {
-                break;
-            };
-            if neighbors.len() != 2 {
-                break;
-            }
-            let other = match neighbors.iter().find(|&&n| n != prev) {
-                Some(&n) => n,
-                None => break,
-            };
-            let ek = undir_key(cur, other);
-            if visited.contains(&ek) {
-                break;
-            }
-            visited.insert(ek);
-            path.push(other);
-        }
+        extend_stroke(graph, &adj, &mut visited, &mut path, true);
+        extend_stroke(graph, &adj, &mut visited, &mut path, false);
 
         let mut coords: Vec<[f64; 2]> = path
             .iter()
@@ -516,6 +550,7 @@ fn drive_role_fc(
 }
 
 fn hiking_fc(
+    routing: &ProjectRouting,
     trails: &TrailRouting,
     view: NetworkViewBBox,
     zoom: f64,
@@ -524,7 +559,8 @@ fn hiking_fc(
     if zoom < 11.0 {
         return empty_fc();
     }
-    let edges = collect_all_undirected_edges(&trails.graph, view);
+    let index = routing.trail_edge_index();
+    let edges = collect_all_undirected_edges(&trails.graph, index, view);
     let filtered = filter_trail_edges_for_zoom(&trails.graph, edges, tier);
     let chained = chain_edges(&trails.graph, filtered, None);
     let center_lat = (view.south + view.north) * 0.5;
@@ -549,6 +585,7 @@ pub fn routing_network_layer_geojson(
         NetworkLayer::Hiking => {
             let empty_trails = TrailRouting::empty();
             hiking_fc(
+                routing,
                 routing.trails_opt().unwrap_or(&empty_trails),
                 view,
                 zoom,
@@ -558,7 +595,8 @@ pub fn routing_network_layer_geojson(
         NetworkLayer::Paved | NetworkLayer::Jeep => {
             let paved_tags: HashSet<&str> = opts.paved_highways.iter().map(String::as_str).collect();
             let graph = &routing.osm().graph;
-            let drive_edges = collect_drive_edges(graph, &paved_tags, view);
+            let index = routing.drive_edge_index();
+            let drive_edges = collect_drive_edges(graph, index, &paved_tags, view);
             let role = if layer == NetworkLayer::Paved {
                 DriveRole::Paved
             } else {
@@ -567,6 +605,34 @@ pub fn routing_network_layer_geojson(
             drive_role_fc(graph, &drive_edges, role, zoom, view)
         }
     }
+}
+
+/// Paved and jeep FeatureCollections from one drive-graph classification pass.
+pub fn routing_network_drive_layers_geojson(
+    routing: &ProjectRouting,
+    opts: &OsmRoutingOpts,
+    view: NetworkViewBBox,
+    zoom: f64,
+) -> (FeatureCollection, FeatureCollection) {
+    let paved_tags: HashSet<&str> = opts.paved_highways.iter().map(String::as_str).collect();
+    let graph = &routing.osm().graph;
+    let index = routing.drive_edge_index();
+    let drive_edges = collect_drive_edges(graph, index, &paved_tags, view);
+    (
+        drive_role_fc(graph, &drive_edges, DriveRole::Paved, zoom, view),
+        drive_role_fc(graph, &drive_edges, DriveRole::Jeep, zoom, view),
+    )
+}
+
+/// JSON object `{ "paved": …, "jeep": … }` for a single combined request.
+pub fn routing_network_drive_geojson_bytes(
+    routing: &ProjectRouting,
+    opts: &OsmRoutingOpts,
+    view: NetworkViewBBox,
+    zoom: f64,
+) -> serde_json::Result<Vec<u8>> {
+    let (paved, jeep) = routing_network_drive_layers_geojson(routing, opts, view, zoom);
+    serde_json::to_vec(&serde_json::json!({ "paved": paved, "jeep": jeep }))
 }
 
 /// Serialize one layer as a GeoJSON FeatureCollection.
@@ -618,10 +684,19 @@ mod tests {
         }
     }
 
+    fn drive_edges_in_view(
+        graph: &JeepRoadGraph,
+        paved_tags: &HashSet<&str>,
+        view: NetworkViewBBox,
+    ) -> HashMap<(u32, u32), DriveRole> {
+        let index = GraphEdgeIndex::build(graph);
+        collect_drive_edges(graph, &index, paved_tags, view)
+    }
+
     fn jeep_lines(graph: &JeepRoadGraph, zoom: f64) -> Vec<Vec<[f64; 2]>> {
         let view = wide_view();
         let center_lat = (view.south + view.north) * 0.5;
-        let all = collect_drive_edges(graph, &HashSet::new(), view);
+        let all = drive_edges_in_view(graph, &HashSet::new(), view);
         let set = filter_drive_edges_for_zoom(graph, &all, DriveRole::Jeep, zoom);
         let chained = chain_edges(graph, set, None);
         let (merge, min_m, simplify) = drive_generalization(zoom, center_lat);
@@ -662,11 +737,51 @@ mod tests {
             east: -118.0,
             north: 40.0,
         };
-        let edges = collect_drive_edges(&graph, &paved_tags, view);
+        let edges = drive_edges_in_view(&graph, &paved_tags, view);
         assert_eq!(edges.len(), 2);
         let lines = chain_edges(&graph, edges.keys().copied().collect(), None);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].len(), 3);
+    }
+
+    #[test]
+    fn through_track_stays_one_stroke_at_coarse_zoom() {
+        let mut graph = JeepRoadGraph::new();
+        let mut map = HashMap::new();
+        let mut id = -1i64;
+        let south = graph.get_or_insert_node_public(id, 39.0, -119.0, &mut map);
+        id -= 1;
+        let mid = graph.get_or_insert_node_public(id, 39.05, -119.0, &mut map);
+        id -= 1;
+        let north = graph.get_or_insert_node_public(id, 39.10, -119.0, &mut map);
+        id -= 1;
+        let west = graph.get_or_insert_node_public(id, 39.05, -119.002, &mut map);
+        id -= 1;
+        let east = graph.get_or_insert_node_public(id, 39.05, -118.998, &mut map);
+        graph.add_way_segment_public(south, mid, 39.0, -119.0, 39.05, -119.0, "track", None, None, false);
+        graph.add_way_segment_public(mid, north, 39.05, -119.0, 39.10, -119.0, "track", None, None, false);
+        graph.add_way_segment_public(west, mid, 39.05, -119.002, 39.05, -119.0, "track", None, None, false);
+        graph.add_way_segment_public(mid, east, 39.05, -119.0, 39.05, -118.998, "track", None, None, false);
+
+        let coarse = jeep_lines(&graph, 8.0);
+        assert_eq!(coarse.len(), 1, "NS through-road should be one stroke at z8");
+        let line = &coarse[0];
+        let min_lat = line.iter().map(|c| c[1]).fold(f64::INFINITY, f64::min);
+        let max_lat = line.iter().map(|c| c[1]).fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            min_lat <= 39.05 && max_lat >= 39.05,
+            "stroke spans the crossing latitude"
+        );
+        assert!(polyline_length_m(line) > 5_000.0);
+
+        let fine = jeep_lines(&graph, 14.0);
+        assert_eq!(fine.len(), 2, "short spur is its own line at z14");
+        let mid_lon = -119.0;
+        let at_mid = |line: &Vec<[f64; 2]>| {
+            line.iter()
+                .any(|c| (c[1] - 39.05).abs() < 0.001 && (c[0] - mid_lon).abs() < 0.001)
+        };
+        assert!(fine.iter().all(at_mid), "both lines meet at the crossing");
     }
 
     #[test]
@@ -726,7 +841,7 @@ mod tests {
             "residential",
             None,
         );
-        let all = collect_drive_edges(&graph, &HashSet::new(), wide_view());
+        let all = drive_edges_in_view(&graph, &HashSet::new(), wide_view());
         assert!(all.values().all(|r| *r == DriveRole::Jeep));
     }
 
@@ -753,7 +868,7 @@ mod tests {
             "tertiary",
             None,
         );
-        let all = collect_drive_edges(&graph, &HashSet::new(), wide_view());
+        let all = drive_edges_in_view(&graph, &HashSet::new(), wide_view());
         assert_eq!(all.len(), 2);
         assert!(all.values().all(|r| *r == DriveRole::Jeep));
     }
@@ -772,7 +887,7 @@ mod tests {
             "secondary",
             None,
         );
-        let all = collect_drive_edges(&graph, &HashSet::new(), wide_view());
+        let all = drive_edges_in_view(&graph, &HashSet::new(), wide_view());
         assert!(all.values().all(|r| *r == DriveRole::Paved));
     }
 
@@ -791,7 +906,7 @@ mod tests {
             Some("dirt"),
         );
         let view = wide_view();
-        let all = collect_drive_edges(&graph, &HashSet::new(), view);
+        let all = drive_edges_in_view(&graph, &HashSet::new(), view);
         assert!(all.values().all(|r| *r == DriveRole::Jeep));
     }
 
@@ -818,7 +933,7 @@ mod tests {
             "service",
             Some("asphalt"),
         );
-        let all = collect_drive_edges(&graph, &HashSet::new(), wide_view());
+        let all = drive_edges_in_view(&graph, &HashSet::new(), wide_view());
         assert_eq!(all.len(), 2);
         assert!(all.values().all(|r| *r == DriveRole::Jeep));
     }
@@ -837,7 +952,7 @@ mod tests {
             "service",
             Some("gravel"),
         );
-        let all = collect_drive_edges(&graph, &HashSet::new(), wide_view());
+        let all = drive_edges_in_view(&graph, &HashSet::new(), wide_view());
         assert!(all.values().all(|r| *r == DriveRole::Jeep));
     }
 
@@ -862,7 +977,7 @@ mod tests {
             east: -118.0,
             north: 40.0,
         };
-        let all = collect_drive_edges(&graph, &paved_tags, view);
+        let all = drive_edges_in_view(&graph, &paved_tags, view);
         let paved = filter_drive_edges_for_zoom(&graph, &all, DriveRole::Paved, 8.0);
         assert_eq!(paved.len(), 1);
     }
@@ -882,7 +997,7 @@ mod tests {
             Some("asphalt"),
         );
         let tags: HashSet<&str> = ["residential"].into_iter().collect();
-        let all = collect_drive_edges(&graph, &tags, wide_view());
+        let all = drive_edges_in_view(&graph, &tags, wide_view());
         assert!(all.values().all(|r| *r == DriveRole::Paved));
         assert!(filter_drive_edges_for_zoom(&graph, &all, DriveRole::Paved, 11.0).is_empty());
         assert_eq!(
@@ -930,7 +1045,7 @@ mod tests {
             east: -118.0,
             north: 40.0,
         };
-        let edges = collect_drive_edges(&graph, &paved_tags, view);
+        let edges = drive_edges_in_view(&graph, &paved_tags, view);
         assert_eq!(edges.len(), 1);
     }
 }
