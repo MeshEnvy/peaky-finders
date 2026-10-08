@@ -13,14 +13,19 @@ For publishing releases, use skill `peaky-release`.
 
 ## Host
 
+Local interactive serve is `./local-run.sh`. It builds the release binary, sets `PEAKY_STATIC_DIR` to `assets/static`, and serves peaky-nevada on `127.0.0.1:8080`. JS, CSS, and HTML templates are read from disk on each request, so frontend edits do not need a rebuild. Extra args are appended to `serve`.
+
 ```bash
+./local-run.sh
 cargo build
 cargo build --locked --release -p peaky
 cargo run -p peaky -- serve /path/to/project --host 127.0.0.1 --port 8080
 cargo test --locked
 ```
 
-Skadi mirror: `<project>/.peaky/cache/skadi`. Optional `SPLAT_CACHE` override. Use `--release` only for long RF runs.
+Debug `cargo run` also serves `/static/` from disk. A release binary without `PEAKY_STATIC_DIR` uses rust-embed.
+
+Skadi mirror: `<project>/.peaky/cache/skadi`. Optional `SPLAT_CACHE` override.
 
 Empty project dirs auto-init with MeshCore defaults on first `serve` (`crates/peaky-preset/src/init.rs`).
 

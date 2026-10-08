@@ -17,7 +17,7 @@ description: >-
 | RF engine | `splatter/` crate (`Session`, in-process) |
 | Config | `$PEAKY_HOME/projects/<slug>/config.yaml` |
 | Code | workspace crates + `cmd/peaky` |
-| Dev/test | `cargo run -p peaky -- serve`, `cargo test`. Image: repo-root `Dockerfile` |
+| Dev/test | `./local-run.sh` (release + disk frontend), `cargo test`. Image: repo-root `Dockerfile` |
 
 ## Sites
 

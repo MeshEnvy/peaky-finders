@@ -32,7 +32,7 @@ Opportunity exists when any of these apply:
 - **Vue panels** (`panels/`) own sidebar list rendering — no manual `innerHTML` sync fan-out for sites.
 - **Import shared modules**; do not copy const blocks or helper bodies back inline.
 - After adding a module, update **MEMORY.md** § Workspace layout in the same change set.
-- **Debug**: JS/CSS edits hot-serve from disk; **release**: `cargo build -p peaky` (rust-embed).
+- **Frontend edits**: `./local-run.sh` serves JS/CSS from disk even on the release binary (`PEAKY_STATIC_DIR`). Debug builds do the same without the env var. A release binary without it uses rust-embed.
 
 ## Rust / other crates
 
