@@ -55,10 +55,11 @@ cargo build --locked --release -p peaky
 
 Binary: `target/release/peaky`
 
-Local dev (debug build is fine for UI work; use `--release` for long RF runs):
+Local dev (`./local-run.sh` builds `--profile fast` → `target/fast/peaky`. Debug is fine for UI work. `--release` is the fat-LTO shipping build):
 
 ```bash
-cargo run -p peaky -- serve /path/to/project --host 127.0.0.1 --port 8080
+./local-run.sh
+cargo run --profile fast -p peaky -- serve /path/to/project --host 127.0.0.1 --port 8080
 ```
 
 Skadi mirror: `<project>/.peaky/cache/skadi`. Optional `SPLAT_CACHE` env override.

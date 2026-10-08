@@ -56,3 +56,11 @@ zip = "2"
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Local iteration. Same opts as release, without fat LTO, so codegen stays
+# parallel and incremental. Binary: target/fast/peaky. Shipping stays on release.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
