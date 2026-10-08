@@ -1,6 +1,6 @@
 # Community site harvest (backlog)
 
-**Status:** backlog — parked 2026-09-12. Enterprise initiative: [`ops/initiatives/peaky-community-harvest.md`](../../../ops/initiatives/peaky-community-harvest.md).
+**Status:** backlog — parked 2026-09-12. Enterprise initiative: [`enterprise/initiatives/peaky-community-harvest.md`](../../../enterprise/initiatives/peaky-community-harvest.md).
 
 ## Goal
 
@@ -24,4 +24,4 @@ Harvest community MeshCore repeater adverts from CoreScope into a **`community.y
 - Public coverage overlay / meshenvy.org
 - Writing harvest rows into `sites.yaml`
 
-See ops initiative for full doctrine table and missing information.
+See [enterprise/initiatives/peaky-community-harvest.md](../../../enterprise/initiatives/peaky-community-harvest.md) for the doctrine table and missing information.
