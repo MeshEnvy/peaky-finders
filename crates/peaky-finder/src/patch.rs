@@ -179,6 +179,7 @@ pub fn apply_patch(
                 height_m: site.height_m,
                 description: None,
                 node: None,
+                access_choice: None,
             };
             sites_map.insert(
                 serde_yaml::Value::from(site.slug.clone()),
@@ -264,6 +265,7 @@ pub fn patch_summary_rows(plan: &PatchPlan, preset: &Preset) -> Vec<serde_json::
             height_m: site.height_m,
             description: None,
             node: None,
+            access_choice: None,
         };
         rows.push(serde_json::to_value(site_row_from_entry(&site.slug, &entry)).unwrap_or_default());
     }
@@ -300,6 +302,7 @@ mod tests {
                 height_m: None,
                 description: None,
                 node: None,
+                access_choice: None,
             },
         );
         assert_eq!(max_prefixed_number(&preset, "Site"), 3);

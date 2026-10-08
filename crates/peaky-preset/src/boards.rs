@@ -205,6 +205,7 @@ mod tests {
             description: None,
             tags: vec![],
             node: Some("me0041".into()),
+            access_choice: None,
         };
         let resolver = resolver_for(&dir);
         assert_eq!(
@@ -232,6 +233,7 @@ mod tests {
             description: None,
             tags: vec![],
             node: Some("me0001".into()),
+            access_choice: None,
         };
         let resolver = resolver_for(&dir);
         assert_eq!(
@@ -259,6 +261,7 @@ mod tests {
             description: None,
             tags: vec![],
             node: None,
+            access_choice: None,
         };
         let resolver = resolver_for(&dir);
         assert_eq!(
@@ -282,6 +285,7 @@ mod tests {
             description: None,
             tags: vec![],
             node: Some("me0041".into()),
+            access_choice: None,
         };
         let resolver = resolver_for(&dir);
         assert_eq!(

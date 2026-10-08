@@ -37,6 +37,7 @@ pub fn create_site_from_peak(
         height_m: None,
         description: None,
         node: None,
+        access_choice: None,
     };
     insert_preset_site(preset_path, &site_slug, &entry)
         .map_err(|e| SiteCreateError(format!("insert site: {e}")))?;

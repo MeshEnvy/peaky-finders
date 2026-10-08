@@ -94,6 +94,7 @@ fn site_entry_from_mapping(slug: &str, entry: &serde_yaml::Mapping) -> Option<Si
         description,
         tags,
         node,
+        access_choice: None,
     })
 }
 

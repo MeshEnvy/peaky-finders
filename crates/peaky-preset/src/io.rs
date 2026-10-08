@@ -124,6 +124,7 @@ pub fn patch_preset_site(
     loc: Option<[f64; 2]>,
     tags: Option<&[String]>,
     height_m: Option<Option<f64>>,
+    access_choice: Option<Option<&str>>,
 ) -> Result<()> {
     let (layout, mut doc) = read_sites_document_root(path)?;
     let sites = sites_map_mut(&mut doc)?;
@@ -142,6 +143,7 @@ pub fn patch_preset_site(
             Value::from("loc"),
             Value::Sequence(vec![Value::from(lat), Value::from(lon)]),
         );
+        site_map.remove(&Value::from("access_choice"));
     }
     if let Some(tags) = tags {
         let normalized = normalize_site_tags(Some(&Value::Sequence(
@@ -158,6 +160,16 @@ pub fn patch_preset_site(
             Value::from("height_m"),
             height_m.map(Value::from).unwrap_or(Value::Null),
         );
+    }
+    if let Some(choice) = access_choice {
+        match choice {
+            Some(id) => {
+                site_map.insert(Value::from("access_choice"), Value::from(id));
+            }
+            None => {
+                site_map.remove(&Value::from("access_choice"));
+            }
+        }
     }
 
     write_sites_document(&layout, &doc)
@@ -377,6 +389,7 @@ mod tests {
                 description: None,
                 tags: vec![],
                 node: None,
+                access_choice: None,
             },
         )
         .unwrap();
@@ -406,6 +419,7 @@ mod tests {
                 description: None,
                 tags: vec![],
                 node: None,
+                access_choice: None,
             },
         )
         .unwrap();
@@ -436,12 +450,37 @@ mod tests {
         root.insert(Value::from("sites"), Value::Mapping(sites));
         write_preset_document(&path, &root).unwrap();
 
-        patch_preset_site(&path, "tower", None, None, None, Some(None)).unwrap();
+        patch_preset_site(&path, "tower", None, None, None, Some(None), None).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("height_m: null") || !text.contains("height_m: 12"));
     }
 
     #[test]
+    fn patch_preset_site_clears_access_choice_when_loc_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+
+        let mut site = Mapping::new();
+        site.insert(Value::from("name"), Value::from("Tower"));
+        site.insert(
+            Value::from("loc"),
+            Value::Sequence(vec![Value::from(1.0), Value::from(2.0)]),
+        );
+        site.insert(
+            Value::from("access_choice"),
+            Value::from("39.0000#-117.0000#0"),
+        );
+        let mut sites = Mapping::new();
+        sites.insert(Value::from("tower"), Value::Mapping(site));
+        let mut root = Mapping::new();
+        root.insert(Value::from("sites"), Value::Mapping(sites));
+        write_preset_document(&path, &root).unwrap();
+
+        patch_preset_site(&path, "tower", None, Some([1.1, 2.1]), None, None, None).unwrap();
+        let ent = load_site_entry(&path, "tower").unwrap();
+        assert!(ent.access_choice.is_none());
+    }
+
     fn patch_preset_site_only_changes_target_site() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
@@ -454,7 +493,7 @@ mod tests {
         write_preset_document(&path, &root).unwrap();
         let before = fs::read_to_string(&path).unwrap();
 
-        patch_preset_site(&path, "edit", Some("New"), None, None, None).unwrap();
+        patch_preset_site(&path, "edit", Some("New"), None, None, None, None).unwrap();
         let after = fs::read_to_string(&path).unwrap();
 
         assert_ne!(before, after);
@@ -490,6 +529,7 @@ mod tests {
                 description: None,
                 tags: vec![],
                 node: None,
+                access_choice: None,
             },
         );
         sites.insert(
@@ -501,6 +541,7 @@ mod tests {
                 description: None,
                 tags: vec![],
                 node: None,
+                access_choice: None,
             },
         );
 

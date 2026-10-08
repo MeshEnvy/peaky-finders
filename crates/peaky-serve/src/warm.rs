@@ -724,8 +724,19 @@ impl WarmHub {
             site.lat(),
             site.lon(),
         ) {
-            Ok(Some(access)) => {
-                let mut payload = access_payload_json(site_slug, &access);
+            Ok(Some(mut access)) => {
+                if let Err(e) = peaky_peaks::ensure_site_access_options_on_probe(
+                    preset_path.parent().unwrap_or(preset_path),
+                    &peaky_peaks::SessionElev(&self.session),
+                    routing.as_ref(),
+                    &meta,
+                    site.lat(),
+                    site.lon(),
+                    &mut access,
+                ) {
+                    tracing::warn!("site access options {project_slug}/{site_slug}: {e:#}");
+                }
+                let mut payload = access_payload_json(site_slug, &access, preset_path);
                 if let Some(obj) = payload.as_object_mut() {
                     obj.insert("project".into(), json!(project_slug));
                 }

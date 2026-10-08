@@ -16,7 +16,7 @@ use peaky_preset::{
 };
 use splatter::Session;
 
-use crate::access_probe::{probe, AccessContext};
+use crate::access_probe::{build_site_access_options, probe, AccessContext};
 use crate::gtlf::{
     apply_gtlf_to_routing_progress, ensure_gtlf_cache, gtlf_cache_fingerprint,
 };
@@ -33,7 +33,7 @@ use crate::osm_cache::{
 use crate::network_index::GraphEdgeIndex;
 use crate::trail::TrailRouting;
 
-struct SessionElev<'a>(&'a Session);
+pub struct SessionElev<'a>(pub &'a Session);
 
 impl HikeSampleElev for SessionElev<'_> {
     fn sample_elev_m(&self, lat: f64, lon: f64) -> f64 {
@@ -357,6 +357,61 @@ pub fn load_routing_near(
         opts,
         &mut |_, _| {},
     )
+}
+
+/// Attach site access options to a probe and refresh the disk cache when present.
+pub fn ensure_site_access_options_on_probe<E: HikeSampleElev>(
+    project_dir: &Path,
+    elev: &E,
+    routing: &ProjectRouting,
+    meta: &AccessMeta,
+    lat: f64,
+    lon: f64,
+    probe: &mut AccessProbe,
+) -> Result<()> {
+    if probe.site_options_rev >= 2
+        && probe
+            .site_options
+            .as_ref()
+            .is_some_and(|options| !options.is_empty())
+    {
+        return Ok(());
+    }
+    let preset_path = project_dir.join("config.yaml");
+    let preset = load_preset(&preset_path).unwrap_or_default();
+    let scan = preset.scan.peaks.clone();
+    let max_slope_deg = preset.peak_access_rules().max_slope_deg;
+    let jeep_budget = JeepLengthBudget::from_extreme(&scan.difficulty.jeep.extreme);
+    let max_jeep_m = display_jeep_max_m();
+    let trees = routing.trees(max_jeep_m, &jeep_budget);
+    let ctx = access_context(
+        routing,
+        trees,
+        meta,
+        &scan,
+        max_jeep_m,
+        max_slope_deg,
+        jeep_budget,
+        scan.preference.clone(),
+        scan.difficulty.clone(),
+    );
+    probe.site_options = Some(build_site_access_options(
+        elev,
+        lat,
+        lon,
+        &ctx,
+        probe,
+    ));
+    probe.site_options_rev = 2;
+    if probe.probe_key.is_some() {
+        let pbf_fp = project_pbf_fingerprint(project_dir);
+        let prefs_key = probe_prefs_key(meta, &scan, &routing.gtlf_fingerprint, &pbf_fp);
+        let cache_path = probe_cache_path(project_dir, &prefs_key, lat, lon);
+        if let Err(e) = save_probe_cache(&cache_path, probe) {
+            tracing::warn!("probe cache write (site options): {e:#}");
+        }
+    }
+    Ok(())
 }
 
 /// Warm (compute + write) access for a place slug at ``loc``.

@@ -1,7 +1,7 @@
 //! Weighted jeep routing on OSM graph (paved anchor → park point).
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use serde::Serialize;
 
@@ -212,12 +212,34 @@ pub fn reconstruct_jeep_route(
     }
 }
 
+pub fn undirected_edge_key(a: u32, b: u32) -> (u32, u32) {
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+pub fn jeep_path_undirected_edges(
+    prev: &HashMap<u32, (u32, crate::osm::GraphEdge)>,
+    dest_node: u32,
+) -> HashSet<(u32, u32)> {
+    let mut edges = HashSet::new();
+    let mut node = dest_node;
+    while let Some((prev_node, _edge)) = prev.get(&node) {
+        edges.insert(undirected_edge_key(node, *prev_node));
+        node = *prev_node;
+    }
+    edges
+}
+
 pub fn dijkstra_from_paved(
     graph: &JeepRoadGraph,
     sources: &[(f64, f64, u32)],
     max_jeep_m: f64,
     stop_at: Option<u32>,
     budget: Option<&JeepLengthBudget>,
+    blocked_edges: Option<&HashSet<(u32, u32)>>,
 ) -> (
     HashMap<u32, f64>,
     HashMap<u32, f64>,
@@ -249,6 +271,11 @@ pub fn dijkstra_from_paved(
         }
         let horiz_base = dist_horiz.get(&node).copied().unwrap_or(0.0);
         for edge in graph.edges(node) {
+            if blocked_edges
+                .is_some_and(|b| b.contains(&undirected_edge_key(node, edge.to)))
+            {
+                continue;
+            }
             let horiz = horiz_base + edge.length_m;
             if horiz > overall_cap + 1.0 {
                 continue;
@@ -289,6 +316,71 @@ pub fn dijkstra_from_paved(
     (dist_cost, dist_horiz, prev)
 }
 
+/// Shortest horizontal drive from any paved anchor to ``park``.
+///
+/// Expands outward from the park and stops at the closest paved node within
+/// ``max_horiz``. Unlike [`dijkstra_from_paved`], edge cost is length only, so a
+/// shorter rough track beats a longer easy road.
+pub fn shortest_horiz_prev_from_paved(
+    graph: &JeepRoadGraph,
+    paved_nodes: &HashSet<u32>,
+    park: u32,
+    max_horiz: f64,
+) -> Option<HashMap<u32, (u32, crate::osm::GraphEdge)>> {
+    if max_horiz <= 0.0 || paved_nodes.contains(&park) {
+        return None;
+    }
+    let mut dist: HashMap<u32, f64> = HashMap::new();
+    let mut came_from: HashMap<u32, (u32, crate::osm::GraphEdge)> = HashMap::new();
+    let mut heap = BinaryHeap::new();
+    dist.insert(park, 0.0);
+    heap.push(HeapState {
+        cost: 0.0,
+        node: park,
+    });
+    let mut paved_hit: Option<u32> = None;
+    while let Some(HeapState { cost, node }) = heap.pop() {
+        if cost > dist.get(&node).copied().unwrap_or(f64::INFINITY) + 1e-9 {
+            continue;
+        }
+        if node != park && paved_nodes.contains(&node) {
+            paved_hit = Some(node);
+            break;
+        }
+        if cost > max_horiz {
+            continue;
+        }
+        for edge in graph.edges(node) {
+            let next = cost + edge.length_m;
+            if next > max_horiz + 1.0 {
+                continue;
+            }
+            let cur = dist.get(&edge.to).copied().unwrap_or(f64::INFINITY);
+            if next + 1e-9 < cur {
+                dist.insert(edge.to, next);
+                came_from.insert(edge.to, (node, edge.clone()));
+                heap.push(HeapState {
+                    cost: next,
+                    node: edge.to,
+                });
+            }
+        }
+    }
+    let mut node = paved_hit?;
+    let mut prev = HashMap::new();
+    let mut guard = 0usize;
+    while node != park {
+        let (toward_park, edge) = came_from.remove(&node)?;
+        prev.insert(toward_park, (node, edge));
+        node = toward_park;
+        guard += 1;
+        if guard > graph.node_count().saturating_add(1) {
+            return None;
+        }
+    }
+    Some(prev)
+}
+
 const REACHABLE_PARK_RINGS_M: [f64; 6] = [2_500.0, 5_000.0, 10_000.0, 20_000.0, 40_000.0, 80_000.0];
 
 /// Paved-anchor Dijkstra flood retained for park-candidate lookup.
@@ -307,8 +399,17 @@ impl PavedReachTree {
         budget: Option<&JeepLengthBudget>,
     ) -> Self {
         let sources = paved.all_sources();
+        tracing::info!(
+            "paved reach tree: dijkstra start nodes={} max_m={max_jeep_m:.0} budgeted={}",
+            graph.node_count(),
+            budget.is_some()
+        );
         let (dist_cost, dist_horiz, prev) =
-            dijkstra_from_paved(graph, &sources, max_jeep_m, None, budget);
+            dijkstra_from_paved(graph, &sources, max_jeep_m, None, budget, None);
+        tracing::info!(
+            "paved reach tree: dijkstra done reachable={}",
+            dist_cost.len()
+        );
         Self {
             dist_cost,
             dist_horiz,
@@ -375,6 +476,36 @@ impl PavedReachTree {
         }
         Vec::new()
     }
+
+    /// All paved-reachable nodes in the first crow ring that contains any (no 0.5 m cluster).
+    pub fn park_candidates_in_ring(
+        &self,
+        routing: &OsmRouting,
+        dest_lat: f64,
+        dest_lon: f64,
+        max_search_m: f64,
+    ) -> Vec<u32> {
+        if self.dist_cost.is_empty() {
+            return Vec::new();
+        }
+        for &ring_m in &REACHABLE_PARK_RINGS_M {
+            let ring_m = ring_m.min(max_search_m);
+            let found: Vec<u32> = routing
+                .graph_nodes
+                .nodes_within(dest_lat, dest_lon, ring_m)
+                .into_iter()
+                .filter(|n| self.dist_cost.contains_key(n))
+                .collect();
+            if found.is_empty() {
+                if ring_m >= max_search_m {
+                    break;
+                }
+                continue;
+            }
+            return found;
+        }
+        Vec::new()
+    }
 }
 
 /// Route from nearest paved anchor to park point (``road_lat``/``road_lon``).
@@ -399,7 +530,7 @@ pub fn route_jeep_detailed(
     }
 
     let (dist_cost, _dist_horiz, prev) =
-        dijkstra_from_paved(graph, &sources, max_jeep_m, Some(dest), budget);
+        dijkstra_from_paved(graph, &sources, max_jeep_m, Some(dest), budget, None);
     if !dist_cost.contains_key(&dest) {
         return None;
     }
@@ -426,7 +557,7 @@ pub fn route_jeep_closest_approach(
     }
 
     let (dist_cost, dist_horiz, prev) =
-        dijkstra_from_paved(graph, &sources, max_jeep_m, None, budget);
+        dijkstra_from_paved(graph, &sources, max_jeep_m, None, budget, None);
     let mut best: Option<(u32, f64)> = None;
     for &node in dist_cost.keys() {
         let (nlat, nlon) = graph.node_coords(node);
@@ -667,6 +798,59 @@ mod tests {
 
         let paved = PavedAnchorIndex::from_nodes(&g, &[(n0, 38.0, -117.0)]);
         (g, paved)
+    }
+
+    #[test]
+    fn blocked_dijkstra_finds_alternate_jeep_path() {
+        let (graph, paved) = test_graph_easy_detour();
+        let sources = paved.all_sources();
+        let n2 = (0..graph.node_count() as u32)
+            .find(|&n| {
+                let (lat, _) = graph.node_coords(n);
+                (lat - 38.008).abs() < 1e-4
+            })
+            .expect("dest node");
+        let (_, _, prev0) =
+            dijkstra_from_paved(&graph, &sources, 5000.0, Some(n2), None, None);
+        let first = jeep_path_undirected_edges(&prev0, n2);
+        let (_, _, prev1) =
+            dijkstra_from_paved(&graph, &sources, 5000.0, Some(n2), None, Some(&first));
+        assert!(prev1.contains_key(&n2));
+        let second = jeep_path_undirected_edges(&prev1, n2);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn shortest_horiz_prefers_short_rough_track() {
+        let mut g = JeepRoadGraph::new();
+        let n0 = g.insert_node(38.0, -117.0);
+        let n1 = g.insert_node(38.02, -117.0);
+        let n2 = g.insert_node(38.04, -117.0);
+        g.add_edge(n0, easy_edge(n1, 8_000.0));
+        g.add_edge(n1, easy_edge(n0, 8_000.0));
+        g.add_edge(n1, easy_edge(n2, 8_000.0));
+        g.add_edge(n2, easy_edge(n1, 8_000.0));
+        g.add_edge(n0, hard_edge_len(n2, 2_000.0));
+        g.add_edge(n2, hard_edge_len(n0, 2_000.0));
+        let paved = HashSet::from([n0]);
+        let prev = shortest_horiz_prev_from_paved(&g, &paved, n2, 20_000.0).unwrap();
+        let route = reconstruct_jeep_route(&g, &prev, n2);
+        assert!(
+            (route.horiz_m - 2_000.0).abs() < 1.0,
+            "horiz {}",
+            route.horiz_m
+        );
+    }
+
+    fn hard_edge_len(to: u32, len: f64) -> GraphEdge {
+        GraphEdge {
+            to,
+            length_m: len,
+            highway: "track".into(),
+            tracktype: Some("grade5".into()),
+            surface: None,
+            fourwd_only: true,
+        }
     }
 
     #[test]

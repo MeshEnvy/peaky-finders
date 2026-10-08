@@ -138,6 +138,7 @@ export function runApp(ctx = {}) {
     isSiteMapHidden: (slug) => siteLayers?.isSiteMapHidden(slug) ?? false,
     raiseSiteLayers: () => mapChrome?.raiseSiteLayers(),
     updatePinOverlays: () => viewshedDomain?.updatePinOverlays(),
+    patchSiteField: (slug, body) => placementDomain.patchSiteField(slug, body),
   })
 
   accessNetworkDomain = createAccessNetworkDomain({
@@ -772,6 +773,8 @@ export function runApp(ctx = {}) {
     ensureSiteAccess: (site) => siteAccessDomain?.ensureSiteAccess(site),
     ensurePlaceAccessProfiles: (...args) =>
       siteAccessDomain?.ensurePlaceAccessProfiles(...args),
+    selectSiteAccessOption: (slug, optionId) =>
+      siteAccessDomain?.selectAccessOption(slug, optionId),
     accessHasRouteProfiles: (row) => siteAccessDomain?.accessHasRouteProfiles(row),
     ingestSiteAccess: (...args) => siteAccessDomain?.ingestAccess(...args),
     copyCoordPair,

@@ -1642,6 +1642,7 @@ mod tests {
             height_m: None,
             description: None,
             node: None,
+            access_choice: None,
         };
         let b = SiteEntry {
             name: "B".into(),
@@ -1650,6 +1651,7 @@ mod tests {
             height_m: None,
             description: None,
             node: None,
+            access_choice: None,
         };
         let (tags, policy) = relay_tags(&a, &b);
         assert_eq!(tags, vec!["mesh".to_string()]);

@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use peaky_preset::{
     access_difficulty_from_stored, classify_hike, classify_jeep, AccessPreferenceConfig,
     AccessProbe, AccessRoute, BudgetLegReport, PeaksDifficultyConfig, RouteBudgetReport,
+    SiteAccessOption,
 };
 use peaky_preset::difficulty::difficulty_rank;
 
@@ -16,8 +17,9 @@ use crate::hike::{
 };
 use crate::hike_route::{profile_polyline_detailed, resolve_hike};
 use crate::jeep::{
-    jeep_class_usage, profile_along_polyline, reconstruct_jeep_route, stored_peak_jeep,
-    JeepLengthBudget, JeepRoadSegment, PavedReachTree,
+    jeep_class_usage, jeep_path_undirected_edges, profile_along_polyline, reconstruct_jeep_route,
+    shortest_horiz_prev_from_paved, stored_peak_jeep, JeepLengthBudget, JeepRoadSegment,
+    PavedReachTree,
 };
 use crate::osm::OsmRouting;
 use crate::trail::{route_trail_closest_approach, trail_park_candidates, TrailRouting, TRAIL_MAX_M};
@@ -505,6 +507,8 @@ pub fn probe<E: HikeSampleElev>(
         eligible,
         recommended,
         budget_route,
+        site_options: None,
+        site_options_rev: 0,
     })
 }
 
@@ -588,9 +592,315 @@ pub fn probe_explain<E: HikeSampleElev>(
             eligible,
             recommended,
             budget_route,
+            site_options: None,
+            site_options_rev: 0,
         },
         reports,
     ))
+}
+
+const MAX_SITE_PARKS: usize = 4;
+const MIN_SITE_PARK_SEP_M: f64 = 400.0;
+const MAX_ALT_PATH_LENGTH_RATIO: f64 = 1.75;
+const MAX_ALT_PATH_EDGE_SHARE: f64 = 0.70;
+
+pub fn site_access_option_id(park_lat: f64, park_lon: f64, path_index: u8) -> String {
+    format!("{:.4}#{:.4}#{path_index}", park_lat, park_lon)
+}
+
+fn park_points_too_close(
+    lat: f64,
+    lon: f64,
+    kept: &[(f64, f64)],
+    min_sep_m: f64,
+) -> bool {
+    kept.iter()
+        .any(|(klat, klon)| haversine_m(lat, lon, *klat, *klon) < min_sep_m)
+}
+
+/// Collapse a dense road-node ring to a handful of spatially distinct parks before scoring.
+fn thin_park_nodes(
+    routing: &OsmRouting,
+    nodes: &[u32],
+    dest_lat: f64,
+    dest_lon: f64,
+    min_sep_m: f64,
+    cap: usize,
+) -> Vec<u32> {
+    let mut ranked: Vec<(u32, f64)> = nodes
+        .iter()
+        .map(|&node| {
+            let (lat, lon) = routing.graph.node_coords(node);
+            (node, haversine_m(lat, lon, dest_lat, dest_lon))
+        })
+        .collect();
+    ranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let mut kept = Vec::new();
+    let mut kept_pts: Vec<(f64, f64)> = Vec::new();
+    for (node, _) in ranked {
+        if kept.len() >= cap {
+            break;
+        }
+        let (lat, lon) = routing.graph.node_coords(node);
+        if park_points_too_close(lat, lon, &kept_pts, min_sep_m) {
+            continue;
+        }
+        kept_pts.push((lat, lon));
+        kept.push(node);
+    }
+    kept
+}
+
+/// Pick up to ``max_parks`` park nodes by preference score with minimum separation.
+pub fn select_distinct_park_nodes(
+    mut scored: Vec<ScoredCandidate>,
+    min_sep_m: f64,
+    max_parks: usize,
+    extra: Option<ScoredCandidate>,
+) -> Vec<ScoredCandidate> {
+    scored.sort_by(|a, b| {
+        a.score
+            .partial_cmp(&b.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut kept: Vec<ScoredCandidate> = Vec::new();
+    let mut kept_pts: Vec<(f64, f64)> = Vec::new();
+    if let Some(winner) = pick_best(scored.clone()) {
+        kept_pts.push((winner.built.road_lat, winner.built.road_lon));
+        kept.push(winner);
+    }
+    for c in scored {
+        if kept.len() >= max_parks {
+            break;
+        }
+        if kept.iter().any(|k| k.park_node == c.park_node) {
+            continue;
+        }
+        let (plat, plon) = (c.built.road_lat, c.built.road_lon);
+        if park_points_too_close(plat, plon, &kept_pts, min_sep_m) {
+            continue;
+        }
+        kept_pts.push((plat, plon));
+        kept.push(c);
+    }
+    if let Some(bud) = extra {
+        let (plat, plon) = (bud.built.road_lat, bud.built.road_lon);
+        let already = kept
+            .iter()
+            .any(|k| k.park_node == bud.park_node);
+        if !already {
+            if kept.len() < max_parks {
+                kept.push(bud);
+            } else if let Some(worst_idx) = kept
+                .iter()
+                .enumerate()
+                .skip(1)
+                .max_by(|(_, a), (_, b)| {
+                    a.score
+                        .partial_cmp(&b.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|(i, _)| i)
+            {
+                kept[worst_idx] = bud;
+            }
+        }
+    }
+    kept
+}
+
+fn path_edge_share(first: &HashSet<(u32, u32)>, second: &HashSet<(u32, u32)>) -> f64 {
+    if first.is_empty() {
+        return 1.0;
+    }
+    let shared = first.intersection(second).count();
+    shared as f64 / first.len() as f64
+}
+
+fn build_option_at_park<E: HikeSampleElev>(
+    elev: &E,
+    ctx: &AccessContext<'_>,
+    park_node: u32,
+    prev: &std::collections::HashMap<u32, (u32, crate::osm::GraphEdge)>,
+    dest_lat: f64,
+    dest_lon: f64,
+    path_index: u8,
+    recommended: bool,
+) -> Option<SiteAccessOption> {
+    let built = build_at_park_node(
+        elev,
+        ctx.routing,
+        ctx.trails,
+        prev,
+        park_node,
+        dest_lat,
+        dest_lon,
+        ctx.max_slope_deg,
+        ctx.hike_path_max_m,
+        ctx.profile_sample_m,
+        false,
+    )?;
+    let report = compute_budget_report(
+        &built,
+        &ctx.jeep_budget,
+        ctx.hike_path_max_m,
+        ctx.max_slope_deg,
+    );
+    let route = built_to_access_route(&built, report.clone(), &ctx.difficulty);
+    let passes_budget = budget_report_passes(&report);
+    Some(SiteAccessOption {
+        id: site_access_option_id(built.road_lat, built.road_lon, path_index),
+        recommended,
+        passes_budget,
+        route,
+    })
+}
+
+/// Site-only list: distinct parks and optional second jeep path per park.
+pub fn build_site_access_options<E: HikeSampleElev>(
+    elev: &E,
+    dest_lat: f64,
+    dest_lon: f64,
+    ctx: &AccessContext<'_>,
+    probe: &AccessProbe,
+) -> Vec<SiteAccessOption> {
+    let rec_road = probe.recommended.road_loc;
+    let ring_nodes = ctx.tree.park_candidates_in_ring(
+        ctx.routing,
+        dest_lat,
+        dest_lon,
+        ctx.max_jeep_m,
+    );
+    tracing::info!(
+        "site access options: ring nodes={} dest={dest_lat:.5},{dest_lon:.5}",
+        ring_nodes.len()
+    );
+    let score_nodes = thin_park_nodes(ctx.routing, &ring_nodes, dest_lat, dest_lon, 250.0, 20);
+    tracing::info!("site access options: scoring {} thinned parks", score_nodes.len());
+    let ring_scored = score_candidates(
+        elev,
+        ctx,
+        &score_nodes,
+        ctx.tree,
+        dest_lat,
+        dest_lon,
+        false,
+    );
+    let rec_park_node = ring_scored
+        .iter()
+        .find(|c| {
+            rec_road.is_some_and(|[rlat, rlon]| {
+                (c.built.road_lat - rlat).abs() < 1e-5 && (c.built.road_lon - rlon).abs() < 1e-5
+            })
+        })
+        .map(|c| c.park_node)
+        .or_else(|| pick_best(ring_scored.clone()).map(|c| c.park_node));
+
+    let bud_nodes = collect_park_nodes(ctx, ctx.tree_budgeted, dest_lat, dest_lon, elev);
+    let bud_best = pick_best(
+        score_candidates(
+            elev,
+            ctx,
+            &bud_nodes,
+            ctx.tree_budgeted,
+            dest_lat,
+            dest_lon,
+            true,
+        )
+        .into_iter()
+        .filter(|c| c.passes_budget)
+        .collect(),
+    );
+    let budget_extra = bud_best.filter(|b| {
+        rec_park_node.is_none_or(|rec| b.park_node != rec)
+    });
+
+    let parks = select_distinct_park_nodes(
+        ring_scored,
+        MIN_SITE_PARK_SEP_M,
+        MAX_SITE_PARKS,
+        budget_extra,
+    );
+
+    let paved_nodes: HashSet<u32> = ctx
+        .routing
+        .paved
+        .all_sources()
+        .iter()
+        .map(|(_, _, node)| *node)
+        .collect();
+    let graph = &ctx.routing.graph;
+    let mut options = Vec::new();
+    for park in parks {
+        let prev0 = ctx.tree.prev();
+        let rec_flag = rec_park_node == Some(park.park_node);
+        if let Some(opt) = build_option_at_park(
+            elev,
+            ctx,
+            park.park_node,
+            prev0,
+            dest_lat,
+            dest_lon,
+            0,
+            rec_flag,
+        ) {
+            options.push(opt);
+        }
+
+        let first_edges = jeep_path_undirected_edges(prev0, park.park_node);
+        let first_horiz = ctx
+            .tree
+            .dist_horiz(park.park_node)
+            .unwrap_or(f64::INFINITY);
+        // Distance alternate to the same pull-off. Weighted search keeps the
+        // easy road; this keeps a shorter track even when it shares the stem.
+        let Some(prev_short) = shortest_horiz_prev_from_paved(
+            graph,
+            &paved_nodes,
+            park.park_node,
+            first_horiz,
+        ) else {
+            continue;
+        };
+        let route_short = reconstruct_jeep_route(graph, &prev_short, park.park_node);
+        let short_edges = jeep_path_undirected_edges(&prev_short, park.park_node);
+        let share = path_edge_share(&first_edges, &short_edges);
+        let meaningfully_shorter = route_short.horiz_m + 200.0 < first_horiz;
+        let distinct = share < MAX_ALT_PATH_EDGE_SHARE
+            && route_short.horiz_m <= first_horiz * MAX_ALT_PATH_LENGTH_RATIO + 1.0;
+        tracing::info!(
+            "site access alt park={} weighted_m={first_horiz:.0} shortest_m={:.0} share={share:.2} keep={}",
+            park.park_node,
+            route_short.horiz_m,
+            meaningfully_shorter || distinct
+        );
+        if meaningfully_shorter || distinct {
+            if let Some(opt) = build_option_at_park(
+                elev,
+                ctx,
+                park.park_node,
+                &prev_short,
+                dest_lat,
+                dest_lon,
+                1,
+                false,
+            ) {
+                options.push(opt);
+            }
+        }
+    }
+    if options.is_empty() {
+        if let Some(road) = probe.recommended.road_loc {
+            let report = probe.recommended.budget.clone();
+            options.push(SiteAccessOption {
+                id: site_access_option_id(road[0], road[1], 0),
+                recommended: true,
+                passes_budget: budget_report_passes(&report),
+                route: probe.recommended.clone(),
+            });
+        }
+    }
+    options
 }
 
 /// Build a catalog filter pass from a probe's recommended route.
@@ -631,4 +941,94 @@ pub fn filter_pass_from_probe(
         trail,
         probe: probe.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::jeep::JeepProfileDetailed;
+    use peaky_preset::{resolve_site_display_route, AccessRoute};
+
+    fn stub_scored(node: u32, lat: f64, lon: f64, score: f64) -> ScoredCandidate {
+        ScoredCandidate {
+            park_node: node,
+            score,
+            passes_budget: true,
+            built: BuiltAccess {
+                mode: crate::access::AccessMode::Both,
+                road_lat: lat,
+                road_lon: lon,
+                road_m: 100.0,
+                paved_lat: lat - 0.01,
+                paved_lon: lon,
+                jeep_m: 1000.0,
+                hike_m: 200.0,
+                max_slope_deg: 10.0,
+                hike: stored_peak_hike(&zero_hike_at(&FlatElev(2000.0), lat, lon)),
+                jeep: stored_peak_jeep(&JeepProfileDetailed {
+                    jeep_m_3d: 1000.0,
+                    horiz_m: 1000.0,
+                    gain_m: 0.0,
+                    loss_m: 0.0,
+                    max_slope_deg: 5.0,
+                    max_grade_pct: 5.0,
+                    avg_grade_pct: 2.0,
+                    difficulty: "easy".into(),
+                    profile: vec![],
+                    histogram: vec![],
+                    road_segments: vec![],
+                }),
+                hike_detail: zero_hike_at(&FlatElev(2000.0), lat, lon),
+                trail_lat: lat,
+                trail_lon: lon,
+                trail_m: 0.0,
+                trail: stored_peak_hike(&zero_hike_at(&FlatElev(2000.0), lat, lon)),
+                trail_detail: zero_hike_at(&FlatElev(2000.0), lat, lon),
+            },
+        }
+    }
+
+    struct FlatElev(f64);
+    impl HikeSampleElev for FlatElev {
+        fn sample_elev_m(&self, _lat: f64, _lon: f64) -> f64 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn select_distinct_parks_keeps_two_one_km_apart() {
+        let a = stub_scored(1, 39.0, -117.0, 10.0);
+        let b = stub_scored(2, 39.009, -117.0, 12.0);
+        let kept = select_distinct_park_nodes(vec![b, a.clone()], 400.0, 4, None);
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].park_node, a.park_node);
+    }
+
+    #[test]
+    fn resolve_site_display_route_stale_falls_back() {
+        let opt_route = AccessRoute {
+            jeep_m: Some(999.0),
+            ..AccessRoute::default()
+        };
+        let probe = AccessProbe {
+            probe_key: None,
+            eligible: true,
+            recommended: AccessRoute {
+                jeep_m: Some(100.0),
+                ..AccessRoute::default()
+            },
+            budget_route: None,
+            site_options: Some(vec![SiteAccessOption {
+                id: "39.0000#-117.0000#0".into(),
+                recommended: true,
+                passes_budget: true,
+                route: opt_route.clone(),
+            }]),
+            site_options_rev: 0,
+        };
+        let picked = resolve_site_display_route(&probe, Some("missing-id"));
+        assert_eq!(picked.jeep_m, Some(100.0));
+        let picked2 = resolve_site_display_route(&probe, Some("39.0000#-117.0000#0"));
+        assert_eq!(picked2.jeep_m, Some(999.0));
+    }
 }

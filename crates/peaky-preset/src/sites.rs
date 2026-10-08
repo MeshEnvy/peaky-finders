@@ -131,6 +131,12 @@ pub fn site_row_from_entry(slug: &str, ent: &SiteEntry) -> serde_json::Map<Strin
             row.insert("node".into(), serde_json::Value::String(s.to_string()));
         }
     }
+    if let Some(choice) = &ent.access_choice {
+        let s = choice.trim();
+        if !s.is_empty() {
+            row.insert("access_choice".into(), serde_json::Value::String(s.to_string()));
+        }
+    }
     row
 }
 

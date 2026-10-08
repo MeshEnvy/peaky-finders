@@ -112,6 +112,7 @@ mod tests {
             description: None,
             tags: tags.iter().map(|t| t.to_string()).collect(),
             node: None,
+            access_choice: None,
         }
     }
 

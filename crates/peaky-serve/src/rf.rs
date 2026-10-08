@@ -505,6 +505,7 @@ mod hop_range_tests {
             description: None,
             tags: vec![],
             node: Some("me0048".into()),
+            access_choice: None,
         }
     }
 
@@ -516,6 +517,7 @@ mod hop_range_tests {
             description: None,
             tags: vec![],
             node: Some("me0001".into()),
+            access_choice: None,
         }
     }
 

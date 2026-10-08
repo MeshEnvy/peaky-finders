@@ -140,7 +140,7 @@ fn route_to_park_node(
     std::collections::HashMap<u32, (u32, crate::osm::GraphEdge)>,
 )> {
     let (dist_cost, dist_horiz, prev) =
-        dijkstra_from_paved(graph, sources, max_jeep_m, Some(park_node), budget);
+        dijkstra_from_paved(graph, sources, max_jeep_m, Some(park_node), budget, None);
     if dist_cost.contains_key(&park_node) {
         Some((dist_horiz, prev))
     } else {
@@ -266,7 +266,7 @@ fn park_nodes_from_flood(
     std::collections::HashMap<u32, (u32, crate::osm::GraphEdge)>,
 )> {
     let (dist_cost, dist_horiz, prev) =
-        dijkstra_from_paved(&routing.graph, sources, max_jeep_m, None, budget);
+        dijkstra_from_paved(&routing.graph, sources, max_jeep_m, None, budget, None);
     if dist_cost.is_empty() {
         return None;
     }

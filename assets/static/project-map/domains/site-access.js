@@ -67,6 +67,50 @@ export function createSiteAccessDomain(opts) {
     }
   }
 
+  /** @param {object} opt */
+  function routeFieldsFromAccessPayload(opt) {
+    return {
+      road_lat: opt.road_lat,
+      road_lon: opt.road_lon,
+      paved_lat: opt.paved_lat,
+      paved_lon: opt.paved_lon,
+      hike_m: opt.hike_m,
+      jeep_m: opt.jeep_m,
+      trail_m: opt.trail_m,
+      trail_lat: opt.trail_lat,
+      trail_lon: opt.trail_lon,
+      hike: opt.hike || null,
+      jeep: opt.jeep || null,
+      trail: opt.trail || null,
+      budget: opt.budget || null,
+      hike_difficulty: opt.hike_difficulty,
+      jeep_difficulty: opt.jeep_difficulty,
+      access_difficulty: opt.access_difficulty,
+      max_slope_deg: opt.max_slope_deg,
+    }
+  }
+
+  /**
+   * @param {object} row
+   * @param {string|null|undefined} choiceId
+   */
+  function rowWithAccessChoice(row, choiceId) {
+    const options = row.options
+    if (!Array.isArray(options) || options.length === 0) return row
+    const id = choiceId || row.access_choice
+    const opt =
+      (id && options.find((o) => o.id === id)) ||
+      options.find((o) => o.recommended) ||
+      options[0]
+    if (!opt) return row
+    return {
+      ...row,
+      ...routeFieldsFromAccessPayload(opt),
+      access_choice: opt.id,
+      options: options.map((o) => ({ ...o, selected: o.id === opt.id })),
+    }
+  }
+
   /**
    * @param {string} slug
    * @param {object} access
@@ -77,14 +121,20 @@ export function createSiteAccessDomain(opts) {
       return
     }
     const base = site || getSites().find((s) => s.slug === slug) || {}
-    store.access.bySlug[slug] = {
+    const hasOptions = Array.isArray(access.options) && access.options.length > 0
+    const choiceId = isEphemeralPlaceSlug(slug)
+      ? store.access.draftAccessChoice
+      : base.access_choice ?? access.access_choice
+    let row = {
       slug,
       name: base.name || slug,
       lat: Number.isFinite(base.lat) ? base.lat : access.lat,
       lon: Number.isFinite(base.lon) ? base.lon : access.lon,
       eligible: access.eligible ?? true,
       budget: access.budget || null,
-      budget_route: access.budget_route || null,
+      budget_route: hasOptions ? null : access.budget_route || null,
+      options: hasOptions ? access.options : null,
+      access_choice: choiceId ?? access.access_choice ?? null,
       road_lat: access.road_lat,
       road_lon: access.road_lon,
       paved_lat: access.paved_lat,
@@ -98,6 +148,8 @@ export function createSiteAccessDomain(opts) {
       jeep: access.jeep || null,
       trail: access.trail || null,
     }
+    row = rowWithAccessChoice(row, choiceId)
+    store.access.bySlug[slug] = row
     if (store.ui.selectedSlug === slug) {
       store.access.selected = store.access.bySlug[slug]
     }
@@ -142,6 +194,27 @@ export function createSiteAccessDomain(opts) {
     return accessHasRouteProfiles(row)
   }
 
+  function siteNeedsAccessOptions(slug) {
+    return !!slug && !isEphemeralPlaceSlug(slug)
+  }
+
+  /** Booked sites need a non-empty ``options`` list, not just jeep/hike profiles. */
+  function accessPayloadComplete(slug, access) {
+    if (!accessHasRouteProfiles(access)) return false
+    if (siteNeedsAccessOptions(slug)) {
+      return Array.isArray(access.options) && access.options.length > 0
+    }
+    return true
+  }
+
+  function accessRowComplete(slug, row, lat, lon) {
+    if (!accessRowMatchesCoords(row, lat, lon)) return false
+    if (siteNeedsAccessOptions(slug)) {
+      return Array.isArray(row.options) && row.options.length > 0
+    }
+    return true
+  }
+
   /** @param {object|null|undefined} row @param {number} lat @param {number} lon */
   function accessRowMatchesCoords(row, lat, lon) {
     if (!accessRowLoaded(row)) return false
@@ -171,19 +244,39 @@ export function createSiteAccessDomain(opts) {
     const meta = siteMeta || { slug, lat, lon, name: slug }
 
     const cached = store.access.bySlug[slug]
-    if (accessRowMatchesCoords(cached, lat, lon)) {
+    if (accessRowComplete(slug, cached, lat, lon)) {
       if (!opts.prefetchOnly && active()) opts.onReady?.()
       return
     }
-    if (cached) delete store.access.bySlug[slug]
+    // Keep jeep/hike on screen while the route list is still warming.
+    const keepProfiles = accessHasRouteProfiles(cached)
 
     if (placeInflight.has(slug)) {
       await placeInflight.get(slug)
-      if (accessRowMatchesCoords(store.access.bySlug[slug], lat, lon)) {
+      if (
+        accessRowComplete(slug, store.access.bySlug[slug], lat, lon) ||
+        (keepProfiles && accessHasRouteProfiles(store.access.bySlug[slug]))
+      ) {
         if (!opts.prefetchOnly && active()) opts.onReady?.()
         return
       }
-      delete store.access.bySlug[slug]
+    }
+
+    async function postWarmAccess() {
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+      const warmResp = await fetch(
+        apiUrls.placeAccessWarmApiUrl(projectSlug, slug, { lat, lon }),
+        { method: 'POST' },
+      )
+      if (!warmResp.ok) {
+        console.warn('place access warm failed', slug, warmResp.status)
+        return
+      }
+      const warmed = await warmResp.json()
+      if (active() || opts.prefetchOnly) {
+        ingestAccess(slug, warmed, meta)
+      }
+      if (!opts.prefetchOnly && active()) opts.onReady?.()
     }
 
     const task = (async () => {
@@ -201,22 +294,18 @@ export function createSiteAccessDomain(opts) {
             }
             if (accessHasRouteProfiles(access)) {
               if (!opts.prefetchOnly && active()) opts.onReady?.()
+            }
+            if (accessPayloadComplete(slug, access)) {
+              return
+            }
+            if (siteNeedsAccessOptions(slug) && accessHasRouteProfiles(access)) {
+              await postWarmAccess()
               return
             }
           }
         }
 
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
-        const warmResp = await fetch(
-          apiUrls.placeAccessWarmApiUrl(projectSlug, slug, { lat, lon }),
-          { method: 'POST' },
-        )
-        if (!warmResp.ok) return
-        const warmed = await warmResp.json()
-        if (active() || opts.prefetchOnly) {
-          ingestAccess(slug, warmed, meta)
-        }
-        if (!opts.prefetchOnly && active()) opts.onReady?.()
+        await postWarmAccess()
       } catch (err) {
         console.warn('place access load failed', slug, err)
       } finally {
@@ -233,7 +322,7 @@ export function createSiteAccessDomain(opts) {
     if (!siteAccessShowing(site.slug)) return
     const lat = Number(site.lat)
     const lon = Number(site.lon)
-    if (accessRowMatchesCoords(store.access.bySlug[site.slug], lat, lon)) {
+    if (accessRowComplete(site.slug, store.access.bySlug[site.slug], lat, lon)) {
       refreshLayers()
       return
     }
@@ -277,6 +366,31 @@ export function createSiteAccessDomain(opts) {
     delete store.access.bySlug[DRAFT_VIEWSHED_SLUG]
     placeInflight.delete(DRAFT_VIEWSHED_SLUG)
     store.access.draftLoading = false
+    store.access.draftAccessChoice = null
+    refreshLayers()
+  }
+
+  /**
+   * @param {string} slug
+   * @param {string} optionId
+   */
+  async function selectAccessOption(slug, optionId) {
+    const row = store.access.bySlug[slug]
+    if (!row || !optionId) return
+    if (isEphemeralPlaceSlug(slug)) {
+      store.access.draftAccessChoice = optionId
+      store.access.bySlug[slug] = rowWithAccessChoice({ ...row, access_choice: optionId }, optionId)
+      if (store.access.selected?.slug === slug) {
+        store.access.selected = store.access.bySlug[slug]
+      }
+      refreshLayers()
+      return
+    }
+    await opts.patchSiteField?.(slug, { access_choice: optionId })
+    store.access.bySlug[slug] = rowWithAccessChoice({ ...row, access_choice: optionId }, optionId)
+    if (store.access.selected?.slug === slug) {
+      store.access.selected = store.access.bySlug[slug]
+    }
     refreshLayers()
   }
 
@@ -300,6 +414,7 @@ export function createSiteAccessDomain(opts) {
     }
     delete store.access.bySlug[DRAFT_VIEWSHED_SLUG]
     placeInflight.delete(DRAFT_VIEWSHED_SLUG)
+    store.access.draftAccessChoice = null
     store.access.draftLoading = true
     opts.updatePinOverlays?.()
     void ensurePlaceAccessProfiles(
@@ -342,5 +457,6 @@ export function createSiteAccessDomain(opts) {
     isAccessVisible,
     setAccessVisible,
     applyAccessVisibilityForSite,
+    selectAccessOption,
   }
 }

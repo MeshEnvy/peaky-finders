@@ -16,7 +16,6 @@ import {
   SITES_CIRCLE,
 } from '../constants.js'
 import {
-  expandAccessVariants,
   peaksAccessGeoJson,
   peaksJeepGeoJson,
   peaksPavedGeoJson,
@@ -174,8 +173,15 @@ export function ensureSiteAccessLayers(map, beforeId = beforeSitesCircle(map)) {
  * @param {maplibregl.Map} map
  * @param {object[]} places  // peak-shaped access rows with slug/lat/lon/hike/jeep/…
  */
+/** Site access: one displayed route (no budget ghost). */
+function siteAccessRoutes(places) {
+  return (places || [])
+    .filter(Boolean)
+    .map((place) => ({ ...place, variant: 'recommended' }))
+}
+
 export function setSiteAccessLayerData(map, places) {
-  const routes = expandAccessVariants(places)
+  const routes = siteAccessRoutes(places)
   if (map.getSource(SITES_JEEP_SOURCE)) {
     map.getSource(SITES_JEEP_SOURCE).setData(peaksJeepGeoJson(routes))
   }

@@ -25,8 +25,12 @@ pub use access_warm::{
     load_routing_for_points, load_routing_for_points_progress, load_routing_near,
     probe_cache_path, project_gtlf_fingerprint, project_pbf_fingerprint, resolve_probe,
     routing_bbox_for_points,
-    routing_coverage_bbox, save_probe_cache, warm_place_access, warm_place_access_with_routing,
-    ProjectRouting, RoutingTrees, OSM_ROUTE_PAD_DEG,
+    routing_coverage_bbox, save_probe_cache, ensure_site_access_options_on_probe,
+    warm_place_access, warm_place_access_with_routing, ProjectRouting, RoutingTrees,
+    SessionElev, OSM_ROUTE_PAD_DEG,
+};
+pub use access_probe::{
+    build_site_access_options, select_distinct_park_nodes, site_access_option_id,
 };
 pub use catalog_filter::{FilterDrop, FilterPass};
 pub use gtlf::{

@@ -794,6 +794,17 @@ pub struct AccessRoute {
     pub budget: RouteBudgetReport,
 }
 
+/// One selectable access path for a site (park + jeep variant).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SiteAccessOption {
+    pub id: String,
+    #[serde(default)]
+    pub recommended: bool,
+    pub passes_budget: bool,
+    #[serde(flatten)]
+    pub route: AccessRoute,
+}
+
 /// Shared paved→park→pad access for a place slug (`access/<slug>.yaml`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct AccessProbe {
@@ -806,12 +817,37 @@ pub struct AccessProbe {
     pub recommended: AccessRoute,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_route: Option<AccessRoute>,
+    /// Up to 4 parks × 2 jeep paths; computed on site warm only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site_options: Option<Vec<SiteAccessOption>>,
+    /// Bumped when the site option builder changes. Missing or older caches rebuild.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub site_options_rev: u8,
 }
 
 pub type PlaceAccess = AccessProbe;
 
+/// Display route for a site: chosen option or probe recommended.
+pub fn resolve_site_display_route(
+    probe: &AccessProbe,
+    access_choice: Option<&str>,
+) -> AccessRoute {
+    if let Some(id) = access_choice {
+        if let Some(opts) = &probe.site_options {
+            if let Some(opt) = opts.iter().find(|o| o.id == id) {
+                return opt.route.clone();
+            }
+        }
+    }
+    probe.recommended.clone()
+}
+
 fn default_probe_eligible() -> bool {
     true
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
 }
 
 impl Deref for AccessProbe {
@@ -838,6 +874,9 @@ pub struct SiteEntry {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node: Option<String>,
+    /// Stable id from site access ``options``; cleared when ``loc`` moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_choice: Option<String>,
 }
 
 impl SiteEntry {

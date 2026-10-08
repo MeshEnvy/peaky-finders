@@ -105,7 +105,13 @@ export function mountSiteSheet(store, appApi) {
           access.value = cached
           accessError.value = ''
           accessLoading.value = false
-          appApi.ensureSiteAccess?.(site)
+          void appApi.ensurePlaceAccessProfiles?.(
+            site.slug,
+            Number(site.lat),
+            Number(site.lon),
+            site,
+            { isActive: () => store.ui.selectedSlug === site.slug },
+          )
           return
         }
         access.value = null
@@ -126,10 +132,11 @@ export function mountSiteSheet(store, appApi) {
           )
           if (store.ui.selectedSlug !== site.slug) return
           const row = store.access?.bySlug?.[site.slug]
-          if (!row?.hike && !row?.jeep && !row?.trail) {
+          if (row && (row.hike || row.jeep || row.trail)) {
+            access.value = row
+          } else if (!accessFromStore(site.slug)) {
             throw new Error('Access profiles missing')
           }
-          access.value = row
         } catch (err) {
           access.value = null
           accessError.value = String(err?.message || err)
@@ -144,21 +151,9 @@ export function mountSiteSheet(store, appApi) {
           store.ui.createMode,
           selectedSite.value?.lat,
           selectedSite.value?.lon,
-          store.access?.bySlug?.[store.ui.selectedSlug],
-          store.access?.bySlug?.[DRAFT_VIEWSHED_SLUG],
-          store.access?.draftLoading,
-          store.access?.osm?.status,
-          store.access?.osm?.step,
         ],
         () => {
-          if (store.ui.createMode) {
-            const row = store.access?.bySlug?.[DRAFT_VIEWSHED_SLUG] || null
-            access.value = row
-            accessError.value = ''
-            const osmBusy = store.access?.osm?.status === 'parsing'
-            accessLoading.value = (!!store.access?.draftLoading || osmBusy) && !row
-            return
-          }
+          if (store.ui.createMode) return
           const slug = store.ui.selectedSlug
           if (!slug) {
             access.value = null
@@ -171,20 +166,31 @@ export function mountSiteSheet(store, appApi) {
       )
 
       watch(
+        () => [
+          store.ui.createMode,
+          store.access?.bySlug?.[DRAFT_VIEWSHED_SLUG],
+          store.access?.draftLoading,
+          store.access?.osm?.status,
+          store.access?.osm?.step,
+        ],
+        () => {
+          if (!store.ui.createMode) return
+          const row = store.access?.bySlug?.[DRAFT_VIEWSHED_SLUG] || null
+          access.value = row
+          accessError.value = ''
+          const osmBusy = store.access?.osm?.status === 'parsing'
+          accessLoading.value = (!!store.access?.draftLoading || osmBusy) && !row
+        },
+      )
+
+      watch(
         () => {
           const slug = store.ui.selectedSlug
           return slug ? store.access?.bySlug?.[slug] : null
         },
         (row) => {
           if (store.ui.createMode) return
-          if (!row) {
-            if (store.ui.selectedSlug) {
-              access.value = null
-              accessLoading.value = true
-              accessError.value = ''
-            }
-            return
-          }
+          if (!row) return
           if (row.hike || row.jeep || row.trail) {
             access.value = row
             accessLoading.value = false
@@ -247,7 +253,13 @@ export function mountSiteSheet(store, appApi) {
       const accessHike = computed(() => access.value?.hike || null)
       const accessJeep = computed(() => access.value?.jeep || null)
       const accessTrail = computed(() => access.value?.trail || null)
-      const accessBudgetRoute = computed(() => access.value?.budget_route || null)
+      const accessOptions = computed(() => {
+        const opts = access.value?.options
+        return Array.isArray(opts) ? opts : []
+      })
+      const accessBudgetRoute = computed(() =>
+        accessOptions.value.length ? null : access.value?.budget_route || null,
+      )
       const accessBudget = computed(() => access.value?.budget || null)
       const accessEligible = computed(() => access.value?.eligible ?? true)
       const hikeStartLabel = computed(() => (accessTrail.value ? 'Leave trail' : 'Park'))
@@ -291,6 +303,26 @@ export function mountSiteSheet(store, appApi) {
         const slug = store.ui.selectedSlug
         if (!slug) return
         appApi.toggleAccessForSelected?.()
+      }
+
+      /** @param {string} optionId */
+      async function selectAccessOption(optionId) {
+        errorText.value = ''
+        const slug = store.ui.createMode ? DRAFT_VIEWSHED_SLUG : store.ui.selectedSlug
+        if (!slug) return
+        try {
+          await appApi.selectSiteAccessOption?.(slug, optionId)
+          access.value = store.access?.bySlug?.[slug] || access.value
+        } catch (err) {
+          errorText.value = err instanceof Error ? err.message : 'Could not save access route.'
+        }
+      }
+
+      /** @param {number|null|undefined} m */
+      function formatAccessKm(m) {
+        const n = Number(m)
+        if (!Number.isFinite(n)) return '—'
+        return n >= 1000 ? `${(n / 1000).toFixed(1)} km` : `${Math.round(n)} m`
       }
 
       function copyCoords() {
@@ -504,8 +536,11 @@ export function mountSiteSheet(store, appApi) {
         accessJeep,
         accessTrail,
         accessBudgetRoute,
+        accessOptions,
         accessBudget,
         accessEligible,
+        selectAccessOption,
+        formatAccessKm,
         hikeStartLabel,
         difficultyConfig,
         onAccessPointClick,
@@ -634,6 +669,22 @@ export function mountSiteSheet(store, appApi) {
               :eligible="accessEligible"
               @point-click="onAccessPointClick"
             />
+            <ul v-if="accessOptions.length" class="site-access-options">
+              <li v-for="opt in accessOptions" :key="opt.id">
+                <button
+                  type="button"
+                  class="site-access-options__row"
+                  :class="{ 'site-access-options__row--active': opt.selected }"
+                  @click="selectAccessOption(opt.id)"
+                >
+                  <span class="site-access-options__metrics pf-mono">
+                    Jeep {{ formatAccessKm(opt.jeep_m) }}, hike {{ formatAccessKm(opt.hike_m) }}
+                  </span>
+                  <span v-if="opt.recommended" class="site-access-options__tag">recommended</span>
+                  <span v-if="opt.passes_budget" class="site-access-options__tag">fits budget</span>
+                </button>
+              </li>
+            </ul>
           </div>
           <div v-if="peerLinks.length" class="site-panel__section">
             <span class="site-panel__label">{{ peerLinks.length === 1 ? '1 link' : peerLinks.length + ' links' }}</span>
@@ -723,6 +774,22 @@ export function mountSiteSheet(store, appApi) {
               :eligible="accessEligible"
               @point-click="onAccessPointClick"
             />
+            <ul v-if="accessOptions.length" class="site-access-options">
+              <li v-for="opt in accessOptions" :key="opt.id">
+                <button
+                  type="button"
+                  class="site-access-options__row"
+                  :class="{ 'site-access-options__row--active': opt.selected }"
+                  @click="selectAccessOption(opt.id)"
+                >
+                  <span class="site-access-options__metrics pf-mono">
+                    Jeep {{ formatAccessKm(opt.jeep_m) }}, hike {{ formatAccessKm(opt.hike_m) }}
+                  </span>
+                  <span v-if="opt.recommended" class="site-access-options__tag">recommended</span>
+                  <span v-if="opt.passes_budget" class="site-access-options__tag">fits budget</span>
+                </button>
+              </li>
+            </ul>
           </div>
           <wa-callout v-if="errorText" variant="danger">{{ errorText }}</wa-callout>
           <div class="site-panel__create-actions">

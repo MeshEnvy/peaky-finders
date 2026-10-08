@@ -5,13 +5,14 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use peaky_peaks::{
-    load_probe_cache, probe_cache_path, project_gtlf_fingerprint, project_pbf_fingerprint,
-    warm_place_access, warm_place_access_with_routing, ProjectRouting,
+    ensure_site_access_options_on_probe, load_probe_cache, probe_cache_path,
+    project_gtlf_fingerprint, project_pbf_fingerprint, warm_place_access,
+    warm_place_access_with_routing, ProjectRouting, SessionElev,
 };
 use crate::peaks_cache::cached_peaks_list;
 use peaky_preset::{
     load_latest_peaks_index, load_preset, prefs_key_for_project, PeakHikeProfile, PeakJeepProfile,
-    PlaceAccess,
+    PlaceAccess, SiteAccessOption, resolve_site_display_route,
 };
 use serde_json::{json, Value};
 use splatter::Session;
@@ -81,26 +82,84 @@ fn route_access_json(route: &peaky_preset::AccessRoute) -> Value {
     })
 }
 
-fn access_json(slug: &str, access: &PlaceAccess) -> Value {
-    let mut value = route_access_json(&access.recommended);
+fn site_option_json(opt: &SiteAccessOption, selected: bool) -> Value {
+    let mut value = route_access_json(&opt.route);
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("id".into(), json!(opt.id));
+        obj.insert("recommended".into(), json!(opt.recommended));
+        obj.insert("selected".into(), json!(selected));
+        obj.insert("passes_budget".into(), json!(opt.passes_budget));
+    }
+    value
+}
+
+fn access_json(
+    slug: &str,
+    access: &PlaceAccess,
+    site_picker: bool,
+    access_choice: Option<&str>,
+) -> Value {
+    let display = if site_picker {
+        resolve_site_display_route(access, access_choice)
+    } else {
+        access.recommended.clone()
+    };
+    let mut value = route_access_json(&display);
     if let Some(obj) = value.as_object_mut() {
         obj.insert("slug".into(), json!(slug));
         obj.insert("status".into(), json!("ready"));
         obj.insert("probe_key".into(), json!(access.probe_key));
         obj.insert("eligible".into(), json!(access.eligible));
-        if let Some(ref budget_route) = access.budget_route {
+        if site_picker {
+            if let Some(choice) = access_choice {
+                obj.insert("access_choice".into(), json!(choice));
+            }
+            if access.site_options_rev >= SITE_OPTIONS_REV {
+                if let Some(ref options) = access.site_options {
+                    let list: Vec<Value> = options
+                        .iter()
+                        .map(|o| site_option_json(o, access_choice == Some(o.id.as_str())))
+                        .collect();
+                    obj.insert("options".into(), json!(list));
+                }
+            }
+        } else if let Some(ref budget_route) = access.budget_route {
             obj.insert("budget_route".into(), route_access_json(budget_route));
         }
     }
     value
 }
 
-pub fn access_payload_json(slug: &str, access: &PlaceAccess) -> Value {
-    access_json(slug, access)
+pub fn access_payload_json(
+    slug: &str,
+    access: &PlaceAccess,
+    preset_path: &Path,
+) -> Value {
+    let preset = load_preset(preset_path).unwrap_or_default();
+    let site_picker = place_uses_site_access_picker(&preset, slug);
+    let access_choice = preset
+        .sites
+        .get(slug)
+        .and_then(|s| s.access_choice.as_deref());
+    access_json(slug, access, site_picker, access_choice)
 }
 
 pub fn list_peaks_payload(preset_path: &Path) -> Result<Value> {
     cached_peaks_list(preset_path)
+}
+
+pub const SITE_OPTIONS_REV: u8 = 2;
+
+fn site_options_ready(probe: &PlaceAccess) -> bool {
+    probe.site_options_rev >= SITE_OPTIONS_REV
+        && probe
+            .site_options
+            .as_ref()
+            .is_some_and(|options| !options.is_empty())
+}
+
+fn place_uses_site_access_picker(preset: &peaky_preset::Preset, place_slug: &str) -> bool {
+    preset.sites.contains_key(place_slug) || place_slug == "_draft"
 }
 
 fn resolve_point(
@@ -139,9 +198,43 @@ pub fn place_access_from_probe_cache(
     let prefs_key = prefs_key_for_project(preset_path, &gtlf, &pbf)?;
     let cache_path = probe_cache_path(project_dir, &prefs_key, lat, lon);
     if let Some(probe) = load_probe_cache(&cache_path) {
-        return Ok(Some(access_json(place_slug, &probe)));
+        let preset = load_preset(preset_path)?;
+        let site_picker = place_uses_site_access_picker(&preset, place_slug);
+        let access_choice = preset
+            .sites
+            .get(place_slug)
+            .and_then(|s| s.access_choice.as_deref());
+        return Ok(Some(access_json(
+            place_slug,
+            &probe,
+            site_picker,
+            access_choice,
+        )));
     }
     Ok(None)
+}
+
+/// Booked sites need ``site_options`` on the probe cache before a cache-first GET is enough.
+pub fn site_probe_cache_needs_options(
+    preset_path: &Path,
+    place_slug: &str,
+    warm_lat: Option<f64>,
+    warm_lon: Option<f64>,
+) -> Result<bool> {
+    let preset = load_preset(preset_path)?;
+    if !preset.sites.contains_key(place_slug) {
+        return Ok(false);
+    }
+    let (lat, lon) = resolve_point(preset_path, place_slug, warm_lat, warm_lon)?;
+    let project_dir = preset_path.parent().context("preset parent")?;
+    let gtlf = project_gtlf_fingerprint(project_dir);
+    let pbf = project_pbf_fingerprint(project_dir);
+    let prefs_key = prefs_key_for_project(preset_path, &gtlf, &pbf)?;
+    let cache_path = probe_cache_path(project_dir, &prefs_key, lat, lon);
+    let Some(probe) = load_probe_cache(&cache_path) else {
+        return Ok(true);
+    };
+    Ok(!site_options_ready(&probe))
 }
 
 pub fn place_access_payload(
@@ -154,15 +247,35 @@ pub fn place_access_payload(
     routing: Option<&ProjectRouting>,
 ) -> Result<Value> {
     let (lat, lon) = resolve_point(preset_path, place_slug, warm_lat, warm_lon)?;
-    let access = if let Some(routing) = routing {
-        let preset = load_preset(preset_path)?;
+    let preset = load_preset(preset_path)?;
+    let site_picker = place_uses_site_access_picker(&preset, place_slug);
+    let access_choice = preset
+        .sites
+        .get(place_slug)
+        .and_then(|s| s.access_choice.as_deref());
+    let mut access = if let Some(routing) = routing {
         let meta = preset.resolved_access_meta();
         warm_place_access_with_routing(preset_path, session, routing, &meta, lat, lon)?
     } else {
         warm_place_access(preset_path, session, place_slug, lat, lon)?
     };
-    if let Some(access) = access {
-        return Ok(access_json(place_slug, &access));
+    if let Some(ref mut probe) = access {
+        if site_picker {
+            if let Some(routing) = routing {
+                let meta = preset.resolved_access_meta();
+                let elev = SessionElev(session.as_ref());
+                ensure_site_access_options_on_probe(
+                    preset_path.parent().context("preset parent")?,
+                    &elev,
+                    routing,
+                    &meta,
+                    lat,
+                    lon,
+                    probe,
+                )?;
+            }
+        }
+        return Ok(access_json(place_slug, probe, site_picker, access_choice));
     }
     if warm_if_missing {
         anyhow::bail!("access not found for {place_slug}");
@@ -269,6 +382,8 @@ mod tests {
                 ..AccessRoute::default()
             },
             budget_route: None,
+            site_options: None,
+            site_options_rev: 0,
         };
 
         let cache_path = probe_cache_path(dir.path(), &prefs_key, lat, lon);
@@ -312,6 +427,8 @@ mod tests {
                 ..AccessRoute::default()
             },
             budget_route: None,
+            site_options: None,
+            site_options_rev: 0,
         };
         save_probe_cache(&probe_cache_path(dir.path(), &prefs_key, lat, lon), &probe).unwrap();
         let payload = place_access_from_probe_cache(&config, "toulon-south", Some(lat), Some(lon))

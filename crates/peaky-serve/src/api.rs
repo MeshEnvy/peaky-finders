@@ -220,6 +220,7 @@ async fn add_site(State(state): State<AppState>,
         height_m: body.height_m,
         description: None,
         node: None,
+        access_choice: None,
     };
     insert_preset_site(&path, &site_slug, &entry)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -276,6 +277,8 @@ struct PatchSiteBody {
     /// Outer None = field omitted; inner None = clear height on disk.
     #[serde(default)]
     height_m: Option<Option<f64>>,
+    #[serde(default)]
+    access_choice: Option<Option<String>>,
 }
 
 async fn patch_site(State(state): State<AppState>,
@@ -299,6 +302,7 @@ async fn patch_site(State(state): State<AppState>,
         },
         body.tags.as_deref(),
         body.height_m,
+        body.access_choice.as_ref().map(|c| c.as_deref()),
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let site = load_site_entry(&path, &site_slug)
@@ -497,6 +501,7 @@ async fn import_sites(State(state): State<AppState>,
                 height_m: None,
                 description: None,
                 node: None,
+                access_choice: None,
             },
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -868,7 +873,16 @@ async fn place_access_resolved(
             lat,
             lon,
         )? {
-            return Ok(cached);
+            let rebuild_options = warm
+                && crate::peaks::site_probe_cache_needs_options(
+                    &state.preset_path(),
+                    &place_slug,
+                    lat,
+                    lon,
+                )?;
+            if !rebuild_options {
+                return Ok(cached);
+            }
         }
         let routing = if warm {
             let extra = match (lat, lon) {
