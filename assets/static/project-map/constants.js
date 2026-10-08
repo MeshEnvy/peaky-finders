@@ -63,15 +63,24 @@ export const FORTIFY_CANDIDATES_LABELS_LAYER = 'fortify-candidates-label'
 export const FORTIFY_LINES_SOURCE = 'fortify-candidate-lines'
 export const FORTIFY_LINES_LAYER = 'fortify-candidate-lines-line'
 export const FORTIFY_LINES_LABELS_LAYER = 'fortify-candidate-lines-label'
-export const GTLF_ROADS_INVENTORY_SOURCE = 'gtlf-roads-inventory'
-export const GTLF_ROADS_INVENTORY_LINE = 'gtlf-roads-inventory-line'
-export const GTLF_TRAILS_INVENTORY_SOURCE = 'gtlf-trails-inventory'
-export const GTLF_TRAILS_INVENTORY_LINE = 'gtlf-trails-inventory-line'
+export const ACCESS_NETWORK_PAVED_SOURCE = 'access-network-paved'
+export const ACCESS_NETWORK_PAVED_LINE = 'access-network-paved-line'
+export const ACCESS_NETWORK_PAVED_CASE = 'access-network-paved-case'
+export const ACCESS_NETWORK_JEEP_SOURCE = 'access-network-jeep'
+export const ACCESS_NETWORK_JEEP_LINE = 'access-network-jeep-line'
+export const ACCESS_NETWORK_JEEP_CASE = 'access-network-jeep-case'
+export const ACCESS_NETWORK_HIKE_SOURCE = 'access-network-hike'
+export const ACCESS_NETWORK_HIKE_LINE = 'access-network-hike-line'
+export const ACCESS_NETWORK_HIKE_CASE = 'access-network-hike-case'
 
 /** Top-of-stack paint order after a basemap or overlay change. Peaks stay under sites and RF. */
 export const SITE_STACK_RAISE_IDS = [
-  GTLF_ROADS_INVENTORY_LINE,
-  GTLF_TRAILS_INVENTORY_LINE,
+  ACCESS_NETWORK_HIKE_CASE,
+  ACCESS_NETWORK_HIKE_LINE,
+  ACCESS_NETWORK_JEEP_CASE,
+  ACCESS_NETWORK_JEEP_LINE,
+  ACCESS_NETWORK_PAVED_CASE,
+  ACCESS_NETWORK_PAVED_LINE,
   PEAKS_JEEP_LINE,
   PEAKS_TRAIL_LINE,
   PEAKS_ACCESS_LINE,

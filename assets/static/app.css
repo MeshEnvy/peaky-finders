@@ -1456,6 +1456,49 @@ wa-button.coord-action-btn.active::part(base) {
   padding: var(--wa-space-s) var(--wa-space-m);
 }
 
+.map-access-network-menu {
+  min-width: 11rem;
+  padding: var(--wa-space-s) var(--wa-space-m);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.map-access-network-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  margin: 0;
+}
+
+.map-access-network-row input {
+  margin: 0;
+}
+
+.map-access-network-swatch {
+  width: 0.75rem;
+  height: 0.2rem;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+.map-access-network-swatch--paved {
+  background: #7dd3fc;
+  box-shadow: 0 0 0 1px #0f172a;
+}
+
+.map-access-network-swatch--jeep {
+  background: #fb923c;
+  box-shadow: 0 0 0 1px #0f172a;
+}
+
+.map-access-network-swatch--hiking {
+  background: #e7c9a8;
+  box-shadow: 0 0 0 1px #0f172a;
+}
+
 .map-opacity-menu .pf-range {
   margin-top: var(--wa-space-xs);
 }

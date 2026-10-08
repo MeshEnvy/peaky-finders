@@ -1,14 +1,18 @@
-//! BLM GTLF inventory GeoJSON for map overlays.
+//! Access routing network GeoJSON for map overlays.
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
-use peaky_peaks::read_gtlf_inventory_geojson;
+use anyhow::Result;
+use peaky_peaks::{NetworkLayer, NetworkViewBBox};
 
-pub fn gtlf_inventory_geojson_bytes(preset_path: &Path, foot: bool) -> Result<Vec<u8>> {
-    let project_dir = preset_path
-        .parent()
-        .context("preset path has no parent")?;
-    let geo = read_gtlf_inventory_geojson(project_dir, foot)?;
-    serde_json::to_vec(&geo).context("serialize gtlf geojson")
+use crate::warm::WarmHub;
+
+pub fn roads_network_layer_geojson_bytes(
+    warm: &WarmHub,
+    preset_path: &Path,
+    layer: NetworkLayer,
+    view: NetworkViewBBox,
+    zoom: f64,
+) -> Result<Vec<u8>> {
+    warm.roads_network_layer_geojson_bytes(preset_path, layer, view, zoom)
 }

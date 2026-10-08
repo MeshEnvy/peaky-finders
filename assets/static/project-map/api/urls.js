@@ -115,12 +115,16 @@ export function landLayerGeoJsonUrl(projectSlug, sourceId, layer) {
   return `/api/p/${projectSlug}/land/sources/${encodeURIComponent(sourceId)}/layers/${encodeURIComponent(layer)}/geojson`
 }
 
-export function gtlfRoadsInventoryGeoJsonUrl(projectSlug) {
-  return `/api/p/${projectSlug}/roads/gtlf/geojson`
-}
-
-export function gtlfTrailsInventoryGeoJsonUrl(projectSlug) {
-  return `/api/p/${projectSlug}/roads/gtlf/trails/geojson`
+/** @param {string} projectSlug @param {'paved'|'jeep'|'hiking'} layer @param {{ west: number, south: number, east: number, north: number }} bbox @param {number} zoom map zoom (integer) */
+export function roadsNetworkLayerGeoJsonUrl(projectSlug, layer, bbox, zoom) {
+  const q = new URLSearchParams({
+    west: String(bbox.west),
+    south: String(bbox.south),
+    east: String(bbox.east),
+    north: String(bbox.north),
+    z: String(Math.round(zoom)),
+  })
+  return `/api/p/${projectSlug}/roads/network/${layer}/geojson?${q}`
 }
 
 export function landOverlayGeoJsonUrl(projectSlug, kind) {

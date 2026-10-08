@@ -10,8 +10,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use peaky_peaks::{
-    load_routing_for_points_progress, routing_bbox_for_points, routing_coverage_bbox,
-    warm_place_access_with_routing, OsmParsePhase, OsmRoutingOpts, ProjectRouting, OSM_ROUTE_PAD_DEG,
+    load_routing_for_points_progress, osm_routing_opts_from_preset, routing_bbox_for_points,
+    routing_coverage_bbox, routing_network_layer_geojson_bytes, warm_place_access_with_routing,
+    NetworkLayer, NetworkViewBBox, OsmParsePhase, OsmRoutingOpts, ProjectRouting,
+    OSM_ROUTE_PAD_DEG,
 };
 use peaky_preset::{
     load_preset, resolved_viewshed_root, BoardViewshedResolver, Preset, SiteEntry,
@@ -302,6 +304,20 @@ impl WarmHub {
             project_slug,
             board_viewshed,
         }
+    }
+
+    /// Viewport-clipped GeoJSON for one access-network layer.
+    pub fn roads_network_layer_geojson_bytes(
+        &self,
+        preset_path: &Path,
+        layer: NetworkLayer,
+        view: NetworkViewBBox,
+        zoom: f64,
+    ) -> Result<Vec<u8>> {
+        let routing = self.ensure_osm_covering(preset_path, &[])?;
+        let opts = osm_routing_opts_from_preset(preset_path);
+        routing_network_layer_geojson_bytes(&routing, &opts, layer, view, zoom)
+            .map_err(anyhow::Error::msg)
     }
 
     fn ensure_workers(&self, queue: Arc<CoverageQueue>) {

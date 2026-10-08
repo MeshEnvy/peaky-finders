@@ -700,6 +700,18 @@ fn is_paved_anchor(tags: WayTags<'_>, paved_tags: &HashSet<&str>) -> bool {
     )
 }
 
+pub(crate) fn graph_edge_is_paved_anchor(edge: &GraphEdge, paved_tags: &HashSet<&str>) -> bool {
+    is_paved_anchor(
+        WayTags {
+            highway: edge.highway.as_str(),
+            tracktype: edge.tracktype.as_deref(),
+            surface: edge.surface.as_deref(),
+            fourwd_only: edge.fourwd_only,
+        },
+        paved_tags,
+    )
+}
+
 pub(crate) fn sample_way_public(nodes: &[(f64, f64)], step_m: f64) -> Vec<RoadPoint> {
     sample_way(nodes, step_m)
 }

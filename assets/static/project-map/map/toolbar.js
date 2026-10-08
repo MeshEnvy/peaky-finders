@@ -68,6 +68,48 @@ export function installMapToolbar(navGroup, { viewshedOpacity = VIEWSHED_OPACITY
   settingsBtn.title = 'Settings'
   settingsBtn.innerHTML = mapToolIcon('gear', 'Settings')
 
+  const accessNetworkDropdown = document.createElement('wa-dropdown')
+  accessNetworkDropdown.className = 'map-toolbar-dropdown'
+  accessNetworkDropdown.placement = 'bottom-end'
+
+  const accessNetworkBtn = document.createElement('button')
+  accessNetworkBtn.type = 'button'
+  accessNetworkBtn.slot = 'trigger'
+  accessNetworkBtn.id = 'map-tool-access-network'
+  accessNetworkBtn.className = 'map-toolbar-tool'
+  accessNetworkBtn.setAttribute('aria-pressed', 'false')
+  accessNetworkBtn.setAttribute('aria-label', 'Access network')
+  accessNetworkBtn.title = 'Paved, jeep, and hiking routes'
+  accessNetworkBtn.innerHTML = mapToolIcon('road', 'Access network')
+
+  const accessNetworkMenu = document.createElement('div')
+  accessNetworkMenu.id = 'map-access-network-menu'
+  accessNetworkMenu.className = 'map-access-network-menu'
+
+  for (const [id, label, swatchClass] of [
+    ['access-network-paved', 'Paved', 'map-access-network-swatch--paved'],
+    ['access-network-jeep', 'Jeep', 'map-access-network-swatch--jeep'],
+    ['access-network-hiking', 'Hiking', 'map-access-network-swatch--hiking'],
+  ]) {
+    const row = document.createElement('label')
+    row.className = 'map-access-network-row'
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.id = id
+    const swatch = document.createElement('span')
+    swatch.className = `map-access-network-swatch ${swatchClass}`
+    swatch.setAttribute('aria-hidden', 'true')
+    const text = document.createElement('span')
+    text.textContent = label
+    row.appendChild(input)
+    row.appendChild(swatch)
+    row.appendChild(text)
+    accessNetworkMenu.appendChild(row)
+  }
+
+  accessNetworkDropdown.appendChild(accessNetworkBtn)
+  accessNetworkDropdown.appendChild(accessNetworkMenu)
+
   const opacityDropdown = document.createElement('wa-dropdown')
   opacityDropdown.className = 'map-toolbar-dropdown'
   opacityDropdown.placement = 'bottom-end'
@@ -104,7 +146,14 @@ export function installMapToolbar(navGroup, { viewshedOpacity = VIEWSHED_OPACITY
   opacityDropdown.appendChild(opacityBtn)
   opacityDropdown.appendChild(opacityMenu)
 
-  for (const el of [basemapDropdown, linkSolverBtn, sitesBtn, opacityDropdown, settingsBtn]) {
+  for (const el of [
+    basemapDropdown,
+    linkSolverBtn,
+    sitesBtn,
+    accessNetworkDropdown,
+    opacityDropdown,
+    settingsBtn,
+  ]) {
     navGroup.appendChild(el)
   }
 
@@ -112,6 +161,7 @@ export function installMapToolbar(navGroup, { viewshedOpacity = VIEWSHED_OPACITY
     mapBasemapMenu: basemapDropdown,
     mapToolLinkSolver: linkSolverBtn,
     mapToolSites: sitesBtn,
+    mapToolAccessNetwork: accessNetworkBtn,
     viewshedOpacityInput: opacitySlider,
     mapToolSettings: settingsBtn,
   }

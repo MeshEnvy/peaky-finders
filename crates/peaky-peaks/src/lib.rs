@@ -16,6 +16,7 @@ mod park;
 mod probe;
 mod run;
 mod trail;
+mod network_geojson;
 mod universe;
 
 pub use access_warm::{
@@ -34,6 +35,10 @@ pub use gtlf::{
 pub use trail::{
     build_trail_graph, route_trail_closest_approach, trail_park_candidates, TrailRouting,
     TRAIL_MAX_M, TRAIL_PARK_SNAP_M,
+};
+pub use network_geojson::{
+    osm_routing_opts_from_preset, routing_network_layer_geojson,
+    routing_network_layer_geojson_bytes, NetworkLayer, NetworkViewBBox,
 };
 pub use peaky_preset::{PLACE_ACCESS_ROAD_SEARCH_M, DEFAULT_MAX_JEEP_M as PLACE_ACCESS_MAX_JEEP_M};
 pub use hike::{

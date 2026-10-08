@@ -41,7 +41,8 @@ use crate::land::{
     read_overlay_part_geojson_bytes, LandImportBody,
     LandPatchSourceBody, LandPreviewGeoJsonBody,
 };
-use crate::roads::gtlf_inventory_geojson_bytes;
+use crate::roads::roads_network_layer_geojson_bytes;
+use peaky_peaks::{NetworkLayer, NetworkViewBBox};
 use crate::simulation::project_simulation_payload;
 use crate::viewshed::{
     coords_viewshed_overlay_if_ready, ensure_viewshed_png, read_coords_viewshed_png_if_ready,
@@ -105,12 +106,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/access/{place_slug}", get(place_access))
         .route("/api/p/{slug}/access/{place_slug}/warm", post(place_access_warm))
         .route(
-            "/api/p/{slug}/roads/gtlf/geojson",
-            get(gtlf_jeep_inventory_geojson),
-        )
-        .route(
-            "/api/p/{slug}/roads/gtlf/trails/geojson",
-            get(gtlf_trail_inventory_geojson),
+            "/api/p/{slug}/roads/network/{layer}/geojson",
+            get(roads_network_layer_geojson),
         )
         .route("/api/p/{slug}/land", get(land_list))
         .route(
@@ -1123,30 +1120,60 @@ async fn land_overlay_part_geojson(
         })
 }
 
-async fn gtlf_jeep_inventory_geojson(
-    State(state): State<AppState>,
-    Path(_slug): Path<String>,
-) -> Result<Response, (StatusCode, Json<Value>)> {
-    gtlf_inventory_geojson_response(state.preset_path(), false).await
+fn default_network_zoom() -> f64 {
+    12.0
 }
 
-async fn gtlf_trail_inventory_geojson(
-    State(state): State<AppState>,
-    Path(_slug): Path<String>,
-) -> Result<Response, (StatusCode, Json<Value>)> {
-    gtlf_inventory_geojson_response(state.preset_path(), true).await
+#[derive(Debug, Deserialize)]
+struct NetworkViewQuery {
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    #[serde(default = "default_network_zoom")]
+    z: f64,
 }
 
-async fn gtlf_inventory_geojson_response(
-    preset_path: std::path::PathBuf,
-    foot: bool,
+async fn roads_network_layer_geojson(
+    State(state): State<AppState>,
+    Path((_slug, layer)): Path<(String, String)>,
+    Query(q): Query<NetworkViewQuery>,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
-    let bytes = tokio::task::spawn_blocking(move || gtlf_inventory_geojson_bytes(&preset_path, foot))
+    let Some(layer) = NetworkLayer::parse(&layer) else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "layer must be paved, jeep, or hiking" })),
+        ));
+    };
+    if !(q.west.is_finite()
+        && q.south.is_finite()
+        && q.east.is_finite()
+        && q.north.is_finite()
+        && q.west < q.east
+        && q.south < q.north)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid west,south,east,north" })),
+        ));
+    }
+    let view = NetworkViewBBox {
+        west: q.west,
+        south: q.south,
+        east: q.east,
+        north: q.north,
+    };
+    let warm = state.warm.clone();
+    let preset_path = state.preset_path();
+    let zoom = if q.z.is_finite() { q.z } else { default_network_zoom() };
+    let bytes = tokio::task::spawn_blocking(move || {
+        roads_network_layer_geojson_bytes(&warm, &preset_path, layer, view, zoom)
+    })
         .await
         .map_err(|_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "gtlf task failed" })),
+                Json(json!({ "error": "roads network task failed" })),
             )
         })?
         .map_err(|e| {

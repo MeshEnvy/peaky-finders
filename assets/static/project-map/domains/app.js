@@ -33,7 +33,7 @@ import { createMapInteractionsDomain } from './map-interactions.js'
 import { createSiteLayersDomain } from './site-layers.js'
 import { createPeaksDomain } from './peaks.js'
 import { createSiteAccessDomain } from './site-access.js'
-import { createGtlfDomain } from './gtlf.js'
+import { createAccessNetworkDomain } from './access-network.js'
 import { createEntityChromeDomain } from './entity-chrome.js'
 import { bootProjectMap, createMapChromeDomain } from './map-chrome.js'
 
@@ -79,8 +79,8 @@ export function runApp(ctx = {}) {
   let peaksDomain = null
   /** @type {ReturnType<typeof createSiteAccessDomain>|null} */
   let siteAccessDomain = null
-  /** @type {ReturnType<typeof createGtlfDomain>|null} */
-  let gtlfDomain = null
+  /** @type {ReturnType<typeof createAccessNetworkDomain>|null} */
+  let accessNetworkDomain = null
   /** @type {ReturnType<typeof createEntityChromeDomain>|null} */
   let entityChrome = null
   /** @type {ReturnType<typeof createMapChromeDomain>|null} */
@@ -140,7 +140,7 @@ export function runApp(ctx = {}) {
     updatePinOverlays: () => viewshedDomain?.updatePinOverlays(),
   })
 
-  gtlfDomain = createGtlfDomain({
+  accessNetworkDomain = createAccessNetworkDomain({
     store,
     projectSlug: String(store.projectSlug || projectSlug || ''),
     getMap: () => map,
@@ -649,7 +649,7 @@ export function runApp(ctx = {}) {
       mapChrome.fitSites()
     }
     void landDomain.refreshLandMapLayers()
-    void gtlfDomain?.refreshOnMapLoad()
+    void accessNetworkDomain?.refreshOnMapLoad()
     const bootLink = parseDeepLink()
     if (bootLink.site || bootLink.peak) {
       void applyDeepLinkSelection(bootLink, { replaceHistory: true })

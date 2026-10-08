@@ -263,8 +263,9 @@ export function createMapChromeDomain(ctx) {
       landSourceBatchVisible: Object.fromEntries(landSourceBatchVisible),
       landLabelsVisible: Object.fromEntries(landLabelsVisible),
       landFoldersCollapsed: Object.fromEntries(landFoldersCollapsed),
-      gtlfRoadsVisible: store?.gtlf?.roadsVisible === true,
-      gtlfTrailsVisible: store?.gtlf?.trailsVisible === true,
+      accessPavedVisible: store?.accessNetwork?.pavedVisible === true,
+      accessJeepVisible: store?.accessNetwork?.jeepVisible === true,
+      accessHikingVisible: store?.accessNetwork?.hikingVisible === true,
     })
   }
 
