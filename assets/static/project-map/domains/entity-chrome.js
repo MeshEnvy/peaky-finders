@@ -12,6 +12,7 @@ export function createEntityChromeDomain(ctx) {
     getMap,
     getMapReady,
     getSites,
+    getPeaks,
     mapShell,
     entityPanel,
     entityPanelToggle,
@@ -85,7 +86,11 @@ export function createEntityChromeDomain(ctx) {
     for (const site of getSites()) {
       applyViewshedVisibilityForSite?.(site.slug)
     }
+    for (const peak of getPeaks?.() || []) {
+      applyViewshedVisibilityForSite?.(peak.slug)
+    }
     refreshFilteredLinks?.()
+    ensureViewshedsForNewlyVisibleSites?.()
     renderEntityPanel?.()
   }
 

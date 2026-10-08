@@ -1,6 +1,6 @@
 // @ts-check
 
-import { formatCoord } from '../geo.js'
+import { flyMapToCoord, formatCoord } from '../geo.js'
 import { DRAFT_MARKER_COLOR, DRAFT_VIEWSHED_SLUG } from '../constants.js'
 import { normalizeSiteFromApi } from '../stores/sites.js'
 import { captureDeepLinkFromMap, writeDeepLink } from '../api/deep-link.js'
@@ -295,6 +295,14 @@ export function createPlacementDomain(ctx) {
     }
   }
 
+  /** @param {object} site */
+  function showSiteInView(site) {
+    const lat = Number(site?.lat)
+    const lon = Number(site?.lon)
+    if (!getMapReady() || !Number.isFinite(lat) || !Number.isFinite(lon)) return
+    flyMapToCoord(getMap(), lat, lon)
+  }
+
   function selectSite(slug, { syncDeepLink = true } = {}) {
     const site = getSiteBySlug?.(slug)
     if (!site) return
@@ -426,6 +434,7 @@ export function createPlacementDomain(ctx) {
     cancelRelocate,
     commitRelocateAt,
     patchSiteField,
+    showSiteInView,
     selectSite,
     deselectSite,
     applySavedSiteToMap,

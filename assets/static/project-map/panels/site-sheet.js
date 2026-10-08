@@ -287,12 +287,6 @@ export function mountSiteSheet(store, appApi) {
         }
       }
 
-      function toggleViewshed() {
-        const slug = store.ui.selectedSlug
-        if (!slug) return
-        appApi.toggleViewshedForSelected?.()
-      }
-
       function toggleAccess() {
         const slug = store.ui.selectedSlug
         if (!slug) return
@@ -377,10 +371,6 @@ export function mountSiteSheet(store, appApi) {
           errorText.value = err instanceof Error ? err.message : 'Could not update height.'
         }
       }
-
-      const viewshedActive = computed(() =>
-        store.ui.selectedSlug ? !!appApi.isViewshedVisible?.(store.ui.selectedSlug) : false,
-      )
 
       const accessActive = computed(() =>
         store.ui.selectedSlug ? !!appApi.isAccessVisible?.(store.ui.selectedSlug) : false,
@@ -519,7 +509,6 @@ export function mountSiteSheet(store, appApi) {
         hikeStartLabel,
         difficultyConfig,
         onAccessPointClick,
-        viewshedActive,
         accessActive,
         canDelete,
         createCoordsLabel,
@@ -539,7 +528,6 @@ export function mountSiteSheet(store, appApi) {
         deleteSelected,
         cancelCreate,
         saveCreate,
-        toggleViewshed,
         toggleAccess,
         copyCoords,
         copySlug,
@@ -660,10 +648,6 @@ export function mountSiteSheet(store, appApi) {
           <p v-if="alternatesStatus" class="site-panel__value pf-muted">{{ alternatesStatus }}</p>
           <div class="site-panel__footer">
             <div class="site-panel__footer-row">
-              <button type="button"
-                class="site-panel__footer-btn"
-                :class="{ 'site-panel__footer-btn--active': viewshedActive }"
-                @click="toggleViewshed">Viewshed</button>
               <button type="button"
                 class="site-panel__footer-btn"
                 :class="{ 'site-panel__footer-btn--active': accessActive }"

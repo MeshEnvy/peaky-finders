@@ -1,5 +1,7 @@
 // @ts-check
 
+import { isPeakMapVisible } from './peaks.js'
+
 /**
  * Viewshed domain store helpers. Runtime state lives on root store.viewshed.
  * SSE commits should update store.viewshed then call map/viewshed-layers adapters.
@@ -93,6 +95,31 @@ export function setViewshedVisible(store, slug, visible) {
 /** @param {object} store @param {string} slug */
 export function isViewshedVisible(store, slug) {
   return store.viewshed.visible.get(slug) !== false
+}
+
+/**
+ * Whether a viewshed raster may paint for this slug (site, catalog peak, or ephemeral preview).
+ * @param {object} store
+ * @param {string} slug
+ * @param {{
+ *   isSiteMapHidden: (slug: string) => boolean,
+ *   isEphemeralViewshedSlug: (slug: string) => boolean,
+ *   getSiteBySlug?: (slug: string) => object|null|undefined,
+ * }} opts
+ */
+export function isViewshedHostVisible(store, slug, opts) {
+  const { isSiteMapHidden, isEphemeralViewshedSlug, getSiteBySlug } = opts
+  if (isEphemeralViewshedSlug(slug)) {
+    return !isSiteMapHidden(slug)
+  }
+  if (getSiteBySlug?.(slug)) {
+    return !isSiteMapHidden(slug)
+  }
+  const peak = store.peaks?.list?.find((row) => row.slug === slug)
+  if (peak) {
+    return isPeakMapVisible(store, slug)
+  }
+  return false
 }
 
 /**

@@ -18,12 +18,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **Sites and Peaks list controls** — each row: crosshairs (show in view), eye (hide pin/peak on map), **v** (viewshed only). Site sheet no longer has a viewshed toggle.
 - **Pin sheets overlay the map** — selecting a site, peak, or link no longer shrinks the MapLibre canvas. Detail cards float on the map; zoom controls slide aside so the viewport stays put.
 - **Relocate hides viewshed** — target mode turns off the site viewshed so the terrain is visible; dropping the pin turns it back on at the new spot.
 - **Peaks catalog in cache** — git-tracked `peaks/` and `access/` are removed. Operator decisions live in **`peaks.yaml`** (`overrides:` deny-by-point). Eligible catalog is derived **`.peaky/cache/peaks/<prefs_key>/index.json`**; probe results are the only persisted access under **`.peaky/cache/probe/`** (compact JSON). Serve returns `missing_catalog: true` when no index exists. `--clean` on build ignores the existing index for the current prefs key (no file deletion). Legacy `.yaml` probe files are ignored; run **`peaky peaks gc`** to reclaim space.
 
 ### Fixed
 
+- **Viewshed on site unhide** — showing a hidden site again loads its viewshed when **v** is on, without toggling **v**.
 - **Tag filter resets site eyes** — changing a tag chip or intersect/union drops manual show/hide. A site forced visible stays up only until the next filter change.
 - **Tag edits drop RF links** — removing the tags that kept a site on the map also drops its RF legs. The pin and the mesh hide together.
 - **Relocate stale overlays** — moving a site drops the old jeep/trail and RF link immediately, then re-warms access and mesh at the new coords. The pin no longer sticks on `warm…` (commit no longer races a draft prefetch; `_draft` SSE remaps via pending coords). The site sheet clears the old jeep/hike stats and shows loading until the new probe lands.

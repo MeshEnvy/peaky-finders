@@ -38,6 +38,7 @@ import {
   markOutboundLinksReady as markOutboundLinksReadyInStore,
   resetSiteProgress as resetSiteProgressInStore,
   isViewshedVisible as isViewshedVisibleInStore,
+  isViewshedHostVisible as isViewshedHostVisibleInStore,
   setViewshedVisible as setViewshedVisibleInStore,
   clearViewshedLoadingState as clearViewshedLoadingStateInStore,
   clearPendingEpoch as clearPendingEpochInStore,
@@ -168,6 +169,26 @@ export function createViewshedDomain(opts) {
     return viewshedVisible.get(slug) !== false
   }
 
+  function getSiteBySlug(slug) {
+    return getSites().find((site) => site.slug === slug) || null
+  }
+
+  function isCatalogPeakSlug(slug) {
+    return !!(store?.peaks?.list || []).find((peak) => peak.slug === slug)
+  }
+
+  function isViewshedHostVisible(slug) {
+    return isViewshedHostVisibleInStore(store, slug, {
+      isSiteMapHidden,
+      isEphemeralViewshedSlug,
+      getSiteBySlug,
+    })
+  }
+
+  function skipOutboundLinksForViewshedSlug(slug) {
+    return isEphemeralViewshedSlug(slug) || isCatalogPeakSlug(slug)
+  }
+
   function resetSiteProgress(slug) {
     if (store) resetSiteProgressInStore(store, slug)
     else {
@@ -205,7 +226,7 @@ export function createViewshedDomain(opts) {
   }
 
   function sitePinSpinning(slug) {
-    if (isSiteMapHidden(slug)) return false
+    if (!isViewshedHostVisible(slug)) return false
     if (!isViewshedVisible(slug)) return false
     if (siteViewshedReady.has(slug) && siteOutboundLinksReady.has(slug)) {
       return false
@@ -244,6 +265,16 @@ export function createViewshedDomain(opts) {
 
   function viewshedOverlaySlugs() {
     const slugs = getSites().map((site) => site.slug)
+    for (const peak of store?.peaks?.list || []) {
+      if (
+        isViewshedVisible(peak.slug) ||
+        viewshedPendingEpoch.has(peak.slug) ||
+        viewshedLoading.has(peak.slug) ||
+        (getMapReady() && map.getLayer(viewshedLayerId(peak.slug)))
+      ) {
+        slugs.push(peak.slug)
+      }
+    }
     slugs.push(
       DRAFT_VIEWSHED_SLUG,
       ALTERNATE_VIEWSHED_SLUG,
@@ -286,7 +317,7 @@ export function createViewshedDomain(opts) {
   }
 
   function applyViewshedVisibilityForSite(slug) {
-    const visible = !isSiteMapHidden(slug) && isViewshedVisible(slug)
+    const visible = isViewshedHostVisible(slug) && isViewshedVisible(slug)
     setViewshedLayerVisibility(map, slug, visible)
   }
 
@@ -318,7 +349,7 @@ export function createViewshedDomain(opts) {
     setViewshedLayerVisibility(
       map,
       vs.slug,
-      isViewshedVisible(vs.slug) && !isSiteMapHidden(vs.slug),
+      isViewshedVisible(vs.slug) && isViewshedHostVisible(vs.slug),
     )
     if (store) clearViewshedLoadingInStore(store, vs.slug)
     else viewshedLoading.delete(vs.slug)
@@ -390,7 +421,7 @@ export function createViewshedDomain(opts) {
     if (epoch != null && pendingEpoch != null && pendingEpoch !== epoch) return
     addViewshedLayer(vs)
     finalizeViewshedReady(vs)
-    if (!isEphemeralViewshedSlug(vs.slug)) {
+    if (!skipOutboundLinksForViewshedSlug(vs.slug)) {
       void loadSingleSiteLinks(vs.slug)
     } else {
       markSiteOutboundLinksReady(vs.slug)
@@ -399,10 +430,10 @@ export function createViewshedDomain(opts) {
 
   function acceptViewshedOverlay(vs) {
     if (!vs || !vs.slug || !vs.url || !vs.coordinates) return
-    if (isSiteMapHidden(vs.slug) || !isViewshedVisible(vs.slug)) return
+    if (!isViewshedHostVisible(vs.slug) || !isViewshedVisible(vs.slug)) return
     addViewshedLayer(vs)
     finalizeViewshedReady(vs)
-    if (!isEphemeralViewshedSlug(vs.slug)) {
+    if (!skipOutboundLinksForViewshedSlug(vs.slug)) {
       void loadSingleSiteLinks(vs.slug)
     } else {
       markSiteOutboundLinksReady(vs.slug)
@@ -625,10 +656,20 @@ export function createViewshedDomain(opts) {
   function ensureViewshedsForNewlyVisibleSites() {
     let queued = false
     for (const site of getSites()) {
-      if (isSiteMapHidden(site.slug) || !isViewshedVisible(site.slug)) continue
+      if (!isViewshedHostVisible(site.slug) || !isViewshedVisible(site.slug)) continue
       if (map.getLayer(viewshedLayerId(site.slug))) continue
       if (sitePinSpinning(site.slug) || viewshedPendingEpoch.has(site.slug)) continue
       probeViewshedCacheForSite(site)
+      queued = true
+    }
+    for (const peak of store?.peaks?.list || []) {
+      if (!isViewshedHostVisible(peak.slug) || !isViewshedVisible(peak.slug)) continue
+      if (map.getLayer(viewshedLayerId(peak.slug))) continue
+      if (sitePinSpinning(peak.slug) || viewshedPendingEpoch.has(peak.slug)) continue
+      const lat = Number(peak.lat)
+      const lon = Number(peak.lon)
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
+      scheduleCoordViewshedLoad(peak.slug, lat, lon)
       queued = true
     }
     if (queued) {
@@ -637,8 +678,46 @@ export function createViewshedDomain(opts) {
     }
   }
 
+  function scheduleCoordViewshedLoad(slug, lat, lon) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+    removeViewshedLayer(slug)
+    resetSiteProgress(slug)
+    viewshedLoading.add(slug)
+    const epoch = viewshedLoadEpoch
+    viewshedPendingEpoch.set(slug, epoch)
+    if (store) setPendingCoordsInStore(store, slug, lat, lon)
+    updatePinOverlays()
+    if (slug === store.ui.selectedSlug) syncViewshedCheckbox()
+    void (async () => {
+      if (await tryLoadCoordViewshedFromCache(slug, lat, lon)) {
+        raiseViewshedLayers()
+        return
+      }
+      try {
+        const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), { method: 'POST' })
+        if (viewshedPendingEpoch.get(slug) !== epoch) return
+        if (!resp.ok) {
+          clearViewshedLoadingState(slug)
+          updatePinOverlays()
+          return
+        }
+        const ready = await resp.json()
+        if (viewshedPendingEpoch.get(slug) !== epoch) return
+        if (ready && ready.status === 'ready') {
+          handleViewshedReady({ ...ready, slug }, epoch)
+          raiseViewshedLayers()
+        }
+      } catch (_) {
+        if (viewshedPendingEpoch.get(slug) === epoch) {
+          clearViewshedLoadingState(slug)
+          updatePinOverlays()
+        }
+      }
+    })()
+  }
+
   function ensureViewshedLoadedForSlug(slug, loadDraftAt) {
-    if (isSiteMapHidden(slug) || !isViewshedVisible(slug)) return
+    if (!isViewshedHostVisible(slug) || !isViewshedVisible(slug)) return
     if (map.getLayer(viewshedLayerId(slug))) return
     if (sitePinSpinning(slug) || viewshedPendingEpoch.has(slug)) return
     if (slug === DRAFT_VIEWSHED_SLUG && loadDraftAt) {
@@ -647,7 +726,14 @@ export function createViewshedDomain(opts) {
       return
     }
     const site = getSites().find((s) => s.slug === slug)
-    if (site) scheduleViewshedLoad(site)
+    if (site) {
+      scheduleViewshedLoad(site)
+      return
+    }
+    const peak = (store?.peaks?.list || []).find((row) => row.slug === slug)
+    if (peak) {
+      scheduleCoordViewshedLoad(slug, Number(peak.lat), Number(peak.lon))
+    }
   }
 
   function scheduleViewshedLoad(site) {
@@ -682,7 +768,7 @@ export function createViewshedDomain(opts) {
       const missing = []
       const upgrades = []
       for (const site of getSites()) {
-        if (isSiteMapHidden(site.slug) || !isViewshedVisible(site.slug)) continue
+        if (!isViewshedHostVisible(site.slug) || !isViewshedVisible(site.slug)) continue
         const entry = siteEntries[site.slug]
         if (entry && entry.ready && entry.url && entry.coordinates) {
           readyOverlays.push({
@@ -715,7 +801,7 @@ export function createViewshedDomain(opts) {
     bumpViewshedLoadEpoch()
     for (const site of getSites()) {
       resetSiteProgress(site.slug)
-      if (!isSiteMapHidden(site.slug) && isViewshedVisible(site.slug)) {
+      if (isViewshedHostVisible(site.slug) && isViewshedVisible(site.slug)) {
         removeViewshedLayer(site.slug)
         viewshedLoading.add(site.slug)
         viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch)
@@ -723,6 +809,18 @@ export function createViewshedDomain(opts) {
         removeViewshedLayer(site.slug)
         viewshedLoading.delete(site.slug)
         viewshedPendingEpoch.delete(site.slug)
+      }
+    }
+    for (const peak of store?.peaks?.list || []) {
+      resetSiteProgress(peak.slug)
+      if (isViewshedHostVisible(peak.slug) && isViewshedVisible(peak.slug)) {
+        removeViewshedLayer(peak.slug)
+        viewshedLoading.add(peak.slug)
+        viewshedPendingEpoch.set(peak.slug, viewshedLoadEpoch)
+      } else {
+        removeViewshedLayer(peak.slug)
+        viewshedLoading.delete(peak.slug)
+        viewshedPendingEpoch.delete(peak.slug)
       }
     }
     updatePinOverlays()
@@ -776,6 +874,7 @@ export function createViewshedDomain(opts) {
     ensureViewshedsForNewlyVisibleSites,
     ensureViewshedLoadedForSlug,
     scheduleViewshedLoad,
+    scheduleCoordViewshedLoad,
     loadViewshedIndex,
     reloadViewshedsForSimChange,
     reconcilePendingViewsheds,

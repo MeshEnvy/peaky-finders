@@ -24,7 +24,7 @@ import {
   sidebarPeaks,
   visiblePeaksForMap,
 } from '../stores/peaks.js'
-import { setPendingCoords } from '../stores/viewshed.js'
+import { flyMapToCoord } from '../geo.js'
 
 /**
  * @param {object} opts
@@ -55,7 +55,6 @@ export function createPeaksDomain(opts) {
     siteAccessDomain,
   } = opts
 
-  let peakViewshedGen = 0
   let peakLinksPrefetchGen = 0
 
   function vs() {
@@ -132,6 +131,10 @@ export function createPeaksDomain(opts) {
 
   function applyPeakVisibilityChange(slug) {
     refreshPeakLayers()
+    vs()?.applyViewshedVisibilityForSite?.(slug)
+    if (isPeakMapVisible(store, slug)) {
+      vs()?.ensureViewshedLoadedForSlug?.(slug)
+    }
     if (store.ui.selectedPeakSlug === slug && !isPeakMapVisible(store, slug)) {
       deselectPeak({ syncDeepLink: true })
     }
@@ -210,7 +213,6 @@ export function createPeaksDomain(opts) {
   }
 
   function cancelPeakViewshedLoad() {
-    peakViewshedGen += 1
     store.viewshed.pendingEpoch.delete(PEAK_VIEWSHED_SLUG)
     store.viewshed.loading.delete(PEAK_VIEWSHED_SLUG)
     vs()?.clearViewshedLoadingState?.(PEAK_VIEWSHED_SLUG)
@@ -224,45 +226,6 @@ export function createPeaksDomain(opts) {
     removePeakDraftLinks()
     clearPeakAccessPreview()
     vs()?.updatePinOverlays?.()
-  }
-
-  async function loadPeakCoordViewshed(lat, lon) {
-    const vsDomain = vs()
-    if (!vsDomain || !Number.isFinite(lat) || !Number.isFinite(lon)) return
-    const gen = ++peakViewshedGen
-    store.viewshed.visible.set(PEAK_VIEWSHED_SLUG, true)
-    if (await vsDomain.tryLoadCoordViewshedFromCache?.(PEAK_VIEWSHED_SLUG, lat, lon)) {
-      vsDomain.raiseViewshedLayers?.()
-      return
-    }
-    vsDomain.removeViewshedLayer?.(PEAK_VIEWSHED_SLUG)
-    store.viewshed.loading.add(PEAK_VIEWSHED_SLUG)
-    const epoch = vsDomain.getViewshedLoadEpoch?.()
-    store.viewshed.pendingEpoch.set(PEAK_VIEWSHED_SLUG, epoch)
-    setPendingCoords(store, PEAK_VIEWSHED_SLUG, lat, lon)
-    vsDomain.updatePinOverlays?.()
-    try {
-      const resp = await fetch(vsDomain.viewshedPrefetchWarmUrl(lat, lon), { method: 'POST' })
-      if (peakViewshedGen !== gen) return
-      if (store.viewshed.pendingEpoch.get(PEAK_VIEWSHED_SLUG) !== epoch) return
-      if (!resp.ok) {
-        cancelPeakViewshedLoad()
-        vsDomain.updatePinOverlays?.()
-        return
-      }
-      const ready = await resp.json()
-      if (peakViewshedGen !== gen) return
-      if (store.viewshed.pendingEpoch.get(PEAK_VIEWSHED_SLUG) !== epoch) return
-      if (ready && ready.status === 'ready') {
-        vsDomain.handleViewshedReady({ ...ready, slug: PEAK_VIEWSHED_SLUG }, epoch)
-        vsDomain.raiseViewshedLayers?.()
-      }
-    } catch (_) {
-      if (peakViewshedGen === gen) {
-        cancelPeakViewshedLoad()
-        vsDomain.updatePinOverlays?.()
-      }
-    }
   }
 
   async function loadPeakPrefetchLinks(lat, lon) {
@@ -333,7 +296,7 @@ export function createPeaksDomain(opts) {
     store.viewshed.visible.delete(PEAK_VIEWSHED_SLUG)
     removePeakDraftLinks()
     vs()?.updatePinOverlays?.()
-    void loadPeakCoordViewshed(lat, lon)
+    vs()?.setViewshedVisible?.(peak.slug, true)
     void loadPeakPrefetchLinks(lat, lon)
     void loadPeakAccess(peak)
   }
@@ -364,6 +327,7 @@ export function createPeaksDomain(opts) {
       updatePeakHighlight(store.ui.selectedPeakSlug)
       bumpPeaksPanel()
       raiseSiteLayers?.()
+      vs()?.ensureViewshedsForNewlyVisibleSites?.()
     } catch (err) {
       console.warn('peaks: catalog load failed', err)
     }
@@ -408,6 +372,11 @@ export function createPeaksDomain(opts) {
     }
     if (!changed) return
     refreshPeakLayers()
+    for (const peak of listed) {
+      if (!peak?.slug) continue
+      vs()?.applyViewshedVisibilityForSite?.(peak.slug)
+    }
+    vs()?.ensureViewshedsForNewlyVisibleSites?.()
     bumpPeaksPanel()
     scheduleSaveMapState?.()
   }
@@ -437,12 +406,7 @@ export function createPeaksDomain(opts) {
     const lat = Number(peak?.lat)
     const lon = Number(peak?.lon)
     if (!getMapReady() || !Number.isFinite(lat) || !Number.isFinite(lon)) return
-    const map = getMap()
-    map.flyTo({
-      center: [lon, lat],
-      zoom: Math.max(map.getZoom(), 12),
-      duration: 600,
-    })
+    flyMapToCoord(getMap(), lat, lon)
   }
 
   function deselectPeak({ syncDeepLink = true } = {}) {

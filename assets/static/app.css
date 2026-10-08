@@ -2865,6 +2865,14 @@ button.entity-panel__row--selected:focus-visible,
   border-color: rgba(74, 108, 247, 0.35);
 }
 
+.entity-panel__action--letter {
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  line-height: 1;
+  text-transform: lowercase;
+}
+
 .entity-panel__action--danger:hover {
   color: var(--wa-color-danger-on-quiet);
   border-color: var(--wa-color-danger-border-normal);

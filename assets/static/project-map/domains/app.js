@@ -280,6 +280,7 @@ export function runApp(ctx = {}) {
     getMap: () => map,
     getMapReady: () => store.ui.mapReady,
     getSites: () => sites,
+    getPeaks: () => store.peaks.list,
     mapShell,
     entityPanel: document.getElementById('entity-panel'),
     entityPanelToggle: document.getElementById('entity-panel-toggle'),
@@ -740,6 +741,7 @@ export function runApp(ctx = {}) {
       mapChrome.scheduleSaveMapState()
     },
     showPeakInView: (...args) => peaksDomain.showPeakInView(...args),
+    showSiteInView: (...args) => placementDomain.showSiteInView(...args),
     renderPeaksPanel: () => peaksDomain.bumpPeaksPanel(),
     deselectLink: (...args) => linksDomain?.deselectLink(...args),
     findSiteLinkFeature: (a, b) => linksDomain?.findSiteLinkFeature(a, b),
@@ -753,10 +755,10 @@ export function runApp(ctx = {}) {
     patchSiteField: (slug, body) => placementDomain.patchSiteField(slug, body),
     saveCreate: (payload) => placementDomain.saveCreateFromSheet(payload),
     deleteSelectedSite: () => placementDomain.deleteSelectedSite(),
-    toggleViewshedForSelected() {
-      const slug = store.ui.selectedSlug
-      if (!slug) return
-      viewshedDomain.setViewshedVisible(slug, !viewshedDomain.isViewshedVisible(slug))
+    toggleViewshed(slug) {
+      const value = String(slug || '').trim()
+      if (!value) return
+      viewshedDomain.setViewshedVisible(value, !viewshedDomain.isViewshedVisible(value))
       mapChrome.scheduleSaveMapState()
     },
     toggleAccessForSelected() {

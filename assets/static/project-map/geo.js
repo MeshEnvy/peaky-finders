@@ -32,6 +32,16 @@ export function formatSiteHeight(site, defaultTxHeightM) {
   return `default (${defaultTxHeightM} m)`
 }
 
+/** @param {maplibregl.Map} map @param {number} lat @param {number} lon @param {number} [minZoom] */
+export function flyMapToCoord(map, lat, lon, minZoom = 12) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+  map.flyTo({
+    center: [lon, lat],
+    zoom: Math.max(map.getZoom(), minZoom),
+    duration: 600,
+  })
+}
+
 export function kmToDegreeDeltas(latDeg, km) {
   const m = km * 1000
   const latDelta = m / 111_320

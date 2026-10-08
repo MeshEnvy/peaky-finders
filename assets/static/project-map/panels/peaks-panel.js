@@ -7,6 +7,7 @@ import {
   sidebarPeaks,
   viewportPeaks,
 } from '../stores/peaks.js'
+import { isViewshedVisible as isViewshedVisibleInStore } from '../stores/viewshed.js'
 import { mountViewportFilterCheckbox } from './viewport-filter.js'
 
 /**
@@ -88,6 +89,14 @@ export function mountPeaksPanel(store, appApi) {
         appApi.showPeakInView?.(peak)
       }
 
+      function viewshedVisible(slug) {
+        return isViewshedVisibleInStore(store, slug)
+      }
+
+      function toggleViewshed(slug) {
+        appApi.toggleViewshed?.(slug)
+      }
+
       function selectPeak(slug) {
         appApi.selectPeak?.(slug)
       }
@@ -97,6 +106,8 @@ export function mountPeaksPanel(store, appApi) {
         peaks,
         peakVisible,
         toggleVisible,
+        viewshedVisible,
+        toggleViewshed,
         showInView,
         selectPeak,
       }
@@ -143,6 +154,16 @@ export function mountPeaksPanel(store, appApi) {
                 :name="peakVisible(peak.slug) ? 'eye' : 'eye-slash'"
                 :label="peakVisible(peak.slug) ? 'Hide peak on map' : 'Show peak on map'"
               ></wa-icon>
+            </button>
+            <button
+              type="button"
+              class="entity-panel__action entity-panel__action--letter"
+              :class="{ 'entity-panel__action--active': viewshedVisible(peak.slug) }"
+              :title="viewshedVisible(peak.slug) ? 'Hide viewshed' : 'Show viewshed'"
+              :aria-label="viewshedVisible(peak.slug) ? 'Hide viewshed' : 'Show viewshed'"
+              @click.stop="toggleViewshed(peak.slug)"
+            >
+              v
             </button>
           </div>
         </div>

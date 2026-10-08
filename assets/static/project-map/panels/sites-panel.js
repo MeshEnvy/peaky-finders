@@ -8,6 +8,7 @@ import {
   visibleSidebarSites as visibleSidebarSitesFromStore,
   viewportSites as viewportSitesFromStore,
 } from '../stores/sites.js'
+import { isViewshedVisible as isViewshedVisibleInStore } from '../stores/viewshed.js'
 import { mountViewportFilterCheckbox } from './viewport-filter.js'
 
 /**
@@ -145,11 +146,32 @@ export function mountSitesPanel(store, appApi) {
         appApi.toggleSiteMapVisible?.(slug)
       }
 
+      function viewshedVisible(slug) {
+        return isViewshedVisibleInStore(store, slug)
+      }
+
+      function toggleViewshed(slug) {
+        appApi.toggleViewshed?.(slug)
+      }
+
+      function showInView(site) {
+        appApi.showSiteInView?.(site)
+      }
+
       function selectSite(slug) {
         appApi.selectSite?.(slug)
       }
 
-      return { store, sidebarSites, siteVisible, toggleVisible, selectSite }
+      return {
+        store,
+        sidebarSites,
+        siteVisible,
+        toggleVisible,
+        viewshedVisible,
+        toggleViewshed,
+        showInView,
+        selectSite,
+      }
     },
     template: `
       <div class="entity-panel__list-items">
@@ -172,6 +194,15 @@ export function mountSitesPanel(store, appApi) {
             <button
               type="button"
               class="entity-panel__action"
+              title="Show in view"
+              aria-label="Show in view"
+              @click.stop="showInView(site)"
+            >
+              <wa-icon name="crosshairs" label="Show in view"></wa-icon>
+            </button>
+            <button
+              type="button"
+              class="entity-panel__action"
               :class="{ 'entity-panel__action--active': siteVisible(site.slug) }"
               :title="siteVisible(site.slug) ? 'Hide site on map' : 'Show site on map'"
               :aria-label="siteVisible(site.slug) ? 'Hide site on map' : 'Show site on map'"
@@ -181,6 +212,16 @@ export function mountSitesPanel(store, appApi) {
                 :name="siteVisible(site.slug) ? 'eye' : 'eye-slash'"
                 :label="siteVisible(site.slug) ? 'Hide site on map' : 'Show site on map'"
               ></wa-icon>
+            </button>
+            <button
+              type="button"
+              class="entity-panel__action entity-panel__action--letter"
+              :class="{ 'entity-panel__action--active': viewshedVisible(site.slug) }"
+              :title="viewshedVisible(site.slug) ? 'Hide viewshed' : 'Show viewshed'"
+              :aria-label="viewshedVisible(site.slug) ? 'Hide viewshed' : 'Show viewshed'"
+              @click.stop="toggleViewshed(site.slug)"
+            >
+              v
             </button>
           </div>
         </div>
