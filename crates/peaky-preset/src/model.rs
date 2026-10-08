@@ -1012,6 +1012,45 @@ pub struct LandConfig {
     pub refresh_interval_days: u32,
 }
 
+/// One site-to-site link in the book (legacy pair or structured provenance row).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum BookLink {
+    Legacy([String; 2]),
+    Record {
+        a: String,
+        b: String,
+        #[serde(default)]
+        origin: Option<String>,
+        #[serde(default)]
+        attest: Option<LinkAttest>,
+        #[serde(default)]
+        rf_at: Option<String>,
+        #[serde(default)]
+        field_at: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LinkAttest {
+    #[serde(default)]
+    pub manual: bool,
+    #[serde(default)]
+    pub rf: bool,
+    #[serde(default)]
+    pub field: bool,
+}
+
+impl BookLink {
+    pub fn slug_pair(&self) -> PresetResult<[String; 2]> {
+        let (a, b) = match self {
+            BookLink::Legacy([a, b]) => (a.as_str(), b.as_str()),
+            BookLink::Record { a, b, .. } => (a.as_str(), b.as_str()),
+        };
+        normalize_link_pair(&[a.to_string(), b.to_string()], 0)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preset {
@@ -1023,7 +1062,7 @@ pub struct Preset {
     pub display: DisplayConfig,
     pub sites: HashMap<String, SiteEntry>,
     #[serde(default)]
-    pub links: Vec<[String; 2]>,
+    pub links: Vec<BookLink>,
     #[serde(default)]
     pub land: LandConfig,
     #[serde(default)]
@@ -1182,8 +1221,8 @@ pub fn validate_preset(preset: &Preset) -> PresetResult<()> {
     crate::viewshed_quality::validate_viewshed_quality(preset.simulation.viewshed_quality)?;
 
     let mut seen_links: HashSet<[String; 2]> = HashSet::new();
-    for pair in &preset.links {
-        let [a, b] = normalize_link_pair(pair, 0)?;
+    for link in &preset.links {
+        let [a, b] = link.slug_pair()?;
         if a == b {
             return Err(err(format!("links pair [{a:?}, {b:?}] must not link a site to itself")));
         }

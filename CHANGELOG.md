@@ -18,6 +18,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **Split-book links file** — when `sites.yaml` is split out, manual RF links live in **`links.json`** (read **`links.yaml`** or legacy `links:` in `sites.yaml` if present). Saves write JSON. Link rows may be a slug pair or a record with optional provenance (`origin`, `attest`, dates).
 - **Sites and Peaks list controls** — each row: crosshairs (show in view), eye (hide pin/peak on map), **v** (viewshed only). Site sheet no longer has a viewshed toggle.
 - **Pin sheets overlay the map** — selecting a site, peak, or link no longer shrinks the MapLibre canvas. Detail cards float on the map; zoom controls slide aside so the viewport stays put.
 - **Relocate hides viewshed** — target mode turns off the site viewshed so the terrain is visible; dropping the pin turns it back on at the new spot.

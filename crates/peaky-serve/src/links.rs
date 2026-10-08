@@ -41,7 +41,11 @@ pub fn manual_link_pairs(preset: &Preset) -> HashSet<LinkPair> {
     preset
         .links
         .iter()
-        .map(|pair| canonical_site_pair(&pair[0], &pair[1]))
+        .filter_map(|link| {
+            link.slug_pair()
+                .ok()
+                .map(|[a, b]| canonical_site_pair(&a, &b))
+        })
         .collect()
 }
 
@@ -80,8 +84,9 @@ pub fn links_input_fingerprint(preset_path: &Path, preset: &Preset) -> Result<St
     let mut manual: Vec<Value> = preset
         .links
         .iter()
-        .map(|pair| {
-            let (a, b) = canonical_site_pair(&pair[0], &pair[1]);
+        .filter_map(|link| link.slug_pair().ok())
+        .map(|[a, b]| {
+            let (a, b) = canonical_site_pair(&a, &b);
             json!([a, b])
         })
         .collect();

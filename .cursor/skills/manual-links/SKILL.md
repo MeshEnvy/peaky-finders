@@ -33,10 +33,12 @@ Implementation: `peaky-serve/src/links.rs` — manual pairs skip the P2P pass, a
 
 | Layout | Where `links:` lives |
 |--------|----------------------|
-| Split (`sites.yaml` present) | Top of [`sites.yaml`](sites.yaml) alongside `sites:` |
+| Split + [`links.json`](links.json) present | **`links.json`** (canonical for large graphs) |
+| Split + [`links.yaml`](links.yaml) only | Legacy YAML (read supported) |
+| Split, no links file | Legacy: top of [`sites.yaml`](sites.yaml) |
 | Monolithic | [`config.yaml`](config.yaml) |
 
-`peaky-preset` `read_merged_document` / `write_merged_document` route `links` through `sites.yaml` when split.
+`peaky-preset` merges `links.json` first, then `links.yaml`, then `sites.yaml`. Saves write `links` to **`links.json`** when split (not `sites.yaml`).
 
 ## Pair format
 
