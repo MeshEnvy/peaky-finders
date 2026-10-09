@@ -44,6 +44,7 @@ export function linkLabelsLayerSpec(layerId, sourceId, visibility) {
     type: 'symbol',
     source: sourceId,
     filter: ['!=', ['get', 'label'], ''],
+    minzoom: 8,
     layout: {
       'symbol-placement': 'line-center',
       'text-field': ['get', 'label'],
@@ -92,6 +93,7 @@ function linksLabelsLayerSpec(visibility) {
     type: 'symbol',
     source: LINKS_SOURCE,
     filter: ['!=', ['get', 'label'], ''],
+    minzoom: 8,
     layout: {
       'symbol-placement': 'line-center',
       'text-field': ['get', 'label'],

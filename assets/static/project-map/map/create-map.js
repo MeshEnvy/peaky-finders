@@ -20,5 +20,6 @@ export function createProjectMap({ container, basemapKey, savedMapState }) {
     pitch: savedMapState ? savedMapState.pitch || 0 : 0,
     maxParallelImageRequests: 64,
     attributionControl: { compact: true },
+    fadeDuration: 0,
   })
 }

@@ -185,6 +185,19 @@ export function createAccessNetworkDomain(opts) {
     await driveInflight
   }
 
+  function clearMapLayer(kind) {
+    const map = getMap()
+    if (!map) return
+    setAccessNetworkLayerData(map, kind, { type: 'FeatureCollection', features: [] })
+  }
+
+  function layerIsVisible(kind) {
+    const v = visState()
+    if (kind === 'paved') return v.pavedVisible
+    if (kind === 'jeep') return v.jeepVisible
+    return v.hikingVisible
+  }
+
   function paintCachedLayer(kind) {
     const map = getMap()
     if (!map || !layerCache[kind] || needsRefetch(kind)) return
@@ -212,6 +225,10 @@ export function createAccessNetworkDomain(opts) {
     if (!map) return
     ensureAccessNetworkLayers(map)
     const geo = await fetchLayerForBBox(kind, bbox, map.getZoom())
+    if (!layerIsVisible(kind)) {
+      clearMapLayer(kind)
+      return
+    }
     setAccessNetworkLayerData(map, kind, geo)
     afterLayerPaint()
   }
@@ -231,9 +248,13 @@ export function createAccessNetworkDomain(opts) {
     const v = visState()
     if (v.pavedVisible && layerCache.paved) {
       setAccessNetworkLayerData(map, 'paved', layerCache.paved)
+    } else {
+      clearMapLayer('paved')
     }
     if (v.jeepVisible && layerCache.jeep) {
       setAccessNetworkLayerData(map, 'jeep', layerCache.jeep)
+    } else {
+      clearMapLayer('jeep')
     }
     afterLayerPaint()
   }
@@ -283,6 +304,8 @@ export function createAccessNetworkDomain(opts) {
       installMapMoveHook()
       paintCachedLayer(kind)
       await refreshVisibleLayers(false)
+    } else {
+      clearMapLayer(kind)
     }
     syncVisibility()
     scheduleSaveMapState?.()

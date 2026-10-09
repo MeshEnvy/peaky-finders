@@ -168,85 +168,36 @@ export function createMapInteractionsDomain(ctx) {
     installed = true
     const map = getMap()
     map.on('mousemove', (ev) => {
+      if (ev.originalEvent?.buttons || map.isMoving()) return
       if (store.ui.addPlacementMode || store.ui.relocateMode) {
         map.getCanvas().style.cursor = 'crosshair'
         return
       }
+      const layers = []
       if (store?.fortify?.active && map.getLayer(FORTIFY_CANDIDATES_LAYER)) {
-        const fortifyFeats = map.queryRenderedFeatures(ev.point, {
-          layers: [FORTIFY_CANDIDATES_LAYER],
-        })
-        if (fortifyFeats.length) {
-          map.getCanvas().style.cursor = 'pointer'
-          return
-        }
+        layers.push(FORTIFY_CANDIDATES_LAYER)
       }
       if (store?.alternates?.active && map.getLayer(ALTERNATES_CANDIDATES_LAYER)) {
-        const altFeats = map.queryRenderedFeatures(ev.point, {
-          layers: [ALTERNATES_CANDIDATES_LAYER],
-        })
-        if (altFeats.length) {
-          map.getCanvas().style.cursor = 'pointer'
-          return
-        }
+        layers.push(ALTERNATES_CANDIDATES_LAYER)
       }
       if (store?.linkSolver?.panelOpen && map.getLayer(LINK_SOLVER_PEAKS_LAYER)) {
-        const hopFeats = map.queryRenderedFeatures(ev.point, {
-          layers: [LINK_SOLVER_PEAKS_LAYER],
-        })
-        if (hopFeats.length) {
-          map.getCanvas().style.cursor = 'pointer'
-          return
-        }
+        layers.push(LINK_SOLVER_PEAKS_LAYER)
       }
-      if (siteFeaturesAtPoint(map, ev.point).length) {
-        map.getCanvas().style.cursor = 'pointer'
-        return
+      for (const id of [...SITE_LAYER_IDS, LINKS_LAYER, PEAKS_SYMBOL, PEAKS_RING_CIRCLE]) {
+        if (map.getLayer(id)) layers.push(id)
       }
-      if (map.getLayer(LINKS_LAYER)) {
-        const linkFeats = map.queryRenderedFeatures(ev.point, { layers: [LINKS_LAYER] })
-        if (linkFeats.length) {
-          map.getCanvas().style.cursor = 'pointer'
-          return
-        }
-      }
-      syncMapCursor?.()
+      const hit = layers.length
+        ? map.queryRenderedFeatures(
+            [
+              [ev.point.x - SITE_HIT_PAD_PX, ev.point.y - SITE_HIT_PAD_PX],
+              [ev.point.x + SITE_HIT_PAD_PX, ev.point.y + SITE_HIT_PAD_PX],
+            ],
+            { layers },
+          )
+        : []
+      map.getCanvas().style.cursor = hit.length ? 'pointer' : ''
+      if (!hit.length) syncMapCursor?.()
     })
-    for (const peakLayer of [PEAKS_SYMBOL, PEAKS_RING_CIRCLE]) {
-      map.on('mouseenter', peakLayer, () => {
-        if (!map.getLayer(peakLayer)) return
-        if (store.ui.addPlacementMode || store.ui.relocateMode) {
-          map.getCanvas().style.cursor = 'crosshair'
-          return
-        }
-        map.getCanvas().style.cursor = 'pointer'
-      })
-      map.on('mouseleave', peakLayer, () => {
-        syncMapCursor?.()
-      })
-    }
-    map.on('mouseenter', LINKS_LAYER, () => {
-      if (store.ui.addPlacementMode || store.ui.relocateMode) {
-        map.getCanvas().style.cursor = 'crosshair'
-        return
-      }
-      map.getCanvas().style.cursor = 'pointer'
-    })
-    map.on('mouseleave', LINKS_LAYER, () => {
-      syncMapCursor?.()
-    })
-    for (const layerId of SITE_LAYER_IDS) {
-      map.on('mouseenter', layerId, () => {
-        if (store.ui.addPlacementMode || store.ui.relocateMode) {
-          map.getCanvas().style.cursor = 'crosshair'
-          return
-        }
-        map.getCanvas().style.cursor = 'pointer'
-      })
-      map.on('mouseleave', layerId, () => {
-        syncMapCursor?.()
-      })
-    }
     map.on('contextmenu', (ev) => {
       if (store.ui.relocateMode) return
       ev.preventDefault()

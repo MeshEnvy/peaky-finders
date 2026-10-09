@@ -339,6 +339,9 @@ export function createSiteAccessDomain(opts) {
   function ensureAccessForVisibleSites() {
     for (const site of getSites()) {
       if (!siteAccessShowing(site.slug)) continue
+      const lat = Number(site.lat)
+      const lon = Number(site.lon)
+      if (accessRowComplete(site.slug, store.access.bySlug[site.slug], lat, lon)) continue
       ensureSiteAccess(site)
     }
   }

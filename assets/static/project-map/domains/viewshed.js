@@ -331,7 +331,11 @@ export function createViewshedDomain(opts) {
     updatePinOverlays()
   }
 
+  /** @type {Map<string, number>} */
+  const viewshedAddTicket = new Map()
+
   function removeViewshedLayer(slug) {
+    viewshedAddTicket.set(slug, (viewshedAddTicket.get(slug) || 0) + 1)
     removeViewshedRasterLayer(map, slug)
     if (store) clearViewshedLoadingInStore(store, slug)
     else viewshedLoading.delete(slug)
@@ -339,26 +343,31 @@ export function createViewshedDomain(opts) {
   }
 
   function addViewshedLayer(vs) {
-    addViewshedRasterLayer(
+    const ticket = (viewshedAddTicket.get(vs.slug) || 0) + 1
+    viewshedAddTicket.set(vs.slug, ticket)
+    void addViewshedRasterLayer(
       map,
       vs.slug,
       { url: vs.url, coordinates: vs.coordinates },
       getViewshedOpacity(),
       viewshedLayerInsertBefore(),
-    )
-    setViewshedLayerVisibility(
-      map,
-      vs.slug,
-      isViewshedVisible(vs.slug) && isViewshedHostVisible(vs.slug),
-    )
-    if (store) clearViewshedLoadingInStore(store, vs.slug)
-    else viewshedLoading.delete(vs.slug)
-    updatePinOverlays()
-    if (vs.slug === store.ui.selectedSlug) syncViewshedCheckbox()
-    if (vs.slug === DRAFT_VIEWSHED_SLUG) {
-      if (onDraftViewshedLayerAdded) onDraftViewshedLayerAdded()
-    }
-    raiseSiteLayers()
+      () => viewshedAddTicket.get(vs.slug) === ticket && isViewshedVisible(vs.slug),
+    ).then(() => {
+      if (viewshedAddTicket.get(vs.slug) !== ticket) return
+      setViewshedLayerVisibility(
+        map,
+        vs.slug,
+        isViewshedVisible(vs.slug) && isViewshedHostVisible(vs.slug),
+      )
+      if (store) clearViewshedLoadingInStore(store, vs.slug)
+      else viewshedLoading.delete(vs.slug)
+      updatePinOverlays()
+      if (vs.slug === store.ui.selectedSlug) syncViewshedCheckbox()
+      if (vs.slug === DRAFT_VIEWSHED_SLUG) {
+        if (onDraftViewshedLayerAdded) onDraftViewshedLayerAdded()
+      }
+      raiseSiteLayers()
+    }).catch(() => {})
   }
 
   function clearViewshedLoadingState(slug) {
