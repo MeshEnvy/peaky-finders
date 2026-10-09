@@ -603,6 +603,10 @@ const MAX_SITE_PARKS: usize = 4;
 const MIN_SITE_PARK_SEP_M: f64 = 400.0;
 const MAX_ALT_PATH_LENGTH_RATIO: f64 = 1.75;
 const MAX_ALT_PATH_EDGE_SHARE: f64 = 0.70;
+/// Extra hike still treated as the same pull-off. Farther than this is an early stop.
+const SAME_PULL_OFF_HIKE_M: f64 = 40.0;
+
+pub const SITE_ACCESS_OPTIONS_REV: u8 = 3;
 
 pub fn site_access_option_id(park_lat: f64, park_lon: f64, path_index: u8) -> String {
     format!("{:.4}#{:.4}#{path_index}", park_lat, park_lon)
@@ -704,6 +708,29 @@ pub fn select_distinct_park_nodes(
             {
                 kept[worst_idx] = bud;
             }
+        }
+    }
+    kept
+}
+
+fn option_hike_m(opt: &SiteAccessOption) -> f64 {
+    opt.route.hike_m.unwrap_or(0.0)
+}
+
+/// Drop parks that stop short of a closer drive. Keep jeep-path alternates at the closest pull-off.
+pub fn drop_early_jeep_stops(options: Vec<SiteAccessOption>) -> Vec<SiteAccessOption> {
+    let Some(min_hike) = options.iter().map(option_hike_m).reduce(f64::min) else {
+        return options;
+    };
+    let mut kept: Vec<SiteAccessOption> = options
+        .into_iter()
+        .filter(|opt| option_hike_m(opt) <= min_hike + SAME_PULL_OFF_HIKE_M)
+        .collect();
+    if !kept.iter().any(|opt| opt.recommended) {
+        if let Some(opt) = kept.iter_mut().find(|opt| opt.id.ends_with("#0")) {
+            opt.recommended = true;
+        } else if let Some(opt) = kept.first_mut() {
+            opt.recommended = true;
         }
     }
     kept
@@ -889,6 +916,7 @@ pub fn build_site_access_options<E: HikeSampleElev>(
             }
         }
     }
+    let mut options = drop_early_jeep_stops(options);
     if options.is_empty() {
         if let Some(road) = probe.recommended.road_loc {
             let report = probe.recommended.budget.clone();
@@ -1002,6 +1030,30 @@ mod tests {
         let kept = select_distinct_park_nodes(vec![b, a.clone()], 400.0, 4, None);
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].park_node, a.park_node);
+    }
+
+    #[test]
+    fn drops_park_that_hikes_farther_than_the_drive() {
+        let kept = drop_early_jeep_stops(vec![
+            site_opt("41.0100#-117.7640#0", 18.0, true),
+            site_opt("41.0100#-117.7640#1", 18.0, false),
+            site_opt("41.0107#-117.7693#0", 430.0, false),
+            site_opt("41.0107#-117.7693#1", 430.0, false),
+        ]);
+        assert_eq!(kept.len(), 2);
+        assert!(kept.iter().all(|opt| opt.id.starts_with("41.0100#")));
+    }
+
+    fn site_opt(id: &str, hike_m: f64, recommended: bool) -> SiteAccessOption {
+        SiteAccessOption {
+            id: id.into(),
+            recommended,
+            passes_budget: true,
+            route: AccessRoute {
+                hike_m: Some(hike_m),
+                ..AccessRoute::default()
+            },
+        }
     }
 
     #[test]

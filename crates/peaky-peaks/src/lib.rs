@@ -30,7 +30,8 @@ pub use access_warm::{
     SessionElev, OSM_ROUTE_PAD_DEG,
 };
 pub use access_probe::{
-    build_site_access_options, select_distinct_park_nodes, site_access_option_id,
+    build_site_access_options, drop_early_jeep_stops, select_distinct_park_nodes,
+    site_access_option_id, SITE_ACCESS_OPTIONS_REV,
 };
 pub use catalog_filter::{FilterDrop, FilterPass};
 pub use gtlf::{

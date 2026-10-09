@@ -369,7 +369,7 @@ pub fn ensure_site_access_options_on_probe<E: HikeSampleElev>(
     lon: f64,
     probe: &mut AccessProbe,
 ) -> Result<()> {
-    if probe.site_options_rev >= 2
+    if probe.site_options_rev >= crate::access_probe::SITE_ACCESS_OPTIONS_REV
         && probe
             .site_options
             .as_ref()
@@ -402,7 +402,7 @@ pub fn ensure_site_access_options_on_probe<E: HikeSampleElev>(
         &ctx,
         probe,
     ));
-    probe.site_options_rev = 2;
+    probe.site_options_rev = crate::access_probe::SITE_ACCESS_OPTIONS_REV;
     if probe.probe_key.is_some() {
         let pbf_fp = project_pbf_fingerprint(project_dir);
         let prefs_key = probe_prefs_key(meta, &scan, &routing.gtlf_fingerprint, &pbf_fp);

@@ -839,6 +839,14 @@ pub fn resolve_site_display_route(
             }
         }
     }
+    if let Some(opts) = &probe.site_options {
+        if let Some(opt) = opts.iter().find(|o| o.recommended) {
+            return opt.route.clone();
+        }
+        if let Some(opt) = opts.first() {
+            return opt.route.clone();
+        }
+    }
     probe.recommended.clone()
 }
 

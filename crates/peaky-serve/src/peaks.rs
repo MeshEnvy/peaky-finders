@@ -148,7 +148,7 @@ pub fn list_peaks_payload(preset_path: &Path) -> Result<Value> {
     cached_peaks_list(preset_path)
 }
 
-pub const SITE_OPTIONS_REV: u8 = 2;
+pub const SITE_OPTIONS_REV: u8 = peaky_peaks::SITE_ACCESS_OPTIONS_REV;
 
 fn site_options_ready(probe: &PlaceAccess) -> bool {
     probe.site_options_rev >= SITE_OPTIONS_REV
