@@ -11,12 +11,8 @@ use crate::network_index::GraphEdgeIndex;
 use crate::osm::{graph_edge_is_paved_anchor, GraphEdge, JeepRoadGraph, OsmRoutingOpts};
 use crate::trail::TrailRouting;
 
-/// Douglas–Peucker tolerance: bends smaller than this on screen are removed.
-const SIMPLIFY_PX: f64 = 1.5;
 /// Drop polylines shorter than a short dash at this zoom.
 const MIN_DRAW_PX: f64 = 12.0;
-/// Parallel tracks closer than this share one corridor (longest original line wins).
-const MERGE_PX: f64 = 8.0;
 /// At a junction, continue only if a leg is within this many degrees of straight-through.
 const STROKE_CONTINUE_MAX_DEG: f64 = 50.0;
 
@@ -54,35 +50,13 @@ fn paved_visible_at_zoom(highway: &str, z: f64) -> bool {
     z >= paved_min_zoom_for_rank(highway_rank(highway))
 }
 
-fn merge_cell_deg(merge_m: f64, lat_deg: f64) -> f64 {
-    meters_to_lon_deg(merge_m, lat_deg)
-}
-
-fn simplify_epsilon_deg(line: &[[f64; 2]], zoom: f64) -> f64 {
-    let lat = line.iter().map(|c| c[1]).sum::<f64>() / line.len().max(1) as f64;
-    let simplify_m = SIMPLIFY_PX * meters_per_pixel(zoom, lat);
-    meters_to_lon_deg(simplify_m, lat)
-}
-
-/// `(merge cell degrees, minimum length meters, run Douglas–Peucker)`.
-fn drive_generalization(zoom: f64, center_lat: f64) -> (Option<f64>, f64, bool) {
+/// Minimum polyline length (m) below this zoom; no geometry distortion.
+fn drive_min_length_m(zoom: f64, center_lat: f64) -> f64 {
     if zoom >= 14.0 {
-        (None, 0.0, false)
+        0.0
     } else {
-        let mpp = meters_per_pixel(zoom, center_lat);
-        (
-            Some(merge_cell_deg(MERGE_PX * mpp, center_lat)),
-            MIN_DRAW_PX * mpp,
-            true,
-        )
+        MIN_DRAW_PX * meters_per_pixel(zoom, center_lat)
     }
-}
-
-fn snap_deg(v: f64, grid: f64) -> f64 {
-    if grid <= 0.0 {
-        return v;
-    }
-    (v / grid).round() * grid
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -245,118 +219,11 @@ fn polyline_length_m(coords: &[[f64; 2]]) -> f64 {
         .sum()
 }
 
-fn corridor_key(line: &[[f64; 2]], grid: f64) -> Vec<(i32, i32)> {
-    let mut cells = Vec::new();
-    for c in line {
-        let cell = ((c[0] / grid).round() as i32, (c[1] / grid).round() as i32);
-        if cells.last() != Some(&cell) {
-            cells.push(cell);
-        }
-    }
-    if cells.len() >= 2 {
-        let rev: Vec<(i32, i32)> = cells.iter().rev().copied().collect();
-        if rev < cells {
-            cells = rev;
-        }
-    }
-    cells
-}
-
-fn point_line_dist_deg(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
-    let scale = a[1].to_radians().cos().abs().max(0.2);
-    let (ax, ay) = (a[0] * scale, a[1]);
-    let (bx, by) = (b[0] * scale, b[1]);
-    let (px, py) = (p[0] * scale, p[1]);
-    let (dx, dy) = (bx - ax, by - ay);
-    let len2 = dx * dx + dy * dy;
-    if len2 < 1e-20 {
-        return ((px - ax).powi(2) + (py - ay).powi(2)).sqrt();
-    }
-    let t = (((px - ax) * dx + (py - ay) * dy) / len2).clamp(0.0, 1.0);
-    let (qx, qy) = (ax + t * dx, ay + t * dy);
-    ((px - qx).powi(2) + (py - qy).powi(2)).sqrt()
-}
-
-fn douglas_peucker(pts: &[[f64; 2]], epsilon_deg: f64) -> Vec<[f64; 2]> {
-    if pts.len() < 3 || epsilon_deg <= 0.0 {
-        return pts.to_vec();
-    }
-    let mut keep = vec![false; pts.len()];
-    keep[0] = true;
-    keep[pts.len() - 1] = true;
-    fn mark(pts: &[[f64; 2]], i: usize, j: usize, eps: f64, keep: &mut [bool]) {
-        let mut max_d = 0.0;
-        let mut max_i = i;
-        for k in i + 1..j {
-            let d = point_line_dist_deg(pts[k], pts[i], pts[j]);
-            if d > max_d {
-                max_d = d;
-                max_i = k;
-            }
-        }
-        if max_d > eps {
-            keep[max_i] = true;
-            mark(pts, i, max_i, eps, keep);
-            mark(pts, max_i, j, eps, keep);
-        }
-    }
-    mark(pts, 0, pts.len() - 1, epsilon_deg, &mut keep);
-    pts.iter()
-        .enumerate()
-        .filter(|(i, _)| keep[*i])
-        .map(|(_, p)| *p)
+fn filter_short_lines(lines: Vec<Vec<[f64; 2]>>, min_len_m: f64) -> Vec<Vec<[f64; 2]>> {
+    lines
+        .into_iter()
+        .filter(|line| line.len() >= 2 && polyline_length_m(line) + 1.0 >= min_len_m)
         .collect()
-}
-
-/// Grid cells group nearby tracks. The drawn line is the longest original polyline, then simplified.
-fn generalize_lines(
-    lines: Vec<Vec<[f64; 2]>>,
-    merge_cell: Option<f64>,
-    min_len_m: f64,
-    zoom: f64,
-    simplify: bool,
-) -> Vec<Vec<[f64; 2]>> {
-    let finish = |line: Vec<[f64; 2]>| -> Option<Vec<[f64; 2]>> {
-        if line.len() < 2 {
-            return None;
-        }
-        let out = if simplify {
-            douglas_peucker(&line, simplify_epsilon_deg(&line, zoom))
-        } else {
-            line
-        };
-        (out.len() >= 2).then_some(out)
-    };
-
-    let Some(grid) = merge_cell else {
-        return lines
-            .into_iter()
-            .filter(|line| line.len() >= 2 && polyline_length_m(line) + 1.0 >= min_len_m)
-            .filter_map(finish)
-            .collect();
-    };
-    let mut best: HashMap<Vec<(i32, i32)>, (f64, Vec<[f64; 2]>)> = HashMap::new();
-    for line in lines {
-        if line.len() < 2 {
-            continue;
-        }
-        let len = polyline_length_m(&line);
-        if len + 1.0 < min_len_m {
-            continue;
-        }
-        let key = corridor_key(&line, grid);
-        if key.len() < 2 {
-            continue;
-        }
-        match best.get_mut(&key) {
-            Some(slot) if slot.0 >= len => {}
-            Some(slot) => *slot = (len, line),
-            None => {
-                best.insert(key, (len, line));
-            }
-        }
-    }
-    best.into_values().filter_map(|(_, line)| finish(line)).collect()
 }
 
 fn node_bearing(graph: &JeepRoadGraph, from: u32, to: u32) -> f64 {
@@ -435,11 +302,7 @@ fn extend_stroke(
     }
 }
 
-fn chain_edges(
-    graph: &JeepRoadGraph,
-    edges: HashSet<(u32, u32)>,
-    grid_deg: Option<f64>,
-) -> Vec<Vec<[f64; 2]>> {
+fn chain_edges(graph: &JeepRoadGraph, edges: HashSet<(u32, u32)>) -> Vec<Vec<[f64; 2]>> {
     if edges.is_empty() {
         return Vec::new();
     }
@@ -464,11 +327,7 @@ fn chain_edges(
             .iter()
             .map(|&n| {
                 let (lat, lon) = graph.node_coords(n);
-                if let Some(grid) = grid_deg {
-                    [round4(snap_deg(lon, grid)), round4(snap_deg(lat, grid))]
-                } else {
-                    [round4(lon), round4(lat)]
-                }
+                [lon, lat]
             })
             .collect();
         coords = dedupe_consecutive_coords(coords);
@@ -494,10 +353,6 @@ fn dedupe_consecutive_coords(coords: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
     out
 }
 
-fn round4(v: f64) -> f64 {
-    (v * 10_000.0).round() / 10_000.0
-}
-
 fn empty_fc() -> FeatureCollection {
     FeatureCollection {
         bbox: None,
@@ -516,7 +371,7 @@ fn lines_to_fc(lines: Vec<Vec<[f64; 2]>>) -> FeatureCollection {
         .map(|coords| {
             coords
                 .into_iter()
-                .map(|c| vec![round4(c[0]), round4(c[1])])
+                .map(|c| vec![c[0], c[1]])
                 .collect()
         })
         .collect();
@@ -542,11 +397,9 @@ fn drive_role_fc(
 ) -> FeatureCollection {
     let center_lat = (view.south + view.north) * 0.5;
     let set = filter_drive_edges_for_zoom(graph, edges, role, zoom);
-    let chained = chain_edges(graph, set, None);
-    let (merge, min_m, simplify) = drive_generalization(zoom, center_lat);
-    lines_to_fc(generalize_lines(
-        chained, merge, min_m, zoom, simplify,
-    ))
+    let chained = chain_edges(graph, set);
+    let min_m = drive_min_length_m(zoom, center_lat);
+    lines_to_fc(filter_short_lines(chained, min_m))
 }
 
 fn hiking_fc(
@@ -562,14 +415,14 @@ fn hiking_fc(
     let index = routing.trail_edge_index();
     let edges = collect_all_undirected_edges(&trails.graph, index, view);
     let filtered = filter_trail_edges_for_zoom(&trails.graph, edges, tier);
-    let chained = chain_edges(&trails.graph, filtered, None);
+    let chained = chain_edges(&trails.graph, filtered);
     let center_lat = (view.south + view.north) * 0.5;
-    let (merge, min_m, simplify) = match tier {
-        ZoomTier::Full => (None, 0.0, false),
-        ZoomTier::Medium => drive_generalization(zoom, center_lat),
-        ZoomTier::Coarse => (None, 0.0, false),
+    let min_m = if tier == ZoomTier::Medium {
+        drive_min_length_m(zoom, center_lat)
+    } else {
+        0.0
     };
-    lines_to_fc(generalize_lines(chained, merge, min_m, zoom, simplify))
+    lines_to_fc(filter_short_lines(chained, min_m))
 }
 
 /// One access-network layer clipped to the map viewport.
@@ -698,9 +551,8 @@ mod tests {
         let center_lat = (view.south + view.north) * 0.5;
         let all = drive_edges_in_view(graph, &HashSet::new(), view);
         let set = filter_drive_edges_for_zoom(graph, &all, DriveRole::Jeep, zoom);
-        let chained = chain_edges(graph, set, None);
-        let (merge, min_m, simplify) = drive_generalization(zoom, center_lat);
-        generalize_lines(chained, merge, min_m, zoom, simplify)
+        let chained = chain_edges(graph, set);
+        filter_short_lines(chained, drive_min_length_m(zoom, center_lat))
     }
 
     fn add_track_run(graph: &mut JeepRoadGraph, steps: usize, dlat: f64, lon: f64, mut id: i64) {
@@ -739,7 +591,7 @@ mod tests {
         };
         let edges = drive_edges_in_view(&graph, &paved_tags, view);
         assert_eq!(edges.len(), 2);
-        let lines = chain_edges(&graph, edges.keys().copied().collect(), None);
+        let lines = chain_edges(&graph, edges.keys().copied().collect());
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].len(), 3);
     }
@@ -814,17 +666,12 @@ mod tests {
     }
 
     #[test]
-    fn low_zoom_merges_parallel_tracks() {
+    fn low_zoom_keeps_parallel_tracks_separate() {
         let mut graph = JeepRoadGraph::new();
         add_track_run(&mut graph, 20, 0.01, -119.0, -1);
         add_track_run(&mut graph, 20, 0.01, -119.005, -10_000);
         let lines = jeep_lines(&graph, 8.0);
-        assert_eq!(lines.len(), 1);
-        let lon = lines[0][0][0];
-        assert!(
-            (lon + 119.0).abs() < 0.001 || (lon + 119.005).abs() < 0.001,
-            "line followed the snap grid at {lon}"
-        );
+        assert_eq!(lines.len(), 2, "parallel tracks stay distinct without corridor merge");
     }
 
     #[test]
@@ -1007,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn grid_snap_merges_collinear_segments() {
+    fn chains_collinear_segments() {
         let mut graph = JeepRoadGraph::new();
         let mut map = HashMap::new();
         let mut id = -1i64;
@@ -1019,9 +866,9 @@ mod tests {
         graph.add_way_segment_public(n0, n1, 39.0, -119.0, 39.001, -119.0, "primary", None, None, false);
         graph.add_way_segment_public(n1, n2, 39.001, -119.0, 39.002, -119.0, "primary", None, None, false);
         let edges: HashSet<_> = [(n0, n1), (n1, n2)].into_iter().collect();
-        let lines = chain_edges(&graph, edges, Some(0.002));
+        let lines = chain_edges(&graph, edges);
         assert_eq!(lines.len(), 1);
-        assert!(lines[0].len() >= 2);
+        assert_eq!(lines[0].len(), 3);
     }
 
     #[test]

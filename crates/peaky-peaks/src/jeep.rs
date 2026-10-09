@@ -11,7 +11,7 @@ use crate::hike::{
     grade_histogram, haversine_m, slope_deg_to_grade_pct, HikeProfilePoint, HikeSampleElev,
     HikeSegment, GradeHistogramBucket,
 };
-use crate::osm::{JeepRoadGraph, OsmRouting, PavedAnchorIndex};
+use crate::osm::{graph_edge_is_paved_anchor, JeepRoadGraph, OsmRouting, PavedAnchorIndex};
 
 const SNAP_PARK_M: f64 = 250.0;
 
@@ -98,12 +98,15 @@ pub struct JeepProfileDetailed {
     pub profile: Vec<HikeProfilePoint>,
     pub histogram: Vec<GradeHistogramBucket>,
     pub road_segments: Vec<JeepRoadSegment>,
+    /// Map/KMZ line: graph vertices on jeep-class edges only (lat, lon).
+    pub jeep_line: Vec<(f64, f64)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct JeepRouteResult {
     pub paved_lat: f64,
     pub paved_lon: f64,
+    pub path_nodes: Vec<u32>,
     pub coords: Vec<(f64, f64)>,
     pub horiz_m: f64,
     pub road_segments: Vec<JeepRoadSegment>,
@@ -206,10 +209,49 @@ pub fn reconstruct_jeep_route(
     JeepRouteResult {
         paved_lat,
         paved_lon,
+        path_nodes,
         coords,
         horiz_m,
         road_segments,
     }
+}
+
+/// Lon/lat polyline for map paint: only edges that are not paved anchors.
+pub fn jeep_class_line_from_path(
+    graph: &JeepRoadGraph,
+    path_nodes: &[u32],
+    paved_tags: &std::collections::HashSet<&str>,
+) -> Vec<(f64, f64)> {
+    if path_nodes.len() < 2 {
+        return Vec::new();
+    }
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    for w in path_nodes.windows(2) {
+        let a = w[0];
+        let b = w[1];
+        let Some(edge) = graph.edges(a).iter().find(|e| e.to == b) else {
+            continue;
+        };
+        if graph_edge_is_paved_anchor(edge, paved_tags) {
+            continue;
+        }
+        let (lat, lon) = graph.node_coords(a);
+        push_line_vertex(&mut out, lat, lon);
+        let (lat_b, lon_b) = graph.node_coords(b);
+        push_line_vertex(&mut out, lat_b, lon_b);
+    }
+    out
+}
+
+fn push_line_vertex(out: &mut Vec<(f64, f64)>, lat: f64, lon: f64) {
+    if out
+        .last()
+        .map(|&(la, lo)| (la - lat).abs() < 1e-9 && (lo - lon).abs() < 1e-9)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    out.push((lat, lon));
 }
 
 pub fn undirected_edge_key(a: u32, b: u32) -> (u32, u32) {
@@ -606,6 +648,7 @@ pub fn profile_along_polyline<E: HikeSampleElev>(
             }],
             histogram: vec![],
             road_segments: road_segments.to_vec(),
+            jeep_line: vec![],
         });
     }
     let step = step_m.max(10.0);
@@ -698,6 +741,7 @@ pub fn profile_along_polyline<E: HikeSampleElev>(
         profile,
         histogram,
         road_segments: road_segments.to_vec(),
+        jeep_line: vec![],
     })
 }
 
@@ -741,6 +785,14 @@ pub fn stored_peak_jeep(detail: &JeepProfileDetailed) -> PeakJeepProfile {
                 highway: s.highway.clone(),
                 tracktype: s.tracktype.clone(),
                 dist_m: round1(s.dist_m),
+            })
+            .collect(),
+        jeep_line: detail
+            .jeep_line
+            .iter()
+            .map(|&(lat, lon)| peaky_preset::PeakJeepLinePoint {
+                lat: round_coord(lat),
+                lon: round_coord(lon),
             })
             .collect(),
     }

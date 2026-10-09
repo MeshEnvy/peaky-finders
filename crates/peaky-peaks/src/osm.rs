@@ -330,6 +330,158 @@ impl JeepRoadGraph {
     ) {
         self.add_way_segment(a, b, lat1, lon1, lat2, lon2, highway, tracktype, surface, fourwd_only);
     }
+
+    pub(crate) fn remove_undirected_edge(&mut self, a: u32, b: u32) {
+        self.adj[a as usize].retain(|e| e.to != b);
+        self.adj[b as usize].retain(|e| e.to != a);
+    }
+
+    /// Split ``a–b`` at ``(mid_lat, mid_lon)`` and return the new vertex index.
+    pub(crate) fn split_undirected_edge(
+        &mut self,
+        a: u32,
+        b: u32,
+        mid_lat: f64,
+        mid_lon: f64,
+        edge: &GraphEdge,
+    ) -> u32 {
+        self.remove_undirected_edge(a, b);
+        let mid = self.insert_node(mid_lat, mid_lon);
+        let (lat_a, lon_a) = self.node_coords(a);
+        let (lat_b, lon_b) = self.node_coords(b);
+        let tt = edge.tracktype.as_deref();
+        let surf = edge.surface.as_deref();
+        self.add_way_segment_public(
+            a,
+            mid,
+            lat_a,
+            lon_a,
+            mid_lat,
+            mid_lon,
+            &edge.highway,
+            tt,
+            surf,
+            edge.fourwd_only,
+        );
+        self.add_way_segment_public(
+            mid,
+            b,
+            mid_lat,
+            mid_lon,
+            lat_b,
+            lon_b,
+            &edge.highway,
+            tt,
+            surf,
+            edge.fourwd_only,
+        );
+        mid
+    }
+}
+
+/// Snap supplemental / trail vertices to the live graph (reuse nodes or split edges).
+pub(crate) fn resolve_vertex_welded(
+    graph: &mut JeepRoadGraph,
+    node_index: &mut GraphNodeIndex,
+    lat: f64,
+    lon: f64,
+    max_snap_m: f64,
+    supplemental_id: &mut i64,
+    id_map: &mut HashMap<i64, u32>,
+) -> u32 {
+    if let Some(n) = node_index.nearest_node(lat, lon, max_snap_m) {
+        return n;
+    }
+    if let Some((a, b, plat, plon, dist_m)) =
+        nearest_edge_midpoint(graph, node_index, lat, lon, max_snap_m)
+    {
+        let (lat_a, lon_a) = graph.node_coords(a);
+        let (lat_b, lon_b) = graph.node_coords(b);
+        if haversine_m(lat, lon, lat_a, lon_a) <= max_snap_m {
+            return a;
+        }
+        if haversine_m(lat, lon, lat_b, lon_b) <= max_snap_m {
+            return b;
+        }
+        if dist_m <= max_snap_m {
+            let edge = graph
+                .edges(a)
+                .iter()
+                .find(|e| e.to == b)
+                .cloned()
+                .expect("nearest edge exists");
+            let mid = graph.split_undirected_edge(a, b, plat, plon, &edge);
+            node_index.insert_node(plat, plon, mid);
+            return mid;
+        }
+    }
+    let id = *supplemental_id;
+    *supplemental_id -= 1;
+    let n = graph.get_or_insert_node_public(id, lat, lon, id_map);
+    node_index.insert_node(lat, lon, n);
+    n
+}
+
+fn nearest_edge_midpoint(
+    graph: &JeepRoadGraph,
+    node_index: &GraphNodeIndex,
+    lat: f64,
+    lon: f64,
+    max_m: f64,
+) -> Option<(u32, u32, f64, f64, f64)> {
+    let mut best: Option<(u32, u32, f64, f64, f64)> = None;
+    for node in node_index.nodes_within(lat, lon, max_m + 50.0) {
+        for edge in graph.edges(node) {
+            let other = edge.to;
+            if node >= other {
+                continue;
+            }
+            let (lat1, lon1) = graph.node_coords(node);
+            let (lat2, lon2) = graph.node_coords(other);
+            let (plat, plon, dist_m) = project_point_on_segment(lat, lon, lat1, lon1, lat2, lon2);
+            if dist_m > max_m + 1.0 {
+                continue;
+            }
+            if best.map(|(_, _, _, _, bd)| dist_m < bd).unwrap_or(true) {
+                best = Some((node, other, plat, plon, dist_m));
+            }
+        }
+    }
+    best
+}
+
+fn project_point_on_segment(
+    lat: f64,
+    lon: f64,
+    lat1: f64,
+    lon1: f64,
+    lat2: f64,
+    lon2: f64,
+) -> (f64, f64, f64) {
+    let dist_m = dist_point_to_segment_m(lat, lon, lat1, lon1, lat2, lon2);
+    let seg_len = haversine_m(lat1, lon1, lat2, lon2);
+    if seg_len < 0.5 {
+        return (lat1, lon1, haversine_m(lat, lon, lat1, lon1));
+    }
+    let cos = lat1.to_radians().cos().abs().max(1e-6);
+    let x1 = lon1 * cos;
+    let y1 = lat1;
+    let x2 = lon2 * cos;
+    let y2 = lat2;
+    let x = lon * cos;
+    let y = lat;
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 < 1e-18 {
+        0.0
+    } else {
+        ((x - x1) * dx + (y - y1) * dy) / len2
+    }
+    .clamp(0.0, 1.0);
+    let plat = lat1 + t * (lat2 - lat1);
+    let plon = lon1 + t * (lon2 - lon1);
+    (plat, plon, dist_m)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1133,39 +1285,27 @@ pub fn merge_supplemental_jeep_lines_progress<F>(
         added_ways += 1;
         new_samples.extend(sample_way(&line.coords, sample_step_m));
 
-        let mut coords = line.coords.clone();
-        if let Some(node) = routing.graph_nodes.nearest_node(
-            coords[0].0,
-            coords[0].1,
-            MERGE_ENDPOINT_SNAP_M,
-        ) {
-            coords[0] = routing.graph.node_coords(node);
-        }
-        if let Some(node) = routing.graph_nodes.nearest_node(
-            coords.last().unwrap().0,
-            coords.last().unwrap().1,
-            MERGE_ENDPOINT_SNAP_M,
-        ) {
-            let last = coords.len() - 1;
-            coords[last] = routing.graph.node_coords(node);
-        }
-
-        let mut vert_nodes = Vec::with_capacity(coords.len());
-        for &(lat, lon) in &coords {
-            let id = next_id;
-            next_id -= 1;
-            let n = routing
-                .graph
-                .get_or_insert_node_public(id, lat, lon, &mut graph_node_map);
-            routing.graph_nodes.insert_node(lat, lon, n);
+        let mut vert_nodes = Vec::with_capacity(line.coords.len());
+        for &(lat, lon) in &line.coords {
+            let n = resolve_vertex_welded(
+                &mut routing.graph,
+                &mut routing.graph_nodes,
+                lat,
+                lon,
+                MERGE_ENDPOINT_SNAP_M,
+                &mut next_id,
+                &mut graph_node_map,
+            );
             vert_nodes.push(n);
         }
-        for i in 0..coords.len() - 1 {
-            let (lat1, lon1) = coords[i];
-            let (lat2, lon2) = coords[i + 1];
+        for i in 0..vert_nodes.len().saturating_sub(1) {
+            let a = vert_nodes[i];
+            let b = vert_nodes[i + 1];
+            let (lat1, lon1) = routing.graph.node_coords(a);
+            let (lat2, lon2) = routing.graph.node_coords(b);
             routing.graph.add_way_segment_public(
-                vert_nodes[i],
-                vert_nodes[i + 1],
+                a,
+                b,
                 lat1,
                 lon1,
                 lat2,
@@ -1446,6 +1586,47 @@ mod tests {
         let flat = FlatElev(2000.0);
         let profile = profile_hike(&flat, rlat, rlon, peak_lat, peak_lon, 30.0).unwrap();
         assert!(profile_passes(&profile, 45.0));
+    }
+
+    #[test]
+    fn supplemental_line_welds_to_existing_node() {
+        let mut graph = JeepRoadGraph::new();
+        let mut map = HashMap::new();
+        let mut id = -1i64;
+        let n0 = graph.get_or_insert_node_public(id, 38.0, -117.0, &mut map);
+        id -= 1;
+        let n1 = graph.get_or_insert_node_public(id, 38.01, -117.0, &mut map);
+        graph.add_way_segment_public(n0, n1, 38.0, -117.0, 38.01, -117.0, "primary", None, None, false);
+        let mut routing = OsmRouting {
+            jeep_roads: JeepRoadIndex {
+                tree: RTree::bulk_load(vec![]),
+                point_count: 0,
+                way_count: 0,
+            },
+            graph,
+            paved: PavedAnchorIndex::test_from_points(&[(38.0, -117.0)]),
+            graph_nodes: GraphNodeIndex::empty(),
+        };
+        routing.graph_nodes = GraphNodeIndex::from_graph(&routing.graph);
+        let line = SupplementalLine {
+            coords: vec![(38.01, -117.0), (38.02, -117.0)],
+            highway: "track".to_string(),
+            tracktype: Some("grade3".to_string()),
+        };
+        merge_supplemental_jeep_lines(&mut routing, &[line], 30.0);
+        assert_eq!(
+            routing.graph.node_count(),
+            3,
+            "spur start reuses n1; one new node at 38.02"
+        );
+        assert!(
+            routing
+                .graph
+                .edges(n1)
+                .iter()
+                .any(|e| e.to != n0 && e.highway == "track"),
+            "track continues from welded node"
+        );
     }
 
     #[test]

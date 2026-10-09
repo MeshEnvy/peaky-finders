@@ -15,7 +15,7 @@ use crate::osm::{
 };
 
 pub const OSM_ROUTING_CACHE_VERSION: u32 = 1;
-pub const MERGED_ROUTING_CACHE_VERSION: u32 = 1;
+pub const MERGED_ROUTING_CACHE_VERSION: u32 = 2;
 
 const NONE: u8 = 255;
 

@@ -9,15 +9,14 @@ use peaky_preset::{
 };
 use peaky_preset::difficulty::difficulty_rank;
 
-use crate::access::{classify_access_mode, BuiltAccess, LEG_MIN_M};
+use crate::access::{BuiltAccess, LEG_MIN_M};
 use crate::catalog_filter::{FilterDrop, FilterPass};
 use crate::hike::hike_detail_from_stored;
 use crate::hike::{
     haversine_m, profile_passes, stored_peak_hike, zero_hike_at, HikeProfile, HikeSampleElev,
 };
-use crate::hike_route::{profile_polyline_detailed, resolve_hike};
 use crate::jeep::{
-    jeep_class_usage, jeep_path_undirected_edges, profile_along_polyline, reconstruct_jeep_route,
+    jeep_class_usage, jeep_path_undirected_edges, reconstruct_jeep_route,
     shortest_horiz_prev_from_paved, stored_peak_jeep, JeepLengthBudget, JeepRoadSegment,
     PavedReachTree,
 };
@@ -36,6 +35,7 @@ pub struct AccessContext<'a> {
     pub jeep_budget: JeepLengthBudget,
     pub preference: AccessPreferenceConfig,
     pub difficulty: PeaksDifficultyConfig,
+    pub paved_highways: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -115,92 +115,41 @@ fn collect_park_nodes<E: HikeSampleElev>(
 
 fn build_at_park_node<E: HikeSampleElev>(
     elev: &E,
-    routing: &OsmRouting,
-    trails: Option<&TrailRouting>,
+    ctx: &AccessContext<'_>,
     prev: &std::collections::HashMap<u32, (u32, crate::osm::GraphEdge)>,
     park_node: u32,
     dest_lat: f64,
     dest_lon: f64,
-    max_slope_deg: f64,
-    hike_path_max_m: f64,
-    profile_sample_m: f64,
     gate_hike: bool,
 ) -> Option<BuiltAccess> {
-    let jeep_route = reconstruct_jeep_route(&routing.graph, prev, park_node);
-    let (park_lat, park_lon) = jeep_route.coords.last().copied()?;
-    let trail_route = trails
+    let (park_lat, park_lon) = ctx.routing.graph.node_coords(park_node);
+    let trail_route = ctx
+        .trails
         .filter(|t| !t.is_empty())
         .and_then(|t| route_trail_closest_approach(t, park_lat, park_lon, dest_lat, dest_lon, TRAIL_MAX_M));
-    let (trail_end_lat, trail_end_lon, trail_coords) = if let Some(ref tr) = trail_route {
-        let (tlat, tlon) = tr.coords.last().copied().unwrap_or((park_lat, park_lon));
-        (tlat, tlon, tr.coords.clone())
+    let (trail_end_lat, trail_end_lon) = if let Some(ref tr) = trail_route {
+        tr.coords.last().copied().unwrap_or((park_lat, park_lon))
     } else {
-        (park_lat, park_lon, Vec::new())
+        (park_lat, park_lon)
     };
     let crow = haversine_m(trail_end_lat, trail_end_lon, dest_lat, dest_lon);
-    // Gated leg: a hike is at least its crow distance, so a far trailhead can
-    // never pass the length gate. Skip the A* instead of routing then rejecting.
-    if gate_hike && crow > hike_path_max_m + 1.0 {
+    if gate_hike && crow > ctx.hike_path_max_m + 1.0 {
         return None;
     }
-    let hike_detail = if crow <= LEG_MIN_M {
-        zero_hike_at(elev, dest_lat, dest_lon)
-    } else if gate_hike {
-        resolve_hike(
-            elev,
-            trail_end_lat,
-            trail_end_lon,
-            dest_lat,
-            dest_lon,
-            max_slope_deg,
-            hike_path_max_m,
-            profile_sample_m,
-            true,
-        )?
-    } else {
-        resolve_hike(
-            elev,
-            trail_end_lat,
-            trail_end_lon,
-            dest_lat,
-            dest_lon,
-            max_slope_deg,
-            hike_path_max_m.max(crow * 2.0 + 500.0),
-            profile_sample_m,
-            false,
-        )?
-    };
-    let jeep_detail = profile_along_polyline(
+    crate::access::build_from_park_node(
         elev,
-        &jeep_route.coords,
-        profile_sample_m,
-        &jeep_route.road_segments,
-    )?;
-    let trail_detail = if trail_coords.len() >= 2 {
-        profile_polyline_detailed(elev, &trail_coords, profile_sample_m)?
-    } else {
-        zero_hike_at(elev, trail_end_lat, trail_end_lon)
-    };
-    let park_paved = jeep_detail.horiz_m <= LEG_MIN_M;
-    Some(BuiltAccess {
-        mode: classify_access_mode(park_paved, hike_detail.horiz_m),
-        road_lat: park_lat,
-        road_lon: park_lon,
-        road_m: haversine_m(park_lat, park_lon, dest_lat, dest_lon),
-        paved_lat: jeep_route.paved_lat,
-        paved_lon: jeep_route.paved_lon,
-        jeep_m: jeep_detail.horiz_m,
-        hike_m: hike_detail.hike_m_3d,
-        max_slope_deg: hike_detail.max_slope_deg,
-        hike: stored_peak_hike(&hike_detail),
-        jeep: stored_peak_jeep(&jeep_detail),
-        hike_detail,
-        trail_lat: trail_end_lat,
-        trail_lon: trail_end_lon,
-        trail_m: trail_detail.horiz_m,
-        trail: stored_peak_hike(&trail_detail),
-        trail_detail,
-    })
+        ctx.routing,
+        ctx.trails,
+        prev,
+        park_node,
+        dest_lat,
+        dest_lon,
+        ctx.max_slope_deg,
+        ctx.hike_path_max_m,
+        ctx.profile_sample_m,
+        gate_hike,
+        &ctx.paved_highways,
+    )
 }
 
 fn preference_score(
@@ -352,19 +301,7 @@ fn score_candidates<E: HikeSampleElev>(
     park_nodes
         .iter()
         .filter_map(|&park_node| {
-            let built = build_at_park_node(
-                elev,
-                ctx.routing,
-                ctx.trails,
-                prev,
-                park_node,
-                dest_lat,
-                dest_lon,
-                ctx.max_slope_deg,
-                ctx.hike_path_max_m,
-                ctx.profile_sample_m,
-                gate_hike,
-            )?;
+            let built = build_at_park_node(elev, ctx, prev, park_node, dest_lat, dest_lon, gate_hike)?;
             let passes_budget = !gate_hike
                 || hike_passes_budget(&built, ctx.hike_path_max_m, ctx.max_slope_deg);
             let score = preference_score(&built, &ctx.preference, &ctx.difficulty);
@@ -754,19 +691,7 @@ fn build_option_at_park<E: HikeSampleElev>(
     path_index: u8,
     recommended: bool,
 ) -> Option<SiteAccessOption> {
-    let built = build_at_park_node(
-        elev,
-        ctx.routing,
-        ctx.trails,
-        prev,
-        park_node,
-        dest_lat,
-        dest_lon,
-        ctx.max_slope_deg,
-        ctx.hike_path_max_m,
-        ctx.profile_sample_m,
-        false,
-    )?;
+    let built = build_at_park_node(elev, ctx, prev, park_node, dest_lat, dest_lon, false)?;
     let report = compute_budget_report(
         &built,
         &ctx.jeep_budget,
@@ -1005,6 +930,7 @@ mod tests {
                     profile: vec![],
                     histogram: vec![],
                     road_segments: vec![],
+                    jeep_line: vec![],
                 }),
                 hike_detail: zero_hike_at(&FlatElev(2000.0), lat, lon),
                 trail_lat: lat,

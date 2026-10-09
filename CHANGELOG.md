@@ -19,6 +19,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **Jeep route vs road overlay** — GTLF and trail vertices weld into the drive graph (reuse nodes or split edges) so Dijkstra paths follow drawn tracks. Site jeep lines use graph `jeep_line` (jeep-class edges only); road overlay keeps raw graph coordinates (no Douglas-Peucker or parallel-track merge). `ACCESS_ALGO_VERSION` → **17**; merged routing cache version **2** (re-warm access after serve rebuilds `routing-merged.bin`).
 - **Map pan with viewsheds** — cursor hover no longer redraws the map on every mouse move. Viewsheds on the map are drawn from a 512 px image. Link distance labels show from zoom 8. Turning a road overlay off drops its geometry so panning does not keep tiling it.
 - **Split-book links file** — when `sites.yaml` is split out, manual RF links live in **`links.json`** (read **`links.yaml`** or legacy `links:` in `sites.yaml` if present). Saves write JSON. Link rows may be a slug pair or a record with optional provenance (`origin`, `attest`, dates).
 - **Sites and Peaks list controls** — each row: crosshairs (show in view), eye (hide pin/peak on map), **v** (viewshed only). Site sheet no longer has a viewshed toggle.

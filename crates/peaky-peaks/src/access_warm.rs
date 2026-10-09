@@ -206,6 +206,7 @@ fn access_context<'a>(
         jeep_budget,
         preference,
         difficulty,
+        paved_highways: meta.paved_highways.clone(),
     }
 }
 

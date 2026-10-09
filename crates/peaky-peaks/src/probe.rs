@@ -141,6 +141,7 @@ pub fn probe_access_point_explain(
         jeep_budget,
         preference: scan.preference.clone(),
         difficulty: scan.difficulty.clone(),
+        paved_highways: access_meta.paved_highways.clone(),
     };
     probe_explain(&elev, lat, lon, &ctx).context("no paved anchor in loaded routing graph")
 }

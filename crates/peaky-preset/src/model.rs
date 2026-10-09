@@ -632,7 +632,7 @@ impl Default for PeakAccessRules {
 
 /// Bump when hike/jeep routing or DEM profile semantics change (forces recompute).
 /// Written into ``access/_meta.yaml`` as ``algo_version``.
-pub const ACCESS_ALGO_VERSION: u32 = 16;
+pub const ACCESS_ALGO_VERSION: u32 = 17;
 
 /// Bump when peak eligibility / summit snap / index schema semantics change.
 pub const PEAK_ALGO_VERSION: u32 = 10;
@@ -729,6 +729,13 @@ pub struct PeakJeepProfilePoint {
     pub lon: f64,
 }
 
+/// Graph vertex on jeep-class edges only (map orange line).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeakJeepLinePoint {
+    pub lat: f64,
+    pub lon: f64,
+}
+
 /// Distance along jeep route colored by OSM road class.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PeakJeepRoadSegment {
@@ -752,6 +759,8 @@ pub struct PeakJeepProfile {
     pub profile: Vec<PeakJeepProfilePoint>,
     pub histogram: Vec<PeakHikeGradeBucket>,
     pub segments: Vec<PeakJeepRoadSegment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jeep_line: Vec<PeakJeepLinePoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -838,6 +847,7 @@ pub fn resolve_site_display_route(
                 return opt.route.clone();
             }
         }
+        return probe.recommended.clone();
     }
     if let Some(opts) = &probe.site_options {
         if let Some(opt) = opts.iter().find(|o| o.recommended) {

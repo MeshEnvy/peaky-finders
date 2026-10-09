@@ -115,6 +115,12 @@ function hikePathCoordinates(peak) {
 
 /** @param {object} peak */
 function jeepPathCoordinates(peak) {
+  const line = peak.jeep?.jeep_line
+  if (Array.isArray(line) && line.length >= 2) {
+    return line
+      .filter((p) => Number.isFinite(p.lon) && Number.isFinite(p.lat))
+      .map((p) => [p.lon, p.lat])
+  }
   const profile = peak.jeep?.profile
   if (!Array.isArray(profile) || profile.length < 2) return null
   return profile

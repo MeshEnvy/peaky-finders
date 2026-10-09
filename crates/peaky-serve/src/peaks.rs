@@ -378,6 +378,7 @@ mod tests {
                     ],
                     histogram: vec![],
                     segments: vec![],
+                    jeep_line: vec![],
                 }),
                 ..AccessRoute::default()
             },

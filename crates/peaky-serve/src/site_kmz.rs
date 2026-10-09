@@ -203,6 +203,14 @@ fn line_from_hike(hike: &PeakHikeProfile) -> Option<Vec<(f64, f64, f64)>> {
 }
 
 fn line_from_jeep(jeep: &PeakJeepProfile) -> Option<Vec<(f64, f64, f64)>> {
+    if jeep.jeep_line.len() >= 2 {
+        return Some(
+            jeep.jeep_line
+                .iter()
+                .map(|p| (p.lon, p.lat, 0.0))
+                .collect(),
+        );
+    }
     if jeep.profile.len() < 2 {
         return None;
     }

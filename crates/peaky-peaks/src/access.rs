@@ -9,10 +9,11 @@ use std::collections::{HashMap, HashSet};
 
 use crate::hike_route::profile_polyline_detailed;
 use crate::jeep::{
-    dijkstra_from_paved, profile_along_polyline, reconstruct_jeep_route, route_jeep_detailed,
-    stored_peak_jeep, JeepLengthBudget, JeepProfileDetailed,
+    dijkstra_from_paved, jeep_class_line_from_path, profile_along_polyline, reconstruct_jeep_route,
+    route_jeep_detailed, stored_peak_jeep, JeepLengthBudget, JeepProfileDetailed,
 };
 use crate::osm::{OsmRouting, PavedAnchorIndex};
+use peaky_preset::AccessMeta;
 use crate::park::ParkHike;
 use crate::trail::{route_trail_closest_approach, TrailRouting, TRAIL_MAX_M, TRAIL_PARK_SNAP_M};
 
@@ -380,6 +381,7 @@ fn build_from_park_routes<E: HikeSampleElev>(
     hike_path_max_m: f64,
     profile_sample_m: f64,
     gate_hike: bool,
+    paved_highways: &[String],
 ) -> Option<BuiltAccess> {
     if routes.is_empty() {
         return None;
@@ -417,6 +419,7 @@ fn build_from_park_routes<E: HikeSampleElev>(
         hike_path_max_m,
         profile_sample_m,
         gate_hike,
+        paved_highways,
     )
 }
 
@@ -438,7 +441,7 @@ fn pick_best_candidate(candidates: &[AccessCandidate]) -> Option<&AccessCandidat
     })
 }
 
-fn build_from_park_node<E: HikeSampleElev>(
+pub(crate) fn build_from_park_node<E: HikeSampleElev>(
     elev: &E,
     routing: &OsmRouting,
     trails: Option<&TrailRouting>,
@@ -450,8 +453,12 @@ fn build_from_park_node<E: HikeSampleElev>(
     hike_path_max_m: f64,
     profile_sample_m: f64,
     gate_hike: bool,
+    paved_highways: &[String],
 ) -> Option<BuiltAccess> {
     let jeep_route = reconstruct_jeep_route(&routing.graph, prev, park_node);
+    let paved_tags: HashSet<&str> = paved_highways.iter().map(String::as_str).collect();
+    let jeep_line =
+        jeep_class_line_from_path(&routing.graph, &jeep_route.path_nodes, &paved_tags);
     let (park_lat, park_lon) = jeep_route.coords.last().copied()?;
     let trail_route = trails
         .filter(|t| !t.is_empty())
@@ -490,12 +497,13 @@ fn build_from_park_node<E: HikeSampleElev>(
             false,
         )?
     };
-    let jeep_detail = profile_along_polyline(
+    let mut jeep_detail = profile_along_polyline(
         elev,
         &jeep_route.coords,
         profile_sample_m,
         &jeep_route.road_segments,
     )?;
+    jeep_detail.jeep_line = jeep_line;
     let trail_detail = if trail_coords.len() >= 2 {
         profile_polyline_detailed(elev, &trail_coords, profile_sample_m)?
     } else {
@@ -535,10 +543,19 @@ fn build_access_with_trails<E: HikeSampleElev>(
     max_slope_deg: f64,
     budget: Option<&JeepLengthBudget>,
     gate_hike: bool,
+    paved_highways: Option<&[String]>,
 ) -> Option<BuiltAccess> {
     if routing.graph.is_empty() {
         return None;
     }
+    let paved_owned;
+    let paved_slice = match paved_highways {
+        Some(s) => s,
+        None => {
+            paved_owned = AccessMeta::default().paved_highways;
+            &paved_owned
+        }
+    };
     let display = budget.is_none();
     if !display {
         let sources = paved_sources_for_catalog(&routing.paved, dest_lat, dest_lon, max_jeep_m);
@@ -563,6 +580,7 @@ fn build_access_with_trails<E: HikeSampleElev>(
                 hike_path_max_m,
                 profile_sample_m,
                 gate_hike,
+                paved_slice,
             ) {
                 return Some(built);
             }
@@ -614,6 +632,7 @@ fn build_access_with_trails<E: HikeSampleElev>(
         hike_path_max_m,
         profile_sample_m,
         gate_hike,
+        paved_slice,
     )
 }
 
@@ -759,6 +778,7 @@ pub fn build_access_from_paved_approach<E: HikeSampleElev>(
         default_max_slope_deg(),
         None,
         false,
+        None,
     )
 }
 
@@ -793,6 +813,7 @@ pub fn build_access_catalog<E: HikeSampleElev>(
         max_slope_deg,
         Some(&budget),
         true,
+        None,
     )
     .ok_or(CatalogBuildDrop::Jeep)?;
     let profile = crate::hike::HikeProfile {

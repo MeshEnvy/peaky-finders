@@ -7,6 +7,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use crate::hike::{haversine_m, HikeSampleElev};
 use crate::hike_route::resolve_hike;
 use crate::jeep::{JeepRouteResult, PavedReachTree};
+use crate::osm::{resolve_vertex_welded, GraphNodeIndex};
 use crate::osm::{GraphEdge, JeepRoadGraph, JeepRoadIndex, OsmRouting, RoadPoint};
 
 /// Snap jeep park to a foot-trail node within this radius (m).
@@ -79,6 +80,7 @@ fn reconstruct_trail_route(
     JeepRouteResult {
         paved_lat: start_lat,
         paved_lon: start_lon,
+        path_nodes,
         coords,
         horiz_m,
         road_segments: Vec::new(),
@@ -221,12 +223,15 @@ pub fn trail_park_candidates<E: HikeSampleElev>(
     parks.into_iter().collect()
 }
 
+const TRAIL_WELD_SNAP_M: f64 = 40.0;
+
 pub fn build_trail_graph(
     lines: &[Vec<(f64, f64)>],
     sample_step_m: f64,
 ) -> TrailRouting {
     let mut graph = JeepRoadGraph::new();
     let mut node_map: HashMap<i64, u32> = HashMap::new();
+    let mut node_index = GraphNodeIndex::empty();
     let mut samples: Vec<RoadPoint> = Vec::new();
     let mut way_count = 0usize;
     let mut next_id: i64 = -1;
@@ -239,17 +244,25 @@ pub fn build_trail_graph(
         samples.extend(crate::osm::sample_way_public(coords, sample_step_m));
         let mut vert_nodes = Vec::with_capacity(coords.len());
         for &(lat, lon) in coords {
-            let id = next_id;
-            next_id -= 1;
-            let n = graph.get_or_insert_node_public(id, lat, lon, &mut node_map);
+            let n = resolve_vertex_welded(
+                &mut graph,
+                &mut node_index,
+                lat,
+                lon,
+                TRAIL_WELD_SNAP_M,
+                &mut next_id,
+                &mut node_map,
+            );
             vert_nodes.push(n);
         }
-        for i in 0..coords.len() - 1 {
-            let (lat1, lon1) = coords[i];
-            let (lat2, lon2) = coords[i + 1];
+        for i in 0..vert_nodes.len().saturating_sub(1) {
+            let a = vert_nodes[i];
+            let b = vert_nodes[i + 1];
+            let (lat1, lon1) = graph.node_coords(a);
+            let (lat2, lon2) = graph.node_coords(b);
             graph.add_way_segment_public(
-                vert_nodes[i],
-                vert_nodes[i + 1],
+                a,
+                b,
                 lat1,
                 lon1,
                 lat2,
