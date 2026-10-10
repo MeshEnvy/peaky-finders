@@ -213,7 +213,6 @@ export function createMapInteractionsDomain(ctx) {
       if (trySelectLinkSolverAtPoint(ev.point)) return
       if (trySelectFortifyAtPoint(ev.point)) return
       if (trySelectAlternateAtPoint(ev.point)) return
-      if (trySelectRoadAtPoint?.(ev.point)) return
       const siteFeats = siteFeaturesAtPoint(map, ev.point)
       if (siteFeats.length) {
         const slug = siteFeats[0].properties && siteFeats[0].properties.slug
@@ -247,6 +246,7 @@ export function createMapInteractionsDomain(ctx) {
           return
         }
       }
+      if (trySelectRoadAtPoint?.(ev.point)) return
       if (store.ui.addPlacementMode) {
         openCreatePanel(ev.lngLat.lat, ev.lngLat.lng)
         return

@@ -1,6 +1,18 @@
 // @ts-check
 
-import { ACCESS_NETWORK_ALL_LINE } from '../constants.js'
+import {
+  ACCESS_NETWORK_ALL_LINE,
+  ALTERNATES_CANDIDATES_LAYER,
+  DRAFT_LINKS_LAYER,
+  FORTIFY_CANDIDATES_LAYER,
+  LINKS_LAYER,
+  LINK_SOLVER_PEAKS_LAYER,
+  PEAKS_RING_CIRCLE,
+  PEAKS_SYMBOL,
+  SITES_CIRCLE,
+  SITES_LABELS,
+  SITES_SELECTED,
+} from '../constants.js'
 import * as apiUrls from '../api/urls.js'
 import {
   appendCustomRoad,
@@ -710,6 +722,35 @@ export function createAccessNetworkDomain(opts) {
     })
   }
 
+  /** Pins, peaks, links, and candidate dots sit above the All-roads hit target. */
+  function interactiveAboveRoad(point) {
+    const map = getMap()
+    if (!map || !point) return false
+    const layers = [
+      SITES_CIRCLE,
+      SITES_LABELS,
+      SITES_SELECTED,
+      PEAKS_SYMBOL,
+      PEAKS_RING_CIRCLE,
+      LINKS_LAYER,
+      DRAFT_LINKS_LAYER,
+      LINK_SOLVER_PEAKS_LAYER,
+      FORTIFY_CANDIDATES_LAYER,
+      ALTERNATES_CANDIDATES_LAYER,
+    ].filter((id) => map.getLayer(id))
+    if (!layers.length) return false
+    const pad = 12
+    return (
+      map.queryRenderedFeatures(
+        [
+          [point.x - pad, point.y - pad],
+          [point.x + pad, point.y + pad],
+        ],
+        { layers },
+      ).length > 0
+    )
+  }
+
   function installAllClickHandler() {
     if (allClickInstalled || !getMapReady()) return
     const map = getMap()
@@ -717,11 +758,13 @@ export function createAccessNetworkDomain(opts) {
     allClickInstalled = true
     map.on('click', ACCESS_NETWORK_ALL_LINE, (ev) => {
       if (!visState().allVisible || !ev.features?.length) return
+      if (interactiveAboveRoad(ev.point)) return
       ev.originalEvent?.preventDefault?.()
       showRoadPopup(ev.lngLat, ev.features)
     })
-    map.on('mouseenter', ACCESS_NETWORK_ALL_LINE, () => {
-      if (visState().allVisible) map.getCanvas().style.cursor = 'pointer'
+    map.on('mouseenter', ACCESS_NETWORK_ALL_LINE, (ev) => {
+      if (!visState().allVisible || interactiveAboveRoad(ev.point)) return
+      map.getCanvas().style.cursor = 'pointer'
     })
     map.on('mouseleave', ACCESS_NETWORK_ALL_LINE, () => {
       map.getCanvas().style.cursor = ''
@@ -736,6 +779,7 @@ export function createAccessNetworkDomain(opts) {
     if (!visState().allVisible || !getMapReady()) return false
     const map = getMap()
     if (!map || !map.getLayer(ACCESS_NETWORK_ALL_LINE)) return false
+    if (interactiveAboveRoad(point)) return false
     const pad = 6
     const feats = map.queryRenderedFeatures(
       [
