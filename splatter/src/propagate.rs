@@ -317,6 +317,43 @@ pub fn mutual_site_link_viable(margin: Option<f64>) -> bool {
     margin.is_some_and(|m| m.is_finite())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LinkLegs {
+    pub forward_margin_db: Option<f64>,
+    pub reverse_margin_db: Option<f64>,
+}
+
+pub fn evaluate_site_link_legs(
+    dem: &DemMosaic,
+    lat_a: f64,
+    lon_a: f64,
+    tx_h_a: f64,
+    lat_b: f64,
+    lon_b: f64,
+    tx_h_b: f64,
+    base: &LinkContext,
+) -> LinkLegs {
+    let mut ab = base.clone();
+    ab.tx_height = tx_h_a.max(1.0);
+    ab.rx_height = tx_h_b.max(1.0);
+    let mut ba = base.clone();
+    ba.tx_height = tx_h_b.max(1.0);
+    ba.rx_height = tx_h_a.max(1.0);
+    let forward = evaluate_link(dem, lat_a, lon_a, lat_b, lon_b, &ab);
+    let reverse = evaluate_link(dem, lat_b, lon_b, lat_a, lon_a, &ba);
+    let t = base.threshold_dbm;
+    LinkLegs {
+        forward_margin_db: forward
+            .viable
+            .then(|| forward.pr_dbm - t)
+            .filter(|m| m.is_finite()),
+        reverse_margin_db: reverse
+            .viable
+            .then(|| reverse.pr_dbm - t)
+            .filter(|m| m.is_finite()),
+    }
+}
+
 /// Weaker-leg dB over threshold. `None` if neither direction decodes.
 /// One-way decode returns `Some(-inf)`; use [`mutual_site_link_viable`] for linked / rendered.
 pub fn evaluate_mutual_site_link_margin(
@@ -329,93 +366,30 @@ pub fn evaluate_mutual_site_link_margin(
     tx_h_b: f64,
     base: &LinkContext,
 ) -> Option<f64> {
-    let mut ab = base.clone();
-    ab.tx_height = tx_h_a.max(1.0);
-    ab.rx_height = tx_h_b.max(1.0);
-    let mut ba = base.clone();
-    ba.tx_height = tx_h_b.max(1.0);
-    ba.rx_height = tx_h_a.max(1.0);
-    let forward = evaluate_link(dem, lat_a, lon_a, lat_b, lon_b, &ab);
-    let reverse = evaluate_link(dem, lat_b, lon_b, lat_a, lon_a, &ba);
-    if !forward.viable && !reverse.viable {
+    let legs = evaluate_site_link_legs(
+        dem, lat_a, lon_a, tx_h_a, lat_b, lon_b, tx_h_b, base,
+    );
+    if legs.forward_margin_db.is_none() && legs.reverse_margin_db.is_none() {
         return None;
     }
-    let t = base.threshold_dbm;
-    let fm = if forward.viable {
-        forward.pr_dbm - t
-    } else {
-        f64::NEG_INFINITY
-    };
-    let rm = if reverse.viable {
-        reverse.pr_dbm - t
-    } else {
-        f64::NEG_INFINITY
-    };
+    let fm = legs
+        .forward_margin_db
+        .unwrap_or(f64::NEG_INFINITY);
+    let rm = legs
+        .reverse_margin_db
+        .unwrap_or(f64::NEG_INFINITY);
     Some(fm.min(rm))
 }
 
-pub fn evaluate_mutual_site_link_strength(
-    dem: &DemMosaic,
-    lat_a: f64,
-    lon_a: f64,
-    tx_h_a: f64,
-    lat_b: f64,
-    lon_b: f64,
-    tx_h_b: f64,
-    base: &LinkContext,
-) -> Option<LinkStrength> {
-    evaluate_mutual_site_link_margin(
-        dem, lat_a, lon_a, tx_h_a, lat_b, lon_b, tx_h_b, base,
-    )
-    .filter(|margin| margin.is_finite())
-    .map(|_| LinkStrength::Strong)
-}
-
-pub fn evaluate_mutual_site_link_strengths_parallel(
+pub fn evaluate_site_link_legs_parallel(
     dem: &DemMosaic,
     pairs: &[(f64, f64, f64, f64, f64, f64)],
     base: &LinkContext,
-) -> Vec<Option<LinkStrength>> {
+) -> Vec<LinkLegs> {
     pairs
         .par_iter()
         .map(|(lat_a, lon_a, h_a, lat_b, lon_b, h_b)| {
-            evaluate_mutual_site_link_strength(dem, *lat_a, *lon_a, *h_a, *lat_b, *lon_b, *h_b, base)
-        })
-        .collect()
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkStrength {
-    Weak,
-    Strong,
-}
-
-pub fn evaluate_link_strength(
-    dem: &DemMosaic,
-    lat_a: f64,
-    lon_a: f64,
-    lat_b: f64,
-    lon_b: f64,
-    ctx: &LinkContext,
-) -> Option<LinkStrength> {
-    let ab = evaluate_link_viable(dem, lat_a, lon_a, lat_b, lon_b, ctx);
-    let ba = evaluate_link_viable(dem, lat_b, lon_b, lat_a, lon_a, ctx);
-    if ab && ba {
-        Some(LinkStrength::Strong)
-    } else {
-        None
-    }
-}
-
-pub fn evaluate_link_strengths_parallel(
-    dem: &DemMosaic,
-    pairs: &[(f64, f64, f64, f64)],
-    ctx: &LinkContext,
-) -> Vec<Option<LinkStrength>> {
-    pairs
-        .par_iter()
-        .map(|(lat_a, lon_a, lat_b, lon_b)| {
-            evaluate_link_strength(dem, *lat_a, *lon_a, *lat_b, *lon_b, ctx)
+            evaluate_site_link_legs(dem, *lat_a, *lon_a, *h_a, *lat_b, *lon_b, *h_b, base)
         })
         .collect()
 }

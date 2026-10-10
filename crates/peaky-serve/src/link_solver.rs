@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use peaky_preset::{
-    load_preset, resolved_preset_cache_dir, worse_difficulty, PeakCatalogEntry, Preset, SiteEntry,
+    load_preset, worse_difficulty, PeakCatalogEntry, Preset, SiteEntry,
 };
 
 use crate::peaks_cache::cached_peaks_catalog_thin;
@@ -422,51 +422,21 @@ fn pair_cache_key(rf_digest: &str, slug_a: &str, slug_b: &str) -> String {
     format!("{rf_digest}:{a}:{b}")
 }
 
+/// RF margins for one link-solver scan. Lives only in RAM for that scan.
 struct PairMarginCache {
     memory: HashMap<String, Option<f64>>,
-    disk_path: PathBuf,
     rf_digest: String,
     cache_hits: u64,
     rf_evals: u64,
-    dirty: bool,
 }
 
 impl PairMarginCache {
-    fn new(preset_path: &Path, rf_json: &str) -> Self {
-        let digest = rf_digest(rf_json);
-        let disk_path = resolved_preset_cache_dir(preset_path)
-            .join("link-solver/pairs.json");
-        let mut memory = HashMap::new();
-        if disk_path.is_file() {
-            if let Ok(raw) = std::fs::read_to_string(&disk_path) {
-                if let Ok(wire) = serde_json::from_str::<Value>(&raw) {
-                    if wire.get("rf_digest").and_then(|v| v.as_str()) == Some(&digest) {
-                        if let Some(obj) = wire.get("pairs").and_then(|v| v.as_object()) {
-                            for (k, v) in obj {
-                                let margin = v
-                                    .get("margin_db")
-                                    .and_then(|m| m.as_f64())
-                                    .or_else(|| {
-                                        if v.get("missing").and_then(|m| m.as_bool()) == Some(true) {
-                                            None
-                                        } else {
-                                            None
-                                        }
-                                    });
-                                memory.insert(k.clone(), margin);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    fn new(rf_json: &str) -> Self {
         Self {
-            memory,
-            disk_path,
-            rf_digest: digest,
+            memory: HashMap::new(),
+            rf_digest: rf_digest(rf_json),
             cache_hits: 0,
             rf_evals: 0,
-            dirty: false,
         }
     }
 
@@ -482,34 +452,6 @@ impl PairMarginCache {
     fn insert(&mut self, slug_a: &str, slug_b: &str, margin: Option<f64>) {
         let key = pair_cache_key(&self.rf_digest, slug_a, slug_b);
         self.memory.insert(key, margin);
-        self.dirty = true;
-    }
-
-    fn persist(&self) -> Result<()> {
-        if !self.dirty {
-            return Ok(());
-        }
-        if let Some(parent) = self.disk_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let mut pairs = serde_json::Map::new();
-        for (k, margin) in &self.memory {
-            pairs.insert(
-                k.clone(),
-                match margin {
-                    Some(m) => json!({ "margin_db": m }),
-                    None => json!({ "missing": true }),
-                },
-            );
-        }
-        let wire = json!({
-            "rf_digest": self.rf_digest,
-            "pairs": pairs,
-        });
-        let tmp = self.disk_path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_string(&wire)?)?;
-        std::fs::rename(&tmp, &self.disk_path)?;
-        Ok(())
     }
 }
 
@@ -521,7 +463,7 @@ struct SessionEdgeOracle<'a> {
 }
 
 impl<'a> SessionEdgeOracle<'a> {
-    fn new(session: &'a Session, preset_path: &Path, rf_json: &str, nodes: &[GraphNode]) -> Self {
+    fn new(session: &'a Session, rf_json: &str, nodes: &[GraphNode]) -> Self {
         let mut slug_lookup = HashMap::new();
         for node in nodes {
             let key = ((node.lat * 1e7).round() as i64, (node.lon * 1e7).round() as i64);
@@ -530,7 +472,7 @@ impl<'a> SessionEdgeOracle<'a> {
         Self {
             session,
             rf_json: rf_json.to_string(),
-            cache: PairMarginCache::new(preset_path, rf_json),
+            cache: PairMarginCache::new(rf_json),
             slug_lookup,
         }
     }
@@ -545,10 +487,6 @@ impl<'a> SessionEdgeOracle<'a> {
 
     fn cache_stats(&self) -> (u64, u64) {
         (self.cache.cache_hits, self.cache.rf_evals)
-    }
-
-    fn persist_cache(&mut self) -> Result<()> {
-        self.cache.persist()
     }
 }
 
@@ -1151,7 +1089,7 @@ fn load_link_solver_body(
         &format!("{} catalog peak(s) eligible as relays", nodes.len().saturating_sub(2)),
     );
 
-    let mut oracle = SessionEdgeOracle::new(session, &req.preset_path, &rf_json, &nodes);
+    let mut oracle = SessionEdgeOracle::new(session, &rf_json, &nodes);
     let cap = preset.scan.max_candidates as usize;
     let mut diverse: Vec<Route> = Vec::new();
     let mut max_hops_searched = l0;
@@ -1191,7 +1129,6 @@ fn load_link_solver_body(
         }
     }
 
-    let _ = oracle.persist_cache();
     let (cache_hits, rf_evals) = oracle.cache_stats();
 
     diverse.sort_by(cmp_route_rank);
@@ -1671,7 +1608,7 @@ mod tests {
     fn mesh_pair_linked_and_parse_rejects_when_linked() {
         let mesh = json!({
             "links": [
-                { "a": "alpha", "b": "beta", "linked": true, "manual": false, "strength": "strong" }
+                { "a": "alpha", "b": "beta", "linked": true, "manual": false, "kind": "two_way" }
             ],
         });
         assert!(mesh_pair_linked(&mesh, "beta", "alpha"));

@@ -1,22 +1,23 @@
 //! On-demand mutual site link checks via splatter P2P propagation.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result};
-use peaky_preset::{resolved_preset_cache_dir, BoardViewshedResolver, Preset, SiteEntry};
+use peaky_preset::{
+    classify_link_kind, project::ProjectLayout, read_pair_cache, write_pair_cache,
+    prune_link_cache, BoardViewshedResolver, LinkCacheKind, PairLinkCacheRecord, Preset,
+    SiteEntry, LINKS_MODEL,
+};
 use serde_json::{json, Value};
-use splatter::{propagate::LinkStrength, Session};
+use splatter::{propagate::LinkLegs, Session};
 
 use crate::rf::{
     draft_hop_radius_m, load_board_viewshed, max_hop_range_m, pair_hop_range_km,
     pair_within_hop_range_coords_to_site, pair_within_hop_range_sites, resolved_site_tx_height_m,
     rf_json_for_preset, site_hop_radius_km,
 };
-
-/// Bumps when link computation semantics change; invalidates prior mesh caches.
-const LINKS_MODEL: &str = "p2p-v7";
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -126,37 +127,6 @@ fn fingerprint_nested_height_m(
         .unwrap_or(0.0)
 }
 
-fn links_disk_cache_path(preset_path: &Path) -> PathBuf {
-    resolved_preset_cache_dir(preset_path).join("links/mesh.json")
-}
-
-fn write_disk_links_cache(preset_path: &Path, fingerprint: &str, payload: &Value) -> Result<()> {
-    let path = links_disk_cache_path(preset_path);
-    std::fs::create_dir_all(path.parent().unwrap())?;
-    let tmp = path.with_extension("json.tmp");
-    let wire = json!({ "fingerprint": fingerprint, "payload": payload });
-    std::fs::write(&tmp, serde_json::to_string(&wire)?)?;
-    std::fs::rename(&tmp, &path)?;
-    Ok(())
-}
-
-fn read_disk_links_cache(preset_path: &Path, fingerprint: &str) -> Option<Value> {
-    let path = links_disk_cache_path(preset_path);
-    let raw = std::fs::read_to_string(&path).ok()?;
-    let wire: Value = serde_json::from_str(&raw).ok()?;
-    if wire.get("fingerprint")?.as_str()? != fingerprint {
-        return None;
-    }
-    let payload = wire.get("payload")?.clone();
-    if payload.get("status")?.as_str()? != "ready" {
-        return None;
-    }
-    if payload.get("links_model")?.as_str()? != LINKS_MODEL {
-        return None;
-    }
-    Some(payload)
-}
-
 fn cache_payload_is_p2p(payload: &Value) -> bool {
     payload.get("links_model").and_then(|v| v.as_str()) == Some(LINKS_MODEL)
 }
@@ -175,7 +145,6 @@ pub fn invalidate_project_site_links_cache(preset_path: &Path) {
     if let Ok(mut cache) = LINKS_PAYLOAD_CACHE.lock() {
         cache.remove(&key);
     }
-    let _ = std::fs::remove_file(links_disk_cache_path(preset_path));
 }
 
 /// P2P links from each slug to in-range sites (same stack as the site mesh).
@@ -274,7 +243,6 @@ pub fn store_project_site_links_cache(
     if let Ok(mut cache) = LINKS_PAYLOAD_CACHE.lock() {
         cache.insert(key, (fingerprint.clone(), payload.clone()));
     }
-    let _ = write_disk_links_cache(preset_path, &fingerprint, payload);
     Ok(())
 }
 
@@ -291,38 +259,128 @@ fn cached_project_site_links(preset_path: &Path, preset: &Preset) -> Result<Opti
             }
         }
     }
-    if let Some(disk) = read_disk_links_cache(preset_path, &fingerprint) {
-        if let Ok(mut cache) = LINKS_PAYLOAD_CACHE.lock() {
-            cache.insert(key, (fingerprint, disk.clone()));
-        }
-        return Ok(Some(disk));
-    }
     Ok(None)
 }
 
-fn link_record(slug_a: &str, slug_b: &str, linked: bool, manual: bool, strength: &str) -> Value {
+fn link_record(slug_a: &str, slug_b: &str, linked: bool, manual: bool, kind: &str) -> Value {
     let (a, b) = canonical_site_pair(slug_a, slug_b);
     json!({
         "a": a,
         "b": b,
         "linked": linked,
         "manual": manual,
-        "strength": strength,
+        "kind": kind,
     })
 }
 
-fn strength_label(strength: LinkStrength) -> &'static str {
-    match strength {
-        LinkStrength::Weak => "weak",
-        LinkStrength::Strong => "strong",
-    }
+fn utc_date_iso() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    unix_days_to_iso(secs / 86_400)
 }
 
-fn site_mesh_pair_strengths(
+fn unix_days_to_iso(mut z: i64) -> String {
+    z += 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    format!("{year:04}-{m:02}-{d:02}")
+}
+
+fn project_layout(preset_path: &Path) -> Result<ProjectLayout> {
+    ProjectLayout::from_config_path(preset_path)
+}
+
+fn pair_link_fingerprint(
+    preset: &Preset,
+    boards: &BoardViewshedResolver,
+    slug_a: &str,
+    slug_b: &str,
+) -> Result<String> {
+    let (a, b) = canonical_site_pair(slug_a, slug_b);
+    let site_a = preset
+        .sites
+        .get(&a)
+        .with_context(|| format!("unknown site {a}"))?;
+    let site_b = preset
+        .sites
+        .get(&b)
+        .with_context(|| format!("unknown site {b}"))?;
+    let radius_km = match &preset.simulation.radius_km {
+        serde_yaml::Value::Number(n) => n.as_f64().unwrap_or(50.0),
+        serde_yaml::Value::String(s) => s.parse::<f64>().unwrap_or(50.0),
+        _ => 50.0,
+    };
+    Ok(serde_json::to_string(&json!([
+        LINKS_MODEL,
+        radius_km,
+        fingerprint_sim_label(&preset.simulation.modem),
+        fingerprint_sim_label(&preset.simulation.environment),
+        fingerprint_nested_height_m(&preset.simulation.transmitter, "transmitter"),
+        fingerprint_nested_height_m(&preset.simulation.receiver, "receiver"),
+        [
+            a,
+            (site_a.loc[0] * 1e7).round() / 1e7,
+            (site_a.loc[1] * 1e7).round() / 1e7,
+            (resolved_site_tx_height_m(preset, site_a) * 1000.0).round() / 1000.0,
+            site_hop_radius_km(preset, site_a, Some(boards)),
+        ],
+        [
+            b,
+            (site_b.loc[0] * 1e7).round() / 1e7,
+            (site_b.loc[1] * 1e7).round() / 1e7,
+            (resolved_site_tx_height_m(preset, site_b) * 1000.0).round() / 1000.0,
+            site_hop_radius_km(preset, site_b, Some(boards)),
+        ],
+    ]))?)
+}
+
+fn cache_record_from_legs(
+    preset: &Preset,
+    boards: &BoardViewshedResolver,
+    slug_a: &str,
+    slug_b: &str,
+    legs: LinkLegs,
+) -> Result<PairLinkCacheRecord> {
+    let (a, b) = canonical_site_pair(slug_a, slug_b);
+    let site_a = &preset.sites[&a];
+    let site_b = &preset.sites[&b];
+    let kind = classify_link_kind(legs.forward_margin_db, legs.reverse_margin_db);
+    let distance_km = (splatter::propagate::haversine_m(
+        site_a.loc[0],
+        site_a.loc[1],
+        site_b.loc[0],
+        site_b.loc[1],
+    ) / 1000.0
+        * 10.0)
+        .round()
+        / 10.0;
+    Ok(PairLinkCacheRecord {
+        a,
+        b,
+        fingerprint: pair_link_fingerprint(preset, boards, slug_a, slug_b)?,
+        links_model: LINKS_MODEL.to_string(),
+        forward_margin_db: legs.forward_margin_db,
+        reverse_margin_db: legs.reverse_margin_db,
+        kind,
+        distance_km,
+        at: utc_date_iso(),
+    })
+}
+
+fn site_mesh_pair_legs(
     session: &Session,
     preset: &Preset,
     rf_pair_slugs: &[(String, String)],
-) -> Result<Vec<Option<LinkStrength>>> {
+) -> Result<Vec<LinkLegs>> {
     if rf_pair_slugs.is_empty() {
         return Ok(Vec::new());
     }
@@ -342,7 +400,46 @@ fn site_mesh_pair_strengths(
             )
         })
         .collect();
-    session.site_mesh_pair_strengths(&pairs, &rf_json)
+    session.site_mesh_pair_legs(&pairs, &rf_json)
+}
+
+fn ensure_pair_caches(
+    session: &Session,
+    preset_path: &Path,
+    preset: &Preset,
+    boards: &BoardViewshedResolver,
+    rf_pair_slugs: &[(String, String)],
+) -> Result<Vec<PairLinkCacheRecord>> {
+    let layout = project_layout(preset_path)?;
+    let mut out: Vec<Option<PairLinkCacheRecord>> = Vec::with_capacity(rf_pair_slugs.len());
+    let mut to_compute: Vec<(usize, (String, String))> = Vec::new();
+
+    for (idx, (slug_a, slug_b)) in rf_pair_slugs.iter().enumerate() {
+        let fp = pair_link_fingerprint(preset, boards, slug_a, slug_b)?;
+        if let Some(cached) = read_pair_cache(&layout, slug_a, slug_b)? {
+            if cached.links_model == LINKS_MODEL && cached.fingerprint == fp {
+                out.push(Some(cached));
+                continue;
+            }
+        }
+        to_compute.push((idx, (slug_a.clone(), slug_b.clone())));
+        out.push(None);
+    }
+
+    if !to_compute.is_empty() {
+        let pairs: Vec<(String, String)> = to_compute.iter().map(|(_, p)| p.clone()).collect();
+        let legs = site_mesh_pair_legs(session, preset, &pairs)?;
+        for ((idx, (slug_a, slug_b)), leg) in to_compute.into_iter().zip(legs.into_iter()) {
+            let record = cache_record_from_legs(preset, boards, &slug_a, &slug_b, leg)?;
+            write_pair_cache(&layout, &record)?;
+            out[idx] = Some(record);
+        }
+    }
+
+    Ok(out
+        .into_iter()
+        .map(|slot| slot.expect("unfilled pair cache slot"))
+        .collect())
 }
 
 fn line_feature(
@@ -353,7 +450,7 @@ fn line_feature(
     site_a: &SiteEntry,
     site_b: &SiteEntry,
     manual: bool,
-    strength: &str,
+    kind: &str,
 ) -> Value {
     let (a, b) = canonical_site_pair(slug_a, slug_b);
     let lat_a = site_a.loc[0];
@@ -373,7 +470,7 @@ fn line_feature(
             "a": a,
             "b": b,
             "manual": manual,
-            "strength": strength,
+            "kind": kind,
             "distance_km": distance_km,
             "hop_range_km": hop_range_km,
         },
@@ -390,7 +487,7 @@ fn manual_only_payload(preset: &Preset, boards: &BoardViewshedResolver) -> Value
         if site_a.is_none() || site_b.is_none() {
             continue;
         }
-        records.push(link_record(&a, &b, true, true, "strong"));
+        records.push(link_record(&a, &b, true, true, "manual"));
         features.push(line_feature(
             preset,
             Some(boards),
@@ -399,7 +496,7 @@ fn manual_only_payload(preset: &Preset, boards: &BoardViewshedResolver) -> Value
             site_a.unwrap(),
             site_b.unwrap(),
             true,
-            "strong",
+            "manual",
         ));
     }
     records.sort_by(|a, b| {
@@ -458,10 +555,11 @@ pub fn compute_project_site_links_p2p(
         }
     }
 
-    let strengths = if rf_pair_slugs.is_empty() {
+    let pair_records = if rf_pair_slugs.is_empty() {
         Vec::new()
     } else {
-        site_mesh_pair_strengths(&session, preset, &rf_pair_slugs).context("site_mesh_pair_strengths")?
+        ensure_pair_caches(session.as_ref(), preset_path, preset, &boards, &rf_pair_slugs)
+            .context("ensure pair link caches")?
     };
 
     let mut records = Vec::new();
@@ -470,7 +568,7 @@ pub fn compute_project_site_links_p2p(
     for (slug_a, slug_b) in manual_pairs {
         let Some(site_a) = preset.sites.get(&slug_a) else { continue };
         let Some(site_b) = preset.sites.get(&slug_b) else { continue };
-        records.push(link_record(&slug_a, &slug_b, true, true, "strong"));
+        records.push(link_record(&slug_a, &slug_b, true, true, "manual"));
         features.push(line_feature(
             preset,
             Some(&boards),
@@ -479,18 +577,19 @@ pub fn compute_project_site_links_p2p(
             site_a,
             site_b,
             true,
-            "strong",
+            "manual",
         ));
     }
 
-    for (idx, (slug_a, slug_b)) in rf_pair_slugs.into_iter().enumerate() {
-        let Some(strength) = strengths.get(idx).copied().flatten() else {
+    for (record, (slug_a, slug_b)) in pair_records.into_iter().zip(rf_pair_slugs.into_iter()) {
+        if !record.kind.renders_on_map() {
             continue;
-        };
-        let label = strength_label(strength);
+        }
+        let kind = record.kind.as_str();
+        let linked = record.kind.mesh_linked(false);
         let site_a = &preset.sites[&slug_a];
         let site_b = &preset.sites[&slug_b];
-        records.push(link_record(&slug_a, &slug_b, true, false, label));
+        records.push(link_record(&slug_a, &slug_b, linked, false, kind));
         features.push(line_feature(
             preset,
             Some(&boards),
@@ -499,7 +598,7 @@ pub fn compute_project_site_links_p2p(
             site_a,
             site_b,
             false,
-            label,
+            kind,
         ));
     }
 
@@ -603,7 +702,7 @@ pub fn compute_single_site_links_p2p(
         }
         let pair = canonical_site_pair(slug, other_slug);
         if manual_pairs.contains(&pair) {
-            records.push(link_record(slug, other_slug, true, true, "strong"));
+            records.push(link_record(slug, other_slug, true, true, "manual"));
             features.push(line_feature(
                 preset,
                 Some(&boards),
@@ -612,7 +711,7 @@ pub fn compute_single_site_links_p2p(
                 center,
                 other,
                 true,
-                "strong",
+                "manual",
             ));
             continue;
         }
@@ -627,15 +726,16 @@ pub fn compute_single_site_links_p2p(
             .iter()
             .map(|other| canonical_site_pair(slug, other))
             .collect();
-        let strengths =
-            site_mesh_pair_strengths(&session, preset, &pair_slugs).context("site_mesh_pair_strengths")?;
-        for (idx, other_slug) in rf_slugs.into_iter().enumerate() {
-            let Some(strength) = strengths.get(idx).copied().flatten() else {
+        let cached = ensure_pair_caches(session.as_ref(), preset_path, preset, &boards, &pair_slugs)
+            .context("ensure pair link caches")?;
+        for (record, other_slug) in cached.into_iter().zip(rf_slugs.into_iter()) {
+            if !record.kind.renders_on_map() {
                 continue;
-            };
-            let label = strength_label(strength);
+            }
+            let kind = record.kind.as_str();
+            let linked = record.kind.mesh_linked(false);
             let other = &preset.sites[&other_slug];
-            records.push(link_record(slug, &other_slug, true, false, label));
+            records.push(link_record(slug, &other_slug, linked, false, kind));
             features.push(line_feature(
                 preset,
                 Some(&boards),
@@ -644,7 +744,7 @@ pub fn compute_single_site_links_p2p(
                 center,
                 other,
                 false,
-                label,
+                kind,
             ));
         }
     }
@@ -683,6 +783,9 @@ pub fn warm_project_site_links(
     if let Some(cached) = cached_project_site_links(preset_path, preset)? {
         return Ok(cached);
     }
+    let layout = project_layout(preset_path)?;
+    let slugs: std::collections::HashSet<String> = preset.sites.keys().cloned().collect();
+    prune_link_cache(&layout, &slugs)?;
     let payload = compute_project_site_links_p2p(session, preset_path, preset, true)?;
     store_project_site_links_cache(preset_path, preset, &payload)?;
     Ok(payload)
@@ -818,39 +921,68 @@ pub fn site_pair_link_detail(
     let distance_km =
         (splatter::propagate::haversine_m(lat_a, lon_a, lat_b, lon_b) / 1000.0 * 10.0).round() / 10.0;
     let in_hop_range = pair_within_hop_range_sites(preset, site_a, site_b, boards.as_ref());
-    let strengths = if in_hop_range {
-        session
-            .site_mesh_pair_strengths(
-                &[(lat_a, lon_a, tx_a, lat_b, lon_b, tx_b)],
-                &rf_json,
-            )
+    let boards_ref = boards.as_ref().expect("boards loaded");
+    let layout = project_layout(preset_path).map_err(|e| LinksError(e.to_string()))?;
+
+    let (forward_margin_db, reverse_margin_db, kind_str, linked) = if in_hop_range {
+        let fp = pair_link_fingerprint(preset, boards_ref, &a, &b)
+            .map_err(|e| LinksError(e.to_string()))?;
+        if let Some(cached) = read_pair_cache(&layout, &a, &b)
             .map_err(|e| LinksError(e.to_string()))?
-    } else {
-        vec![None]
-    };
-    let strength = strengths.first().copied().flatten();
-    let margin_db_raw = if in_hop_range {
-        session
-            .seek_repeater_link_margins(lat_a, lon_a, tx_a, &[(lat_b, lon_b, tx_b)], &rf_json)
+        {
+            if cached.links_model == LINKS_MODEL && cached.fingerprint == fp {
+                let kind = cached.kind.as_str();
+                return Ok(json!({
+                    "a": a,
+                    "b": b,
+                    "linked": cached.kind.mesh_linked(false),
+                    "kind": kind,
+                    "forward_margin_db": cached.forward_margin_db.map(|m| (m * 10.0).round() / 10.0),
+                    "reverse_margin_db": cached.reverse_margin_db.map(|m| (m * 10.0).round() / 10.0),
+                    "margin_db": cached.forward_margin_db.and_then(|f| {
+                        cached.reverse_margin_db.map(|r| (f.min(r) * 10.0).round() / 10.0)
+                    }).or_else(|| cached.forward_margin_db.or(cached.reverse_margin_db).map(|m| (m * 10.0).round() / 10.0)),
+                    "distance_km": cached.distance_km,
+                    "hop_range_km": hop_range_km,
+                }));
+            }
+        }
+        let legs = session
+            .site_mesh_pair_legs(&[(lat_a, lon_a, tx_a, lat_b, lon_b, tx_b)], &rf_json)
             .map_err(|e| LinksError(e.to_string()))?
-            .first()
-            .copied()
-            .flatten()
+            .into_iter()
+            .next()
+            .unwrap_or(LinkLegs {
+                forward_margin_db: None,
+                reverse_margin_db: None,
+            });
+        let record = cache_record_from_legs(preset, boards_ref, &a, &b, legs)
+            .map_err(|e| LinksError(e.to_string()))?;
+        write_pair_cache(&layout, &record).map_err(|e| LinksError(e.to_string()))?;
+        let kind = record.kind.as_str();
+        (
+            record.forward_margin_db,
+            record.reverse_margin_db,
+            kind.to_string(),
+            record.kind.mesh_linked(false),
+        )
     } else {
-        None
+        (None, None, "none".to_string(), false)
     };
-    let linked = crate::rf::mutual_rf_viable(margin_db_raw);
-    let strength_str = if linked {
-        strength.map(strength_label).unwrap_or("strong").to_string()
-    } else {
-        "none".to_string()
+
+    let margin_db = match (forward_margin_db, reverse_margin_db) {
+        (Some(f), Some(r)) if f.is_finite() && r.is_finite() => Some(f.min(r)),
+        (Some(f), _) if f.is_finite() => Some(f),
+        (_, Some(r)) if r.is_finite() => Some(r),
+        _ => None,
     };
-    let margin_db = margin_db_raw.filter(|m| m.is_finite());
     Ok(json!({
         "a": a,
         "b": b,
         "linked": linked,
-        "strength": strength_str,
+        "kind": kind_str,
+        "forward_margin_db": forward_margin_db.map(|m| (m * 10.0).round() / 10.0),
+        "reverse_margin_db": reverse_margin_db.map(|m| (m * 10.0).round() / 10.0),
         "margin_db": margin_db.map(|m| (m * 10.0).round() / 10.0),
         "distance_km": distance_km,
         "hop_range_km": hop_range_km,

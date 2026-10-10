@@ -2,7 +2,7 @@
 name: manual-links
 description: >-
   When and how to add manual RF link overrides in Peaky presets. Use when editing
-  links:, serve map mesh gaps, or spine/corridor planning docs.
+  links.json, serve map mesh gaps, or spine/corridor planning docs.
 ---
 
 # Manual links
@@ -13,7 +13,9 @@ Read [MEMORY.md](../../MEMORY.md) first.
 
 Force-draw a site pair on the serve map when **P2P RF does not show the link** but field reality says the hop exists.
 
-Implementation: `peaky-serve/src/links.rs` — manual pairs skip the P2P pass, always render as strong lines (`manual: true`).
+Implementation: `peaky-serve/src/links.rs` — manual pairs skip P2P, render teal (`manual: true`).
+
+Computed RF (blue two-way, red one-way) lives in git-tracked **`links/<a>/<b>.json`**, not in `links.json`.
 
 ## When to add
 
@@ -25,34 +27,34 @@ Implementation: `peaky-serve/src/links.rs` — manual pairs skip the P2P pass, a
 ## When NOT to add
 
 - Spine order or corridor docs say nodes "should hear" each other.
-- A new stake or site was just added (wait for mesh cache refresh first).
+- A new stake or site was just added (wait for mesh warm / per-pair cache refresh first).
 - Topology documentation or initiative planning (use site descriptions / ops notes instead).
 - Declaring a planned hop because it is the "next link in the chain."
 
 ## File location
 
-| Layout | Where `links:` lives |
-|--------|----------------------|
-| Split + [`links.json`](links.json) present | **`links.json`** (canonical for large graphs) |
-| Split + [`links.yaml`](links.yaml) only | Legacy YAML (read supported) |
-| Split, no links file | Legacy: top of [`sites.yaml`](sites.yaml) |
-| Monolithic | [`config.yaml`](config.yaml) |
+| Layout | Manual overrides |
+|--------|------------------|
+| Split book | **`links.json`** next to `sites.yaml` |
+| Monolithic | `links:` in **`config.yaml`** |
 
-`peaky-preset` merges `links.json` first, then `links.yaml`, then `sites.yaml`. Saves write `links` to **`links.json`** when split (not `sites.yaml`).
+`peaky-preset` merges `links.json` when split. Saves write manual rows to **`links.json`**.
 
-## Pair format
+## Pair format (`links.json`)
 
-```yaml
-links:
-- - slug-a
-  - slug-b
-- - slug-c
-  - slug-d
+```json
+{
+  "links": [
+    ["slug-a", "slug-b"],
+    { "a": "slug-c", "b": "slug-d", "field_at": "2026-09-09" }
+  ]
+}
 ```
 
 - Slugs must match keys under `sites:`.
 - Order within a pair does not matter; keep pairs sorted for readable diffs.
 - Both endpoints must exist before adding.
+- Unknown keys on record rows fail preset load (greenfield).
 
 ## advert_name (site-bound radios)
 

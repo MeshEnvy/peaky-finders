@@ -62,14 +62,14 @@ export function linkLabelsLayerSpec(layerId, sourceId, visibility) {
   }
 }
 
-/** Site-link mesh line paint (manual / weak / strong). */
+/** Site-link mesh line paint (manual / one-way / two-way). */
 export function linksLinePaint() {
   return {
     'line-color': [
       'case',
       ['get', 'manual'],
       '#0d9488',
-      ['==', ['get', 'strength'], 'weak'],
+      ['==', ['get', 'kind'], 'one_way'],
       '#ef4444',
       '#4a6cf7',
     ],
@@ -77,7 +77,7 @@ export function linksLinePaint() {
     'line-opacity': 0.85,
     'line-dasharray': [
       'case',
-      ['==', ['get', 'strength'], 'weak'],
+      ['==', ['get', 'kind'], 'one_way'],
       ['literal', [4, 3]],
       ['literal', [1, 0]],
     ],

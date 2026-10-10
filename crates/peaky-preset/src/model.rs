@@ -1075,40 +1075,29 @@ pub struct LandConfig {
     pub refresh_interval_days: u32,
 }
 
-/// One site-to-site link in the book (legacy pair or structured provenance row).
+/// Operator manual RF override row in ``links.json``.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BookLinkRecord {
+    pub a: String,
+    pub b: String,
+    #[serde(default)]
+    pub field_at: Option<String>,
+}
+
+/// Manual override only (``links.json``). Computed RF lives under ``links/``.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum BookLink {
     Legacy([String; 2]),
-    Record {
-        a: String,
-        b: String,
-        #[serde(default)]
-        origin: Option<String>,
-        #[serde(default)]
-        attest: Option<LinkAttest>,
-        #[serde(default)]
-        rf_at: Option<String>,
-        #[serde(default)]
-        field_at: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LinkAttest {
-    #[serde(default)]
-    pub manual: bool,
-    #[serde(default)]
-    pub rf: bool,
-    #[serde(default)]
-    pub field: bool,
+    Record(BookLinkRecord),
 }
 
 impl BookLink {
     pub fn slug_pair(&self) -> PresetResult<[String; 2]> {
         let (a, b) = match self {
             BookLink::Legacy([a, b]) => (a.as_str(), b.as_str()),
-            BookLink::Record { a, b, .. } => (a.as_str(), b.as_str()),
+            BookLink::Record(rec) => (rec.a.as_str(), rec.b.as_str()),
         };
         normalize_link_pair(&[a.to_string(), b.to_string()], 0)
     }

@@ -104,8 +104,8 @@ Both exporters write **KMZ** (`doc.kml` + `files/`): one folder per site with pl
 
 ```
 preset → CovRequest JSON (rf_json)
-         → Session::seek_repeater_link_batch / site_mesh_pair_strengths
-         → propagate::evaluate_mutual_site_link_strength
+         → Session::seek_repeater_link_batch / site_mesh_pair_legs
+         → propagate::evaluate_site_link_legs
 ```
 
 **Terrain sample step:** P2P / cover / seek links sample at **native DEM spacing** (~30 m Skadi). Viewshed rasters use `radius_m / raster_dimension` for display ray step; `raster_dimension` derives from `viewshed_quality` + radius (see Preset model).
@@ -113,17 +113,17 @@ preset → CovRequest JSON (rf_json)
 | Consumer | v4 (do not copy) | v5 |
 |----------|------------------|-----|
 | Link solver / Fortify / alternates (site ↔ peak hops) | splatter P2P | `seek_repeater_link_batch` / `seek_repeater_link_margins` |
-| Linkable binned peaks | `Session::linkable_binned_peaks` | Same (`evaluate_mutual_site_link_strength`) |
-| Site link mesh (`GET …/links`) | viewshed footprint cover | **P2P RF** via `site_mesh_pair_strengths` |
+| Linkable binned peaks | `Session::linkable_binned_peaks` | Same (`evaluate_mutual_site_link_margin`) |
+| Site link mesh (`GET …/links`) | viewshed footprint cover | **P2P RF** via `site_mesh_pair_legs` + git-tracked **`links/<a>/<b>.json`** cache |
 | Link solver accept → sites | — | Same P2P; seeds mesh for created slugs; keep path sites visible |
 
 **Viewsheds are not link truth.** Footprint polygons and PNG overlays are display/cache only. They must not gate whether two sites are linked. Optional: derive a visual "coverage overlap" hint from footprints, but `linked` / `rf_viable` / scan candidacy come from P2P only.
 
 **Single serve module:** implement in `peaky-serve/src/rf.rs` (preset→`rf_json`, pair/batch queries, shared by `links.rs`, `link_solver.rs`, `fortify.rs`, `alternates.rs`). No duplicate RF logic in route handlers.
 
-**Mutual decode required everywhere** — `mutual_rf_viable` / `mutual_site_link_viable`: both directions must decode (finite weaker-leg margin). One-way, out of hop range, or no decode = not linked; nothing renders as a link. Canonical helper in `peaky-serve/src/rf.rs`; splatter implements `propagate::mutual_site_link_viable`.
+**Mesh vs mutual:** `mesh_linked` / Fortify / link solver require **two-way** (`kind: two_way` or manual override). **One-way** hops (`kind: one_way`) draw red dashed on the map but are not mesh peers. **None** is cached under `links/` but not drawn.
 
-**Link sheet + Fortify + Link solver (map UI):** Click a drawn site link (`LINKS_LAYER`) → link side sheet with endpoint names, `distance_km`, mesh `strength`, and `GET …/links/pair?a=&b=` weaker-leg margin dB. **Fortify** (`GET …/fortify?a=&b=` + `…/fortify/scan-progress`) scans **every** catalog peak in `hop(A) ∩ hop(B)` (no corridor, along-track, site-dedup, or `scan.max_candidates` cap) and returns only peaks where **both legs are `mutual_rf_viable`**. Rows carry per-leg margins; ranked by weaker-leg margin. Purple dots + A–C–B lines when selected; **Add as site** reuses peak slug. **Link solver** (`GET …/link-solver?a=&b=&min_routes=` + scan-progress, like, accept) finds multi-hop peak chains between two sites; floating Vue panel, hop peak dots, selected route lines with margin labels, preview viewsheds (`_linksolver_{i}`), **More like this**, **Load more**, **Accept** seeds hop sites + mesh links. **Alternates**, **Fortify**, and **Link solver** clear each other when started. Solvers: `peaky-serve/src/fortify.rs`, `link_solver.rs`.
+**Link sheet + Fortify + Link solver (map UI):** Click a drawn site link (`LINKS_LAYER`) → link side sheet with endpoint names, `distance_km`, mesh `kind`, and `GET …/links/pair?a=&b=` leg margins. **Fortify** (`GET …/fortify?a=&b=` + `…/fortify/scan-progress`) scans **every** catalog peak in `hop(A) ∩ hop(B)` (no corridor, along-track, site-dedup, or `scan.max_candidates` cap) and returns only peaks where **both legs are `mutual_rf_viable`**. Rows carry per-leg margins; ranked by weaker-leg margin. Purple dots + A–C–B lines when selected; **Add as site** reuses peak slug. **Link solver** (`GET …/link-solver?a=&b=&min_routes=` + scan-progress, like, accept) finds multi-hop peak chains between two sites; floating Vue panel, hop peak dots, selected route lines with margin labels, preview viewsheds (`_linksolver_{i}`), **More like this**, **Load more**, **Accept** seeds hop sites + mesh links. **Alternates**, **Fortify**, and **Link solver** clear each other when started. Solvers: `peaky-serve/src/fortify.rs`, `link_solver.rs`.
 
 ## Elevation sources
 
@@ -135,7 +135,7 @@ preset → CovRequest JSON (rf_json)
 
 **Topo ↔ Skadi trust:** In practice, Skadi SRTM elevations align almost exactly with USGS Topo contours/shading where both are visible. When reviewing candidate sites on topo (or satellite/street), the parallel Skadi DEM used for placement and viewsheds is likely nearly identical at that location even though the basemap pixels come from a different provider.
 
-**Links disk cache:** `links/mesh.json` carries `links_model: "p2p-v7"` (mutual-decode-only links); fingerprint includes radius, modem/env/heights, sites, manual links — not viewshed quality/px. Older model tags rejected on read.
+**Links book layout:** **`links.json`** — manual overrides only (`[a,b]` or `{a,b,field_at?}`). **`links/<a>/<b>.json`** — per-pair RF cache (`links_model: p2p-v8`, per-pair fingerprint, forward/reverse margins, `kind`). Serve read-through/write-back on mesh warm; in-memory payload cache keyed by whole-book fingerprint. Map colors: manual teal, two-way blue, one-way red dashed.
 
 ## Serve (implemented vs stub)
 
@@ -146,7 +146,7 @@ preset → CovRequest JSON (rf_json)
 | Home modem/environment catalogs | Implemented |
 | SSE `/events` | Implemented (hello + keepalive; publish on warm TBD) |
 | Links mesh, warm scheduler | Implemented (P2P mesh, warm queue, SSE) |
-| Link solver (`/link-solver`, scan-progress, like, accept) | Implemented — multi-hop peak routes between two preset sites (`link_solver.rs`); P2P margins via `seek_repeater_link_margins`; ranked routes with bottleneck margin, distance, peak chain, access difficulty; accept creates hop sites from catalog peaks and seeds mesh links |
+| Link solver (`/link-solver`, scan-progress, like, accept) | Implemented — multi-hop peak routes between two preset sites (`link_solver.rs`); P2P margins via `seek_repeater_link_margins`; ranked routes with bottleneck margin, distance, peak chain, access difficulty; accept creates hop sites from catalog peaks and seeds mesh links. Pair margins are RAM for that scan only (no `pairs.json`). |
 | Site alternates (`/alternates`, `/alternates/scan-progress`) | Implemented — same peak candidate pool as Fortify (peaks index in the shared N-anchor RF lens), plus preset sites in lens; mutual P2P to all linked peers; site sheet **Find alternates** + **Add as site** |
 | Land list + layer GeoJSON | Implemented (plus built-in eligible overlay GeoJSON, digest-cached) |
 | Skadi map tiles (`/api/dem/hillshade`, `/api/dem/terrarium`) + point elev (`GET …/elev`) | Implemented — PNG cache `<project>/.peaky/cache/skadi/.map_tiles/v3/`; render only when all required HGT on disk (503 until ready); hillshade uses padded HGT ring; **AOI HGT prefetch on project page load** (background); map tile prefetch capped (`PEAKY_DEM_MAP_QUEUE_CAP`, default 128). Point elev ensures the HGT tile then bilinear-samples AMSL |

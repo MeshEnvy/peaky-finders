@@ -462,26 +462,14 @@ impl Session {
             .collect())
     }
 
-    pub fn link_strength_batch(
-        &self,
-        pairs: &[(f64, f64, f64, f64)],
-        rf_json: &str,
-    ) -> Result<Vec<Option<crate::propagate::LinkStrength>>> {
-        let ctx = link_context_from_json(rf_json)?;
-        let dem = self.dem.read().unwrap();
-        Ok(crate::propagate::evaluate_link_strengths_parallel(
-            &dem, pairs, &ctx,
-        ))
-    }
-
-    pub fn site_mesh_pair_strengths(
+    pub fn site_mesh_pair_legs(
         &self,
         pairs: &[(f64, f64, f64, f64, f64, f64)],
         rf_json: &str,
-    ) -> Result<Vec<Option<crate::propagate::LinkStrength>>> {
+    ) -> Result<Vec<crate::propagate::LinkLegs>> {
         let ctx = link_context_from_json(rf_json)?;
         let dem = self.dem.read().unwrap();
-        Ok(crate::propagate::evaluate_mutual_site_link_strengths_parallel(
+        Ok(crate::propagate::evaluate_site_link_legs_parallel(
             &dem, pairs, &ctx,
         ))
     }

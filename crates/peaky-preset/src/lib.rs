@@ -6,6 +6,7 @@ pub mod difficulty;
 pub mod home;
 pub mod init;
 pub mod io;
+pub mod link_cache;
 pub mod model;
 pub mod nodes_board;
 pub mod paths;
@@ -56,6 +57,10 @@ pub use io::{
     patch_land_source_last_updated,
     patch_preset_site, patch_preset_site_tags, patch_preset_sites_tags, preset_site_slugs,
     remove_preset_site, save_preset, write_preset_document,
+};
+pub use link_cache::{
+    canonical_link_pair, classify_link_kind, pair_cache_path, prune_link_cache, read_pair_cache,
+    write_pair_cache, LinkCacheKind, PairLinkCacheRecord, LINKS_MODEL,
 };
 pub use yaml_io::read_preset_document;
 pub use boards::{

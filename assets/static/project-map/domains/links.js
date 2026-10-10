@@ -165,7 +165,7 @@ export function createLinksDomain(opts) {
         'case',
         ['get', 'manual'],
         '#14b8a6',
-        ['==', ['get', 'strength'], 'weak'],
+        ['==', ['get', 'kind'], 'one_way'],
         '#f87171',
         '#818cf8',
       ],

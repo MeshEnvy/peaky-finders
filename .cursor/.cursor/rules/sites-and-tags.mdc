@@ -17,16 +17,15 @@ Roles like `installed` or `planned` are **tags**, not schema fields.
 
 ## Links
 
-Manual **RF overrides** only — not spine declaration or "should hear" planning.
+Manual **RF overrides** only in **`links.json`** (split book) or `links:` in monolithic `config.yaml`. Not spine declaration or "should hear" planning.
 
-```yaml
-links:
-- - site-a
-  - site-b
+Computed RF cache: **`links/<a>/<b>.json`** (serve read/write; not manual).
+
+```json
+"links": [["site-a", "site-b"], {"a": "site-c", "b": "site-d", "field_at": "2026-09-09"}]
 ```
 
-- Split layout: `links:` lives in **`sites.yaml`** (with `sites:`). Monolithic projects: `config.yaml`.
-- Add a pair only after serve map / P2P omits a hop that field reality requires. See skill **`manual-links`**.
+Add a pair only after serve map / P2P omits a hop that field reality requires. See skill **`manual-links`**.
 
 ## advert_name
 

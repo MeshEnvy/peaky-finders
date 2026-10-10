@@ -1,5 +1,5 @@
 //! Multi-file project layout: ``config.yaml`` plus optional ``sites.yaml`` / ``land.yaml``,
-//! optional ``links.json`` (or legacy ``links.yaml``), plus git-tracked ``peaks.yaml``
+//! optional ``links.json`` (manual overrides) and ``links/`` RF cache, plus ``peaks.yaml``
 //! overrides and cache under ``.peaky/cache/``.
 
 use std::fs;
@@ -35,17 +35,12 @@ impl ProjectLayout {
         self.project_dir.join("land.yaml")
     }
 
-    pub fn split_links_yaml_path(&self) -> PathBuf {
-        self.project_dir.join("links.yaml")
-    }
-
     pub fn split_links_json_path(&self) -> PathBuf {
         self.project_dir.join("links.json")
     }
 
-    /// Legacy alias for ``links.yaml`` path.
-    pub fn split_links_path(&self) -> PathBuf {
-        self.split_links_yaml_path()
+    pub fn links_dir(&self) -> PathBuf {
+        self.project_dir.join("links")
     }
 
     pub fn boards_path(&self) -> PathBuf {
@@ -82,7 +77,7 @@ impl ProjectLayout {
     }
 
     pub fn uses_split_links(&self) -> bool {
-        self.split_links_json_path().is_file() || self.split_links_yaml_path().is_file()
+        self.split_links_json_path().is_file()
     }
 
     pub fn sites_document_path(&self) -> PathBuf {
@@ -128,39 +123,25 @@ fn read_split_links_value(layout: &ProjectLayout) -> Result<Option<Value>> {
         };
         return json_value_to_yaml(links.clone()).map(Some);
     }
-    if layout.split_links_yaml_path().is_file() {
-        let links_doc = read_preset_document(&layout.split_links_yaml_path())?;
-        return Ok(links_doc.get(&yaml_key("links")).cloned());
-    }
     Ok(None)
 }
 
 fn write_split_links_value(layout: &ProjectLayout, links: Value) -> Result<()> {
-    let use_json =
-        layout.split_links_json_path().is_file() || !layout.split_links_yaml_path().is_file();
-    if use_json {
-        let path = layout.split_links_json_path();
-        let json_links = yaml_value_to_json(&links)?;
-        let mut doc = serde_json::Map::new();
-        doc.insert("links".into(), json_links);
-        let text = serde_json::to_string_pretty(&serde_json::Value::Object(doc))
-            .context("serialize links JSON")?;
-        let tmp = path.with_extension("json.partial");
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("create links parent: {}", parent.display()))?;
-        }
-        fs::write(&tmp, format!("{text}\n"))
-            .with_context(|| format!("write links temp: {}", tmp.display()))?;
-        fs::rename(&tmp, &path).with_context(|| format!("replace links JSON: {}", path.display()))?;
-        return Ok(());
+    let path = layout.split_links_json_path();
+    let json_links = yaml_value_to_json(&links)?;
+    let mut doc = serde_json::Map::new();
+    doc.insert("links".into(), json_links);
+    let text = serde_json::to_string_pretty(&serde_json::Value::Object(doc))
+        .context("serialize links JSON")?;
+    let tmp = path.with_extension("json.partial");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create links parent: {}", parent.display()))?;
     }
-    let mut links_doc = Mapping::new();
-    links_doc.insert(yaml_key("links"), links);
-    write_preset_value(
-        &layout.split_links_yaml_path(),
-        Value::Mapping(links_doc),
-    )
+    fs::write(&tmp, format!("{text}\n"))
+        .with_context(|| format!("write links temp: {}", tmp.display()))?;
+    fs::rename(&tmp, &path).with_context(|| format!("replace links JSON: {}", path.display()))?;
+    Ok(())
 }
 
 /// Merge ``config.yaml`` with optional ``sites.yaml`` / ``land.yaml``.
@@ -298,26 +279,6 @@ mod tests {
         fs::write(
             dir.path().join("links.json"),
             r#"{"links": [["x", "y"]]}"#,
-        )
-        .unwrap();
-
-        let layout = ProjectLayout::from_config_path(&config_path).unwrap();
-        let merged = read_merged_document(&layout).unwrap();
-        let links = merged.get(&yaml_key("links")).unwrap();
-        let pair = links.as_sequence().unwrap().first().unwrap().as_sequence().unwrap();
-        assert_eq!(pair[0], yaml_key("x"));
-        assert_eq!(pair[1], yaml_key("y"));
-    }
-
-    #[test]
-    fn split_layout_reads_links_from_links_yaml() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.yaml");
-        write_yaml_document(&config_path, &Mapping::new()).unwrap();
-        fs::write(dir.path().join("sites.yaml"), "sites: {}\n").unwrap();
-        fs::write(
-            dir.path().join("links.yaml"),
-            "links:\n  - [x, y]\n",
         )
         .unwrap();
 

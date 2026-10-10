@@ -73,15 +73,30 @@ export function mountLinkSheet(store, appApi) {
         return null
       })
 
-      const strength = computed(() => {
+      const linkKind = computed(() => {
         const props = meshFeature.value?.properties || {}
-        if (props.strength) return String(props.strength)
-        if (pairDetail.value?.strength) return String(pairDetail.value.strength)
+        if (props.manual) return 'manual'
+        if (props.kind) return String(props.kind)
+        if (pairDetail.value?.kind) return String(pairDetail.value.kind)
         return 'unknown'
       })
 
       const marginDb = computed(() => {
         if (pairDetail.value?.margin_db != null) return Number(pairDetail.value.margin_db)
+        return null
+      })
+
+      const forwardMarginDb = computed(() => {
+        if (pairDetail.value?.forward_margin_db != null) {
+          return Number(pairDetail.value.forward_margin_db)
+        }
+        return null
+      })
+
+      const reverseMarginDb = computed(() => {
+        if (pairDetail.value?.reverse_margin_db != null) {
+          return Number(pairDetail.value.reverse_margin_db)
+        }
         return null
       })
 
@@ -244,9 +259,11 @@ export function mountLinkSheet(store, appApi) {
         appApi.flyToPeakProfilePoint?.(pt.lat, pt.lon)
       }
 
-      function strengthLabel(val) {
-        if (val === 'strong') return 'Mutual (strong)'
-        if (val === 'weak') return 'One-way (weak)'
+      function kindLabel(val) {
+        if (val === 'manual') return 'Manual override'
+        if (val === 'two_way') return 'Two-way'
+        if (val === 'one_way') return 'One-way'
+        if (val === 'none') return 'Not viable'
         return val
       }
 
@@ -308,9 +325,11 @@ export function mountLinkSheet(store, appApi) {
         endpointA,
         endpointB,
         distanceKm,
-        strength,
-        strengthLabel,
+        linkKind,
+        kindLabel,
         marginDb,
+        forwardMarginDb,
+        reverseMarginDb,
         hopKm,
         loading,
         detailError,
@@ -366,12 +385,20 @@ export function mountLinkSheet(store, appApi) {
             <p class="site-panel__value">{{ distanceKm != null ? distanceKm.toFixed(1) + ' km' : '—' }}</p>
           </div>
           <div class="site-panel__fact">
-            <span class="site-panel__label">Strength</span>
-            <p class="site-panel__value">{{ strengthLabel(strength) }}</p>
+            <span class="site-panel__label">Link</span>
+            <p class="site-panel__value">{{ kindLabel(linkKind) }}</p>
           </div>
           <div class="site-panel__fact">
-            <span class="site-panel__label">Margin</span>
+            <span class="site-panel__label">Margin (weaker leg)</span>
             <p class="site-panel__value">{{ loading ? '…' : marginDb != null ? marginDb.toFixed(1) + ' dB' : '—' }}</p>
+          </div>
+          <div v-if="forwardMarginDb != null || reverseMarginDb != null" class="site-panel__fact">
+            <span class="site-panel__label">Leg margins</span>
+            <p class="site-panel__value">
+              {{ forwardMarginDb != null ? forwardMarginDb.toFixed(1) + ' dB' : '—' }}
+              /
+              {{ reverseMarginDb != null ? reverseMarginDb.toFixed(1) + ' dB' : '—' }}
+            </p>
           </div>
           <div class="site-panel__fact">
             <span class="site-panel__label">Hop radius</span>
