@@ -385,6 +385,7 @@ mod tests {
             budget_route: None,
             site_options: None,
             site_options_rev: 0,
+            ..Default::default()
         };
 
         let cache_path = probe_cache_path(dir.path(), &prefs_key, lat, lon);
@@ -430,6 +431,7 @@ mod tests {
             budget_route: None,
             site_options: None,
             site_options_rev: 0,
+            ..Default::default()
         };
         save_probe_cache(&probe_cache_path(dir.path(), &prefs_key, lat, lon), &probe).unwrap();
         let payload = place_access_from_probe_cache(&config, "toulon-south", Some(lat), Some(lon))

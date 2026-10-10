@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{get, patch, post, put},
     Json, Router,
 };
 use peaky_geo::{parse_kml_point_placemarks, parse_kmz_point_placemarks};
@@ -41,7 +41,11 @@ use crate::land::{
     read_overlay_part_geojson_bytes, LandImportBody,
     LandPatchSourceBody, LandPreviewGeoJsonBody,
 };
-use crate::roads::{roads_network_drive_geojson_bytes, roads_network_layer_geojson_bytes};
+use crate::roads::{
+    roads_book_get, roads_book_put, roads_network_all_geojson_bytes,
+    roads_network_drive_geojson_bytes, roads_network_layer_geojson_bytes,
+};
+use peaky_preset::RoadsBook;
 use peaky_peaks::{NetworkLayer, NetworkViewBBox};
 use crate::simulation::project_simulation_payload;
 use crate::viewshed::{
@@ -109,6 +113,11 @@ pub fn router() -> Router<AppState> {
             "/api/p/{slug}/roads/network/drive/geojson",
             get(roads_network_drive_geojson),
         )
+        .route(
+            "/api/p/{slug}/roads/network/all/geojson",
+            get(roads_network_all_geojson),
+        )
+        .route("/api/p/{slug}/roads", get(roads_book_get_handler).put(roads_book_put_handler))
         .route(
             "/api/p/{slug}/roads/network/{layer}/geojson",
             get(roads_network_layer_geojson),
@@ -1150,6 +1159,70 @@ struct NetworkViewQuery {
     north: f64,
     #[serde(default = "default_network_zoom")]
     z: f64,
+}
+
+async fn roads_book_get_handler(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+) -> Result<Json<RoadsBook>, (StatusCode, Json<Value>)> {
+    let preset_path = state.preset_path();
+    roads_book_get(&preset_path).map(Json).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })
+}
+
+async fn roads_book_put_handler(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Json(body): Json<RoadsBook>,
+) -> Result<Json<RoadsBook>, (StatusCode, Json<Value>)> {
+    let preset_path = state.preset_path();
+    let warm = state.warm.clone();
+    roads_book_put(&preset_path, &warm, &body).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })?;
+    roads_book_get(&preset_path).map(Json).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })
+}
+
+async fn roads_network_all_geojson(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(q): Query<NetworkViewQuery>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let view = match network_view_from_query(&q) {
+        Ok(v) => v,
+        Err(e) => return Err(e),
+    };
+    let warm = state.warm.clone();
+    let preset_path = state.preset_path();
+    let bytes = tokio::task::spawn_blocking(move || {
+        roads_network_all_geojson_bytes(&warm, &preset_path, view)
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "roads network task failed" })),
+        )
+    })?
+    .map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })?;
+    network_geojson_response(bytes)
 }
 
 async fn roads_network_drive_geojson(

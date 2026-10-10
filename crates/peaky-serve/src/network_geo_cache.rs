@@ -12,6 +12,7 @@ const CACHE_CAP: usize = 32;
 enum CacheKind {
     Layer(NetworkLayer),
     DriveBoth,
+    AllInventory,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
@@ -86,6 +87,29 @@ impl NetworkGeoByteCache {
             view,
         };
         self.lru.put(key, Arc::new(bytes));
+    }
+
+    pub fn get_all(&mut self, routing: &ProjectRouting, view: NetworkViewCacheKey) -> Option<Arc<Vec<u8>>> {
+        self.touch_routing(routing);
+        let key = CacheKey {
+            kind: CacheKind::AllInventory,
+            view,
+        };
+        self.lru.get(&key).cloned()
+    }
+
+    pub fn put_all(&mut self, routing: &ProjectRouting, view: NetworkViewCacheKey, bytes: Vec<u8>) {
+        self.touch_routing(routing);
+        let key = CacheKey {
+            kind: CacheKind::AllInventory,
+            view,
+        };
+        self.lru.put(key, Arc::new(bytes));
+    }
+
+    pub fn clear(&mut self) {
+        self.routing_id = 0;
+        self.lru.clear();
     }
 }
 

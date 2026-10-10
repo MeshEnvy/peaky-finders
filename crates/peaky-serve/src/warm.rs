@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use peaky_peaks::{
-    load_routing_for_points_progress, osm_routing_opts_from_preset, routing_bbox_for_points,
-    routing_coverage_bbox, routing_network_drive_geojson_bytes,
+    ensure_osm_pbf, invalidate_osm_routing_caches, load_routing_for_points_progress,
+    osm_routing_opts_from_preset, routing_bbox_for_points,
+    routing_coverage_bbox,     inventory_all_geojson_bytes, routing_network_drive_geojson_bytes,
     routing_network_layer_geojson_bytes, warm_place_access_with_routing, NetworkLayer,
     NetworkViewBBox, NetworkViewCacheKey, OsmParsePhase, OsmRoutingOpts, ProjectRouting,
     OSM_ROUTE_PAD_DEG,
@@ -51,6 +52,8 @@ const OSM_COVER_PAD_DEG: f64 = 0.35;
 
 struct CachedOsmRouting {
     routing: Arc<ProjectRouting>,
+    /// `WarmHub::osm_epoch` when this graph was published. A roads save bumps the epoch so an in-flight parse cannot republish a stale graph.
+    epoch: u64,
     west: f64,
     south: f64,
     east: f64,
@@ -275,6 +278,8 @@ pub struct WarmHub {
     workers_started: Arc<AtomicBool>,
     /// Project-wide OSM routing graph (lazy; shared across site access warms).
     osm_routing: Arc<Mutex<Option<CachedOsmRouting>>>,
+    /// Bumped on every roads save. In-flight parses publish only if it is unchanged.
+    osm_epoch: Arc<AtomicU64>,
     /// Single-flight lock so prefetch and HTTP warm share one PBF parse.
     osm_build: Arc<Mutex<()>>,
     osm_status: Arc<Mutex<OsmStatus>>,
@@ -301,6 +306,7 @@ impl WarmHub {
             projects: Arc::new(Mutex::new(HashMap::new())),
             workers_started: Arc::new(AtomicBool::new(false)),
             osm_routing: Arc::new(Mutex::new(None)),
+            osm_epoch: Arc::new(AtomicU64::new(0)),
             osm_build: Arc::new(Mutex::new(())),
             osm_status: Arc::new(Mutex::new(OsmStatus::default())),
             osm_last_pub: Arc::new(Mutex::new(None)),
@@ -364,6 +370,42 @@ impl WarmHub {
             .lock()
             .unwrap()
             .put_drive(&routing, cache_key, bytes.clone());
+        Ok(bytes)
+    }
+
+    /// Full OSM + GTLF inventory for the map "All" overlay (no zoom thinning).
+    pub fn roads_network_all_geojson_bytes(
+        &self,
+        preset_path: &Path,
+        view: NetworkViewBBox,
+    ) -> Result<Vec<u8>> {
+        let routing = self.ensure_osm_covering(preset_path, &[])?;
+        let cache_key = NetworkViewCacheKey::from_view(
+            view.west,
+            view.south,
+            view.east,
+            view.north,
+            -1.0,
+        );
+        if let Some(hit) = self
+            .network_geo_cache
+            .lock()
+            .unwrap()
+            .get_all(&routing, cache_key)
+        {
+            return Ok((*hit).clone());
+        }
+        let bytes = inventory_all_geojson_bytes(
+            &routing.osm_inventory,
+            &routing.gtlf_inventory,
+            &routing.roads_customs,
+            view,
+        )
+        .map_err(anyhow::Error::msg)?;
+        self.network_geo_cache
+            .lock()
+            .unwrap()
+            .put_all(&routing, cache_key, bytes.clone());
         Ok(bytes)
     }
 
@@ -611,8 +653,12 @@ impl WarmHub {
     }
 
     fn cached_osm_if_covers(&self, extra: &[(f64, f64)]) -> Option<Arc<ProjectRouting>> {
+        let epoch = self.osm_epoch.load(Ordering::Acquire);
         let guard = self.osm_routing.lock().unwrap();
         let cached = guard.as_ref()?;
+        if cached.epoch != epoch {
+            return None;
+        }
         if extra.is_empty() || extra.iter().all(|&(lat, lon)| cached.covers(lat, lon, OSM_COVER_PAD_DEG))
         {
             Some(cached.routing.clone())
@@ -635,6 +681,7 @@ impl WarmHub {
         if let Some(routing) = self.cached_osm_if_covers(extra) {
             return Ok(routing);
         }
+        let started = self.osm_epoch.load(Ordering::Acquire);
         let preset = load_preset(preset_path)?;
         let mut points: Vec<(f64, f64)> = preset.sites.values().map(|s| (s.lat(), s.lon())).collect();
         points.extend_from_slice(extra);
@@ -661,9 +708,14 @@ impl WarmHub {
                 return Err(e);
             }
         };
+        if self.osm_epoch.load(Ordering::Acquire) != started {
+            drop(_build);
+            return self.ensure_osm_covering(preset_path, extra);
+        }
         let (cwest, csouth, ceast, cnorth) = routing_coverage_bbox(west, south, east, north);
         let cached = CachedOsmRouting {
             routing: routing.clone(),
+            epoch: started,
             west: cwest,
             south: csouth,
             east: ceast,
@@ -672,6 +724,19 @@ impl WarmHub {
         *self.osm_routing.lock().unwrap() = Some(cached);
         self.publish_osm_progress(OsmParsePhase::Ready, 1.0, true);
         Ok(routing)
+    }
+
+    /// Clear in-memory OSM routing and on-disk PBF-side caches after ``roads.yaml`` changes.
+    pub fn invalidate_osm_routing(&self, preset_path: &Path) -> anyhow::Result<()> {
+        self.osm_epoch.fetch_add(1, Ordering::AcqRel);
+        *self.osm_routing.lock().unwrap() = None;
+        self.network_geo_cache.lock().unwrap().clear();
+        let project_dir = preset_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("preset path has no parent"))?;
+        let pbf = ensure_osm_pbf(project_dir, false)?;
+        invalidate_osm_routing_caches(&pbf);
+        Ok(())
     }
 
     /// Prefetch the site-bbox graph after listen so the first draft click is a route, not a PBF parse.

@@ -52,6 +52,10 @@ impl ProjectLayout {
         self.project_dir.join("boards.yaml")
     }
 
+    pub fn roads_path(&self) -> PathBuf {
+        self.project_dir.join("roads.yaml")
+    }
+
     pub fn peak_overrides_path(&self) -> PathBuf {
         self.project_dir.join("peaks.yaml")
     }

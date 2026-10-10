@@ -579,6 +579,7 @@ mod tests {
             budget_route: None,
             site_options: None,
             site_options_rev: 0,
+            ..Default::default()
         };
         let row = index_row_from_probe(
             Some("Peak".into()),
