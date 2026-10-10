@@ -150,6 +150,10 @@ export function runApp(ctx = {}) {
     scheduleSaveMapState: () => mapChrome?.scheduleSaveMapState(),
   })
 
+  window.addEventListener('peaky-roads-book-changed', () => {
+    void siteAccessDomain?.rewarmAfterRoadsBookChange()
+  })
+
   peaksDomain = createPeaksDomain({
     store,
     projectSlug: String(store.projectSlug || projectSlug || ''),

@@ -5,6 +5,7 @@ import { DRAFT_VIEWSHED_SLUG, isEphemeralPlaceSlug } from '../constants.js'
 import { coordsMatchPair } from '../geo.js'
 import { ensureSiteAccessLayers, setSiteAccessLayerData } from '../map/site-access-layers.js'
 import {
+  activeAccessPreviewSlug,
   isAccessVisible as isAccessVisibleInStore,
   setAccessVisible as setAccessVisibleInStore,
   siteAccessShouldShow,
@@ -174,6 +175,115 @@ export function createSiteAccessDomain(opts) {
       fraction: Number(data.fraction) || 0,
     }
     opts.updatePinOverlays?.()
+    const phase = String(data.phase || '').toLowerCase()
+    const ready =
+      phase === 'ready' ||
+      (data.status === 'ready' && Number(data.fraction) >= 1) ||
+      Number(data.fraction) >= 1
+    if (ready && store.access.pendingRewarmAfterRoads) {
+      store.access.pendingRewarmAfterRoads = false
+      void rewarmAfterRoadsBookChange()
+    }
+  }
+
+  function accessRewarmTargets() {
+    /** @type {Map<string, { slug: string, lat: number, lon: number, name?: string }>} */
+    const out = new Map()
+    const add = (slug, lat, lon, name) => {
+      if (!slug || !Number.isFinite(lat) || !Number.isFinite(lon)) return
+      if (!siteAccessShowing(slug)) return
+      out.set(slug, { slug, lat, lon, name: name || slug })
+    }
+    for (const row of Object.values(store.access.bySlug || {})) {
+      if (!row?.slug) continue
+      add(row.slug, Number(row.lat), Number(row.lon), row.name)
+    }
+    const selected = store.ui?.selectedSlug
+    if (selected) {
+      const site = getSites().find((s) => s.slug === selected)
+      if (site) add(site.slug, Number(site.lat), Number(site.lon), site.name)
+    }
+    const preview = activeAccessPreviewSlug(store)
+    if (preview) {
+      const row = store.access.bySlug[preview]
+      if (row) add(preview, Number(row.lat), Number(row.lon), row.name)
+    }
+    return [...out.values()]
+  }
+
+  /** Drop cached routes and POST warm after ``roads.yaml`` changes (custom roads, overrides). */
+  async function rewarmAfterRoadsBookChange() {
+    store.access.pendingRewarmAfterRoads = true
+    const osm = store.access.osm
+    const osmBusy =
+      osm &&
+      osm.status !== 'idle' &&
+      osm.status !== 'ready' &&
+      Number(osm.fraction) < 1 &&
+      String(osm.phase || '').toLowerCase() !== 'ready'
+
+    const jobs = []
+    if (!osmBusy) {
+      for (const target of accessRewarmTargets()) {
+        const { slug, lat, lon, name } = target
+        const meta =
+          getSites().find((s) => s.slug === slug) || {
+            slug,
+            lat,
+            lon,
+            name: name || slug,
+          }
+        jobs.push(
+          ensurePlaceAccessProfiles(slug, lat, lon, meta, {
+            forceRewarm: true,
+            isActive: () => siteAccessShowing(slug),
+          }),
+        )
+      }
+    }
+
+    if (
+      !osmBusy &&
+      store.ui.createMode &&
+      Number.isFinite(store.ui.createLat) &&
+      Number.isFinite(store.ui.createLon)
+    ) {
+      const lat = store.ui.createLat
+      const lon = store.ui.createLon
+      store.access.draftLoading = true
+      opts.updatePinOverlays?.()
+      jobs.push(
+        ensurePlaceAccessProfiles(
+          DRAFT_VIEWSHED_SLUG,
+          lat,
+          lon,
+          { slug: DRAFT_VIEWSHED_SLUG, name: 'New site', lat, lon },
+          {
+            forceRewarm: true,
+            isActive: () =>
+              !!store.ui.createMode && store.ui.createLat === lat && store.ui.createLon === lon,
+            onReady: () => {
+              if (store.ui.createLat === lat && store.ui.createLon === lon) {
+                store.access.draftLoading = false
+                opts.updatePinOverlays?.()
+              }
+            },
+          },
+        ).finally(() => {
+          if (store.ui.createLat === lat && store.ui.createLon === lon) {
+            store.access.draftLoading = false
+            opts.updatePinOverlays?.()
+          }
+        }),
+      )
+    }
+
+    if (jobs.length) {
+      store.access.pendingRewarmAfterRoads = false
+      await Promise.all(jobs)
+    } else if (!osmBusy) {
+      store.access.pendingRewarmAfterRoads = false
+    }
   }
 
   /**
@@ -243,8 +353,13 @@ export function createSiteAccessDomain(opts) {
     const active = () => (opts.isActive ? opts.isActive() : true)
     const meta = siteMeta || { slug, lat, lon, name: slug }
 
+    if (opts.forceRewarm) {
+      delete store.access.bySlug[slug]
+      placeInflight.delete(slug)
+    }
+
     const cached = store.access.bySlug[slug]
-    if (accessRowComplete(slug, cached, lat, lon)) {
+    if (!opts.forceRewarm && accessRowComplete(slug, cached, lat, lon)) {
       if (!opts.prefetchOnly && active()) opts.onReady?.()
       return
     }
@@ -282,6 +397,11 @@ export function createSiteAccessDomain(opts) {
     const task = (async () => {
       try {
         if (!active() && !opts.prefetchOnly) return
+
+        if (opts.forceRewarm) {
+          await postWarmAccess()
+          return
+        }
 
         if (!isEphemeralPlaceSlug(slug)) {
           const resp = await fetch(
@@ -461,5 +581,6 @@ export function createSiteAccessDomain(opts) {
     setAccessVisible,
     applyAccessVisibilityForSite,
     selectAccessOption,
+    rewarmAfterRoadsBookChange,
   }
 }

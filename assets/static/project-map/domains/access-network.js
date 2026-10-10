@@ -196,16 +196,25 @@ export function createAccessNetworkDomain(opts) {
       return
     }
     const id = `custom-${Date.now()}`
+    const savedVerts = drawVertices.slice()
     try {
       const book = await fetchRoadsBook(projectSlug)
-      appendCustomRoad(book, id, /** @type {import('../api/roads-book.js').RoadRole} */ (role), drawVertices)
+      appendCustomRoad(
+        book,
+        id,
+        /** @type {import('../api/roads-book.js').RoadRole} */ (role),
+        savedVerts,
+      )
       await saveRoadsBook(projectSlug, book)
-      await onRoadsBookChanged()
+      setDrawRoadActive(false)
+      invalidateNetworkClientCache()
+      paintOptimisticCustomRoad(id, /** @type {import('../api/roads-book.js').RoadRole} */ (role), savedVerts)
       window.dispatchEvent(new CustomEvent('peaky-roads-book-changed', { detail: { fromMap: true } }))
+      void refreshVisibleLayers(true)
     } catch (err) {
       window.alert(err.message || String(err))
+      setDrawRoadActive(false)
     }
-    setDrawRoadActive(false)
   }
 
   function visState() {
@@ -319,6 +328,62 @@ export function createAccessNetworkDomain(opts) {
       layerFetchTier[kind] = null
       inflight[kind] = null
     }
+  }
+
+  /**
+   * @param {string} id
+   * @param {import('../api/roads-book.js').RoadRole} role
+   * @param {[number, number][]} latLonVerts
+   */
+  function customRoadFeature(id, role, latLonVerts) {
+    return {
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: latLonVerts.map(([lat, lon]) => [lon, lat]),
+      },
+      properties: { role, source: 'custom', id },
+    }
+  }
+
+  /**
+   * Show the saved custom with real layer colors while the server rebuilds OSM routing.
+   * @param {string} id
+   * @param {import('../api/roads-book.js').RoadRole} role
+   * @param {[number, number][]} latLonVerts
+   */
+  function paintOptimisticCustomRoad(id, role, latLonVerts) {
+    const map = getMap()
+    if (!map || latLonVerts.length < 2) return
+    const feature = customRoadFeature(id, role, latLonVerts)
+    const solo = { type: 'FeatureCollection', features: [feature] }
+    ensureAccessNetworkLayers(map)
+    syncVisibility()
+    const v = visState()
+    if (v.allVisible) {
+      allCache = solo
+      setAccessNetworkAllData(map, solo)
+    }
+    if (!v.allVisible) {
+      if (role === 'paved' && v.pavedVisible) {
+        layerCache.paved = solo
+        setAccessNetworkLayerData(map, 'paved', solo)
+      }
+      if (role === 'jeep' && v.jeepVisible) {
+        layerCache.jeep = solo
+        setAccessNetworkLayerData(map, 'jeep', solo)
+      }
+      if (role === 'hiking' && v.hikingVisible) {
+        layerCache.hiking = solo
+        setAccessNetworkLayerData(map, 'hiking', solo)
+      }
+      if (role === 'other') {
+        console.info(
+          'Custom road role "other" appears on the All layer; turn on All to see it while the map reloads.',
+        )
+      }
+    }
+    afterLayerPaint()
   }
 
   /** After ``roads.yaml`` save: drop client cache and repaint every visible network layer. */

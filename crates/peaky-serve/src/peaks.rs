@@ -7,11 +7,12 @@ use anyhow::{Context, Result};
 use peaky_peaks::{
     ensure_site_access_options_on_probe, load_probe_cache, probe_cache_path,
     project_gtlf_fingerprint, project_pbf_fingerprint, warm_place_access,
-    warm_place_access_with_routing, ProjectRouting, SessionElev,
+    warm_place_access_with_routing, ProjectRouting, SessionElev, OSM_ROUTE_PAD_DEG,
 };
 use crate::peaks_cache::cached_peaks_list;
 use peaky_preset::{
-    load_latest_peaks_index, load_preset, prefs_key_for_project, PeakHikeProfile, PeakJeepProfile,
+    ensure_roads_book, load_latest_peaks_index, load_preset, prefs_key_for_project,
+    roads_global_fingerprint, roads_local_fingerprint, PeakHikeProfile, PeakJeepProfile,
     PlaceAccess, SiteAccessOption, resolve_site_display_route,
 };
 use serde_json::{json, Value};
@@ -184,6 +185,17 @@ fn resolve_point(
     anyhow::bail!("unknown place slug {place_slug}")
 }
 
+fn probe_cache_matches_roads(preset_path: &Path, lat: f64, lon: f64, probe: &PlaceAccess) -> bool {
+    let Ok(roads) = ensure_roads_book(preset_path) else {
+        return false;
+    };
+    let global_fp = roads_global_fingerprint(&roads);
+    let max_jeep_m = OSM_ROUTE_PAD_DEG * 111_320.0;
+    let local_fp = roads_local_fingerprint(&roads, lat, lon, max_jeep_m);
+    probe.roads_global_fp.as_deref() == Some(global_fp.as_str())
+        && probe.roads_local_fp.as_deref() == Some(local_fp.as_str())
+}
+
 /// Read precomputed probe JSON from disk — no OSM/GTLF/DEM work.
 pub fn place_access_from_probe_cache(
     preset_path: &Path,
@@ -198,6 +210,9 @@ pub fn place_access_from_probe_cache(
     let prefs_key = prefs_key_for_project(preset_path, &gtlf, &pbf)?;
     let cache_path = probe_cache_path(project_dir, &prefs_key, lat, lon);
     if let Some(probe) = load_probe_cache(&cache_path) {
+        if !probe_cache_matches_roads(preset_path, lat, lon, &probe) {
+            return Ok(None);
+        }
         let preset = load_preset(preset_path)?;
         let site_picker = place_uses_site_access_picker(&preset, place_slug);
         let access_choice = preset
@@ -234,6 +249,9 @@ pub fn site_probe_cache_needs_options(
     let Some(probe) = load_probe_cache(&cache_path) else {
         return Ok(true);
     };
+    if !probe_cache_matches_roads(preset_path, lat, lon, &probe) {
+        return Ok(true);
+    }
     Ok(!site_options_ready(&probe))
 }
 
@@ -309,6 +327,14 @@ mod tests {
     use peaky_peaks::save_probe_cache;
     use peaky_preset::model::{AccessProbe, AccessRoute, PeakHikeProfile, PeakHikeProfilePoint, PeakJeepProfile, PeakJeepProfilePoint};
     use std::fs;
+
+    fn stamp_probe_roads(config: &Path, lat: f64, lon: f64, mut probe: AccessProbe) -> AccessProbe {
+        let roads = ensure_roads_book(config).unwrap();
+        probe.roads_global_fp = Some(roads_global_fingerprint(&roads));
+        let max_jeep_m = OSM_ROUTE_PAD_DEG * 111_320.0;
+        probe.roads_local_fp = Some(roads_local_fingerprint(&roads, lat, lon, max_jeep_m));
+        probe
+    }
 
     #[test]
     fn place_access_from_probe_cache_returns_profiles() {
@@ -387,6 +413,7 @@ mod tests {
             site_options_rev: 0,
             ..Default::default()
         };
+        let probe = stamp_probe_roads(&config, lat, lon, probe);
 
         let cache_path = probe_cache_path(dir.path(), &prefs_key, lat, lon);
         save_probe_cache(&cache_path, &probe).unwrap();
@@ -433,6 +460,7 @@ mod tests {
             site_options_rev: 0,
             ..Default::default()
         };
+        let probe = stamp_probe_roads(&config, lat, lon, probe);
         save_probe_cache(&probe_cache_path(dir.path(), &prefs_key, lat, lon), &probe).unwrap();
         let payload = place_access_from_probe_cache(&config, "toulon-south", Some(lat), Some(lon))
             .unwrap()
