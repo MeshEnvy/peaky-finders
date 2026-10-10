@@ -7,6 +7,8 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use crate::hike::{haversine_m, HikeSampleElev};
 use crate::hike_route::resolve_hike;
 use crate::jeep::{JeepRouteResult, PavedReachTree};
+use peaky_preset::RoadRole;
+
 use crate::osm::{resolve_vertex_welded, GraphNodeIndex};
 use crate::osm::{GraphEdge, JeepRoadGraph, JeepRoadIndex, OsmRouting, RoadPoint};
 
@@ -260,7 +262,7 @@ pub fn build_trail_graph(
             let b = vert_nodes[i + 1];
             let (lat1, lon1) = graph.node_coords(a);
             let (lat2, lon2) = graph.node_coords(b);
-            graph.add_way_segment_public(
+            graph.add_way_segment_classified(
                 a,
                 b,
                 lat1,
@@ -271,6 +273,8 @@ pub fn build_trail_graph(
                 None,
                 None,
                 false,
+                RoadRole::Hiking,
+                way_count as u32,
             );
         }
     }

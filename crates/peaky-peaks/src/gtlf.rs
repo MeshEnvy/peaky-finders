@@ -1,6 +1,6 @@
 //! BLM GTLF fetch, cache, and merge with OSM jeep + foot-trail graphs.
 
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -8,12 +8,13 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use geojson::{Feature, GeoJson, Geometry, Value as GeoValue};
 use peaky_geo::{download_featureserver_geojson_bbox, load_preset_aoi_union, LonLatBBox};
-use peaky_preset::{load_preset, GtlfSourceConfig};
+use peaky_preset::{load_preset, RoadsBook, GtlfSourceConfig};
 
 use crate::osm::OsmRoutingOpts;
 use tracing::info;
 
 use crate::osm::{merge_supplemental_jeep_lines_progress, OsmRouting, SupplementalLine};
+use crate::road_inventory::{GtlfInventoryLine, GtlfRoadInventory, InventoryRole};
 use crate::trail::{build_trail_graph, TrailRouting, TRAIL_MAX_M};
 use crate::OSM_BUILD_PAD_DEG;
 
@@ -215,7 +216,12 @@ fn gtlf_highway_from_props(props: &serde_json::Map<String, serde_json::Value>) -
     }
 }
 
-fn load_jeep_lines(project_dir: &Path, gtlf: &GtlfSourceConfig, bbox: LonLatBBox) -> Result<Vec<SupplementalLine>> {
+fn load_jeep_lines(
+    project_dir: &Path,
+    gtlf: &GtlfSourceConfig,
+    roads: &RoadsBook,
+    bbox: LonLatBBox,
+) -> Result<Vec<SupplementalLine>> {
     let mut out = Vec::new();
     for url in &gtlf.jeep_layers {
         let path = gtlf_cache_dir(project_dir).join(layer_cache_name(url));
@@ -249,10 +255,14 @@ fn load_jeep_lines(project_dir: &Path, gtlf: &GtlfSourceConfig, bbox: LonLatBBox
                 .as_ref()
                 .map(|p| gtlf_highway_from_props(p))
                 .unwrap_or(("track".to_string(), None));
+            let role = roads.classify_gtlf_line(layer_id, &coords, false);
             out.push(SupplementalLine {
                 coords,
                 highway,
                 tracktype,
+                role,
+                group_id: u32::MAX,
+                gtlf_layer: Some(layer_id.to_string()),
             });
         }
         info!(
@@ -314,6 +324,7 @@ pub fn apply_gtlf_to_routing(
         north,
         force_fetch,
         false,
+        &[],
         &mut |_| {},
     )
 }
@@ -330,6 +341,7 @@ pub fn apply_gtlf_to_routing_progress<F>(
     north: f64,
     force_fetch: bool,
     skip_jeep_merge: bool,
+    extra_foot_lines: &[Vec<(f64, f64)>],
     progress: &mut F,
 ) -> Result<GtlfBundle>
 where
@@ -347,7 +359,13 @@ where
     if !skip_jeep_merge {
         info!(fingerprint = %fingerprint, "gtlf: loading jeep lines");
         progress(0.04);
-        let jeep_lines = load_jeep_lines(project_dir, &gtlf, LonLatBBox::new(west, south, east, north))?;
+        let roads = peaky_preset::ensure_roads_book(&preset_path)?;
+        let jeep_lines = load_jeep_lines(
+            project_dir,
+            &gtlf,
+            &roads,
+            LonLatBBox::new(west, south, east, north),
+        )?;
         info!(
             lines = jeep_lines.len(),
             jeep_ways = routing.jeep_roads.way_count,
@@ -370,7 +388,9 @@ where
         progress(0.92);
     }
     info!("gtlf: loading foot trails");
-    let foot_lines = load_foot_lines(project_dir, &gtlf, LonLatBBox::new(west, south, east, north))?;
+    let mut foot_lines =
+        load_foot_lines(project_dir, &gtlf, LonLatBBox::new(west, south, east, north))?;
+    foot_lines.extend(extra_foot_lines.iter().cloned());
     let t_trails = Instant::now();
     let foot_trails = build_trail_graph(&foot_lines, opts.road_sample_step_m);
     info!(
@@ -385,6 +405,75 @@ where
         foot_trails,
         fingerprint,
     })
+}
+
+fn string_props(props: &serde_json::Map<String, serde_json::Value>) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for (k, v) in props {
+        if let Some(s) = v.as_str() {
+            out.insert(k.clone(), s.to_string());
+        } else if !v.is_null() {
+            out.insert(k.clone(), v.to_string());
+        }
+    }
+    out
+}
+
+/// Cached GTLF jeep + foot lines for the map "All" overlay (full properties).
+pub fn load_gtlf_display_inventory(
+    project_dir: &Path,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    roads: &RoadsBook,
+) -> Result<GtlfRoadInventory> {
+    let preset = load_preset(&project_dir.join("config.yaml"))?;
+    let gtlf = preset.sources.gtlf.clone();
+    if !gtlf.enabled {
+        return Ok(GtlfRoadInventory::default());
+    }
+    let mut lines = Vec::new();
+    for url in gtlf.jeep_layers.iter().chain(gtlf.foot_layers.iter()) {
+        let path = gtlf_cache_dir(project_dir).join(layer_cache_name(url));
+        if !path.is_file() {
+            continue;
+        }
+        let layer_id = url.trim_end_matches('/').rsplit('/').next().unwrap_or("?").to_string();
+        let foot_layer = gtlf.foot_layers.iter().any(|u| u == url);
+        let bytes = std::fs::read(&path)?;
+        let geo: GeoJson = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse gtlf display layer {layer_id}"))?;
+        let features = match geo {
+            GeoJson::FeatureCollection(fc) => fc.features,
+            GeoJson::Feature(f) => vec![f],
+            _ => continue,
+        };
+        for f in features {
+            let Some(geom) = f.geometry else { continue };
+            let coords = extract_line_coords(&geom);
+            if coords.len() < 2 {
+                continue;
+            }
+            if !coords_in_bbox(&coords, west, south, east, north) {
+                continue;
+            }
+            let road_role = roads.classify_gtlf_line(&layer_id, &coords, foot_layer);
+            let role = crate::road_inventory::inventory_role_from_road(road_role);
+            let props = f
+                .properties
+                .as_ref()
+                .map(string_props)
+                .unwrap_or_default();
+            lines.push(GtlfInventoryLine {
+                coords,
+                role,
+                layer_id: layer_id.clone(),
+                props,
+            });
+        }
+    }
+    Ok(GtlfRoadInventory { lines })
 }
 
 pub fn read_gtlf_inventory_geojson(project_dir: &Path, foot: bool) -> Result<GeoJson> {

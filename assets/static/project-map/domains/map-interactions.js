@@ -53,6 +53,7 @@ export function createMapInteractionsDomain(ctx) {
     deselectLink,
     openCreatePanel,
     beginCreateAtMapPoint,
+    trySelectRoadAtPoint,
   } = ctx
 
   let longPressTimer = null
@@ -212,6 +213,7 @@ export function createMapInteractionsDomain(ctx) {
       if (trySelectLinkSolverAtPoint(ev.point)) return
       if (trySelectFortifyAtPoint(ev.point)) return
       if (trySelectAlternateAtPoint(ev.point)) return
+      if (trySelectRoadAtPoint?.(ev.point)) return
       const siteFeats = siteFeaturesAtPoint(map, ev.point)
       if (siteFeats.length) {
         const slug = siteFeats[0].properties && siteFeats[0].properties.slug

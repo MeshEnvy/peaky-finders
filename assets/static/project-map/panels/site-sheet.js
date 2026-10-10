@@ -682,6 +682,7 @@ export function mountSiteSheet(store, appApi) {
                   </span>
                   <span v-if="opt.recommended" class="site-access-options__tag">recommended</span>
                   <span v-if="opt.passes_budget" class="site-access-options__tag">fits budget</span>
+                  <span v-if="String(opt.id || '').startsWith('draft-')" class="site-access-options__tag pf-muted">custom draft</span>
                 </button>
               </li>
             </ul>
@@ -787,6 +788,7 @@ export function mountSiteSheet(store, appApi) {
                   </span>
                   <span v-if="opt.recommended" class="site-access-options__tag">recommended</span>
                   <span v-if="opt.passes_budget" class="site-access-options__tag">fits budget</span>
+                  <span v-if="String(opt.id || '').startsWith('draft-')" class="site-access-options__tag pf-muted">custom draft</span>
                 </button>
               </li>
             </ul>

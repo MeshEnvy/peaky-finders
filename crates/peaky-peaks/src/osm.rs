@@ -76,10 +76,13 @@ pub struct OsmRoutingOpts {
     pub road_sample_step_m: f64,
     pub jeep_highways: Vec<String>,
     pub paved_highways: Vec<String>,
+    /// Fingerprint of project ``roads.yaml`` (classifiers + overrides + customs).
+    pub roads_fingerprint: String,
 }
 
 impl Default for OsmRoutingOpts {
     fn default() -> Self {
+        let book = peaky_preset::seed_roads_book();
         Self {
             road_sample_step_m: 40.0,
             jeep_highways: JEEP_HIGHWAY_TAGS.iter().map(|s| (*s).to_string()).collect(),
@@ -87,21 +90,45 @@ impl Default for OsmRoutingOpts {
                 .iter()
                 .map(|s| (*s).to_string())
                 .collect(),
+            roads_fingerprint: peaky_preset::roads_fingerprint(&book),
         }
     }
 }
 
 impl From<&peaky_preset::AccessMeta> for OsmRoutingOpts {
     fn from(meta: &peaky_preset::AccessMeta) -> Self {
+        let book = peaky_preset::seed_roads_book();
         Self {
             road_sample_step_m: meta.road_sample_step_m,
             jeep_highways: meta.road_highways.clone(),
             paved_highways: meta.paved_highways.clone(),
+            roads_fingerprint: peaky_preset::roads_fingerprint(&book),
         }
     }
 }
 
-use peaky_preset::{load_preset, DEFAULT_OSM_PBF_URL, OsmSourceConfig};
+pub fn osm_routing_opts_with_roads(meta: &peaky_preset::AccessMeta, book: &RoadsBook) -> OsmRoutingOpts {
+    OsmRoutingOpts {
+        road_sample_step_m: meta.road_sample_step_m,
+        jeep_highways: meta.road_highways.clone(),
+        paved_highways: meta.paved_highways.clone(),
+        roads_fingerprint: peaky_preset::roads_fingerprint(book),
+    }
+}
+
+fn inventory_role_from_road(role: RoadRole) -> crate::road_inventory::InventoryRole {
+    use crate::road_inventory::InventoryRole;
+    match role {
+        RoadRole::Paved => InventoryRole::Paved,
+        RoadRole::Jeep => InventoryRole::Jeep,
+        RoadRole::Hiking => InventoryRole::Hiking,
+        RoadRole::Other => InventoryRole::Other,
+    }
+}
+
+use peaky_preset::{load_preset, RoadRole, RoadsBook, DEFAULT_OSM_PBF_URL, OsmSourceConfig};
+
+use crate::segment_groups::{RoadSegmentGroup, SegmentGroupKey, SegmentGroupTags};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RoadPoint {
@@ -181,6 +208,23 @@ pub struct GraphEdge {
     pub tracktype: Option<String>,
     pub surface: Option<String>,
     pub fourwd_only: bool,
+    /// Classified once when the parent segment group was built.
+    pub role: RoadRole,
+    pub group_id: u32,
+}
+
+impl GraphEdge {
+    pub fn is_paved_anchor(&self) -> bool {
+        self.role == RoadRole::Paved
+    }
+
+    /// Jeep/paved customs are drawn on the map but omitted from trusted reach routing.
+    pub fn trusted_jeep_traversable(&self) -> bool {
+        if self.highway == "custom" && matches!(self.role, RoadRole::Paved | RoadRole::Jeep) {
+            return false;
+        }
+        matches!(self.role, RoadRole::Paved | RoadRole::Jeep)
+    }
 }
 
 pub struct JeepRoadGraph {
@@ -283,6 +327,8 @@ impl JeepRoadGraph {
         tracktype: Option<&str>,
         surface: Option<&str>,
         fourwd_only: bool,
+        role: RoadRole,
+        group_id: u32,
     ) {
         let len = haversine_m(lat1, lon1, lat2, lon2);
         if len < 0.5 {
@@ -300,6 +346,8 @@ impl JeepRoadGraph {
                 tracktype: tt.clone(),
                 surface: surf.clone(),
                 fourwd_only,
+                role,
+                group_id,
             },
         );
         self.add_edge(
@@ -311,10 +359,13 @@ impl JeepRoadGraph {
                 tracktype: tt,
                 surface: surf,
                 fourwd_only,
+                role,
+                group_id,
             },
         );
     }
 
+    #[cfg(test)]
     pub(crate) fn add_way_segment_public(
         &mut self,
         a: u32,
@@ -328,7 +379,43 @@ impl JeepRoadGraph {
         surface: Option<&str>,
         fourwd_only: bool,
     ) {
-        self.add_way_segment(a, b, lat1, lon1, lat2, lon2, highway, tracktype, surface, fourwd_only);
+        let paved_tags: HashSet<&str> = PAVED_HIGHWAY_TAGS.iter().copied().collect();
+        let role = if is_paved_anchor(
+            WayTags {
+                highway,
+                tracktype,
+                surface,
+                fourwd_only,
+            },
+            &paved_tags,
+        ) {
+            RoadRole::Paved
+        } else {
+            RoadRole::Jeep
+        };
+        self.add_way_segment(
+            a, b, lat1, lon1, lat2, lon2, highway, tracktype, surface, fourwd_only, role, 0,
+        );
+    }
+
+    pub(crate) fn add_way_segment_classified(
+        &mut self,
+        a: u32,
+        b: u32,
+        lat1: f64,
+        lon1: f64,
+        lat2: f64,
+        lon2: f64,
+        highway: &str,
+        tracktype: Option<&str>,
+        surface: Option<&str>,
+        fourwd_only: bool,
+        role: RoadRole,
+        group_id: u32,
+    ) {
+        self.add_way_segment(
+            a, b, lat1, lon1, lat2, lon2, highway, tracktype, surface, fourwd_only, role, group_id,
+        );
     }
 
     pub(crate) fn remove_undirected_edge(&mut self, a: u32, b: u32) {
@@ -351,7 +438,7 @@ impl JeepRoadGraph {
         let (lat_b, lon_b) = self.node_coords(b);
         let tt = edge.tracktype.as_deref();
         let surf = edge.surface.as_deref();
-        self.add_way_segment_public(
+        self.add_way_segment_classified(
             a,
             mid,
             lat_a,
@@ -362,8 +449,10 @@ impl JeepRoadGraph {
             tt,
             surf,
             edge.fourwd_only,
+            edge.role,
+            edge.group_id,
         );
-        self.add_way_segment_public(
+        self.add_way_segment_classified(
             mid,
             b,
             mid_lat,
@@ -374,6 +463,8 @@ impl JeepRoadGraph {
             tt,
             surf,
             edge.fourwd_only,
+            edge.role,
+            edge.group_id,
         );
         mid
     }
@@ -678,6 +769,28 @@ pub struct OsmRouting {
     pub graph: JeepRoadGraph,
     pub paved: PavedAnchorIndex,
     pub graph_nodes: GraphNodeIndex,
+    pub segment_groups: Vec<RoadSegmentGroup>,
+}
+
+/// Deep copy of a routing graph (for draft custom-road overlay). Rebuilds spatial indexes.
+pub fn duplicate_osm_routing(src: &OsmRouting) -> OsmRouting {
+    let graph = JeepRoadGraph::from_parts(
+        src.graph.nodes_slice().to_vec(),
+        src.graph.adj_slice().to_vec(),
+    );
+    let jeep_roads = JeepRoadIndex::from_samples(
+        src.jeep_roads.sample_points(),
+        src.jeep_roads.way_count,
+    );
+    let paved = PavedAnchorIndex::from_points(src.paved.sample_points());
+    let graph_nodes = GraphNodeIndex::from_graph(&graph);
+    OsmRouting {
+        jeep_roads,
+        graph,
+        paved,
+        graph_nodes,
+        segment_groups: src.segment_groups.clone(),
+    }
 }
 
 pub fn osm_cache_path(project_dir: &Path, cache_name: &str) -> PathBuf {
@@ -745,11 +858,11 @@ pub fn ensure_osm_pbf_with_source(
 }
 
 #[derive(Debug, Clone, Copy)]
-struct WayTags<'a> {
-    highway: &'a str,
-    tracktype: Option<&'a str>,
-    surface: Option<&'a str>,
-    fourwd_only: bool,
+pub(crate) struct WayTags<'a> {
+    pub highway: &'a str,
+    pub tracktype: Option<&'a str>,
+    pub surface: Option<&'a str>,
+    pub fourwd_only: bool,
 }
 
 fn parse_way_tags<'a, I>(tags: I) -> Option<WayTags<'a>>
@@ -777,7 +890,7 @@ where
     })
 }
 
-fn is_jeep_highway(tags: WayTags<'_>, jeep_tags: &HashSet<&str>) -> bool {
+pub(crate) fn is_jeep_highway(tags: WayTags<'_>, jeep_tags: &HashSet<&str>) -> bool {
     if !jeep_tags.contains(tags.highway) {
         return false;
     }
@@ -797,7 +910,7 @@ fn is_jeep_highway(tags: WayTags<'_>, jeep_tags: &HashSet<&str>) -> bool {
     true
 }
 
-fn is_paved_highway(tags: WayTags<'_>, paved_tags: &HashSet<&str>) -> bool {
+pub(crate) fn is_paved_highway(tags: WayTags<'_>, paved_tags: &HashSet<&str>) -> bool {
     paved_tags.contains(tags.highway)
 }
 
@@ -825,7 +938,7 @@ fn is_unpaved_surface(surface: Option<&str>) -> bool {
 }
 
 /// Paved Dijkstra sources only — not every jeep-class road.
-fn is_paved_anchor(tags: WayTags<'_>, paved_tags: &HashSet<&str>) -> bool {
+pub(crate) fn is_paved_anchor(tags: WayTags<'_>, paved_tags: &HashSet<&str>) -> bool {
     if matches!(
         tags.highway,
         "track" | "footway" | "path" | "steps" | "service" | "bridleway"
@@ -852,16 +965,8 @@ fn is_paved_anchor(tags: WayTags<'_>, paved_tags: &HashSet<&str>) -> bool {
     )
 }
 
-pub(crate) fn graph_edge_is_paved_anchor(edge: &GraphEdge, paved_tags: &HashSet<&str>) -> bool {
-    is_paved_anchor(
-        WayTags {
-            highway: edge.highway.as_str(),
-            tracktype: edge.tracktype.as_deref(),
-            surface: edge.surface.as_deref(),
-            fourwd_only: edge.fourwd_only,
-        },
-        paved_tags,
-    )
+pub(crate) fn graph_edge_is_paved_anchor(edge: &GraphEdge, _paved_tags: &HashSet<&str>) -> bool {
+    edge.is_paved_anchor()
 }
 
 pub(crate) fn sample_way_public(nodes: &[(f64, f64)], step_m: f64) -> Vec<RoadPoint> {
@@ -971,6 +1076,15 @@ fn node_in_bbox(lat: f64, lon: f64, west: f64, south: f64, east: f64, north: f64
     lon >= west && lon <= east && lat >= south && lat <= north
 }
 
+/// Parsed OSM routing graph plus full highway inventory for map debug overlay.
+pub struct OsmRoutingBuild {
+    pub routing: OsmRouting,
+    pub inventory: crate::road_inventory::OsmRoadInventory,
+    /// OSM ways classified as hiking (merged into the trail graph after GTLF foot layers).
+    pub hiking_trail_lines: Vec<Vec<(f64, f64)>>,
+    pub segment_groups: Vec<RoadSegmentGroup>,
+}
+
 /// Parse PBF once: jeep-road R-tree, routing graph, paved anchor index.
 pub fn build_osm_routing(
     pbf_path: &Path,
@@ -979,8 +1093,9 @@ pub fn build_osm_routing(
     east: f64,
     north: f64,
     opts: &OsmRoutingOpts,
-) -> Result<OsmRouting> {
-    build_osm_routing_with_progress(pbf_path, west, south, east, north, opts, &mut |_, _| {})
+    roads: &RoadsBook,
+) -> Result<OsmRoutingBuild> {
+    build_osm_routing_with_progress(pbf_path, west, south, east, north, opts, roads, &mut |_, _| {})
 }
 
 pub fn build_osm_routing_with_progress<F>(
@@ -990,8 +1105,9 @@ pub fn build_osm_routing_with_progress<F>(
     east: f64,
     north: f64,
     opts: &OsmRoutingOpts,
+    roads: &RoadsBook,
     progress: &mut F,
-) -> Result<OsmRouting>
+) -> Result<OsmRoutingBuild>
 where
     F: FnMut(OsmParsePhase, f64),
 {
@@ -1000,8 +1116,6 @@ where
     let south = south - pad;
     let east = east + pad;
     let north = north + pad;
-    let jeep_tags: HashSet<&str> = opts.jeep_highways.iter().map(String::as_str).collect();
-    let paved_tags: HashSet<&str> = opts.paved_highways.iter().map(String::as_str).collect();
     let sample_step = opts.road_sample_step_m;
 
     info!(
@@ -1051,6 +1165,9 @@ where
     let mut paved_points: Vec<PavedPoint> = Vec::new();
     let mut graph_way_count = 0usize;
     let mut way_hits = 0usize;
+    let mut inventory_ways: Vec<crate::road_inventory::OsmInventoryWay> = Vec::new();
+    let mut segment_groups: Vec<RoadSegmentGroup> = Vec::new();
+    let mut hiking_trail_lines: Vec<Vec<(f64, f64)>> = Vec::new();
     let ways_t0 = Instant::now();
 
     ElementReader::from_path(pbf_path)
@@ -1060,11 +1177,7 @@ where
                 let Some(tags) = parse_way_tags(way.tags()) else {
                     return;
                 };
-                let jeep = is_jeep_highway(tags, &jeep_tags);
-                let paved = is_paved_highway(tags, &paved_tags);
-                if !jeep && !paved {
-                    return;
-                }
+                let osm_way_id = way.id();
                 let mut coords = Vec::new();
                 let mut osm_ids = Vec::new();
                 for nid in way.refs() {
@@ -1076,31 +1189,78 @@ where
                 if coords.len() < 2 {
                     return;
                 }
+                let road_role = roads.classify_osm_way(
+                    osm_way_id,
+                    tags.highway,
+                    tags.tracktype,
+                    tags.surface,
+                    tags.fourwd_only,
+                );
+                let role = inventory_role_from_road(road_role);
+                let reason = if role == crate::road_inventory::InventoryRole::Other {
+                    Some(tags.highway.to_string())
+                } else {
+                    None
+                };
+                inventory_ways.push(crate::road_inventory::OsmInventoryWay {
+                    osm_id: Some(osm_way_id),
+                    coords: coords
+                        .iter()
+                        .map(|(lat, lon)| (*lat as f32, *lon as f32))
+                        .collect(),
+                    highway: tags.highway.to_string(),
+                    tracktype: tags.tracktype.map(str::to_string),
+                    surface: tags.surface.map(str::to_string),
+                    fourwd_only: tags.fourwd_only,
+                    role,
+                    reason: reason.clone(),
+                });
+                let group_id = segment_groups.len() as u32;
+                segment_groups.push(RoadSegmentGroup {
+                    key: SegmentGroupKey::Osm {
+                        osm_id: osm_way_id,
+                    },
+                    coords: coords.clone(),
+                    tags: SegmentGroupTags {
+                        highway: tags.highway.to_string(),
+                        tracktype: tags.tracktype.map(str::to_string),
+                        surface: tags.surface.map(str::to_string),
+                        fourwd_only: tags.fourwd_only,
+                    },
+                    role: road_role,
+                    reason,
+                });
+                let driveable = matches!(road_role, RoadRole::Paved | RoadRole::Jeep);
+                if !driveable {
+                    if road_role == RoadRole::Hiking {
+                        hiking_trail_lines.push(coords.clone());
+                    }
+                    return;
+                }
                 way_hits += 1;
                 if way_hits % 2500 == 0 {
                     let t = ways_t0.elapsed().as_secs_f64();
                     let frac = 0.22 + 0.62 * (t / 80.0).min(0.98);
                     progress(OsmParsePhase::Ways, frac);
                 }
-                if jeep {
+                if road_role == RoadRole::Jeep {
                     jeep_samples.extend(sample_way(&coords, sample_step));
                     jeep_way_count += 1;
                 }
-                if jeep || paved {
-                    graph_way_count += 1;
-                    let mut vert_nodes = Vec::with_capacity(coords.len());
-                    for i in 0..coords.len() {
-                        let (lat, lon) = coords[i];
-                        let n = graph.get_or_insert_node(osm_ids[i], lat, lon, &mut graph_node_map);
-                        vert_nodes.push(n);
-                    }
-                    let anchor = is_paved_anchor(tags, &paved_tags);
+                graph_way_count += 1;
+                let mut vert_nodes = Vec::with_capacity(coords.len());
+                for i in 0..coords.len() {
+                    let (lat, lon) = coords[i];
+                    let n = graph.get_or_insert_node(osm_ids[i], lat, lon, &mut graph_node_map);
+                    vert_nodes.push(n);
+                }
+                let anchor = road_role == RoadRole::Paved;
                     for i in 0..coords.len() - 1 {
                         let (lat1, lon1) = coords[i];
                         let (lat2, lon2) = coords[i + 1];
                         let a = vert_nodes[i];
                         let b = vert_nodes[i + 1];
-                        graph.add_way_segment(
+                        graph.add_way_segment_classified(
                             a,
                             b,
                             lat1,
@@ -1111,6 +1271,8 @@ where
                             tags.tracktype,
                             tags.surface,
                             tags.fourwd_only,
+                            road_role,
+                            group_id,
                         );
                         if anchor {
                             paved_points.push(PavedPoint {
@@ -1125,13 +1287,12 @@ where
                             });
                         }
                     }
-                    if anchor {
-                        paved_points.extend(paved_interpolated_samples(
-                            &coords,
-                            &vert_nodes,
-                            sample_step,
-                        ));
-                    }
+                if anchor {
+                    paved_points.extend(paved_interpolated_samples(
+                        &coords,
+                        &vert_nodes,
+                        sample_step,
+                    ));
                 }
             }
         })?;
@@ -1153,15 +1314,23 @@ where
     progress(OsmParsePhase::Ready, 1.0);
 
     let graph_nodes = GraphNodeIndex::from_graph(&graph);
-    Ok(OsmRouting {
-        jeep_roads: JeepRoadIndex {
-            tree: jeep_tree,
-            point_count: jeep_point_count,
-            way_count: jeep_way_count,
+    Ok(OsmRoutingBuild {
+        routing: OsmRouting {
+            jeep_roads: JeepRoadIndex {
+                tree: jeep_tree,
+                point_count: jeep_point_count,
+                way_count: jeep_way_count,
+            },
+            graph,
+            paved: PavedAnchorIndex { tree: paved_tree },
+            graph_nodes,
+            segment_groups: segment_groups.clone(),
         },
-        graph,
-        paved: PavedAnchorIndex { tree: paved_tree },
-        graph_nodes,
+        inventory: crate::road_inventory::OsmRoadInventory {
+            ways: inventory_ways,
+        },
+        hiking_trail_lines,
+        segment_groups,
     })
 }
 
@@ -1170,6 +1339,9 @@ pub struct SupplementalLine {
     pub coords: Vec<(f64, f64)>,
     pub highway: String,
     pub tracktype: Option<String>,
+    pub role: RoadRole,
+    pub group_id: u32,
+    pub gtlf_layer: Option<String>,
 }
 
 const MERGE_ENDPOINT_SNAP_M: f64 = 40.0;
@@ -1186,6 +1358,54 @@ fn line_fully_covered(index: &JeepRoadIndex, coords: &[(f64, f64)]) -> bool {
             .nearest_within(pt.lat, pt.lon, MERGE_DEDUP_M)
             .is_some()
     })
+}
+
+/// Register and weld jeep/paved customs from ``roads.yaml`` into the live graph.
+pub fn merge_road_customs_into_routing(
+    routing: &mut OsmRouting,
+    book: &RoadsBook,
+    sample_step_m: f64,
+) {
+    let mut lines = Vec::new();
+    for custom in &book.customs {
+        if custom.coords.len() < 2 {
+            continue;
+        }
+        if !matches!(custom.role, RoadRole::Paved | RoadRole::Jeep) {
+            continue;
+        }
+        let coords: Vec<(f64, f64)> = custom
+            .coords
+            .iter()
+            .map(|[lat, lon]| (*lat, *lon))
+            .collect();
+        let group_id = routing.segment_groups.len() as u32;
+        routing.segment_groups.push(RoadSegmentGroup {
+            key: SegmentGroupKey::Custom {
+                id: custom.id.clone(),
+            },
+            coords: coords.clone(),
+            tags: SegmentGroupTags {
+                highway: "custom".into(),
+                tracktype: None,
+                surface: None,
+                fourwd_only: false,
+            },
+            role: custom.role,
+            reason: None,
+        });
+        lines.push(SupplementalLine {
+            coords,
+            highway: "custom".into(),
+            tracktype: None,
+            role: custom.role,
+            group_id,
+            gtlf_layer: None,
+        });
+    }
+    if !lines.is_empty() {
+        merge_supplemental_jeep_lines(routing, &lines, sample_step_m);
+    }
 }
 
 /// Merge driveable GTLF lines into an OSM routing graph (snap endpoints, dedup).
@@ -1285,6 +1505,30 @@ pub fn merge_supplemental_jeep_lines_progress<F>(
         added_ways += 1;
         new_samples.extend(sample_way(&line.coords, sample_step_m));
 
+        let group_id = if line.group_id == u32::MAX {
+            let layer = line.gtlf_layer.clone().unwrap_or_else(|| "gtlf".into());
+            let coord_hash = peaky_preset::gtlf_coord_hash(&layer, &line.coords);
+            let id = routing.segment_groups.len() as u32;
+            routing.segment_groups.push(RoadSegmentGroup {
+                key: SegmentGroupKey::Gtlf {
+                    layer_id: layer,
+                    coord_hash,
+                },
+                coords: line.coords.clone(),
+                tags: SegmentGroupTags {
+                    highway: line.highway.clone(),
+                    tracktype: line.tracktype.clone(),
+                    surface: None,
+                    fourwd_only: false,
+                },
+                role: line.role,
+                reason: None,
+            });
+            id
+        } else {
+            line.group_id
+        };
+
         let mut vert_nodes = Vec::with_capacity(line.coords.len());
         for &(lat, lon) in &line.coords {
             let n = resolve_vertex_welded(
@@ -1303,7 +1547,7 @@ pub fn merge_supplemental_jeep_lines_progress<F>(
             let b = vert_nodes[i + 1];
             let (lat1, lon1) = routing.graph.node_coords(a);
             let (lat2, lon2) = routing.graph.node_coords(b);
-            routing.graph.add_way_segment_public(
+            routing.graph.add_way_segment_classified(
                 a,
                 b,
                 lat1,
@@ -1314,6 +1558,8 @@ pub fn merge_supplemental_jeep_lines_progress<F>(
                 line.tracktype.as_deref(),
                 None,
                 false,
+                line.role,
+                group_id,
             );
         }
     }
@@ -1359,6 +1605,7 @@ pub fn build_jeep_road_index(
     east: f64,
     north: f64,
 ) -> Result<JeepRoadIndex> {
+    let book = peaky_preset::seed_roads_book();
     Ok(build_osm_routing(
         pbf_path,
         west,
@@ -1366,7 +1613,9 @@ pub fn build_jeep_road_index(
         east,
         north,
         &OsmRoutingOpts::default(),
+        &book,
     )?
+    .routing
     .jeep_roads)
 }
 
@@ -1606,12 +1855,16 @@ mod tests {
             graph,
             paved: PavedAnchorIndex::test_from_points(&[(38.0, -117.0)]),
             graph_nodes: GraphNodeIndex::empty(),
+            segment_groups: Vec::new(),
         };
         routing.graph_nodes = GraphNodeIndex::from_graph(&routing.graph);
         let line = SupplementalLine {
             coords: vec![(38.01, -117.0), (38.02, -117.0)],
             highway: "track".to_string(),
             tracktype: Some("grade3".to_string()),
+            role: RoadRole::Jeep,
+            group_id: 0,
+            gtlf_layer: None,
         };
         merge_supplemental_jeep_lines(&mut routing, &[line], 30.0);
         assert_eq!(
@@ -1630,6 +1883,34 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_osm_routing_preserves_node_count() {
+        let mut graph = JeepRoadGraph::new();
+        let mut map = HashMap::new();
+        let mut id = -1i64;
+        let n0 = graph.get_or_insert_node_public(id, 38.0, -117.0, &mut map);
+        id -= 1;
+        let n1 = graph.get_or_insert_node_public(id, 38.01, -117.0, &mut map);
+        graph.add_way_segment_public(n0, n1, 38.0, -117.0, 38.01, -117.0, "track", None, None, false);
+        let src = OsmRouting {
+            jeep_roads: JeepRoadIndex {
+                tree: RTree::bulk_load(vec![RoadPoint {
+                    lat: 38.0,
+                    lon: -117.0,
+                }]),
+                point_count: 1,
+                way_count: 1,
+            },
+            graph,
+            paved: PavedAnchorIndex::test_from_points(&[(38.0, -117.0)]),
+            graph_nodes: GraphNodeIndex::empty(),
+            segment_groups: Vec::new(),
+        };
+        let dup = duplicate_osm_routing(&src);
+        assert_eq!(dup.graph.node_count(), src.graph.node_count());
+        assert_eq!(dup.jeep_roads.point_count, src.jeep_roads.point_count);
+    }
+
+    #[test]
     fn supplemental_ohv_track_merges_into_jeep_graph() {
         let graph = JeepRoadGraph::new();
         let mut routing = OsmRouting {
@@ -1641,11 +1922,15 @@ mod tests {
             graph,
             paved: PavedAnchorIndex::test_from_points(&[]),
             graph_nodes: GraphNodeIndex::empty(),
+            segment_groups: Vec::new(),
         };
         let line = SupplementalLine {
             coords: vec![(38.0, -117.0), (38.01, -117.0)],
             highway: "track".to_string(),
             tracktype: Some("grade3".to_string()),
+            role: RoadRole::Jeep,
+            group_id: 0,
+            gtlf_layer: None,
         };
         merge_supplemental_jeep_lines(&mut routing, &[line], 30.0);
         assert!(routing.jeep_roads.point_count >= 2);

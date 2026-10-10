@@ -53,6 +53,7 @@ export function createRootStore(config, savedMapState) {
       hikingVisible:
         savedMapState?.accessHikingVisible === true ||
         savedMapState?.gtlfTrailsVisible === true,
+      allVisible: savedMapState?.accessAllVisible === true,
     },
     access: {
       bySlug: {},

@@ -282,6 +282,7 @@ pub fn dijkstra_from_paved(
     stop_at: Option<u32>,
     budget: Option<&JeepLengthBudget>,
     blocked_edges: Option<&HashSet<(u32, u32)>>,
+    trusted_only: bool,
 ) -> (
     HashMap<u32, f64>,
     HashMap<u32, f64>,
@@ -313,6 +314,12 @@ pub fn dijkstra_from_paved(
         }
         let horiz_base = dist_horiz.get(&node).copied().unwrap_or(0.0);
         for edge in graph.edges(node) {
+            if trusted_only && !edge.trusted_jeep_traversable() {
+                continue;
+            }
+            if !matches!(edge.role, peaky_preset::RoadRole::Paved | peaky_preset::RoadRole::Jeep) {
+                continue;
+            }
             if blocked_edges
                 .is_some_and(|b| b.contains(&undirected_edge_key(node, edge.to)))
             {
@@ -439,15 +446,23 @@ impl PavedReachTree {
         paved: &PavedAnchorIndex,
         max_jeep_m: f64,
         budget: Option<&JeepLengthBudget>,
+        trusted_only: bool,
     ) -> Self {
         let sources = paved.all_sources();
         tracing::info!(
-            "paved reach tree: dijkstra start nodes={} max_m={max_jeep_m:.0} budgeted={}",
+            "paved reach tree: dijkstra start nodes={} max_m={max_jeep_m:.0} budgeted={} trusted_only={trusted_only}",
             graph.node_count(),
             budget.is_some()
         );
-        let (dist_cost, dist_horiz, prev) =
-            dijkstra_from_paved(graph, &sources, max_jeep_m, None, budget, None);
+        let (dist_cost, dist_horiz, prev) = dijkstra_from_paved(
+            graph,
+            &sources,
+            max_jeep_m,
+            None,
+            budget,
+            None,
+            trusted_only,
+        );
         tracing::info!(
             "paved reach tree: dijkstra done reachable={}",
             dist_cost.len()
@@ -572,7 +587,7 @@ pub fn route_jeep_detailed(
     }
 
     let (dist_cost, _dist_horiz, prev) =
-        dijkstra_from_paved(graph, &sources, max_jeep_m, Some(dest), budget, None);
+        dijkstra_from_paved(graph, &sources, max_jeep_m, Some(dest), budget, None, true);
     if !dist_cost.contains_key(&dest) {
         return None;
     }
@@ -599,7 +614,7 @@ pub fn route_jeep_closest_approach(
     }
 
     let (dist_cost, dist_horiz, prev) =
-        dijkstra_from_paved(graph, &sources, max_jeep_m, None, budget, None);
+        dijkstra_from_paved(graph, &sources, max_jeep_m, None, budget, None, true);
     let mut best: Option<(u32, f64)> = None;
     for &node in dist_cost.keys() {
         let (nlat, nlon) = graph.node_coords(node);
@@ -820,6 +835,8 @@ mod tests {
             tracktype: None,
             surface: Some("paved".into()),
             fourwd_only: false,
+            role: peaky_preset::RoadRole::Paved,
+            group_id: 0,
         }
     }
 
@@ -831,6 +848,8 @@ mod tests {
             tracktype: Some("grade5".into()),
             surface: None,
             fourwd_only: true,
+            role: peaky_preset::RoadRole::Jeep,
+            group_id: 0,
         }
     }
 
@@ -863,10 +882,10 @@ mod tests {
             })
             .expect("dest node");
         let (_, _, prev0) =
-            dijkstra_from_paved(&graph, &sources, 5000.0, Some(n2), None, None);
+            dijkstra_from_paved(&graph, &sources, 5000.0, Some(n2), None, None, true);
         let first = jeep_path_undirected_edges(&prev0, n2);
         let (_, _, prev1) =
-            dijkstra_from_paved(&graph, &sources, 5000.0, Some(n2), None, Some(&first));
+            dijkstra_from_paved(&graph, &sources, 5000.0, Some(n2), None, Some(&first), true);
         assert!(prev1.contains_key(&n2));
         let second = jeep_path_undirected_edges(&prev1, n2);
         assert_ne!(first, second);
@@ -902,6 +921,8 @@ mod tests {
             tracktype: Some("grade5".into()),
             surface: None,
             fourwd_only: true,
+            role: peaky_preset::RoadRole::Jeep,
+            group_id: 0,
         }
     }
 
@@ -949,6 +970,8 @@ mod tests {
                 tracktype: None,
                 surface: None,
                 fourwd_only: false,
+                role: peaky_preset::RoadRole::Jeep,
+            group_id: 0,
             },
         );
         g.add_edge(
@@ -960,6 +983,8 @@ mod tests {
                 tracktype: None,
                 surface: None,
                 fourwd_only: false,
+                role: peaky_preset::RoadRole::Jeep,
+            group_id: 0,
             },
         );
         let _ = n2;
@@ -1000,6 +1025,8 @@ mod tests {
             tracktype: tracktype.map(str::to_string),
             surface: None,
             fourwd_only: false,
+            role: peaky_preset::RoadRole::Jeep,
+            group_id: 0,
         };
         let rev = GraphEdge {
             to: n0,
@@ -1008,6 +1035,8 @@ mod tests {
             tracktype: tracktype.map(str::to_string),
             surface: None,
             fourwd_only: false,
+            role: peaky_preset::RoadRole::Jeep,
+            group_id: 0,
         };
         g.add_edge(n0, edge);
         g.add_edge(n1, rev);

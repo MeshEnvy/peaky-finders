@@ -282,6 +282,7 @@
   <p class="wa-caption pf-muted" id="home-settings-project-hint">Simulation values show this project's effective settings. Highlighted fields override global defaults; use the reset control to clear a project override.</p>
   <wa-tab-group id="home-settings-tabs" active="simulation">
     <wa-tab slot="nav" panel="simulation">Simulation</wa-tab>
+    <wa-tab slot="nav" panel="roads" id="home-settings-roads-tab">Roads</wa-tab>
     <wa-tab slot="nav" panel="modems">Modems</wa-tab>
     <wa-tab slot="nav" panel="environments">Environments</wa-tab>
     <wa-tab-panel name="simulation">
@@ -399,6 +400,20 @@
                 <input id="home-sim-dem-workers" type="number" min="1" step="1" class="home-sim-field--narrow">
               </div>
       </div>
+    </wa-tab-panel>
+    <wa-tab-panel name="roads" id="home-settings-roads-panel">
+      <p class="wa-caption pf-muted">Highway classifiers, segment overrides, and custom lines live in <code>roads.yaml</code>. Saving rebuilds the routing graph on next load.</p>
+      <h3 class="home-roads-heading">Class table</h3>
+      <div class="home-roads-table-wrap">
+        <table class="home-roads-table">
+          <thead><tr><th>Id</th><th>Match</th><th>Role</th></tr></thead>
+          <tbody id="home-roads-classes-body"></tbody>
+        </table>
+      </div>
+      <h3 class="home-roads-heading">Segment overrides</h3>
+      <ul id="home-roads-overrides-list" class="home-roads-list"></ul>
+      <h3 class="home-roads-heading">Custom roads</h3>
+      <ul id="home-roads-customs-list" class="home-roads-list"></ul>
     </wa-tab-panel>
     <wa-tab-panel name="modems">
       <div class="home-settings-split">

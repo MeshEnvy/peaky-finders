@@ -127,6 +127,17 @@ export function roadsNetworkLayerGeoJsonUrl(projectSlug, layer, bbox, zoom) {
   return `/api/p/${projectSlug}/roads/network/${layer}/geojson?${q}`
 }
 
+/** Full OSM + GTLF inventory (map "All" overlay). */
+export function roadsNetworkAllGeoJsonUrl(projectSlug, bbox) {
+  const q = new URLSearchParams({
+    west: String(bbox.west),
+    south: String(bbox.south),
+    east: String(bbox.east),
+    north: String(bbox.north),
+  })
+  return `/api/p/${projectSlug}/roads/network/all/geojson?${q}`
+}
+
 /** Combined paved + jeep from one drive-graph pass. */
 export function roadsNetworkDriveGeoJsonUrl(projectSlug, bbox, zoom) {
   const q = new URLSearchParams({
@@ -247,4 +258,8 @@ export function fortifyScanUrl(projectSlug, slugA, slugB, excludePeaks = []) {
 export function fortifyScanProgressUrl(projectSlug, slugA, slugB) {
   const params = new URLSearchParams({ a: slugA, b: slugB })
   return `/api/p/${projectSlug}/fortify/scan-progress?${params}`
+}
+
+export function roadsBookApiUrl(projectSlug) {
+  return `/api/p/${encodeURIComponent(projectSlug)}/roads`
 }

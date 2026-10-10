@@ -446,6 +446,7 @@ pub fn probe<E: HikeSampleElev>(
         budget_route,
         site_options: None,
         site_options_rev: 0,
+        ..Default::default()
     })
 }
 
@@ -531,6 +532,7 @@ pub fn probe_explain<E: HikeSampleElev>(
             budget_route,
             site_options: None,
             site_options_rev: 0,
+            ..Default::default()
         },
         reports,
     ))
@@ -543,7 +545,7 @@ const MAX_ALT_PATH_EDGE_SHARE: f64 = 0.70;
 /// Extra hike still treated as the same pull-off. Farther than this is an early stop.
 const SAME_PULL_OFF_HIKE_M: f64 = 40.0;
 
-pub const SITE_ACCESS_OPTIONS_REV: u8 = 3;
+pub const SITE_ACCESS_OPTIONS_REV: u8 = 4;
 
 pub fn site_access_option_id(park_lat: f64, park_lon: f64, path_index: u8) -> String {
     format!("{:.4}#{:.4}#{path_index}", park_lat, park_lon)
@@ -856,6 +858,75 @@ pub fn build_site_access_options<E: HikeSampleElev>(
     options
 }
 
+const DRAFT_DUP_PULL_OFF_M: f64 = 50.0;
+const DRAFT_DUP_JEEP_M: f64 = 200.0;
+
+fn draft_coord5(v: f64) -> String {
+    format!("{:.5}", v)
+}
+
+pub fn access_route_uses_custom(route: &AccessRoute) -> bool {
+    route
+        .jeep
+        .as_ref()
+        .is_some_and(|j| j.segments.iter().any(|s| s.highway == "custom"))
+}
+
+fn draft_duplicate_of_existing(route: &AccessRoute, options: &[SiteAccessOption]) -> bool {
+    let Some([rlat, rlon]) = route.road_loc else {
+        return true;
+    };
+    let jeep_m = route.jeep_m.unwrap_or(0.0);
+    options.iter().any(|opt| {
+        opt.route.road_loc.is_some_and(|[olat, olon]| {
+            haversine_m(rlat, rlon, olat, olon) < DRAFT_DUP_PULL_OFF_M
+                && (opt.route.jeep_m.unwrap_or(0.0) - jeep_m).abs() < DRAFT_DUP_JEEP_M
+        })
+    })
+}
+
+/// Append one draft custom-road option when the draft graph finds a shorter jeep path via ``highway=custom``.
+pub fn append_draft_site_access_options<E: HikeSampleElev>(
+    elev: &E,
+    dest_lat: f64,
+    dest_lon: f64,
+    draft_ctx: &AccessContext<'_>,
+    trusted_probe: &AccessProbe,
+    options: &mut Vec<SiteAccessOption>,
+) {
+    let Some(draft_probe) = probe(elev, dest_lat, dest_lon, draft_ctx) else {
+        return;
+    };
+    let route = draft_probe.recommended;
+    if !access_route_uses_custom(&route) {
+        return;
+    }
+    if draft_duplicate_of_existing(&route, options) {
+        return;
+    }
+    let Some([rlat, rlon]) = route.road_loc else {
+        return;
+    };
+    if trusted_probe.recommended.road_loc.is_some_and(|[tlat, tlon]| {
+        haversine_m(rlat, rlon, tlat, tlon) < DRAFT_DUP_PULL_OFF_M
+            && !access_route_uses_custom(&trusted_probe.recommended)
+    }) {
+        // Trusted already parks at the same pull-off without needing the custom edge.
+        return;
+    }
+    let report = route.budget.clone();
+    options.push(SiteAccessOption {
+        id: format!(
+            "draft-{}-{}-0",
+            draft_coord5(rlat),
+            draft_coord5(rlon)
+        ),
+        recommended: false,
+        passes_budget: budget_report_passes(&report),
+        route,
+    });
+}
+
 /// Build a catalog filter pass from a probe's recommended route.
 pub fn filter_pass_from_probe(
     cand: &crate::universe::RawCandidate,
@@ -983,6 +1054,31 @@ mod tests {
     }
 
     #[test]
+    fn access_route_uses_custom_segment() {
+        let mut route = AccessRoute::default();
+        assert!(!access_route_uses_custom(&route));
+        route.jeep = Some(peaky_preset::PeakJeepProfile {
+            jeep_m_3d: 0.0,
+            horiz_m: 0.0,
+            gain_m: 0.0,
+            loss_m: 0.0,
+            max_slope_deg: 0.0,
+            max_grade_pct: 0.0,
+            avg_grade_pct: 0.0,
+            difficulty: "easy".into(),
+            profile: vec![],
+            histogram: vec![],
+            segments: vec![peaky_preset::PeakJeepRoadSegment {
+                highway: "custom".into(),
+                tracktype: None,
+                dist_m: 100.0,
+            }],
+            jeep_line: vec![],
+        });
+        assert!(access_route_uses_custom(&route));
+    }
+
+    #[test]
     fn resolve_site_display_route_stale_falls_back() {
         let opt_route = AccessRoute {
             jeep_m: Some(999.0),
@@ -1003,6 +1099,7 @@ mod tests {
                 route: opt_route.clone(),
             }]),
             site_options_rev: 0,
+            ..Default::default()
         };
         let picked = resolve_site_display_route(&probe, Some("missing-id"));
         assert_eq!(picked.jeep_m, Some(100.0));

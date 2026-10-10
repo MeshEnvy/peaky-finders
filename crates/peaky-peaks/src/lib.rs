@@ -18,6 +18,8 @@ mod run;
 mod trail;
 mod network_geojson;
 mod network_index;
+mod road_inventory;
+mod segment_groups;
 mod universe;
 
 pub use access_warm::{
@@ -30,13 +32,18 @@ pub use access_warm::{
     SessionElev, OSM_ROUTE_PAD_DEG,
 };
 pub use access_probe::{
-    build_site_access_options, drop_early_jeep_stops, select_distinct_park_nodes,
-    site_access_option_id, SITE_ACCESS_OPTIONS_REV,
+    access_route_uses_custom, append_draft_site_access_options, build_site_access_options,
+    drop_early_jeep_stops, select_distinct_park_nodes, site_access_option_id,
+    SITE_ACCESS_OPTIONS_REV,
 };
 pub use catalog_filter::{FilterDrop, FilterPass};
 pub use gtlf::{
     apply_gtlf_to_routing, ensure_gtlf_cache, gtlf_cache_dir, gtlf_cache_fingerprint,
-    read_gtlf_inventory_geojson, GtlfBundle,
+    load_gtlf_display_inventory, read_gtlf_inventory_geojson, GtlfBundle,
+};
+pub use road_inventory::{
+    inventory_all_geojson, inventory_all_geojson_bytes, classify_osm_inventory_from_opts,
+    InventoryRole, OsmRoadInventory, GtlfRoadInventory,
 };
 pub use trail::{
     build_trail_graph, route_trail_closest_approach, trail_park_candidates, TrailRouting,
@@ -63,12 +70,13 @@ pub use jeep::{
     JeepProfileDetailed, PavedReachTree,
 };
 pub use osm::{
-    build_osm_routing, JeepRoadIndex, OsmParsePhase, OsmRouting, OsmRoutingOpts, JEEP_HIGHWAY_TAGS,
-    OSM_BUILD_PAD_DEG, PAVED_HIGHWAY_TAGS,
+    build_osm_routing, ensure_osm_pbf, osm_routing_opts_with_roads, OsmRoutingBuild, JeepRoadIndex,
+    OsmParsePhase, OsmRouting, OsmRoutingOpts,
+    JEEP_HIGHWAY_TAGS, OSM_BUILD_PAD_DEG, PAVED_HIGHWAY_TAGS,
 };
 pub use osm_cache::{
-    save_merged_routing_cache, save_osm_routing_cache, try_load_merged_routing_cache,
-    try_load_osm_routing_cache,
+    invalidate_osm_routing_caches, save_merged_routing_cache, save_osm_routing_cache,
+    try_load_merged_routing_cache, try_load_osm_routing_cache, try_load_road_inventory_cache,
 };
 pub use corridor::{corridor_polygon, parse_corridor_coords, resolve_corridor_sites, MI_TO_M};
 pub use probe::{

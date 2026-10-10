@@ -12,6 +12,7 @@ pub mod paths;
 pub mod peaks;
 pub mod peaks_index;
 pub mod project;
+pub mod roads_book;
 pub mod viewshed_quality;
 pub mod sites;
 pub mod yaml_io;
@@ -97,6 +98,12 @@ pub use paths::{
     resolved_preset_cache_dir,
     resolved_preset_slug, resolved_skadi_mirror_dir, resolved_skadi_mirror_dir_for_project,
     resolved_viewshed_root, workspace_root,
+};
+pub use roads_book::{
+    ensure_roads_book, gtlf_coord_hash, load_roads_book, roads_fingerprint,
+    roads_global_fingerprint, roads_local_fingerprint, roads_path_for_config,
+    save_roads_book, seed_roads_book, GtlfOverrideKey, RoadClassRow, RoadCustom, RoadRole,
+    RoadSurfaceMatch, RoadsBook, SegmentOverride, SegmentOverrideKey,
 };
 pub use sites::{
     normalize_site_tags, site_row_from_entry, site_row_from_yaml_ent, slugify, unique_place_slug,

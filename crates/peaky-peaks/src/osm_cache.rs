@@ -1,7 +1,7 @@
 //! On-disk OSM routing graph so serve / `peaky peaks` skip the PBF after the first parse.
 
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Read};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
@@ -9,15 +9,40 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use peaky_preset::RoadRole;
+
 use crate::osm::{
     GraphEdge, GraphNodeIndex, JeepRoadGraph, JeepRoadIndex, OsmRouting, OsmRoutingOpts,
     PavedAnchorIndex, PavedPoint, RoadPoint,
 };
+use crate::road_inventory::{
+    inventory_from_disk, inventory_to_disk, OsmRoadInventory, RoadInventoryDisk,
+    ROAD_INVENTORY_CACHE_VERSION,
+};
 
-pub const OSM_ROUTING_CACHE_VERSION: u32 = 1;
-pub const MERGED_ROUTING_CACHE_VERSION: u32 = 2;
+pub const OSM_ROUTING_CACHE_VERSION: u32 = 6;
+pub const MERGED_ROUTING_CACHE_VERSION: u32 = 6;
 
 const NONE: u8 = 255;
+
+/// On-disk caches write `version: u32` first. Peek before full bincode decode so stale
+/// layouts cannot mis-read vector lengths and abort the process.
+fn peek_cache_version(path: &Path) -> Option<u32> {
+    let mut file = File::open(path).ok()?;
+    let mut buf = [0u8; 4];
+    file.read_exact(&mut buf).ok()?;
+    Some(u32::from_le_bytes(buf))
+}
+
+fn remove_stale_cache(path: &Path, found: u32, expected: u32) {
+    warn!(
+        path = %path.display(),
+        found,
+        expected,
+        "osm cache version mismatch, removing stale file"
+    );
+    let _ = std::fs::remove_file(path);
+}
 
 #[derive(Serialize, Deserialize)]
 struct OsmRoutingDisk {
@@ -31,6 +56,7 @@ struct OsmRoutingDisk {
     sample_step_m: f64,
     jeep_highways: Vec<String>,
     paved_highways: Vec<String>,
+    roads_fingerprint: String,
     jeep_way_count: u32,
     jeep_lat: Vec<f32>,
     jeep_lon: Vec<f32>,
@@ -46,6 +72,8 @@ struct OsmRoutingDisk {
     e_tt: Vec<u8>,
     e_surf: Vec<u8>,
     e_4wd: Vec<u8>,
+    e_role: Vec<u8>,
+    e_group: Vec<u32>,
     paved_lat: Vec<f32>,
     paved_lon: Vec<f32>,
     paved_idx: Vec<u32>,
@@ -70,6 +98,28 @@ fn merged_cache_path(pbf_path: &Path) -> std::path::PathBuf {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("routing-merged.bin")
+}
+
+/// Drop OSM routing caches so the next load reparses the PBF (e.g. after ``roads.yaml`` save).
+pub fn invalidate_osm_routing_caches(pbf_path: &Path) {
+    for name in ["routing-v1.bin", "routing-merged.bin", "road-inventory-v1.bin"] {
+        let path = pbf_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(name);
+        if path.is_file() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                warn!(path = %path.display(), error = %e, "osm routing cache delete failed");
+            }
+        }
+    }
+}
+
+fn inventory_cache_path(pbf_path: &Path) -> std::path::PathBuf {
+    pbf_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("road-inventory-v1.bin")
 }
 
 fn pbf_fingerprint(pbf_path: &Path) -> Result<(u64, u64)> {
@@ -131,6 +181,11 @@ pub fn try_load_osm_routing_cache(
     opts: &OsmRoutingOpts,
 ) -> Option<OsmRouting> {
     let path = cache_path(pbf_path);
+    let version = peek_cache_version(&path)?;
+    if version != OSM_ROUTING_CACHE_VERSION {
+        remove_stale_cache(&path, version, OSM_ROUTING_CACHE_VERSION);
+        return None;
+    }
     let file = File::open(&path).ok()?;
     info!(path = %path.display(), "peaks: OSM routing cache load start");
     let disk: OsmRoutingDisk = match bincode::deserialize_from(BufReader::new(file)) {
@@ -145,9 +200,6 @@ pub fn try_load_osm_routing_cache(
         jeep_points = disk.jeep_lat.len(),
         "peaks: OSM routing cache deserialized, building indexes"
     );
-    if disk.version != OSM_ROUTING_CACHE_VERSION {
-        return None;
-    }
     let (pbf_len, pbf_mtime) = pbf_fingerprint(pbf_path).ok()?;
     if disk.pbf_len != pbf_len || disk.pbf_mtime != pbf_mtime {
         return None;
@@ -155,7 +207,7 @@ pub fn try_load_osm_routing_cache(
     if (disk.sample_step_m - opts.road_sample_step_m).abs() > 0.01 {
         return None;
     }
-    if disk.jeep_highways != opts.jeep_highways || disk.paved_highways != opts.paved_highways {
+    if disk.roads_fingerprint != opts.roads_fingerprint {
         return None;
     }
     if !bbox_covers((disk.west, disk.south, disk.east, disk.north), west, south, east, north) {
@@ -196,7 +248,9 @@ fn routing_from_disk(disk: OsmRoutingDisk) -> Result<OsmRouting> {
         .min(disk.e_hw.len())
         .min(disk.e_tt.len())
         .min(disk.e_surf.len())
-        .min(disk.e_4wd.len());
+        .min(disk.e_4wd.len())
+        .min(disk.e_role.len())
+        .min(disk.e_group.len());
     for i in 0..edge_n {
         let from = disk.e_from[i] as usize;
         if from >= gn {
@@ -211,6 +265,8 @@ fn routing_from_disk(disk: OsmRoutingDisk) -> Result<OsmRouting> {
             tracktype: lookup(&disk.tracktypes, disk.e_tt[i]).map(str::to_string),
             surface: lookup(&disk.surfaces, disk.e_surf[i]).map(str::to_string),
             fourwd_only: disk.e_4wd[i] != 0,
+            role: road_role_from_u8(disk.e_role[i]),
+            group_id: disk.e_group[i],
         });
     }
     let pn = disk
@@ -232,7 +288,26 @@ fn routing_from_disk(disk: OsmRoutingDisk) -> Result<OsmRouting> {
         graph_nodes: GraphNodeIndex::from_graph(&graph),
         graph,
         paved: PavedAnchorIndex::from_points(paved),
+        segment_groups: Vec::new(),
     })
+}
+
+fn road_role_from_u8(v: u8) -> RoadRole {
+    match v {
+        0 => RoadRole::Paved,
+        1 => RoadRole::Jeep,
+        2 => RoadRole::Hiking,
+        _ => RoadRole::Other,
+    }
+}
+
+fn road_role_to_u8(role: RoadRole) -> u8 {
+    match role {
+        RoadRole::Paved => 0,
+        RoadRole::Jeep => 1,
+        RoadRole::Hiking => 2,
+        RoadRole::Other => 3,
+    }
 }
 
 fn routing_to_disk(
@@ -269,6 +344,8 @@ fn routing_to_disk(
     let mut e_tt = Vec::new();
     let mut e_surf = Vec::new();
     let mut e_4wd = Vec::new();
+    let mut e_role = Vec::new();
+    let mut e_group = Vec::new();
     for (from, edges) in routing.graph.adj_slice().iter().enumerate() {
         for edge in edges {
             e_from.push(from as u32);
@@ -278,6 +355,8 @@ fn routing_to_disk(
             e_tt.push(intern_opt(&mut tracktypes, edge.tracktype.as_deref()));
             e_surf.push(intern_opt(&mut surfaces, edge.surface.as_deref()));
             e_4wd.push(u8::from(edge.fourwd_only));
+            e_role.push(road_role_to_u8(edge.role));
+            e_group.push(edge.group_id);
         }
     }
     let paved = routing.paved.sample_points();
@@ -300,6 +379,7 @@ fn routing_to_disk(
         sample_step_m: opts.road_sample_step_m,
         jeep_highways: opts.jeep_highways.clone(),
         paved_highways: opts.paved_highways.clone(),
+        roads_fingerprint: opts.roads_fingerprint.clone(),
         jeep_way_count: routing.jeep_roads.way_count as u32,
         jeep_lat,
         jeep_lon,
@@ -315,6 +395,8 @@ fn routing_to_disk(
         e_tt,
         e_surf,
         e_4wd,
+        e_role,
+        e_group,
         paved_lat,
         paved_lon,
         paved_idx,
@@ -356,10 +438,57 @@ fn disk_matches_request(
     if (disk.sample_step_m - opts.road_sample_step_m).abs() > 0.01 {
         return false;
     }
-    if disk.jeep_highways != opts.jeep_highways || disk.paved_highways != opts.paved_highways {
+    if disk.roads_fingerprint != opts.roads_fingerprint {
         return false;
     }
     bbox_covers((disk.west, disk.south, disk.east, disk.north), west, south, east, north)
+}
+
+fn inventory_disk_matches(
+    disk: &RoadInventoryDisk,
+    pbf_path: &Path,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    opts: &OsmRoutingOpts,
+) -> bool {
+    if disk.version != ROAD_INVENTORY_CACHE_VERSION {
+        return false;
+    }
+    let Ok((pbf_len, pbf_mtime)) = pbf_fingerprint(pbf_path) else {
+        return false;
+    };
+    if disk.pbf_len != pbf_len || disk.pbf_mtime != pbf_mtime {
+        return false;
+    }
+    if disk.roads_fingerprint != opts.roads_fingerprint {
+        return false;
+    }
+    bbox_covers((disk.west, disk.south, disk.east, disk.north), west, south, east, north)
+}
+
+/// Load OSM highway inventory written beside the PBF cache.
+pub fn try_load_road_inventory_cache(
+    pbf_path: &Path,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+    opts: &OsmRoutingOpts,
+) -> Option<OsmRoadInventory> {
+    let path = inventory_cache_path(pbf_path);
+    let version = peek_cache_version(&path)?;
+    if version != ROAD_INVENTORY_CACHE_VERSION {
+        remove_stale_cache(&path, version, ROAD_INVENTORY_CACHE_VERSION);
+        return None;
+    }
+    let file = File::open(&path).ok()?;
+    let disk: RoadInventoryDisk = bincode::deserialize_from(BufReader::new(file)).ok()?;
+    if !inventory_disk_matches(&disk, pbf_path, west, south, east, north, opts) {
+        return None;
+    }
+    Some(inventory_from_disk(disk))
 }
 
 /// Write the parsed OSM-only graph next to the PBF. Overwrites any previous cache.
@@ -371,11 +500,26 @@ pub fn save_osm_routing_cache(
     north: f64,
     opts: &OsmRoutingOpts,
     routing: &OsmRouting,
+    inventory: &OsmRoadInventory,
 ) -> Result<()> {
     let disk = routing_to_disk(pbf_path, west, south, east, north, opts, routing)?;
     let path = cache_path(pbf_path);
     write_bincode(&path, &disk)?;
     info!(path = %path.display(), "peaks: OSM routing cache written");
+    let (pbf_len, pbf_mtime) = pbf_fingerprint(pbf_path)?;
+    let inv_disk = inventory_to_disk(
+        pbf_len,
+        pbf_mtime,
+        west,
+        south,
+        east,
+        north,
+        opts,
+        inventory,
+    );
+    let inv_path = inventory_cache_path(pbf_path);
+    write_bincode(&inv_path, &inv_disk)?;
+    info!(path = %inv_path.display(), ways = inventory.ways.len(), "peaks: road inventory cache written");
     Ok(())
 }
 
@@ -420,6 +564,11 @@ pub fn try_load_merged_routing_cache(
         return None;
     }
     let path = merged_cache_path(pbf_path);
+    let version = peek_cache_version(&path)?;
+    if version != MERGED_ROUTING_CACHE_VERSION {
+        remove_stale_cache(&path, version, MERGED_ROUTING_CACHE_VERSION);
+        return None;
+    }
     let file = File::open(&path).ok()?;
     info!(path = %path.display(), "peaks: merged routing cache load start");
     let disk: MergedRoutingDisk = match bincode::deserialize_from(BufReader::new(file)) {
@@ -429,9 +578,6 @@ pub fn try_load_merged_routing_cache(
             return None;
         }
     };
-    if disk.version != MERGED_ROUTING_CACHE_VERSION {
-        return None;
-    }
     if disk.gtlf_fingerprint != gtlf_fingerprint {
         info!(
             cached = %disk.gtlf_fingerprint,
@@ -474,14 +620,17 @@ mod tests {
             graph_nodes: GraphNodeIndex::from_graph(&graph),
             graph,
             paved: PavedAnchorIndex::from_points(Vec::new()),
+            segment_groups: Vec::new(),
         }
     }
 
     fn test_opts() -> OsmRoutingOpts {
+        let book = peaky_preset::seed_roads_book();
         OsmRoutingOpts {
             road_sample_step_m: 30.0,
             jeep_highways: vec!["track".into()],
             paved_highways: vec!["primary".into()],
+            roads_fingerprint: peaky_preset::roads_fingerprint(&book),
         }
     }
 
@@ -506,5 +655,20 @@ mod tests {
             &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "disabled"
         )
         .is_none());
+    }
+
+    #[test]
+    fn merged_cache_drops_stale_version_before_decode() {
+        let dir = tempfile::tempdir().unwrap();
+        let pbf = dir.path().join("nevada-latest.osm.pbf");
+        std::fs::write(&pbf, b"fake-pbf").unwrap();
+        let merged = merged_cache_path(&pbf);
+        std::fs::write(&merged, 3u32.to_le_bytes()).unwrap();
+        let opts = test_opts();
+        assert!(try_load_merged_routing_cache(
+            &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "abc123"
+        )
+        .is_none());
+        assert!(!merged.exists());
     }
 }

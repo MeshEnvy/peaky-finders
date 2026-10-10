@@ -141,7 +141,7 @@ fn route_to_park_node(
     std::collections::HashMap<u32, (u32, crate::osm::GraphEdge)>,
 )> {
     let (dist_cost, dist_horiz, prev) =
-        dijkstra_from_paved(graph, sources, max_jeep_m, Some(park_node), budget, None);
+        dijkstra_from_paved(graph, sources, max_jeep_m, Some(park_node), budget, None, true);
     if dist_cost.contains_key(&park_node) {
         Some((dist_horiz, prev))
     } else {
@@ -267,7 +267,7 @@ fn park_nodes_from_flood(
     std::collections::HashMap<u32, (u32, crate::osm::GraphEdge)>,
 )> {
     let (dist_cost, dist_horiz, prev) =
-        dijkstra_from_paved(&routing.graph, sources, max_jeep_m, None, budget, None);
+        dijkstra_from_paved(&routing.graph, sources, max_jeep_m, None, budget, None, true);
     if dist_cost.is_empty() {
         return None;
     }
@@ -904,6 +904,7 @@ mod tests {
             graph: JeepRoadGraph::new(),
             paved: PavedAnchorIndex::test_from_points(&[]),
             graph_nodes: crate::osm::GraphNodeIndex::empty(),
+            segment_groups: Vec::new(),
         }
     }
 
@@ -1079,6 +1080,8 @@ mod tests {
                 tracktype: None,
                 surface: None,
                 fourwd_only: false,
+                role: peaky_preset::RoadRole::Jeep,
+                group_id: 0,
             },
         );
         graph.add_edge(
@@ -1090,6 +1093,8 @@ mod tests {
                 tracktype: None,
                 surface: None,
                 fourwd_only: false,
+                role: peaky_preset::RoadRole::Jeep,
+                group_id: 0,
             },
         );
         let _ = n2;
@@ -1101,6 +1106,7 @@ mod tests {
                 &JeepRoadGraph::new(),
                 &[(n0, 38.0, -117.0)],
             ),
+            segment_groups: Vec::new(),
         }
     }
 
@@ -1147,6 +1153,8 @@ mod tests {
                     tracktype: None,
                     surface: None,
                     fourwd_only: false,
+                    role: peaky_preset::RoadRole::Jeep,
+                    group_id: 0,
                 },
             );
         }
@@ -1155,6 +1163,7 @@ mod tests {
             graph_nodes: crate::osm::GraphNodeIndex::from_graph(&graph),
             graph,
             paved: PavedAnchorIndex::from_nodes(&JeepRoadGraph::new(), &[(n0, 38.0, -117.0)]),
+            segment_groups: Vec::new(),
         };
         routing.paved = PavedAnchorIndex::from_nodes(&routing.graph, &[(n0, 38.0, -117.0)]);
         let dest = (38.080, -117.0);

@@ -87,6 +87,7 @@ export function installMapToolbar(navGroup, { viewshedOpacity = VIEWSHED_OPACITY
   accessNetworkMenu.className = 'map-access-network-menu'
 
   for (const [id, label, swatchClass] of [
+    ['access-network-all', 'All', 'map-access-network-swatch--all'],
     ['access-network-paved', 'Paved', 'map-access-network-swatch--paved'],
     ['access-network-jeep', 'Jeep', 'map-access-network-swatch--jeep'],
     ['access-network-hiking', 'Hiking', 'map-access-network-swatch--hiking'],
@@ -106,6 +107,16 @@ export function installMapToolbar(navGroup, { viewshedOpacity = VIEWSHED_OPACITY
     row.appendChild(text)
     accessNetworkMenu.appendChild(row)
   }
+
+  const drawRow = document.createElement('div')
+  drawRow.className = 'map-access-network-draw'
+  const drawBtn = document.createElement('button')
+  drawBtn.type = 'button'
+  drawBtn.id = 'access-network-draw-road'
+  drawBtn.className = 'map-access-network-draw-btn'
+  drawBtn.textContent = 'Draw road'
+  drawRow.appendChild(drawBtn)
+  accessNetworkMenu.appendChild(drawRow)
 
   accessNetworkDropdown.appendChild(accessNetworkBtn)
   accessNetworkDropdown.appendChild(accessNetworkMenu)

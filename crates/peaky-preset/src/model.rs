@@ -632,7 +632,7 @@ impl Default for PeakAccessRules {
 
 /// Bump when hike/jeep routing or DEM profile semantics change (forces recompute).
 /// Written into ``access/_meta.yaml`` as ``algo_version``.
-pub const ACCESS_ALGO_VERSION: u32 = 17;
+pub const ACCESS_ALGO_VERSION: u32 = 18;
 
 /// Bump when peak eligibility / summit snap / index schema semantics change.
 pub const PEAK_ALGO_VERSION: u32 = 10;
@@ -832,6 +832,12 @@ pub struct AccessProbe {
     /// Bumped when the site option builder changes. Missing or older caches rebuild.
     #[serde(default, skip_serializing_if = "is_zero_u8")]
     pub site_options_rev: u8,
+    /// Fingerprint of ``roads.yaml`` classes + overrides when this probe was built.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roads_global_fp: Option<String>,
+    /// Fingerprint of jeep/paved customs intersecting this destination's jeep reach disk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roads_local_fp: Option<String>,
 }
 
 pub type PlaceAccess = AccessProbe;

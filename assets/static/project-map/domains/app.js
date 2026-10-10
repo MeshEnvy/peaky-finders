@@ -528,6 +528,7 @@ export function runApp(ctx = {}) {
         deselectLink: (...args) => linksDomain.deselectLink(...args),
         openCreatePanel: (...args) => placementDomain.openCreatePanel(...args),
         beginCreateAtMapPoint: (...args) => placementDomain.beginCreateAtMapPoint(...args),
+        trySelectRoadAtPoint: (...args) => accessNetworkDomain?.trySelectRoadAtPoint(...args),
       })
     }
   }

@@ -2,6 +2,11 @@ import {
   computeViewshedRaster,
   formatViewshedQualityLabel,
 } from './project-map/viewshed-raster.js'
+import {
+  bindRoadsSettingsUi,
+  loadRoadsSettings,
+  saveRoadsSettings,
+} from './roads-settings.js'
 
 'use strict'
 
@@ -238,6 +243,8 @@ import {
       saveBtn.textContent = "Save modem";
     } else if (tab === "environments") {
       saveBtn.textContent = "Save environment";
+    } else if (tab === "roads") {
+      saveBtn.textContent = "Save roads";
     } else {
       saveBtn.textContent = onProjectMap() ? "Save project simulation" : "Save global defaults";
     }
@@ -657,6 +664,7 @@ import {
       const tab = activeSettingsTab();
       if (tab === "modems") await saveModem();
       else if (tab === "environments") await saveEnvironment();
+      else if (tab === "roads") await saveRoadsSettings(showError);
       else await saveSimulation();
       closeSettingsModal();
     } catch (err) {
@@ -740,11 +748,23 @@ import {
 
     dialog.addEventListener("wa-show", () => {
       updateSaveButtonLabel();
+      const roadsTab = document.getElementById("home-settings-roads-tab");
+      if (roadsTab) roadsTab.hidden = !onProjectMap();
       void loadAll().catch((err) => showError(err.message || String(err)));
+      if (onProjectMap()) {
+        void loadRoadsSettings(projectSlug(), showError);
+      }
     });
 
     const tabGroup = document.getElementById("home-settings-tabs");
-    tabGroup?.addEventListener("wa-tab-show", updateSaveButtonLabel);
+    tabGroup?.addEventListener("wa-tab-show", () => {
+      updateSaveButtonLabel();
+      if (activeSettingsTab() === "roads" && onProjectMap()) {
+        void loadRoadsSettings(projectSlug(), showError);
+      }
+    });
+
+    bindRoadsSettingsUi(showError);
 
     document.getElementById("home-settings-save")?.addEventListener("click", () => void saveActiveTab());
     document.getElementById("home-modem-add")?.addEventListener("click", addModemDraft);
