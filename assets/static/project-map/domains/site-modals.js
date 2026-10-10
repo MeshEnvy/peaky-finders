@@ -63,7 +63,7 @@ export function createSiteModalsDomain(ctx) {
         store.ui.tagFilterMode === 'or' ? 'with any selected tag' : 'with all selected tags'
       scopeParts.push(filters.size < 2 ? 'with selected tags' : mode)
     }
-    if (store.ui.filterByViewport) scopeParts.push('in the current map view')
+    scopeParts.push('in the current map view')
     const scope = scopeParts.length ? ` ${scopeParts.join(' and ')}` : ''
     if (count === 0) return 'No visible sites match the current filters.'
     if (count === 1) return `Apply to 1 site${scope}`

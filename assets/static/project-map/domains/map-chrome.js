@@ -251,7 +251,7 @@ export function createMapChromeDomain(ctx) {
       manualShownSites: store?.sites?.manualShown ? [...store.sites.manualShown] : [],
       tagFilters: [...activeTagFilters].sort((a, b) => a.localeCompare(b)),
       tagFilterMode: store?.ui?.tagFilterMode ?? 'and',
-      filterByViewport: !!store?.ui?.filterByViewport,
+      listTagScope: store?.ui?.listTagScope === 'all' ? 'all' : 'tagged',
       viewshedVisible: Object.fromEntries(viewshedVisible),
       accessVisible: Object.fromEntries(accessVisible),
       entityPanelOpen: !!store?.ui?.entityPanelOpen,

@@ -122,16 +122,13 @@ export function createEntityChromeDomain(ctx) {
     store.ui.viewportEpoch = (store.ui.viewportEpoch || 0) + 1
   }
 
-  function onViewportFilterChange() {
-    bumpViewportEpoch()
-    renderEntityPanel?.()
+  function onListTagScopeChange() {
     scheduleSaveMapState?.()
   }
 
   function onMapMoveEndForEntityPanel() {
-    if (!store?.ui?.filterByViewport && !store?.linkSolver?.panelOpen) return
     bumpViewportEpoch()
-    if (store?.ui?.filterByViewport) renderEntityPanel?.()
+    renderEntityPanel?.()
   }
 
   function install() {
@@ -159,7 +156,7 @@ export function createEntityChromeDomain(ctx) {
     applyEntityVisibility,
     toggleTagFilter,
     onTagFilterChange,
-    onViewportFilterChange,
+    onListTagScopeChange,
     onMapMoveEndForEntityPanel,
     install,
   }

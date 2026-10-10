@@ -9,7 +9,7 @@ export function isMapTiltedView(map, mapReady) {
 
 /**
  * True when the lon/lat projects onto the canvas. Uses MapLibre's camera
- * (pitch, bearing, terrain) so In view matches pins on a tilted map.
+ * (pitch, bearing, terrain) so sidebar lists match pins on a tilted map.
  * `getBounds()` / nadir boxes miss anything toward the horizon.
  *
  * @param {maplibregl.Map} map

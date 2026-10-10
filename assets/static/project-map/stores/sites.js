@@ -190,20 +190,20 @@ export function allProjectTags(store) {
 }
 
 /**
- * Sites in the current map view when In view is on. Otherwise the full list.
+ * Sites whose pins project onto the current map canvas.
  * @param {object} store
  * @param {{ map?: object, mapReady?: boolean }} [opts]
  */
 export function viewportSites(store, { map, mapReady } = {}) {
   const list = store?.sites?.list || []
-  if (!store.ui?.filterByViewport || !map || !mapReady) return list
+  if (!map || !mapReady) return []
   return list.filter((site) =>
     coordVisibleInMapViewport(map, site.lon, site.lat, { mapReady })
   )
 }
 
 /**
- * Tag chips for the sidebar. In view limits chips to sites on screen.
+ * Tag chips for sites on screen.
  * Selected filters stay visible so they can be cleared after a pan.
  * @param {object} store
  * @param {{ map?: object, mapReady?: boolean }} [opts]
@@ -226,13 +226,33 @@ export function tagFilteredSites(store) {
 }
 
 /**
- * Sidebar site rows: viewport scope when In view is on; always lists all scoped sites.
+ * Sidebar site rows: sites on the map canvas.
+ * `tagged` (default) keeps sites that match the selected tags.
+ * `all` lists every on-screen site, including ones the tag chips hide on the map.
  * @param {object} store
  * @param {{ map?: object, mapReady?: boolean }} [opts]
  */
 export function sidebarSites(store, opts = {}) {
   void store.sites?.revision
-  return [...viewportSites(store, opts)].sort((a, b) => compareHuman(a.name, b.name))
+  const scoped = viewportSites(store, opts)
+  const taggedOnly = store?.ui?.listTagScope !== 'all'
+  const list =
+    taggedOnly && store?.ui?.tagFilters?.size
+      ? scoped.filter((site) => sitePassesTagFilter(site, store))
+      : scoped
+  return [...list].sort((a, b) => compareHuman(a.name, b.name))
+}
+
+/**
+ * Empty-list copy for the sites sidebar.
+ * @param {object} store
+ * @param {{ scopedCount?: number }} [opts] sites in the viewport scope before the tagged filter
+ */
+export function sidebarEmptyMessage(store, { scopedCount = 0 } = {}) {
+  if (!store?.sites?.list?.length) return 'No sites yet.'
+  if (!store.ui?.mapReady) return ''
+  if (!scopedCount) return 'No sites in view.'
+  return 'No sites match the selected tags.'
 }
 
 /**

@@ -2,6 +2,7 @@
 
 import { createApp, computed, watch } from 'vue'
 import {
+  sidebarEmptyMessage,
   sidebarSites as sidebarSitesFromStore,
   sidebarTags as sidebarTagsFromStore,
   isSiteMapVisible,
@@ -9,7 +10,56 @@ import {
   viewportSites as viewportSitesFromStore,
 } from '../stores/sites.js'
 import { isViewshedVisible as isViewshedVisibleInStore } from '../stores/viewshed.js'
-import { mountViewportFilterCheckbox } from './viewport-filter.js'
+
+/**
+ * tagged | all control in the sites scope bar. Creates the buttons when the
+ * served HTML predates the template (project HTML is compiled into the binary).
+ * @param {HTMLElement|null} scopeEl
+ * @param {object} store
+ * @param {() => void} [onChange]
+ */
+function mountListTagScope(scopeEl, store, onChange) {
+  if (!scopeEl) return
+  let group = scopeEl.querySelector('.entity-panel__list-scope')
+  if (!group) {
+    group = document.createElement('div')
+    group.className = 'entity-panel__list-scope'
+    group.setAttribute('role', 'group')
+    group.setAttribute('aria-label', 'Which sites appear in the list')
+    for (const [scope, title] of [
+      ['tagged', 'List sites on the map that match the selected tags'],
+      ['all', 'List every site on the map'],
+    ]) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'entity-panel__tag-filter'
+      btn.dataset.listScope = scope
+      btn.title = title
+      btn.textContent = scope
+      group.appendChild(btn)
+    }
+    scopeEl.appendChild(group)
+  }
+  const buttons = [...group.querySelectorAll('[data-list-scope]')]
+  function sync() {
+    const mode = store.ui.listTagScope === 'all' ? 'all' : 'tagged'
+    for (const btn of buttons) {
+      const active = btn.dataset.listScope === mode
+      btn.classList.toggle('entity-panel__tag-filter--active', active)
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false')
+    }
+  }
+  for (const btn of buttons) {
+    btn.addEventListener('click', () => {
+      const next = btn.dataset.listScope === 'all' ? 'all' : 'tagged'
+      if (store.ui.listTagScope === next) return
+      store.ui.listTagScope = next
+      sync()
+      onChange?.()
+    })
+  }
+  sync()
+}
 
 /**
  * @param {object} store
@@ -17,21 +67,17 @@ import { mountViewportFilterCheckbox } from './viewport-filter.js'
  */
 export function mountSitesPanel(store, appApi) {
   const countEl = document.getElementById('entity-panel-sites-count')
-  const filterVisibleEl = document.getElementById('entity-panel-filter-visible-sites')
   const tagFiltersEl = document.getElementById('entity-panel-tag-filters')
   const listEl = document.getElementById('entity-panel-sites-list')
   if (!tagFiltersEl || !listEl) return null
 
-  const viewportLabel = filterVisibleEl?.closest('label')
-  if (
-    viewportLabel &&
-    tagFiltersEl.parentElement &&
-    !viewportLabel.parentElement?.classList.contains('entity-panel__sites-scope')
-  ) {
-    const bar = document.createElement('div')
-    bar.className = 'entity-panel__sites-scope'
-    tagFiltersEl.before(bar)
-    bar.appendChild(viewportLabel)
+  document.getElementById('entity-panel-filter-visible-sites')?.closest('label')?.remove()
+  const pane = tagFiltersEl.parentElement
+  let scopeBar = pane?.querySelector(':scope > .entity-panel__sites-scope') || null
+  if (!scopeBar && pane) {
+    scopeBar = document.createElement('div')
+    scopeBar.className = 'entity-panel__sites-scope'
+    tagFiltersEl.before(scopeBar)
   }
 
   tagFiltersEl.innerHTML = ''
@@ -51,8 +97,8 @@ export function mountSitesPanel(store, appApi) {
     epoch: store.ui.viewportEpoch,
   })
 
-  mountViewportFilterCheckbox(filterVisibleEl, store, () => {
-    appApi.onViewportFilterChange?.()
+  mountListTagScope(scopeBar, store, () => {
+    appApi.onListTagScopeChange?.()
   })
 
   const app = createApp({
@@ -75,7 +121,9 @@ export function mountSitesPanel(store, appApi) {
           const total = sidebarSites.value.length
           const shown = visibleCount.value
           if (!total) {
-            countEl.textContent = store.sites.list.length ? 'No sites in view.' : ''
+            countEl.textContent = store.sites.list.length
+              ? sidebarEmptyMessage(store, { scopedCount: scopedSites.value.length })
+              : ''
             return
           }
           if (shown < total) {
@@ -137,6 +185,12 @@ export function mountSitesPanel(store, appApi) {
     setup() {
       const sidebarSites = computed(() => sidebarSitesFromStore(store, mapOpts()))
 
+      const emptyMessage = computed(() =>
+        sidebarEmptyMessage(store, {
+          scopedCount: viewportSitesFromStore(store, mapOpts()).length,
+        }),
+      )
+
       function siteVisible(slug) {
         void store.sites.revision
         return isSiteMapVisible(store, slug)
@@ -165,6 +219,7 @@ export function mountSitesPanel(store, appApi) {
       return {
         store,
         sidebarSites,
+        emptyMessage,
         siteVisible,
         toggleVisible,
         viewshedVisible,
@@ -176,7 +231,7 @@ export function mountSitesPanel(store, appApi) {
     template: `
       <div class="entity-panel__list-items">
         <div v-if="!sidebarSites.length" class="entity-panel__empty">
-          {{ store.sites.list.length ? 'No sites in view.' : 'No sites yet.' }}
+          {{ emptyMessage }}
         </div>
         <div
           v-for="site in sidebarSites"

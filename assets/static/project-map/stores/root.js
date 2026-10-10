@@ -78,10 +78,10 @@ export function createRootStore(config, savedMapState) {
       entityPanelTab: ['land', 'peaks'].includes(savedMapState?.entityPanelTab)
         ? savedMapState.entityPanelTab
         : 'sites',
-      filterByViewport: savedMapState?.filterByViewport === true,
       viewportEpoch: 0,
       tagFilters: new Set(Array.isArray(savedMapState?.tagFilters) ? savedMapState.tagFilters : []),
       tagFilterMode: savedMapState?.tagFilterMode === 'or' ? 'or' : 'and',
+      listTagScope: savedMapState?.listTagScope === 'all' ? 'all' : 'tagged',
       showSiteLinks: savedMapState?.showLinks ?? true,
       viewshedOpacity: Number(savedMapState?.viewshedOpacity) || VIEWSHED_OPACITY_DEFAULT,
       basemapKey: savedMapState?.basemap || 'street',

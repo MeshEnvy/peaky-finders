@@ -8,7 +8,6 @@ import {
   viewportPeaks,
 } from '../stores/peaks.js'
 import { isViewshedVisible as isViewshedVisibleInStore } from '../stores/viewshed.js'
-import { mountViewportFilterCheckbox } from './viewport-filter.js'
 
 /**
  * Vue peaks sidebar for #entity-panel-peaks-list.
@@ -17,9 +16,14 @@ import { mountViewportFilterCheckbox } from './viewport-filter.js'
  */
 export function mountPeaksPanel(store, appApi) {
   const countEl = document.getElementById('entity-panel-peaks-count')
-  const filterVisibleEl = document.getElementById('entity-panel-filter-visible-peaks')
   const listEl = document.getElementById('entity-panel-peaks-list')
   if (!listEl) return null
+
+  const peaksFilter = document.getElementById('entity-panel-filter-visible-peaks')
+  const peaksFilterLabel = peaksFilter?.closest('label')
+  const peaksScope = peaksFilterLabel?.closest('.entity-panel__sites-scope')
+  peaksFilterLabel?.remove()
+  if (peaksScope && !peaksScope.childElementCount) peaksScope.remove()
 
   listEl.innerHTML = ''
   const mountPoint = document.createElement('div')
@@ -30,10 +34,6 @@ export function mountPeaksPanel(store, appApi) {
     map: appApi.getMap?.(),
     mapReady: store.ui.mapReady,
     epoch: store.ui.viewportEpoch,
-  })
-
-  mountViewportFilterCheckbox(filterVisibleEl, store, () => {
-    appApi.onViewportFilterChange?.()
   })
 
   const app = createApp({
@@ -118,7 +118,7 @@ export function mountPeaksPanel(store, appApi) {
           {{ store.peaks.missingCatalogHint || 'Run peaky peaks build for this project.' }}
         </div>
         <div v-else-if="!peaks.length" class="entity-panel__empty">
-          {{ store.peaks.list.length ? 'No peaks in view.' : 'No peaks in catalog yet.' }}
+          {{ store.ui.mapReady ? (store.peaks.list.length ? 'No peaks in view.' : 'No peaks in catalog yet.') : '' }}
         </div>
         <div
           v-for="peak in peaks"

@@ -2796,9 +2796,17 @@ wa-dropdown-item.is-active::part(base) {
 .entity-panel__sites-scope {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   padding: 0.45rem 0.8rem 0.4rem;
   border-bottom: 1px solid var(--wa-color-surface-border);
   flex-shrink: 0;
+}
+
+.entity-panel__list-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
 }
 
 .entity-panel__tag-filters {
@@ -2925,21 +2933,6 @@ wa-dialog wa-callout[hidden] {
   font-size: 0.65rem;
   line-height: 1;
   opacity: 0.9;
-}
-
-.entity-panel__viewport-filter {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.6875rem;
-  white-space: nowrap;
-  cursor: pointer;
-  margin: 0;
-  padding: 0;
-}
-
-.entity-panel__viewport-filter input {
-  margin: 0;
 }
 
 .entity-panel__list {

@@ -20,13 +20,13 @@ export function sortedPeaksList(store) {
 }
 
 /**
- * Peaks in the current map view when In view is on. Otherwise the full catalog.
+ * Peaks whose pins project onto the current map canvas.
  * @param {object} store
  * @param {{ map?: object, mapReady?: boolean }} [opts]
  */
 export function viewportPeaks(store, { map, mapReady } = {}) {
   const list = store?.peaks?.list || []
-  if (!store.ui?.filterByViewport || !map || !mapReady) return list
+  if (!map || !mapReady) return []
   return list.filter((peak) => {
     const lat = Number(peak.lat)
     const lon = Number(peak.lon)
@@ -36,7 +36,7 @@ export function viewportPeaks(store, { map, mapReady } = {}) {
 }
 
 /**
- * Sidebar peak rows: viewport scope when In view is on.
+ * Sidebar peak rows: peaks on the map canvas.
  * @param {object} store
  * @param {{ map?: object, mapReady?: boolean }} [opts]
  */
