@@ -1,5 +1,6 @@
 //! Peaky CLI — serve, find, and freeze.
 
+mod coverage;
 mod export;
 mod find;
 mod freeze;
@@ -68,6 +69,11 @@ enum Commands {
         #[command(subcommand)]
         command: MapCommands,
     },
+    /// Ensure splatter viewshed PNGs and write a footprint manifest
+    Coverage {
+        #[command(subcommand)]
+        command: CoverageCommands,
+    },
     /// Export a compact official project base (config.yaml + project.geojson)
     Freeze {
         /// Project directory (or path to config.yaml)
@@ -79,6 +85,36 @@ enum Commands {
         /// Include sites in config.yaml
         #[arg(long)]
         include_sites: bool,
+        #[arg(long)]
+        verbose: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum CoverageCommands {
+    /// Generate splatter viewsheds for Point features in a GeoJSON file
+    Points {
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
+        #[arg(value_name = "GEOJSON")]
+        geojson: PathBuf,
+        #[arg(long, default_value_t = 3)]
+        quality: u8,
+        #[arg(long)]
+        workers: Option<usize>,
+        #[arg(long, value_name = "PATH")]
+        out: PathBuf,
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Generate splatter viewsheds for deployed fleet sites (sites.yaml + nodes.yaml)
+    Fleet {
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
+        #[arg(long)]
+        workers: Option<usize>,
+        #[arg(long, value_name = "PATH")]
+        out: PathBuf,
         #[arg(long)]
         verbose: bool,
     },
@@ -108,8 +144,6 @@ enum MapCommands {
         tile_workers: Option<u32>,
         #[arg(long)]
         skip_tiles: bool,
-        #[arg(long, default_value_t = 400.0)]
-        silver_base_step_m: f64,
         #[arg(long)]
         verbose: bool,
     },
@@ -370,6 +404,30 @@ async fn main() -> Result<()> {
         } => {
             export::run(project, &tag, &exclude_tag, output, verbose)?;
         }
+        Commands::Coverage {
+            command: CoverageCommands::Points {
+                project,
+                geojson,
+                quality,
+                workers,
+                out,
+                verbose,
+            },
+        } => {
+            let w = workers.unwrap_or_else(default_coverage_workers);
+            coverage::run_points(project, geojson, quality, w, out, verbose)?;
+        }
+        Commands::Coverage {
+            command: CoverageCommands::Fleet {
+                project,
+                workers,
+                out,
+                verbose,
+            },
+        } => {
+            let w = workers.unwrap_or_else(default_coverage_workers);
+            coverage::run_fleet(project, w, out, verbose)?;
+        }
         Commands::Map {
             command:
                 MapCommands::Export {
@@ -382,7 +440,6 @@ async fn main() -> Result<()> {
                     tile_zoom_max,
                     tile_workers,
                     skip_tiles,
-                    silver_base_step_m,
                     verbose,
                 },
         } => {
@@ -397,7 +454,6 @@ async fn main() -> Result<()> {
                 tile_zoom_max,
                 tile_workers,
                 skip_tiles,
-                silver_base_step_m,
                 verbose,
             )?;
         }
@@ -411,6 +467,19 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn default_coverage_workers() -> usize {
+    std::env::var("PEAKY_MAP_WORKERS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|p| p.get())
+                .unwrap_or(4)
+                .clamp(1, 16)
+        })
 }
 
 fn default_map_out_dir() -> PathBuf {

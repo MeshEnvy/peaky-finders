@@ -16,6 +16,6 @@ peaky map export /path/to/peaky-nevada --out-dir /path/to/meshenvy.org/static
 ## Semantics
 
 - **`meshenvy_meta.model`**: `splatter_v5` (reads project `config.yaml` simulation block)
-- **Hub-bridge progress**: generic `hub_bridge` crate; Nevada hubs and the legacy JSON key `silver_triangle` live in `meshenvy.rs` for the site contract only
+- **Silver Triangle progress**: hand-edited on meshenvy.org (`src/data/silverTriangle.ts`), not derived from this export
 - **Gap-fill**: disabled (`close_iterations=0`) so the public map does not bridge real RF gaps
 - **Corridor P2P closure**: not exported (privacy + separate metric); future optional stat from splatter pair API without site coordinates

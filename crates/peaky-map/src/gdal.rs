@@ -4,14 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
-use geo::{LineString, MultiPolygon, Polygon};
-use geojson::{GeoJson, Value as GeoJsonValue};
 use peaky_geo::polygonize::{fraction_to_lat_lon, LatLonBox};
 use peaky_serve::load_bounds_from_manifest;
 use tracing::info;
-
-/// Coarse grid for hub-bridge polygonize (~400 m).
-const POLYGONIZE_RESOLUTION_DEG: f64 = 0.004;
 
 fn find_on_path(names: &[&str]) -> Result<PathBuf> {
     let path_var = std::env::var_os("PATH").unwrap_or_default();
@@ -171,116 +166,6 @@ pub fn mosaic_viewsheds_3857(geotiffs: &[PathBuf], dest: &Path) -> Result<()> {
         bail!("gdal_translate rgba tags failed");
     }
     Ok(())
-}
-
-pub fn polygonize_alpha_geotiff(tif: &Path) -> Result<Vec<MultiPolygon<f64>>> {
-    let gdalwarp = find_on_path(&["gdalwarp", "gdalwarp.py"])?;
-    let coarse = tif.with_extension("alpha_coarse.tif");
-    info!(
-        "downsampling alpha to {} deg for hub-bridge polygonize",
-        POLYGONIZE_RESOLUTION_DEG
-    );
-    let status = Command::new(&gdalwarp)
-        .arg("-t_srs")
-        .arg("EPSG:4326")
-        .arg("-tr")
-        .arg(format!("{POLYGONIZE_RESOLUTION_DEG}"))
-        .arg(format!("{POLYGONIZE_RESOLUTION_DEG}"))
-        .arg("-r")
-        .arg("max")
-        .arg("-b")
-        .arg("4")
-        .arg("-co")
-        .arg("COMPRESS=DEFLATE")
-        .arg(tif)
-        .arg(&coarse)
-        .status()
-        .context("gdalwarp alpha downsample")?;
-    if !status.success() {
-        bail!("gdalwarp alpha downsample failed with status {status}");
-    }
-
-    let gdal_polygonize = find_on_path(&["gdal_polygonize.py", "gdal_polygonize"])?;
-    let out_geojson = coarse.with_extension("polygons.geojson");
-    let status = Command::new(&gdal_polygonize)
-        .arg(&coarse)
-        .arg("-f")
-        .arg("GeoJSON")
-        .arg(&out_geojson)
-        .status()
-        .context("gdal_polygonize")?;
-    let _ = std::fs::remove_file(&coarse);
-    if !status.success() {
-        bail!("gdal_polygonize failed with status {status}");
-    }
-    let text = std::fs::read_to_string(&out_geojson)?;
-    let _ = std::fs::remove_file(&out_geojson);
-    let geoms = parse_geojson_polygons(&text)?;
-    info!("polygonize produced {} coverage component(s)", geoms.len());
-    Ok(geoms)
-}
-
-fn parse_geojson_polygons(text: &str) -> Result<Vec<MultiPolygon<f64>>> {
-    let gj: GeoJson = text.parse().context("parse polygonize GeoJSON")?;
-    let mut out = Vec::new();
-    match gj {
-        GeoJson::FeatureCollection(fc) => {
-            for feat in fc.features {
-                if let Some(geom) = feat.geometry {
-                    if let Some(mp) = geometry_to_multipolygon(&geom.value) {
-                        out.push(mp);
-                    }
-                }
-            }
-        }
-        GeoJson::Feature(f) => {
-            if let Some(geom) = f.geometry {
-                if let Some(mp) = geometry_to_multipolygon(&geom.value) {
-                    out.push(mp);
-                }
-            }
-        }
-        _ => {}
-    }
-    Ok(out)
-}
-
-fn geometry_to_multipolygon(value: &GeoJsonValue) -> Option<MultiPolygon<f64>> {
-    match value {
-        GeoJsonValue::Polygon(coords) => {
-            let exterior: LineString = coords
-                .first()?
-                .iter()
-                .map(|c| geo::Coord { x: c[0], y: c[1] })
-                .collect();
-            let holes: Vec<LineString> = coords
-                .iter()
-                .skip(1)
-                .map(|ring| ring.iter().map(|c| geo::Coord { x: c[0], y: c[1] }).collect())
-                .collect();
-            Some(MultiPolygon(vec![Polygon::new(exterior, holes)]))
-        }
-        GeoJsonValue::MultiPolygon(mps) => {
-            let polys: Vec<Polygon<f64>> = mps
-                .iter()
-                .filter_map(|poly_coords| {
-                    let exterior: LineString = poly_coords
-                        .first()?
-                        .iter()
-                        .map(|c| geo::Coord { x: c[0], y: c[1] })
-                        .collect();
-                    let holes: Vec<LineString> = poly_coords
-                        .iter()
-                        .skip(1)
-                        .map(|ring| ring.iter().map(|c| geo::Coord { x: c[0], y: c[1] }).collect())
-                        .collect();
-                    Some(Polygon::new(exterior, holes))
-                })
-                .collect();
-            Some(MultiPolygon(polys))
-        }
-        _ => None,
-    }
 }
 
 pub fn run_gdal2tiles(rgba3857: &Path, out_dir: &Path, z_min: u32, z_max: u32, tile_workers: u32) -> Result<()> {

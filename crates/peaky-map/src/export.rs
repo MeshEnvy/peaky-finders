@@ -15,14 +15,10 @@ use splatter::Session;
 use tracing::{info, warn};
 
 use crate::fleet::{load_fleet_sites, FleetSite};
-use crate::gdal::{
-    georeference_splat_png, mosaic_viewsheds_3857, polygonize_alpha_geotiff, run_gdal2tiles,
-    write_tile_sidecar,
-};
+use crate::gdal::{georeference_splat_png, mosaic_viewsheds_3857, run_gdal2tiles, write_tile_sidecar};
 use crate::geojson::{build_feature_collection, write_geojson};
-use crate::hub_bridge::compute_hub_bridge_progress;
 use crate::merge::{filter_inputs_to_coverage, union_manifest_bounds, SiteMaskInput};
-use crate::meshenvy::{self, META_HUB_BRIDGE_KEY};
+use crate::meshenvy;
 
 #[derive(Debug, Clone)]
 pub struct MapExportOptions {
@@ -33,7 +29,6 @@ pub struct MapExportOptions {
     pub tile_zoom_max: u32,
     pub tile_workers: u32,
     pub skip_tiles: bool,
-    pub silver_base_step_m: f64,
     pub verbose: bool,
 }
 
@@ -47,7 +42,6 @@ impl Default for MapExportOptions {
             tile_zoom_max: 11,
             tile_workers: default_tile_workers(),
             skip_tiles: false,
-            silver_base_step_m: 400.0,
             verbose: false,
         }
     }
@@ -93,8 +87,7 @@ pub fn run_map_export(
     let preset = load_preset(&preset_path)?;
     let board_viewshed = BoardViewshedResolver::load(&project_dir)
         .map_err(|e| anyhow::anyhow!("boards.yaml: {e}"))?;
-    let hub_config = meshenvy::nevada_hub_bridge_config();
-    let coverage_bbox = hub_config.bbox(0.5);
+    let coverage_bbox = meshenvy::nevada_empty_overlay_bbox(0.5);
 
     let fleet = load_fleet_sites(&project_dir)?;
     let fleet_site_count = fleet.len();
@@ -107,7 +100,6 @@ pub fn run_map_export(
             out_dir,
             opts,
             fleet_site_count,
-            &hub_config,
             coverage_bbox,
         );
     }
@@ -181,7 +173,6 @@ pub fn run_map_export(
             out_dir,
             opts,
             fleet_site_count,
-            &hub_config,
             coverage_bbox,
         );
     }
@@ -209,14 +200,9 @@ pub fn run_map_export(
     let rgba3857 = out_dir.join(".build/coverage_rgba3857.tif");
     mosaic_viewsheds_3857(&geotiffs, &rgba3857)?;
 
-    info!("polygonizing mosaic alpha for hub-bridge progress");
-    let geoms = polygonize_alpha_geotiff(&rgba3857)?;
-    let hub_bridge = compute_hub_bridge_progress(&geoms, &hub_config, opts.silver_base_step_m);
-
     let coverage_bbox = union_manifest_bounds(&filtered).unwrap_or(coverage_bbox);
     let overlay_meta = json!({
         "coverage_bbox": coverage_bbox,
-        META_HUB_BRIDGE_KEY: hub_bridge,
         "coverage_tile_min_zoom": opts.tile_zoom_min,
         "coverage_tile_max_zoom": opts.tile_zoom_max,
     });
@@ -283,13 +269,10 @@ fn write_empty_overlay(
     out_dir: &Path,
     opts: &MapExportOptions,
     fleet_site_count: usize,
-    hub_config: &crate::hub_bridge::HubBridgeConfig,
     coverage_bbox: [f64; 4],
 ) -> Result<MapExportResult> {
-    let hub_bridge = compute_hub_bridge_progress(&[], hub_config, opts.silver_base_step_m);
     let overlay_meta = json!({
         "coverage_bbox": coverage_bbox,
-        META_HUB_BRIDGE_KEY: hub_bridge,
         "coverage_tile_min_zoom": opts.tile_zoom_min,
         "coverage_tile_max_zoom": opts.tile_zoom_max,
     });

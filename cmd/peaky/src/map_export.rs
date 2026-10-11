@@ -15,7 +15,6 @@ pub fn run(
     tile_zoom_max: u32,
     tile_workers: Option<u32>,
     skip_tiles: bool,
-    silver_base_step_m: f64,
     verbose: bool,
 ) -> Result<()> {
     let mut opts = MapExportOptions {
@@ -24,7 +23,6 @@ pub fn run(
         tile_zoom_min,
         tile_zoom_max,
         skip_tiles,
-        silver_base_step_m,
         verbose,
         ..MapExportOptions::default()
     };

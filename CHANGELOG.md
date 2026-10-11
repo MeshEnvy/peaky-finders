@@ -10,8 +10,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Changed
+
+- **`peaky map export`** — drops hub-bridge polygonize and `meshenvy_meta.silver_triangle`. Silver Triangle leg progress is edited on meshenvy.org. Export metadata is coverage bbox and tile zoom only.
+
 ### Added
 
+- **`peaky coverage points|fleet`** — ensure splatter viewshed PNGs for GeoJSON points or deployed fleet sites and write a footprint manifest (`splat_path`, `manifest_path`).
 - **Sites list tagged | all** — Sites and peaks sidebars list only what is on the map. The **In view** checkbox is gone. **tagged** (default) lists sites that match the selected tag chips. **all** lists every site on screen, including ones the chips hide on the map.
 - **Per-pair RF link cache (`links/`)** — serve reads and writes `links/<a>/<b>.json` (canonical slugs) with per-pair fingerprint, forward/reverse margins, and `kind` (`two_way`, `one_way`, `none`). Point queries and mesh warm reuse fresh files; stale pairs recompute. **`links.json` is manual overrides only** (slug pair or `{a, b, field_at?}`). Map: teal manual, blue two-way, red dashed one-way. `links_model: p2p-v8`. Envybot: `envybot.links.load_manual_links` / `read_link_status`.
 - **Configurable road roles (`roads.yaml`)** — project Settings **Roads** tab edits the class table (seeded from former hard-coded rules), segment overrides, and custom polylines. `GET`/`PUT /api/p/{slug}/roads`; save invalidates OSM routing caches so the next warm reparses the graph. All overlay popup **Use as** sets an override; access network menu **Draw road** adds a custom chain.
