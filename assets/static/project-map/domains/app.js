@@ -684,6 +684,75 @@ export function runApp(ctx = {}) {
     return api
   }
 
+  function listedSites() {
+    return sidebarSites(store, {
+      map,
+      mapReady: store.ui.mapReady,
+    })
+  }
+
+  function showAllSites() {
+    const listed = listedSites()
+    let changed = false
+    for (const site of listed) {
+      if (!site?.slug) continue
+      if (store.sites.manualHidden.has(site.slug)) {
+        store.sites.manualHidden.delete(site.slug)
+        changed = true
+      }
+      if (!isSiteMapVisible(store, site.slug)) {
+        store.sites.manualShown.add(site.slug)
+        changed = true
+      }
+    }
+    if (!changed) return
+    syncTagFilterVisibility(store)
+    entityChrome.applyEntityVisibility()
+    mapChrome.scheduleSaveMapState()
+  }
+
+  function hideAllSites() {
+    const listed = listedSites()
+    let changed = false
+    for (const site of listed) {
+      if (!site?.slug) continue
+      if (store.sites.manualShown.has(site.slug)) {
+        store.sites.manualShown.delete(site.slug)
+        changed = true
+      }
+      if (!store.sites.manualHidden.has(site.slug)) {
+        store.sites.manualHidden.add(site.slug)
+        changed = true
+      }
+    }
+    if (!changed) return
+    syncTagFilterVisibility(store)
+    entityChrome.applyEntityVisibility()
+    mapChrome.scheduleSaveMapState()
+  }
+
+  function toggleListedSiteVisibility() {
+    const listed = listedSites()
+    if (!listed.length) return
+    const allVisible = listed.every((site) => site?.slug && isSiteMapVisible(store, site.slug))
+    if (allVisible) hideAllSites()
+    else showAllSites()
+  }
+
+  function toggleListedSiteViewsheds() {
+    const listed = listedSites()
+    if (!listed.length || !viewshedDomain) return
+    const next = !listed.every(
+      (site) => site?.slug && viewshedDomain.isViewshedVisible(site.slug),
+    )
+    for (const site of listed) {
+      if (!site?.slug) continue
+      if (viewshedDomain.isViewshedVisible(site.slug) === next) continue
+      viewshedDomain.setViewshedVisible(site.slug, next)
+    }
+    mapChrome.scheduleSaveMapState()
+  }
+
   return {
     reloadViewshedsForSimChange,
     setViewshedSimulation: (radiusKm, quality) => setSimulation(store, radiusKm, quality),
@@ -697,55 +766,17 @@ export function runApp(ctx = {}) {
     togglePeakMapVisible: (...args) => peaksDomain.togglePeakMapVisible(...args),
     showAllPeaks: () => peaksDomain.showAllPeaks(),
     hideAllPeaks: () => peaksDomain.hideAllPeaks(),
+    toggleListedPeakVisibility: () => peaksDomain.toggleListedPeakVisibility(),
+    toggleListedPeakViewsheds: () => peaksDomain.toggleListedPeakViewsheds(),
     toggleSiteMapVisible(slug) {
       toggleSiteManualHidden(store, slug)
       entityChrome.applyEntityVisibility()
       mapChrome.scheduleSaveMapState()
     },
-    showAllSites() {
-      const listed = sidebarSites(store, {
-        map,
-        mapReady: store.ui.mapReady,
-      })
-      let changed = false
-      for (const site of listed) {
-        if (!site?.slug) continue
-        if (store.sites.manualHidden.has(site.slug)) {
-          store.sites.manualHidden.delete(site.slug)
-          changed = true
-        }
-        if (!isSiteMapVisible(store, site.slug)) {
-          store.sites.manualShown.add(site.slug)
-          changed = true
-        }
-      }
-      if (!changed) return
-      syncTagFilterVisibility(store)
-      entityChrome.applyEntityVisibility()
-      mapChrome.scheduleSaveMapState()
-    },
-    hideAllSites() {
-      const listed = sidebarSites(store, {
-        map,
-        mapReady: store.ui.mapReady,
-      })
-      let changed = false
-      for (const site of listed) {
-        if (!site?.slug) continue
-        if (store.sites.manualShown.has(site.slug)) {
-          store.sites.manualShown.delete(site.slug)
-          changed = true
-        }
-        if (!store.sites.manualHidden.has(site.slug)) {
-          store.sites.manualHidden.add(site.slug)
-          changed = true
-        }
-      }
-      if (!changed) return
-      syncTagFilterVisibility(store)
-      entityChrome.applyEntityVisibility()
-      mapChrome.scheduleSaveMapState()
-    },
+    showAllSites,
+    hideAllSites,
+    toggleListedSiteVisibility,
+    toggleListedSiteViewsheds,
     showPeakInView: (...args) => peaksDomain.showPeakInView(...args),
     showSiteInView: (...args) => placementDomain.showSiteInView(...args),
     renderPeaksPanel: () => peaksDomain.bumpPeaksPanel(),

@@ -8,6 +8,7 @@ import {
   viewportPeaks,
 } from '../stores/peaks.js'
 import { isViewshedVisible as isViewshedVisibleInStore } from '../stores/viewshed.js'
+import { syncListMasters } from './list-masters.js'
 
 /**
  * Vue peaks sidebar for #entity-panel-peaks-list.
@@ -36,6 +37,8 @@ export function mountPeaksPanel(store, appApi) {
     epoch: store.ui.viewportEpoch,
   })
 
+  const masters = ensurePeakMasterButtons()
+
   const app = createApp({
     setup() {
       const revision = computed(() => store.peaks.panelRevision)
@@ -57,21 +60,33 @@ export function mountPeaksPanel(store, appApi) {
         return peaks.value.filter((peak) => isPeakMapVisible(store, peak.slug)).length
       })
 
+      const viewshedOnCount = computed(() => {
+        revision.value
+        return peaks.value.filter((peak) => isViewshedVisibleInStore(store, peak.slug)).length
+      })
+
       watch(
-        [peaks, visibleCount, scopedPeaks],
+        [peaks, visibleCount, scopedPeaks, viewshedOnCount],
         () => {
-          if (!countEl) return
-          const total = peaks.value.length
-          const shown = visibleCount.value
-          if (!total) {
-            countEl.textContent = store.peaks.list.length ? 'No peaks in view.' : ''
-            return
+          if (countEl) {
+            const total = peaks.value.length
+            const shown = visibleCount.value
+            if (!total) {
+              countEl.textContent = store.peaks.list.length ? 'No peaks in view.' : ''
+            } else if (shown < total) {
+              countEl.textContent = `${shown} of ${total} visible`
+            } else {
+              countEl.textContent = `${total} peak${total === 1 ? '' : 's'}`
+            }
           }
-          if (shown < total) {
-            countEl.textContent = `${shown} of ${total} visible`
-          } else {
-            countEl.textContent = `${total} peak${total === 1 ? '' : 's'}`
-          }
+          syncListMasters({
+            eye: document.getElementById('entity-panel-peaks-toggle-visible'),
+            viewshed: document.getElementById('entity-panel-peaks-toggle-viewshed'),
+            total: peaks.value.length,
+            visible: visibleCount.value,
+            viewsheds: viewshedOnCount.value,
+            pinNoun: 'peaks',
+          })
         },
         { immediate: true },
       )
@@ -172,14 +187,35 @@ export function mountPeaksPanel(store, appApi) {
   })
   app.mount(mountPoint)
 
-  document.getElementById('entity-panel-peaks-show-all')?.addEventListener('click', () => {
-    appApi.showAllPeaks?.()
+  masters?.querySelector('#entity-panel-peaks-toggle-visible')?.addEventListener('click', () => {
+    appApi.toggleListedPeakVisibility?.()
   })
-  document.getElementById('entity-panel-peaks-hide-all')?.addEventListener('click', () => {
-    appApi.hideAllPeaks?.()
+  masters?.querySelector('#entity-panel-peaks-toggle-viewshed')?.addEventListener('click', () => {
+    appApi.toggleListedPeakViewsheds?.()
   })
 
   return { mountPoint }
+}
+
+function ensurePeakMasterButtons() {
+  const toolbar = document.querySelector('#entity-panel-peaks-pane .entity-panel__list-toolbar')
+  if (!toolbar) return null
+  let group = document.getElementById('entity-panel-peaks-masters')
+  if (!group) {
+    document.getElementById('entity-panel-peaks-show-all')?.remove()
+    document.getElementById('entity-panel-peaks-hide-all')?.remove()
+    group = document.createElement('div')
+    group.id = 'entity-panel-peaks-masters'
+    group.className = 'entity-panel__controls entity-panel__controls--peak'
+    group.innerHTML = `
+      <button type="button" id="entity-panel-peaks-toggle-visible" class="entity-panel__action" title="Show peaks on map" aria-label="Show peaks on map">
+        <wa-icon name="eye-slash" label="Show peaks on map"></wa-icon>
+      </button>
+      <button type="button" id="entity-panel-peaks-toggle-viewshed" class="entity-panel__action entity-panel__action--letter" title="Show viewsheds" aria-label="Show viewsheds">v</button>
+    `
+    toolbar.appendChild(group)
+  }
+  return group
 }
 
 export { hiddenPeakSlugs }

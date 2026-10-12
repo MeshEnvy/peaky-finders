@@ -10,17 +10,19 @@ import {
   viewportSites as viewportSitesFromStore,
 } from '../stores/sites.js'
 import { isViewshedVisible as isViewshedVisibleInStore } from '../stores/viewshed.js'
+import { syncListMasters } from './list-masters.js'
 
 /**
- * tagged | all control in the sites scope bar. Creates the buttons when the
- * served HTML predates the template (project HTML is compiled into the binary).
- * @param {HTMLElement|null} scopeEl
+ * tagged | all on the site list header, between the count and the eye / v.
+ * Moves the group when served HTML still has the old scope bar above the tags.
+ * @param {HTMLElement|null} toolbar
  * @param {object} store
  * @param {() => void} [onChange]
  */
-function mountListTagScope(scopeEl, store, onChange) {
-  if (!scopeEl) return
-  let group = scopeEl.querySelector('.entity-panel__list-scope')
+function mountListTagScope(toolbar, store, onChange) {
+  if (!toolbar) return
+  const pane = document.getElementById('entity-panel-sites-pane')
+  let group = pane?.querySelector('.entity-panel__list-scope') || null
   if (!group) {
     group = document.createElement('div')
     group.className = 'entity-panel__list-scope'
@@ -38,8 +40,19 @@ function mountListTagScope(scopeEl, store, onChange) {
       btn.textContent = scope
       group.appendChild(btn)
     }
-    scopeEl.appendChild(group)
   }
+  const masters = document.getElementById('entity-panel-sites-masters')
+  const bulk = document.getElementById('entity-panel-bulk-tag')
+  const before =
+    masters && masters.parentElement === toolbar
+      ? masters
+      : bulk && bulk.parentElement === toolbar
+        ? bulk
+        : null
+  if (before) toolbar.insertBefore(group, before)
+  else if (group.parentElement !== toolbar) toolbar.appendChild(group)
+  pane?.querySelector(':scope > .entity-panel__sites-scope')?.remove()
+
   const buttons = [...group.querySelectorAll('[data-list-scope]')]
   function sync() {
     const mode = store.ui.listTagScope === 'all' ? 'all' : 'tagged'
@@ -72,13 +85,6 @@ export function mountSitesPanel(store, appApi) {
   if (!tagFiltersEl || !listEl) return null
 
   document.getElementById('entity-panel-filter-visible-sites')?.closest('label')?.remove()
-  const pane = tagFiltersEl.parentElement
-  let scopeBar = pane?.querySelector(':scope > .entity-panel__sites-scope') || null
-  if (!scopeBar && pane) {
-    scopeBar = document.createElement('div')
-    scopeBar.className = 'entity-panel__sites-scope'
-    tagFiltersEl.before(scopeBar)
-  }
 
   tagFiltersEl.innerHTML = ''
   listEl.innerHTML = ''
@@ -97,7 +103,9 @@ export function mountSitesPanel(store, appApi) {
     epoch: store.ui.viewportEpoch,
   })
 
-  mountListTagScope(scopeBar, store, () => {
+  const masters = ensureSiteMasterButtons()
+  const toolbar = document.querySelector('#entity-panel-sites-pane .entity-panel__list-toolbar')
+  mountListTagScope(toolbar, store, () => {
     appApi.onListTagScopeChange?.()
   })
 
@@ -114,23 +122,35 @@ export function mountSitesPanel(store, appApi) {
         return sidebarSites.value.filter((site) => isSiteMapVisible(store, site.slug)).length
       })
 
+      const viewshedOnCount = computed(() => {
+        void store.sites.revision
+        return sidebarSites.value.filter((site) => isViewshedVisibleInStore(store, site.slug)).length
+      })
+
       watch(
-        [sidebarSites, visibleCount, scopedSites],
+        [sidebarSites, visibleCount, scopedSites, viewshedOnCount],
         () => {
-          if (!countEl) return
           const total = sidebarSites.value.length
           const shown = visibleCount.value
-          if (!total) {
-            countEl.textContent = store.sites.list.length
-              ? sidebarEmptyMessage(store, { scopedCount: scopedSites.value.length })
-              : ''
-            return
+          if (countEl) {
+            if (!total) {
+              countEl.textContent = store.sites.list.length
+                ? sidebarEmptyMessage(store, { scopedCount: scopedSites.value.length })
+                : ''
+            } else if (shown < total) {
+              countEl.textContent = `${shown} of ${total} visible`
+            } else {
+              countEl.textContent = `${total} site${total === 1 ? '' : 's'}`
+            }
           }
-          if (shown < total) {
-            countEl.textContent = `${shown} of ${total} visible`
-          } else {
-            countEl.textContent = `${total} site${total === 1 ? '' : 's'}`
-          }
+          syncListMasters({
+            eye: document.getElementById('entity-panel-sites-toggle-visible'),
+            viewshed: document.getElementById('entity-panel-sites-toggle-viewshed'),
+            total,
+            visible: shown,
+            viewsheds: viewshedOnCount.value,
+            pinNoun: 'sites',
+          })
         },
         { immediate: true },
       )
@@ -285,6 +305,13 @@ export function mountSitesPanel(store, appApi) {
   })
   listApp.mount(listMount)
 
+  masters?.querySelector('#entity-panel-sites-toggle-visible')?.addEventListener('click', () => {
+    appApi.toggleListedSiteVisibility?.()
+  })
+  masters?.querySelector('#entity-panel-sites-toggle-viewshed')?.addEventListener('click', () => {
+    appApi.toggleListedSiteViewsheds?.()
+  })
+
   const bulkTagBtn = document.getElementById('entity-panel-bulk-tag')
   const addSiteBtn = document.getElementById('entity-panel-add-site')
   const exportBtn = document.getElementById('entity-panel-export-sites')
@@ -340,4 +367,25 @@ export function mountSitesPanel(store, appApi) {
   importBtn?.addEventListener('click', () => appApi.openImportSitesModal?.())
 
   return { mountPoint, listMount }
+}
+
+function ensureSiteMasterButtons() {
+  const toolbar = document.querySelector('#entity-panel-sites-pane .entity-panel__list-toolbar')
+  if (!toolbar) return null
+  let group = document.getElementById('entity-panel-sites-masters')
+  if (!group) {
+    group = document.createElement('div')
+    group.id = 'entity-panel-sites-masters'
+    group.className = 'entity-panel__controls entity-panel__controls--site'
+    group.innerHTML = `
+      <button type="button" id="entity-panel-sites-toggle-visible" class="entity-panel__action" title="Show sites on map" aria-label="Show sites on map">
+        <wa-icon name="eye-slash" label="Show sites on map"></wa-icon>
+      </button>
+      <button type="button" id="entity-panel-sites-toggle-viewshed" class="entity-panel__action entity-panel__action--letter" title="Show viewsheds" aria-label="Show viewsheds">v</button>
+    `
+    const bulk = document.getElementById('entity-panel-bulk-tag')
+    if (bulk && bulk.parentElement === toolbar) toolbar.insertBefore(group, bulk)
+    else toolbar.appendChild(group)
+  }
+  return group
 }

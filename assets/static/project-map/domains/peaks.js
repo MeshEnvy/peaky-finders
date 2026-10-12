@@ -372,11 +372,6 @@ export function createPeaksDomain(opts) {
     }
     if (!changed) return
     refreshPeakLayers()
-    for (const peak of listed) {
-      if (!peak?.slug) continue
-      vs()?.applyViewshedVisibilityForSite?.(peak.slug)
-    }
-    vs()?.ensureViewshedsForNewlyVisibleSites?.()
     bumpPeaksPanel()
     scheduleSaveMapState?.()
   }
@@ -397,6 +392,35 @@ export function createPeaksDomain(opts) {
       deselectPeak({ syncDeepLink: true })
     }
     refreshPeakLayers()
+    bumpPeaksPanel()
+    scheduleSaveMapState?.()
+  }
+
+  function listedPeaksAllVisible() {
+    const listed = listedPeaks()
+    return listed.length > 0 && listed.every((peak) => peak?.slug && isPeakMapVisible(store, peak.slug))
+  }
+
+  function listedPeaksAllViewsheds() {
+    const listed = listedPeaks()
+    return listed.length > 0 && listed.every((peak) => peak?.slug && vs()?.isViewshedVisible?.(peak.slug) === true)
+  }
+
+  function toggleListedPeakVisibility() {
+    if (!listedPeaks().length) return
+    if (listedPeaksAllVisible()) hideAllPeaks()
+    else showAllPeaks()
+  }
+
+  function toggleListedPeakViewsheds() {
+    const listed = listedPeaks()
+    if (!listed.length) return
+    const next = !listedPeaksAllViewsheds()
+    for (const peak of listed) {
+      if (!peak?.slug) continue
+      if (vs()?.isViewshedVisible?.(peak.slug) === next) continue
+      vs()?.setViewshedVisible?.(peak.slug, next)
+    }
     bumpPeaksPanel()
     scheduleSaveMapState?.()
   }
@@ -445,6 +469,10 @@ export function createPeaksDomain(opts) {
     togglePeakMapVisible,
     showAllPeaks,
     hideAllPeaks,
+    toggleListedPeakVisibility,
+    toggleListedPeakViewsheds,
+    listedPeaksAllVisible,
+    listedPeaksAllViewsheds,
     showPeakInView,
     bumpPeaksPanel,
     hiddenPeakSlugs: () => hiddenPeakSlugs(store),

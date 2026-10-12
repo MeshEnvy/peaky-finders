@@ -28,6 +28,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **Peaks toolbar toggles** — Show all and Hide all are an eye and a **v**, the same controls as each peak row. The eye shows or hides every listed peak. The **v** shows or hides every listed viewshed. Showing peaks does not turn viewsheds on.
+- **Sites toolbar toggles** — The sites list header has **tagged** | **all**, then the same eye and **v** as each row. The eye shows or hides every listed site pin and does not change viewshed flags. The **v** shows or hides every listed viewshed. A site viewshed draws only while its pin is on.
 - **Link solver margin cache** — RF margins for a scan stay in memory for that scan only. Serve no longer reads or writes `.peaky/cache/link-solver/pairs.json`.
 - **Custom jeep/paved roads are draft alternates** — drawn polylines no longer merge into the trusted OSM+GTLF graph used for `recommended`, peak eligibility, or default site access. They still show on jeep/paved map layers and can appear as extra site access options (`draft-…`, never `recommended`). Probe cache tracks `roads.yaml` with a global stamp (classes + overrides) and a local stamp (customs inside the destination jeep reach disk). `ACCESS_ALGO_VERSION` → **18**. Re-warm site/draft access after upgrade.
 - **OSM `highway=path` default role** — seeded `roads.yaml` class rows treat `path` as **jeep** (unpaved desert tracks join the drive graph and jeep overlay). Explicit paved-surface paths stay **other**. Update project `roads.yaml` or reset the path row in Settings **Roads**; save or restart serve so routing caches rebuild.

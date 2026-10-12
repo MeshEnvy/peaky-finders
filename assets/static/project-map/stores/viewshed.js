@@ -94,7 +94,11 @@ export function setViewshedVisible(store, slug, visible) {
 
 /** @param {object} store @param {string} slug */
 export function isViewshedVisible(store, slug) {
-  return store.viewshed.visible.get(slug) !== false
+  if (store.viewshed.visible.has(slug)) return store.viewshed.visible.get(slug) !== false
+  const isSite = (store.sites?.list || []).some((site) => site.slug === slug)
+  if (isSite) return true
+  if ((store.peaks?.list || []).some((peak) => peak.slug === slug)) return false
+  return true
 }
 
 /**

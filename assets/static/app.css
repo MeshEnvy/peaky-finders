@@ -2904,6 +2904,23 @@ wa-dropdown-item.is-active::part(base) {
   flex-shrink: 0;
 }
 
+.entity-panel__list-toolbar .entity-panel__controls {
+  margin-left: auto;
+}
+
+#entity-panel-sites-pane .entity-panel__list-toolbar .entity-panel__list-scope {
+  margin-left: auto;
+}
+
+#entity-panel-sites-pane .entity-panel__list-toolbar .entity-panel__controls {
+  margin-left: 0.15rem;
+}
+
+.entity-panel__list-toolbar .entity-panel__action:hover,
+.entity-panel__list-toolbar .entity-panel__action:focus-visible {
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
 .bulk-tag-form {
   margin-top: 0.25rem;
 }
