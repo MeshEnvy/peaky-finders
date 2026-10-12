@@ -185,6 +185,17 @@ export function createViewshedDomain(opts) {
     })
   }
 
+  /**
+   * Site rasters require a visible pin, even when the slug is also a catalog peak.
+   * A peak-only raster follows the v flag alone.
+   */
+  function viewshedLayerShouldShow(slug) {
+    if (!isViewshedVisible(slug)) return false
+    if (getSiteBySlug(slug)) return isViewshedHostVisible(slug)
+    if (isCatalogPeakSlug(slug)) return true
+    return isViewshedHostVisible(slug)
+  }
+
   function skipOutboundLinksForViewshedSlug(slug) {
     return isEphemeralViewshedSlug(slug) || isCatalogPeakSlug(slug)
   }
@@ -317,8 +328,7 @@ export function createViewshedDomain(opts) {
   }
 
   function applyViewshedVisibilityForSite(slug) {
-    const visible = isViewshedHostVisible(slug) && isViewshedVisible(slug)
-    setViewshedLayerVisibility(map, slug, visible)
+    setViewshedLayerVisibility(map, slug, viewshedLayerShouldShow(slug))
   }
 
   function setViewshedVisible(slug, visible) {
@@ -351,14 +361,10 @@ export function createViewshedDomain(opts) {
       { url: vs.url, coordinates: vs.coordinates },
       getViewshedOpacity(),
       viewshedLayerInsertBefore(),
-      () => viewshedAddTicket.get(vs.slug) === ticket && isViewshedVisible(vs.slug),
+      () => viewshedAddTicket.get(vs.slug) === ticket && viewshedLayerShouldShow(vs.slug),
     ).then(() => {
       if (viewshedAddTicket.get(vs.slug) !== ticket) return
-      setViewshedLayerVisibility(
-        map,
-        vs.slug,
-        isViewshedVisible(vs.slug) && isViewshedHostVisible(vs.slug),
-      )
+      setViewshedLayerVisibility(map, vs.slug, viewshedLayerShouldShow(vs.slug))
       if (store) clearViewshedLoadingInStore(store, vs.slug)
       else viewshedLoading.delete(vs.slug)
       updatePinOverlays()
@@ -665,14 +671,15 @@ export function createViewshedDomain(opts) {
   function ensureViewshedsForNewlyVisibleSites() {
     let queued = false
     for (const site of getSites()) {
-      if (!isViewshedHostVisible(site.slug) || !isViewshedVisible(site.slug)) continue
+      if (!viewshedLayerShouldShow(site.slug)) continue
       if (map.getLayer(viewshedLayerId(site.slug))) continue
       if (sitePinSpinning(site.slug) || viewshedPendingEpoch.has(site.slug)) continue
       probeViewshedCacheForSite(site)
       queued = true
     }
     for (const peak of store?.peaks?.list || []) {
-      if (!isViewshedHostVisible(peak.slug) || !isViewshedVisible(peak.slug)) continue
+      if (getSiteBySlug(peak.slug)) continue
+      if (!viewshedLayerShouldShow(peak.slug)) continue
       if (map.getLayer(viewshedLayerId(peak.slug))) continue
       if (sitePinSpinning(peak.slug) || viewshedPendingEpoch.has(peak.slug)) continue
       const lat = Number(peak.lat)
@@ -726,7 +733,7 @@ export function createViewshedDomain(opts) {
   }
 
   function ensureViewshedLoadedForSlug(slug, loadDraftAt) {
-    if (!isViewshedHostVisible(slug) || !isViewshedVisible(slug)) return
+    if (!viewshedLayerShouldShow(slug)) return
     if (map.getLayer(viewshedLayerId(slug))) return
     if (sitePinSpinning(slug) || viewshedPendingEpoch.has(slug)) return
     if (slug === DRAFT_VIEWSHED_SLUG && loadDraftAt) {
@@ -821,8 +828,9 @@ export function createViewshedDomain(opts) {
       }
     }
     for (const peak of store?.peaks?.list || []) {
+      if (getSiteBySlug(peak.slug)) continue
       resetSiteProgress(peak.slug)
-      if (isViewshedHostVisible(peak.slug) && isViewshedVisible(peak.slug)) {
+      if (viewshedLayerShouldShow(peak.slug)) {
         removeViewshedLayer(peak.slug)
         viewshedLoading.add(peak.slug)
         viewshedPendingEpoch.set(peak.slug, viewshedLoadEpoch)

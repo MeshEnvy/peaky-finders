@@ -10,6 +10,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Fixed
+
+- **Hidden site viewsheds** — a site raster stays off while that pin is hidden, including when the slug is also a catalog peak.
+
 ### Changed
 
 - **`peaky map export`** — drops hub-bridge polygonize and `meshenvy_meta.silver_triangle`. Silver Triangle leg progress is edited on meshenvy.org. Export metadata is coverage bbox and tile zoom only.
