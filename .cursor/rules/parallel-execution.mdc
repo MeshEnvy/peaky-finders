@@ -1,6 +1,6 @@
 ---
 description: Prefer parallel and multi-core execution where feasible and prudent
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Parallel execution

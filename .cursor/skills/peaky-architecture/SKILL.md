@@ -1,8 +1,8 @@
 ---
 name: peaky-architecture
 description: >-
-  Peaky Finders v4: serve-only web UI over preset YAML, splatter RF, greenfield.
-  Use when onboarding or cross-cutting refactors — no batch CLI or build DAG.
+  Peaky Finders v5: Rust workspace, peaky serve web UI, splatter RF, greenfield.
+  Use when onboarding or cross-cutting refactors in this repo.
 ---
 
 # Peaky architecture

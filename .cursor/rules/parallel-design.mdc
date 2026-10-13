@@ -1,6 +1,6 @@
 ---
 description: Consider cores and parallelism when designing new features and pipelines
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Parallelism in new designs

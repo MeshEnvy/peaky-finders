@@ -1,6 +1,6 @@
 ---
 description: Conventional Commits for git history; CHANGELOG.md for release notes
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Commit style

@@ -1,6 +1,6 @@
 ---
 description: --verbose output must log start, progress, and completion of operations
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Verbose logging

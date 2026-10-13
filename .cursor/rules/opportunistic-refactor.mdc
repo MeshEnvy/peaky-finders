@@ -1,6 +1,6 @@
 ---
 description: Mandatory opportunistic refactors when touching code — extract before leaving
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Opportunistic refactor (mandatory)

@@ -1,6 +1,6 @@
 ---
 description: Greenfield — break freely to simplify; no legacy support unless explicitly requested
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Greenfield: break to simplify

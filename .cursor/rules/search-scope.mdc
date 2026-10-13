@@ -1,11 +1,11 @@
 ---
-description: Scope code search to the Peaky v5 subtree that owns the symbol or behavior
-alwaysApply: true
+description: Scope code search to Peaky v5 crates and assets in this repo
+alwaysApply: false
 ---
 
 # Search scope — Peaky Finders
 
-Peaky work lives in **`peaky_finders/`**. Enterprise routing: `ops/.cursor/rules/search-scope.mdc`. **Always pass an explicit path** to grep, glob, and codebase search. Do not search unscoped across sibling workspace roots.
+Peaky work lives in **`peaky_finders/`**. Enterprise routing: `/Volumes/Code/repos/meshenvy/enterprise/.cursor/rules/search-scope.mdc`. Universal workspace: `/Volumes/Code/repos/root/.cursor/rules/workspace.mdc`. **Always pass an explicit path** to grep, glob, and codebase search.
 
 ## Default search roots
 
@@ -24,7 +24,7 @@ Peaky work lives in **`peaky_finders/`**. Enterprise routing: `ops/.cursor/rules
 
 ## When to widen
 
-Search outside this repo only for cross-leaf integration (project YAML, ops initiatives, meshenvy.org map). Name the target path in the tool call.
+Search outside this repo only for cross-leaf integration (project YAML, enterprise initiatives, meshenvy.org map). Name the target path in the tool call.
 
 ## Anti-patterns
 

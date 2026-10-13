@@ -1,0 +1,41 @@
+---
+description: Read MEMORY.md before substantive Peaky v5 work; update it when architecture shifts
+alwaysApply: false
+---
+
+# MEMORY.md — read first, update always
+
+[MEMORY.md](../../MEMORY.md) is the living source of truth for Peaky v5. Agents must **use** it for context and **maintain** it as work proceeds.
+
+## Read (start of task)
+
+Before planning or coding on presets, serve/web UI, splatter RF, CLI, map export, or dev workflow:
+
+1. **Read MEMORY.md** — prefer it over chat history or assumptions about v4 Python.
+2. If MEMORY and code disagree, **trust the code** but **fix MEMORY in the same change set**.
+
+## Update (before marking done)
+
+Update MEMORY.md in the **same commit/PR** when you change anything in the table below — do not defer.
+
+| Area | Examples |
+|------|----------|
+| Preset schema | `config.yaml`, sites/tags, split `sites.yaml` / `land.yaml`, `boards.yaml` |
+| Workspace crates | `peaky-preset`, `peaky-serve`, `peaky-geo`, `peaky-map`, `splatter`, `cmd/peaky` |
+| Artifact layout | Paths under `<project>/.peaky/cache/` |
+| CLI surface | `serve`, `find path`, `map export`, `coverage`, flags |
+| Web UI | `assets/static/project-map/`, serve routes |
+| Dev contract | `./local-run.sh`, `cargo test`, Dockerfile, env vars |
+| splatter / RF | Coverage, viewshed pipeline, link solver |
+| Greenfield breaks | Removed APIs, renamed paths, invalidated caches |
+| Releases | `CHANGELOG.md` Unreleased, `Cargo.toml` version, `./scripts/changelog.sh` |
+
+## Style
+
+- Under ~150 lines — current state only, not a roadmap.
+- Tables over prose; **delete obsolete rows** when breaking changes land.
+
+## Self-check
+
+- *Did I read MEMORY.md before starting?*
+- *Did I change presets, serve, artifacts, or RF behavior?* → Update MEMORY now.

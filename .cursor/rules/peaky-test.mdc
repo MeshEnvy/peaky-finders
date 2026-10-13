@@ -1,6 +1,6 @@
 ---
 description: Run v5 tests with cargo test; link-solver/RF paths must have timing budgets
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Tests (v5)

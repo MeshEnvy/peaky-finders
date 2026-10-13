@@ -1,6 +1,6 @@
 ---
 description: Curated CHANGELOG.md for releases; commits are for git history only
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Changelog

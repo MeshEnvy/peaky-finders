@@ -1,6 +1,6 @@
 ---
 description: Site YAML vocabulary — one sites map, optional tags, no type or goals
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Sites and tags
