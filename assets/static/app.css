@@ -2892,6 +2892,20 @@ wa-dropdown-item.is-active::part(base) {
   min-width: 0;
 }
 
+.entity-panel__scope-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.8rem;
+  border-bottom: 1px solid var(--wa-color-surface-border);
+  flex-shrink: 0;
+}
+
+.entity-panel__scope-bar wa-button {
+  flex-shrink: 0;
+}
+
 .entity-panel__list-toolbar {
   display: flex;
   align-items: center;
@@ -2904,16 +2918,12 @@ wa-dropdown-item.is-active::part(base) {
   flex-shrink: 0;
 }
 
+/* Row controls sit inside list padding (0.4rem) plus row padding (0.65rem).
+   Header padding is 0.8rem, so the masters need 0.25rem more inset to share
+   the eye and v columns with each row. */
 .entity-panel__list-toolbar .entity-panel__controls {
   margin-left: auto;
-}
-
-#entity-panel-sites-pane .entity-panel__list-toolbar .entity-panel__list-scope {
-  margin-left: auto;
-}
-
-#entity-panel-sites-pane .entity-panel__list-toolbar .entity-panel__controls {
-  margin-left: 0.15rem;
+  margin-right: 0.25rem;
 }
 
 .entity-panel__list-toolbar .entity-panel__action:hover,

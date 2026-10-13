@@ -13,16 +13,25 @@ import { isViewshedVisible as isViewshedVisibleInStore } from '../stores/viewshe
 import { syncListMasters } from './list-masters.js'
 
 /**
- * tagged | all on the site list header, between the count and the eye / v.
- * Moves the group when served HTML still has the old scope bar above the tags.
- * @param {HTMLElement|null} toolbar
+ * tagged | all lives once, directly under the tag chips.
+ * Bulk tag shares that row so it does not sit in the eye / v column.
  * @param {object} store
  * @param {() => void} [onChange]
  */
-function mountListTagScope(toolbar, store, onChange) {
-  if (!toolbar) return
+function mountListTagScope(store, onChange) {
   const pane = document.getElementById('entity-panel-sites-pane')
-  let group = pane?.querySelector('.entity-panel__list-scope') || null
+  const tagFilters = document.getElementById('entity-panel-tag-filters')
+  if (!pane || !tagFilters) return
+
+  let bar = pane.querySelector(':scope > .entity-panel__scope-bar')
+  if (!bar) {
+    bar = document.createElement('div')
+    bar.className = 'entity-panel__scope-bar'
+    tagFilters.insertAdjacentElement('afterend', bar)
+  }
+
+  const groups = [...pane.querySelectorAll('.entity-panel__list-scope')]
+  let group = groups[0] || null
   if (!group) {
     group = document.createElement('div')
     group.className = 'entity-panel__list-scope'
@@ -41,17 +50,13 @@ function mountListTagScope(toolbar, store, onChange) {
       group.appendChild(btn)
     }
   }
-  const masters = document.getElementById('entity-panel-sites-masters')
+  for (const extra of groups.slice(1)) extra.remove()
+  if (group.parentElement !== bar) bar.insertBefore(group, bar.firstChild)
+
   const bulk = document.getElementById('entity-panel-bulk-tag')
-  const before =
-    masters && masters.parentElement === toolbar
-      ? masters
-      : bulk && bulk.parentElement === toolbar
-        ? bulk
-        : null
-  if (before) toolbar.insertBefore(group, before)
-  else if (group.parentElement !== toolbar) toolbar.appendChild(group)
-  pane?.querySelector(':scope > .entity-panel__sites-scope')?.remove()
+  if (bulk && bulk.parentElement !== bar) bar.appendChild(bulk)
+
+  pane.querySelector(':scope > .entity-panel__sites-scope')?.remove()
 
   const buttons = [...group.querySelectorAll('[data-list-scope]')]
   function sync() {
@@ -62,14 +67,17 @@ function mountListTagScope(toolbar, store, onChange) {
       btn.setAttribute('aria-pressed', active ? 'true' : 'false')
     }
   }
-  for (const btn of buttons) {
-    btn.addEventListener('click', () => {
-      const next = btn.dataset.listScope === 'all' ? 'all' : 'tagged'
-      if (store.ui.listTagScope === next) return
-      store.ui.listTagScope = next
-      sync()
-      onChange?.()
-    })
+  if (group.dataset.bound !== '1') {
+    group.dataset.bound = '1'
+    for (const btn of buttons) {
+      btn.addEventListener('click', () => {
+        const next = btn.dataset.listScope === 'all' ? 'all' : 'tagged'
+        if (store.ui.listTagScope === next) return
+        store.ui.listTagScope = next
+        sync()
+        onChange?.()
+      })
+    }
   }
   sync()
 }
@@ -104,8 +112,7 @@ export function mountSitesPanel(store, appApi) {
   })
 
   const masters = ensureSiteMasterButtons()
-  const toolbar = document.querySelector('#entity-panel-sites-pane .entity-panel__list-toolbar')
-  mountListTagScope(toolbar, store, () => {
+  mountListTagScope(store, () => {
     appApi.onListTagScopeChange?.()
   })
 
@@ -305,10 +312,10 @@ export function mountSitesPanel(store, appApi) {
   })
   listApp.mount(listMount)
 
-  masters?.querySelector('#entity-panel-sites-toggle-visible')?.addEventListener('click', () => {
+  bindMasterToggle(masters?.querySelector('#entity-panel-sites-toggle-visible'), () => {
     appApi.toggleListedSiteVisibility?.()
   })
-  masters?.querySelector('#entity-panel-sites-toggle-viewshed')?.addEventListener('click', () => {
+  bindMasterToggle(masters?.querySelector('#entity-panel-sites-toggle-viewshed'), () => {
     appApi.toggleListedSiteViewsheds?.()
   })
 
@@ -369,6 +376,15 @@ export function mountSitesPanel(store, appApi) {
   return { mountPoint, listMount }
 }
 
+function bindMasterToggle(button, fn) {
+  if (!(button instanceof HTMLButtonElement) || button.dataset.bound === '1') return
+  button.dataset.bound = '1'
+  button.addEventListener('click', (ev) => {
+    ev.preventDefault()
+    fn()
+  })
+}
+
 function ensureSiteMasterButtons() {
   const toolbar = document.querySelector('#entity-panel-sites-pane .entity-panel__list-toolbar')
   if (!toolbar) return null
@@ -383,9 +399,7 @@ function ensureSiteMasterButtons() {
       </button>
       <button type="button" id="entity-panel-sites-toggle-viewshed" class="entity-panel__action entity-panel__action--letter" title="Show viewsheds" aria-label="Show viewsheds">v</button>
     `
-    const bulk = document.getElementById('entity-panel-bulk-tag')
-    if (bulk && bulk.parentElement === toolbar) toolbar.insertBefore(group, bulk)
-    else toolbar.appendChild(group)
   }
+  if (group.parentElement !== toolbar) toolbar.appendChild(group)
   return group
 }

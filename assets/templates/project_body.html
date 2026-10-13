@@ -43,20 +43,22 @@
     <div class="entity-panel__body">
       <div id="entity-panel-sites-pane" class="entity-panel__pane" role="tabpanel">
         <div id="entity-panel-tag-filters" class="entity-panel__tag-filters" role="toolbar" aria-label="Site tags"></div>
+        <div class="entity-panel__scope-bar">
+          <div class="entity-panel__list-scope" role="group" aria-label="Which sites appear in the list">
+            <button type="button" class="entity-panel__tag-filter entity-panel__tag-filter--active" data-list-scope="tagged" title="List sites on the map that match the selected tags" aria-pressed="true">tagged</button>
+            <button type="button" class="entity-panel__tag-filter" data-list-scope="all" title="List every site on the map" aria-pressed="false">all</button>
+          </div>
+          <wa-button id="entity-panel-bulk-tag" appearance="outlined" size="s" type="button" title="Add or remove tags on visible sites" disabled>Bulk tag</wa-button>
+        </div>
         <div class="entity-panel__list-header">
           <div class="entity-panel__list-toolbar">
             <span class="wa-caption pf-muted entity-panel__list-count" id="entity-panel-sites-count"></span>
-            <div class="entity-panel__list-scope" role="group" aria-label="Which sites appear in the list">
-              <button type="button" class="entity-panel__tag-filter entity-panel__tag-filter--active" data-list-scope="tagged" title="List sites on the map that match the selected tags" aria-pressed="true">tagged</button>
-              <button type="button" class="entity-panel__tag-filter" data-list-scope="all" title="List every site on the map" aria-pressed="false">all</button>
-            </div>
             <div class="entity-panel__controls entity-panel__controls--site" id="entity-panel-sites-masters">
               <button type="button" id="entity-panel-sites-toggle-visible" class="entity-panel__action" title="Show sites on map" aria-label="Show sites on map">
                 <wa-icon name="eye-slash" label="Show sites on map"></wa-icon>
               </button>
               <button type="button" id="entity-panel-sites-toggle-viewshed" class="entity-panel__action entity-panel__action--letter" title="Show viewsheds" aria-label="Show viewsheds">v</button>
             </div>
-            <wa-button id="entity-panel-bulk-tag" appearance="outlined" size="s" type="button" title="Add or remove tags on visible sites" disabled>Bulk tag</wa-button>
           </div>
         </div>
         <div id="entity-panel-sites-list" class="entity-panel__list"></div>
