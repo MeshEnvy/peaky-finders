@@ -98,8 +98,6 @@ enum CoverageCommands {
         project: PathBuf,
         #[arg(value_name = "GEOJSON")]
         geojson: PathBuf,
-        #[arg(long, default_value_t = 3)]
-        quality: u8,
         #[arg(long)]
         workers: Option<usize>,
         #[arg(long, value_name = "PATH")]
@@ -408,14 +406,13 @@ async fn main() -> Result<()> {
             command: CoverageCommands::Points {
                 project,
                 geojson,
-                quality,
                 workers,
                 out,
                 verbose,
             },
         } => {
             let w = workers.unwrap_or_else(default_coverage_workers);
-            coverage::run_points(project, geojson, quality, w, out, verbose)?;
+            coverage::run_points(project, geojson, w, out, verbose)?;
         }
         Commands::Coverage {
             command: CoverageCommands::Fleet {

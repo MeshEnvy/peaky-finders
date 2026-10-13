@@ -24,4 +24,5 @@ pub use dem_mirror::{
 };
 pub use hash::{splat_input_sha256, Request as CovRequest, SPLAT_CACHE_SCHEMA_VERSION};
 pub use peaks::LandFilterIndex;
+pub use engine::CoverageRunContext;
 pub use session::Session;

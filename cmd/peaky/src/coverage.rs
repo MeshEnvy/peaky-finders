@@ -13,7 +13,6 @@ use peaky_preset::{
 use peaky_serve::viewshed::{
     ensure_coords_viewshed_blocking, ensure_viewshed_for_site_blocking, target_viewshed_digest_for_site,
 };
-use peaky_serve::ViewshedSimOverrides;
 use serde_json::json;
 use splatter::Session;
 use tracing::info;
@@ -31,7 +30,6 @@ struct ManifestRow {
 pub fn run_points(
     project: PathBuf,
     geojson: PathBuf,
-    quality: u8,
     workers: usize,
     out: PathBuf,
     verbose: bool,
@@ -43,10 +41,6 @@ pub fn run_points(
     std::fs::create_dir_all(&mirror)?;
     let dem_workers = resolved_dem_fetch_max_workers(&preset);
     let session = Arc::new(Session::new(mirror, verbose, dem_workers));
-    let sim = ViewshedSimOverrides {
-        quality: Some(quality),
-        ..Default::default()
-    };
 
     let text = std::fs::read_to_string(&geojson)
         .with_context(|| format!("read {}", geojson.display()))?;
@@ -72,7 +66,7 @@ pub fn run_points(
                 &preset,
                 *lat,
                 *lon,
-                Some(&sim),
+                None,
                 verbose,
             )
         });
@@ -135,6 +129,7 @@ pub fn run_fleet(
                 &site.site,
                 Some(&board_viewshed),
                 verbose,
+                None,
             )
         });
         match png {

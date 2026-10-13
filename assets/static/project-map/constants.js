@@ -141,10 +141,7 @@ export function isEphemeralPlaceSlug(slug) {
 export const ALTERNATE_VIEWSHED_SLUG = '_alternate'
 export const FORTIFY_VIEWSHED_SLUG = '_fortify'
 export const PEAK_VIEWSHED_SLUG = '_peak'
-export const VIEWSHED_PREVIEW_QUALITY = 1
 export const SKADI_DEM_SPACING_M = 30
-export const VIEWSHED_QUALITY_MIN = 1
-export const VIEWSHED_QUALITY_MAX = 5
 export const VIEWSHED_RASTER_MIN = 128
 export const VIEWSHED_RASTER_MAX = 4096
 export const COORD_PREFETCH_MS = 350

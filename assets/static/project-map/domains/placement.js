@@ -1,6 +1,7 @@
 // @ts-check
 
 import { flyMapToCoord, formatCoord } from '../geo.js'
+import { beginPreview, cancelPreview } from '../preview-session.js'
 import { DRAFT_MARKER_COLOR, DRAFT_VIEWSHED_SLUG } from '../constants.js'
 import { normalizeSiteFromApi } from '../stores/sites.js'
 import { captureDeepLinkFromMap, writeDeepLink } from '../api/deep-link.js'
@@ -41,6 +42,7 @@ export function createPlacementDomain(ctx) {
     removeDraftViewshed,
     removeDraftLinksLayer,
     loadDraftViewshedAt,
+    loadPlacementPrefetchAt,
     onStartRelocate,
     onCancelRelocate,
     onCleanupRelocate,
@@ -174,7 +176,9 @@ export function createPlacementDomain(ctx) {
     deselectPeak?.({ syncDeepLink: false })
     clearLinkSelection?.()
     viewshedVisible?.set?.(DRAFT_VIEWSHED_SLUG, true)
+    beginPreview()
     void loadDraftViewshedAt?.(lat, lon)
+    void loadPlacementPrefetchAt?.(lat, lon)
     ensureDraftAccess?.(lat, lon)
   }
 
@@ -182,6 +186,7 @@ export function createPlacementDomain(ctx) {
     if (!isCreateMode() && !draftMarker) return
     store.ui.createMode = false
     setCreateDraftCoords(null, null)
+    cancelPreview()
     removeDraftMarker()
     removeDraftViewshed?.()
     removeDraftLinksLayer?.()
@@ -224,6 +229,7 @@ export function createPlacementDomain(ctx) {
     store.ui.relocateMode = false
     store.ui.relocateSlug = null
     setRelocateDraftCoords(null, null)
+    cancelPreview()
     removeDraftMarker()
     removeDraftViewshed?.()
     removeDraftLinksLayer?.()
@@ -406,7 +412,6 @@ export function createPlacementDomain(ctx) {
     const { site } = await sitesDomain.createSite(body)
     if (!site?.slug) throw new Error('Unexpected server response.')
     removeDraftMarker()
-    removeDraftViewshed?.()
     setCreateDraftCoords(null, null)
     store.ui.createMode = false
     clearAddPlacementMode()

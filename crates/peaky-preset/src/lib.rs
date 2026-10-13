@@ -94,9 +94,8 @@ pub use model::{
 pub use nodes_board::{load_nodes_board_index, load_nodes_board_index_from_path, NodesBoardIndex};
 pub use viewshed_quality::{
     dem_native_raster_dimension, effective_radius_m, effective_target_raster_dimension,
-    effective_viewshed_quality, preset_radius_km, preset_radius_m, raster_upgrade_ladder,
-    validate_viewshed_quality, viewshed_raster_for_quality, SKADI_DEM_SPACING_M,
-    VIEWSHED_QUALITY_MAX, VIEWSHED_QUALITY_MIN, VIEWSHED_RASTER_MAX, VIEWSHED_RASTER_MIN,
+    preset_radius_km, preset_radius_m, SKADI_DEM_SPACING_M, VIEWSHED_RASTER_MAX,
+    VIEWSHED_RASTER_MIN,
 };
 pub use paths::{
     peaky_home, peaky_projects_dir, resolve_preset_path, resolve_project_dir,

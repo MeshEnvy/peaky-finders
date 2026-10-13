@@ -22,7 +22,6 @@ environment_presets:
 simulation:
   provider: splatter
   radius_km: 50.0
-  viewshed_quality: 3
   modem: meshcore-us
   environment: test-env
   transmitter:

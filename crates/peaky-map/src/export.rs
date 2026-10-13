@@ -259,6 +259,7 @@ fn ensure_site_viewshed(
         &fleet_site.site,
         Some(board_viewshed),
         verbose,
+        None,
     )?;
     Ok((workdir, cache_hit))
 }

@@ -53,12 +53,13 @@ export function siteApiUrl(projectSlug, slug) {
   return `/api/p/${projectSlug}/sites/${encodeURIComponent(slug)}`
 }
 
-export function sitesPrefetchUrl(projectSlug, lat, lon, excludeSite) {
+export function sitesPrefetchUrl(projectSlug, lat, lon, excludeSite, previewId) {
   const params = new URLSearchParams({
     lat: String(lat),
     lon: String(lon),
   })
   if (excludeSite) params.set('exclude_site', excludeSite)
+  if (previewId) params.set('preview', String(previewId))
   return `/api/p/${projectSlug}/sites/prefetch?${params}`
 }
 
@@ -66,22 +67,24 @@ export function peaksApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/peaks`
 }
 
-/** @param {string} projectSlug @param {string} placeSlug @param {{ warm?: boolean, lat?: number, lon?: number }} [opts] */
+/** @param {string} projectSlug @param {string} placeSlug @param {{ warm?: boolean, lat?: number, lon?: number, preview?: number }} [opts] */
 export function placeAccessApiUrl(projectSlug, placeSlug, opts = {}) {
   const params = new URLSearchParams()
   if (opts.warm) params.set('warm', '1')
   if (Number.isFinite(opts.lat)) params.set('lat', String(opts.lat))
   if (Number.isFinite(opts.lon)) params.set('lon', String(opts.lon))
+  if (opts.preview) params.set('preview', String(opts.preview))
   const qs = params.toString()
   const base = `/api/p/${projectSlug}/access/${encodeURIComponent(placeSlug)}`
   return qs ? `${base}?${qs}` : base
 }
 
-/** @param {string} projectSlug @param {string} placeSlug @param {{ lat?: number, lon?: number }} [opts] */
+/** @param {string} projectSlug @param {string} placeSlug @param {{ lat?: number, lon?: number, preview?: number }} [opts] */
 export function placeAccessWarmApiUrl(projectSlug, placeSlug, opts = {}) {
   const params = new URLSearchParams()
   if (Number.isFinite(opts.lat)) params.set('lat', String(opts.lat))
   if (Number.isFinite(opts.lon)) params.set('lon', String(opts.lon))
+  if (opts.preview) params.set('preview', String(opts.preview))
   const qs = params.toString()
   const base = `/api/p/${projectSlug}/access/${encodeURIComponent(placeSlug)}/warm`
   return qs ? `${base}?${qs}` : base

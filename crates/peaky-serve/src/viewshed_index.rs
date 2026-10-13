@@ -1,20 +1,87 @@
 //! Bulk viewshed cache index and MapLibre overlay metadata.
 
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use peaky_geo::polygonize::{fraction_to_lat_lon, LatLonBox};
-use peaky_preset::{preset_radius_km, resolved_viewshed_root, BoardViewshedResolver, Preset, SiteEntry};
+use peaky_preset::{
+    dem_native_raster_dimension, preset_radius_km, resolved_viewshed_root, BoardViewshedResolver,
+    Preset, SiteEntry,
+};
 use serde_json::{json, Value};
+use splatter::CovRequest;
 
 use crate::rf::{preset_to_request, viewshed_workspace_digest};
-use crate::viewshed::viewshed_digest_for_raster;
-use crate::viewshed_sim::{
-    effective_target_raster_for_site,
-    effective_viewshed_quality_for_preset, raster_upgrade_ladder, ViewshedSimOverrides,
-    MIN_SERVE_RASTER_DIMENSION,
-};
+use crate::viewshed_log::viewshed_progress_log;
+use crate::viewshed::viewshed_digest_for_site;
+use crate::viewshed_sim::{effective_target_raster_for_site, ViewshedSimOverrides};
+
+/// YAML and query-string parses of the same pin can differ by one f64 ULP (~1e-14°).
+const COORD_REUSE_EPS_DEG: f64 = 1e-6;
+
+fn same_viewshed_except_coord_noise(want: &CovRequest, have: &CovRequest) -> bool {
+    if (want.lat - have.lat).abs() > COORD_REUSE_EPS_DEG
+        || (want.lon - have.lon).abs() > COORD_REUSE_EPS_DEG
+    {
+        return false;
+    }
+    let mut snapped = want.clone();
+    snapped.lat = have.lat;
+    snapped.lon = have.lon;
+    match (
+        splatter::splat_input_sha256(&snapped),
+        splatter::splat_input_sha256(have),
+    ) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Copy a finished raster into `dest` when the only digest difference is lat/lon float noise.
+pub(crate) fn adopt_coord_noise_viewshed(
+    preset_path: &Path,
+    dest: &Path,
+    want: &CovRequest,
+) -> Result<bool> {
+    let root = resolved_viewshed_root(preset_path);
+    let Ok(rd) = fs::read_dir(&root) else {
+        return Ok(false);
+    };
+    for ent in rd.flatten() {
+        let src = ent.path();
+        if src == dest {
+            continue;
+        }
+        let png = src.join("splat.png");
+        if !png.is_file() {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(src.join("request.json")) else {
+            continue;
+        };
+        let Ok(have) = serde_json::from_str::<CovRequest>(&raw) else {
+            continue;
+        };
+        if !same_viewshed_except_coord_noise(want, &have) {
+            continue;
+        }
+        fs::create_dir_all(dest)?;
+        fs::copy(&png, dest.join("splat.png"))?;
+        let manifest = src.join("manifest.json");
+        if manifest.is_file() {
+            fs::copy(&manifest, dest.join("manifest.json"))?;
+        }
+        fs::write(dest.join("request.json"), serde_json::to_string_pretty(want)?)?;
+        viewshed_progress_log(&format!(
+            "viewshed cache reuse (coord drift) {}",
+            src.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        return Ok(true);
+    }
+    Ok(false)
+}
 
 pub fn viewshed_cache_png_api_path(project_slug: &str, digest: &str) -> String {
     format!("/api/p/{project_slug}/cache/viewsheds/{digest}/splat.png")
@@ -68,7 +135,7 @@ fn site_index_entry(
     target_raster: u32,
     board_viewshed: Option<&BoardViewshedResolver>,
 ) -> Result<Value> {
-    let target_digest = viewshed_digest_for_raster(preset, site, target_raster, board_viewshed)?;
+    let target_digest = viewshed_digest_for_site(preset, site, board_viewshed)?;
     let target_workdir = viewshed_root.join(&target_digest);
     let target_png = target_workdir.join("splat.png");
     if target_png.is_file() && splat_png_is_valid_fast(&target_png) {
@@ -78,34 +145,14 @@ fn site_index_entry(
             &target_workdir,
             &target_digest,
             target_raster,
-            target_raster,
-            true,
         );
-    }
-
-    let ladder = raster_upgrade_ladder(MIN_SERVE_RASTER_DIMENSION, target_raster);
-    for raster in ladder.iter().rev().copied().skip(1) {
-        let digest = viewshed_digest_for_raster(preset, site, raster, board_viewshed)?;
-        let workdir = viewshed_root.join(&digest);
-        let png = workdir.join("splat.png");
-        if png.is_file() && splat_png_is_valid_fast(&png) {
-            return overlay_index_entry(
-                project_slug,
-                site_slug,
-                &workdir,
-                &digest,
-                raster,
-                target_raster,
-                false,
-            );
-        }
     }
 
     Ok(json!({
         "slug": site_slug,
         "ready": false,
         "digest": target_digest,
-        "raster_target": target_raster,
+        "raster_dimension": target_raster,
     }))
 }
 
@@ -115,8 +162,6 @@ fn overlay_index_entry(
     workdir: &Path,
     digest: &str,
     raster_dimension: u32,
-    raster_target: u32,
-    at_target: bool,
 ) -> Result<Value> {
     let bounds = load_bounds_from_manifest(&workdir.join("manifest.json"));
     let Some(bounds) = bounds else {
@@ -124,7 +169,7 @@ fn overlay_index_entry(
             "slug": site_slug,
             "ready": false,
             "digest": digest,
-            "raster_target": raster_target,
+            "raster_dimension": raster_dimension,
         }));
     };
     let coordinates = image_coordinates_from_bbox(&bounds)?;
@@ -135,8 +180,6 @@ fn overlay_index_entry(
         "url": viewshed_cache_png_api_path(project_slug, digest),
         "coordinates": coordinates,
         "raster_dimension": raster_dimension,
-        "raster_target": raster_target,
-        "at_target": at_target,
     }))
 }
 
@@ -165,14 +208,15 @@ pub fn build_viewshed_index(
         }
         entries.insert(slug.clone(), row);
     }
+    let radius_km = preset_radius_km(preset);
     Ok(json!({
         "project": project_slug,
         "sites": Value::Object(entries),
         "ready_count": ready_count,
         "total": preset.sites.len(),
         "sim": {
-            "radius_km": preset_radius_km(preset),
-            "viewshed_quality": effective_viewshed_quality_for_preset(preset, None),
+            "radius_km": radius_km,
+            "raster_dimension": dem_native_raster_dimension(radius_km * 1000.0),
         },
     }))
 }
@@ -242,4 +286,46 @@ pub fn viewshed_overlay_from_workdir(
         "url": viewshed_cache_png_api_path(project_slug, &digest),
         "coordinates": coordinates,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_req(lon: f64) -> CovRequest {
+        let mut v: Value = serde_json::from_str(include_str!(
+            "../../../splatter/tests/fixtures/splat_request_hash_fixture.json"
+        ))
+        .unwrap();
+        v["lon"] = json!(lon);
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn adopt_reuses_one_ulp_longitude() {
+        let project = std::env::temp_dir().join(format!(
+            "peaky-adopt-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&project);
+        let preset = project.join("config.yaml");
+        fs::create_dir_all(&project).unwrap();
+        let have = sample_req(-114.96467113494873);
+        let want = sample_req(-114.96467113494872);
+        let src_digest = splatter::splat_input_sha256(&have).unwrap();
+        let dest_digest = splatter::splat_input_sha256(&want).unwrap();
+        assert_ne!(src_digest, dest_digest);
+        let src = resolved_viewshed_root(&preset).join(&src_digest);
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("request.json"),
+            serde_json::to_string_pretty(&have).unwrap(),
+        )
+        .unwrap();
+        fs::write(src.join("splat.png"), vec![7u8; 300]).unwrap();
+        let dest = resolved_viewshed_root(&preset).join(&dest_digest);
+        assert!(adopt_coord_noise_viewshed(&preset, &dest, &want).unwrap());
+        assert_eq!(fs::read(dest.join("splat.png")).unwrap(), vec![7u8; 300]);
+        let _ = fs::remove_dir_all(&project);
+    }
 }

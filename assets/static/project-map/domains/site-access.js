@@ -2,6 +2,7 @@
 
 import * as apiUrls from '../api/urls.js'
 import { DRAFT_VIEWSHED_SLUG, isEphemeralPlaceSlug } from '../constants.js'
+import { currentPreview } from '../preview-session.js'
 import { coordsMatchPair } from '../geo.js'
 import { ensureSiteAccessLayers, setSiteAccessLayerData } from '../map/site-access-layers.js'
 import {
@@ -377,17 +378,24 @@ export function createSiteAccessDomain(opts) {
       }
     }
 
+    const preview = currentPreview()
+
     async function postWarmAccess() {
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
       const warmResp = await fetch(
-        apiUrls.placeAccessWarmApiUrl(projectSlug, slug, { lat, lon }),
-        { method: 'POST' },
+        apiUrls.placeAccessWarmApiUrl(projectSlug, slug, {
+          lat,
+          lon,
+          preview: preview.id || undefined,
+        }),
+        { method: 'POST', signal: preview.signal },
       )
       if (!warmResp.ok) {
         console.warn('place access warm failed', slug, warmResp.status)
         return
       }
       const warmed = await warmResp.json()
+      if (warmed?.status === 'cancelled') return
       if (active() || opts.prefetchOnly) {
         ingestAccess(slug, warmed, meta)
       }
@@ -405,10 +413,16 @@ export function createSiteAccessDomain(opts) {
 
         if (!isEphemeralPlaceSlug(slug)) {
           const resp = await fetch(
-            apiUrls.placeAccessApiUrl(projectSlug, slug, { lat, lon }),
+            apiUrls.placeAccessApiUrl(projectSlug, slug, {
+              lat,
+              lon,
+              preview: preview.id || undefined,
+            }),
+            { signal: preview.signal },
           )
           if (resp.ok) {
             const access = await resp.json()
+            if (access?.status === 'cancelled') return
             if (active() || opts.prefetchOnly) {
               ingestAccess(slug, access, meta)
             }
@@ -427,6 +441,7 @@ export function createSiteAccessDomain(opts) {
 
         await postWarmAccess()
       } catch (err) {
+        if (err?.name === 'AbortError') return
         console.warn('place access load failed', slug, err)
       } finally {
         placeInflight.delete(slug)

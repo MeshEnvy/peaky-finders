@@ -533,6 +533,14 @@ impl Session {
     }
 
     pub fn run(&self, work_dir: &Path) -> Result<()> {
+        self.run_with_context(work_dir, crate::engine::CoverageRunContext::verbose_only(self.verbose))
+    }
+
+    pub fn run_with_context(
+        &self,
+        work_dir: &Path,
+        ctx: crate::engine::CoverageRunContext<'_>,
+    ) -> Result<()> {
         let req_path = work_dir.join("request.json");
         let raw = std::fs::read_to_string(&req_path)
             .with_context(|| format!("read {}", req_path.display()))?;
@@ -540,6 +548,6 @@ impl Session {
             serde_json::from_str(&raw).context("parse request.json as SplatCoverageRequest")?;
         self.ensure_tiles_for_request(&parsed)?;
         let dem = self.dem.read().unwrap();
-        run_coverage_with_dem(work_dir, &dem, self.verbose)
+        run_coverage_with_dem(work_dir, &dem, ctx)
     }
 }

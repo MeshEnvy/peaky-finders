@@ -1,7 +1,4 @@
-import {
-  computeViewshedRaster,
-  formatViewshedQualityLabel,
-} from './project-map/viewshed-raster.js'
+import { formatViewshedRadiusLabel } from './project-map/viewshed-raster.js'
 import {
   bindRoadsSettingsUi,
   loadRoadsSettings,
@@ -24,8 +21,6 @@ import {
     envIsNew: false,
     radiusMin: 1,
     radiusMax: 100,
-    qualityMin: 1,
-    qualityMax: 5,
   };
 
   function onProjectMap() {
@@ -40,10 +35,7 @@ import {
     if (onProjectMap() && window.PEAKY_MAP) {
       let simChanged = false;
       if (typeof window.PEAKY_MAP.setViewshedSimulation === "function" && state.simulation) {
-        simChanged = window.PEAKY_MAP.setViewshedSimulation(
-          state.simulation.radius_km,
-          state.simulation.viewshed_quality
-        );
+        simChanged = window.PEAKY_MAP.setViewshedSimulation(state.simulation.radius_km);
       }
       if (
         simChanged &&
@@ -67,9 +59,7 @@ import {
       return;
     }
     const radiusKm = Number(sim.radius_km ?? sim.radiusKm) || 50;
-    const quality = Number(sim.viewshed_quality ?? sim.quality) || 3;
-    const px = computeViewshedRaster(quality, radiusKm);
-    const text = `${Math.round(radiusKm)} km · Q${quality} (${px} px)`;
+    const text = formatViewshedRadiusLabel(radiusKm);
     btn.title = `Settings — ${text}`;
   }
 
@@ -134,7 +124,6 @@ import {
     modem: "home-sim-modem",
     environment: "home-sim-environment",
     radius_km: "home-sim-radius-km",
-    viewshed_quality: "home-sim-viewshed-quality",
     "transmitter.height_m": "home-sim-tx-height",
     "transmitter.gain_dbi": "home-sim-tx-gain",
     "transmitter.loss_db": "home-sim-tx-loss",
@@ -180,17 +169,15 @@ import {
     } else {
       el.value = String(value);
     }
-    if (path === "radius_km") syncRangeLabel("home-sim-radius-km", "home-sim-radius-km-value");
-    if (path === "viewshed_quality") syncViewshedQualityLabel();
+    if (path === "radius_km") syncRadiusRasterLabel();
   }
 
-  function syncViewshedQualityLabel() {
-    const qualityEl = document.getElementById("home-sim-viewshed-quality");
+  function syncRadiusRasterLabel() {
     const radiusEl = document.getElementById("home-sim-radius-km");
-    const label = document.getElementById("home-sim-viewshed-quality-value");
-    if (!qualityEl || !label) return;
-    const radiusKm = Number(radiusEl?.value) || Number(state.simulation?.radius_km) || 50;
-    label.textContent = formatViewshedQualityLabel(qualityEl.value, radiusKm);
+    const label = document.getElementById("home-sim-radius-km-value");
+    if (!radiusEl || !label) return;
+    const radiusKm = Number(radiusEl.value) || Number(state.simulation?.radius_km) || 50;
+    label.textContent = formatViewshedRadiusLabel(radiusKm);
   }
 
   function valuesDiffer(path, current, defaultVal) {
@@ -287,19 +274,12 @@ import {
       presetRefName(sim.environment)
     );
     const radiusEl = document.getElementById("home-sim-radius-km");
-    const qualityEl = document.getElementById("home-sim-viewshed-quality");
     if (radiusEl) {
       radiusEl.min = String(state.radiusMin);
       radiusEl.max = String(state.radiusMax);
       radiusEl.value = String(sim.radius_km);
     }
-    if (qualityEl) {
-      qualityEl.min = String(state.qualityMin);
-      qualityEl.max = String(state.qualityMax);
-      qualityEl.value = String(sim.viewshed_quality ?? 3);
-    }
-    syncRangeLabel("home-sim-radius-km", "home-sim-radius-km-value");
-    syncViewshedQualityLabel();
+    syncRadiusRasterLabel();
     const tx = sim.transmitter || {};
     const rx = sim.receiver || {};
     const setNum = (id, val) => {
@@ -327,8 +307,6 @@ import {
     state.environmentNames = payload.environment_names || [];
     if (payload.radius_km_min != null) state.radiusMin = Number(payload.radius_km_min);
     if (payload.radius_km_max != null) state.radiusMax = Number(payload.radius_km_max);
-    if (payload.viewshed_quality_min != null) state.qualityMin = Number(payload.viewshed_quality_min);
-    if (payload.viewshed_quality_max != null) state.qualityMax = Number(payload.viewshed_quality_max);
     hydrateSimulationForm();
   }
 
@@ -456,8 +434,6 @@ import {
       environment_names: payload.environment_names,
       radius_km_min: 1,
       radius_km_max: 100,
-      viewshed_quality_min: VIEWSHED_QUALITY_MIN,
-      viewshed_quality_max: VIEWSHED_QUALITY_MAX,
     });
   }
 
@@ -475,7 +451,6 @@ import {
       modem: document.getElementById("home-sim-modem")?.value || undefined,
       environment: document.getElementById("home-sim-environment")?.value || undefined,
       radius_km: num("home-sim-radius-km"),
-      viewshed_quality: num("home-sim-viewshed-quality"),
       transmitter: {
         height_m: num("home-sim-tx-height"),
         gain_dbi: num("home-sim-tx-gain"),
@@ -782,12 +757,7 @@ import {
     });
 
     document.getElementById("home-sim-radius-km")?.addEventListener("input", () => {
-      syncRangeLabel("home-sim-radius-km", "home-sim-radius-km-value");
-      syncViewshedQualityLabel();
-      onSimulationFieldInput();
-    });
-    document.getElementById("home-sim-viewshed-quality")?.addEventListener("input", () => {
-      syncViewshedQualityLabel();
+      syncRadiusRasterLabel();
       onSimulationFieldInput();
     });
 
@@ -813,8 +783,7 @@ import {
 
   window.PEAKY_HOME_SETTINGS = {
     updateGearSummary,
-    computeViewshedRaster,
-    formatViewshedQualityLabel,
+    formatViewshedRadiusLabel,
   };
 
   if (document.readyState === 'loading') {

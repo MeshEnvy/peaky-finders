@@ -69,7 +69,6 @@ pub fn default_meshcore_preset() -> Preset {
         simulation: SimulationConfig {
             provider: CoverageProvider::Splatter,
             radius_km: Value::from(50),
-            viewshed_quality: 3,
             max_workers: SimulationMaxWorkers::default(),
             modem: Some(Value::String("meshcore-us".into())),
             environment: Some(Value::String("meshcore-open".into())),

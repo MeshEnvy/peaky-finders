@@ -51,7 +51,6 @@ impl Default for SimulationMaxWorkers {
 pub struct SimulationConfig {
     pub provider: CoverageProvider,
     pub radius_km: serde_yaml::Value,
-    pub viewshed_quality: u8,
     pub max_workers: SimulationMaxWorkers,
     pub modem: Option<serde_yaml::Value>,
     pub environment: Option<serde_yaml::Value>,
@@ -64,7 +63,6 @@ impl Default for SimulationConfig {
         Self {
             provider: CoverageProvider::Splatter,
             radius_km: serde_yaml::Value::Number(serde_yaml::Number::from(50)),
-            viewshed_quality: 3,
             max_workers: SimulationMaxWorkers::default(),
             modem: None,
             environment: None,
@@ -1223,7 +1221,12 @@ pub fn validate_project_preset_document(raw: &serde_yaml::Mapping) -> PresetResu
         if let serde_yaml::Value::Mapping(sim_map) = sim {
             if sim_map.contains_key(serde_yaml::Value::String("raster_dimension".into())) {
                 return Err(err(
-                    "simulation.raster_dimension is removed; use simulation.viewshed_quality (1–5)",
+                    "simulation.raster_dimension is removed; viewshed resolution is DEM-native from radius_km",
+                ));
+            }
+            if sim_map.contains_key(serde_yaml::Value::String("viewshed_quality".into())) {
+                return Err(err(
+                    "simulation.viewshed_quality is removed; viewshed resolution is DEM-native from radius_km",
                 ));
             }
             if sim_map.contains_key(serde_yaml::Value::String("boards".into())) {
@@ -1269,8 +1272,6 @@ pub fn validate_preset(preset: &Preset) -> PresetResult<()> {
     if radius > 100.0 {
         return Err(err("simulation.radius_km must be <= 100"));
     }
-
-    crate::viewshed_quality::validate_viewshed_quality(preset.simulation.viewshed_quality)?;
 
     let mut seen_links: HashSet<[String; 2]> = HashSet::new();
     for link in &preset.links {
@@ -1328,7 +1329,20 @@ mod tests {
         );
         raw.insert(serde_yaml::Value::from("simulation"), serde_yaml::Value::Mapping(sim));
         let err = validate_project_preset_document(&raw).unwrap_err();
-        assert!(err.to_string().contains("viewshed_quality"));
+        assert!(err.to_string().contains("DEM-native"));
+    }
+
+    #[test]
+    fn rejects_removed_viewshed_quality_key() {
+        let mut raw = Mapping::new();
+        let mut sim = Mapping::new();
+        sim.insert(
+            serde_yaml::Value::from("viewshed_quality"),
+            serde_yaml::Value::from(5),
+        );
+        raw.insert(serde_yaml::Value::from("simulation"), serde_yaml::Value::Mapping(sim));
+        let err = validate_project_preset_document(&raw).unwrap_err();
+        assert!(err.to_string().contains("viewshed_quality is removed"));
     }
 
 }

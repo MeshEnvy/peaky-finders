@@ -110,6 +110,7 @@ fn resolve_site_folder(
         site,
         Some(board_viewshed),
         verbose,
+        None,
     )
     .with_context(|| format!("viewshed {slug}"))?;
 

@@ -144,7 +144,7 @@ export function mountPeakSheet(store, appApi) {
           const { site } = await appApi.sitesDomain.createSite(body)
           if (site?.slug) {
             appApi.applySavedSiteToMap?.(site, peak.lat, peak.lon)
-            appApi.deselectPeak?.()
+            appApi.deselectPeak?.({ syncDeepLink: false, keepViewshed: true })
             appApi.selectSite?.(site.slug)
           }
         } catch (err) {

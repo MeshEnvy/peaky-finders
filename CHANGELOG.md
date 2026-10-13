@@ -16,6 +16,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- **Preview pin** — dropping or moving a pin starts links, the viewshed, and the route together. Moving or dismissing the pin cancels all three.
+- **Saving a pin reuses the draft viewshed** — a one-ULP lat/lon drift between the preview request and the YAML site no longer starts a second splatter run. The preview stays on the map until the site layer is up.
+- **DEM-native viewshed only** — one splatter run per site, draft pin, catalog peak, Fortify, and link-solver hop. Resolution is always `ceil(radius_m / 30)` px (no quality slider, no 128→target ladder, no preview `quality=1`). Settings radius label shows native pixel count. Pin progress bar follows SSE terrain/raster fraction; moving the draft pin cancels the prior coord warm. Remove `simulation.viewshed_quality` from presets (load rejects the key). Re-warm or delete stale `.peaky/cache/viewsheds/` after upgrade.
 - **`peaky map export`** — drops hub-bridge polygonize and `meshenvy_meta.silver_triangle`. Silver Triangle leg progress is edited on meshenvy.org. Export metadata is coverage bbox and tile zoom only.
 
 ### Added

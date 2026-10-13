@@ -1,6 +1,7 @@
 //! Precomputed terrain profiles along azimuth rays from the TX site.
 
 use std::f64::consts::TAU;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use rayon::prelude::*;
@@ -30,24 +31,67 @@ impl RayTerrainCache {
         clutter_m: f64,
         verbose: bool,
     ) -> Self {
+        Self::build_with_hooks(
+            dem,
+            tx_lat,
+            tx_lon,
+            radius_m,
+            num_rays,
+            step_m,
+            clutter_m,
+            verbose,
+            None,
+            None,
+            0.0,
+        )
+    }
+
+    pub fn build_with_hooks(
+        dem: &DemMosaic,
+        tx_lat: f64,
+        tx_lon: f64,
+        radius_m: f64,
+        num_rays: usize,
+        step_m: f64,
+        clutter_m: f64,
+        verbose: bool,
+        on_progress: Option<&(dyn Fn(f64, &'static str) + Send + Sync)>,
+        cancel: Option<&AtomicBool>,
+        ray_phase_cap: f64,
+    ) -> Self {
         let step_m = step_m.max(1.0);
         let max_steps = ((radius_m / step_m).ceil() as usize).max(MIN_PROFILE_STEPS);
         let stride = max_steps + 1;
         let mut terrain = vec![0.0_f32; num_rays * stride];
 
         let started = Instant::now();
+        let rays_done = AtomicUsize::new(0);
         terrain
             .par_chunks_mut(stride)
             .enumerate()
             .for_each(|(ray, chunk)| {
+                if cancel.is_some_and(|f| f.load(Ordering::Relaxed)) {
+                    return;
+                }
                 let bearing = TAU * ray as f64 / num_rays as f64;
                 for step in 0..=max_steps {
+                    if step % 256 == 0 && cancel.is_some_and(|f| f.load(Ordering::Relaxed)) {
+                        return;
+                    }
                     let dist = step as f64 * step_m;
                     if dist > radius_m {
                         break;
                     }
                     let (lat, lon) = destination_point(tx_lat, tx_lon, bearing, dist);
                     chunk[step] = (dem.sample_m(lat, lon) + clutter_m) as f32;
+                }
+                let n = rays_done.fetch_add(1, Ordering::Relaxed) + 1;
+                if let Some(cb) = on_progress {
+                    let total = num_rays.max(1);
+                    if n == 1 || n == total || n % 64 == 0 {
+                        let frac = ray_phase_cap * (n as f64 / total as f64);
+                        cb(frac, "terrain");
+                    }
                 }
             });
 

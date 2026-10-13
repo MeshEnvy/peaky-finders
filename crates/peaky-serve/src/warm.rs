@@ -3,10 +3,10 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use peaky_peaks::{
@@ -30,9 +30,10 @@ use crate::links::{
 use crate::peaks::access_payload_json;
 use crate::rf::{max_hop_range_m, preset_to_request_with_sim, viewshed_workspace_digest};
 use crate::viewshed::{
-    coords_viewshed_overlay_if_ready, ensure_viewshed_progressive_for_coords_blocking,
-    ensure_viewshed_progressive_for_site_blocking, preview_site_at, target_viewshed_digest_for_site,
-    DRAFT_VIEWSHED_SLUG,
+    coords_viewshed_overlay_if_ready,
+    ensure_viewshed_progressive_for_coords_blocking_with_hooks,
+    ensure_viewshed_progressive_for_site_blocking_with_hooks, preview_site_at,
+    target_viewshed_digest_for_site, ViewshedWarmHooks, DRAFT_VIEWSHED_SLUG,
 };
 use crate::viewshed_index::site_viewshed_overlay_if_ready;
 use crate::viewshed_log::viewshed_progress_log;
@@ -247,6 +248,26 @@ struct ProjectWarm {
     warm_running: AtomicBool,
     links_refresh_gen: AtomicU64,
     links_phase: Mutex<LinksPhase>,
+    /// Cancel flag for the in-flight coordinate draft viewshed (pin moves).
+    coord_warm_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    /// Latest map-preview id. Links, viewshed, and route share it so a moved pin drops all three.
+    preview: Mutex<PreviewSlot>,
+}
+
+struct PreviewSlot {
+    id: u64,
+    preview_cancel: Arc<AtomicBool>,
+    viewshed_cancel: Arc<AtomicBool>,
+}
+
+impl Default for PreviewSlot {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            preview_cancel: Arc::new(AtomicBool::new(false)),
+            viewshed_cancel: Arc::new(AtomicBool::new(false)),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -445,6 +466,8 @@ impl WarmHub {
             warm_running: AtomicBool::new(false),
             links_refresh_gen: AtomicU64::new(0),
             links_phase: Mutex::new(LinksPhase::default()),
+            coord_warm_cancel: Mutex::new(None),
+            preview: Mutex::new(PreviewSlot::default()),
         });
         map.insert(slug.to_string(), warm.clone());
         warm
@@ -464,15 +487,158 @@ impl WarmHub {
         png.is_file()
     }
 
-    fn overlay_is_at_target(overlay: &Value) -> bool {
-        overlay.get("at_target").and_then(|v| v.as_bool()) == Some(true)
-    }
-
     fn publish_viewshed(&self, project_slug: &str, overlay: Value) {
         let mut data = overlay.as_object().cloned().unwrap_or_default();
         data.insert("project".into(), json!(project_slug));
         data.insert("status".into(), json!("ready"));
         self.events.publish(project_slug, "viewshed", Value::Object(data));
+    }
+
+    fn publish_viewshed_running(
+        &self,
+        project_slug: &str,
+        site_slug: &str,
+        fraction: f64,
+        phase: &str,
+        lat: Option<f64>,
+        lon: Option<f64>,
+    ) {
+        let mut data = serde_json::Map::new();
+        data.insert("project".into(), json!(project_slug));
+        data.insert("slug".into(), json!(site_slug));
+        data.insert("status".into(), json!("running"));
+        data.insert(
+            "fraction".into(),
+            json!((fraction * 100.0).round() / 100.0),
+        );
+        data.insert("phase".into(), json!(phase));
+        if let Some(v) = lat {
+            data.insert("lat".into(), json!(v));
+        }
+        if let Some(v) = lon {
+            data.insert("lon".into(), json!(v));
+        }
+        self.events.publish(project_slug, "viewshed", Value::Object(data));
+    }
+
+    /// Register a pin preview. A higher id cancels the previous pin's links, route, and viewshed.
+    /// The same id (the other two requests) reuses the flags.
+    pub fn begin_preview(&self, slug: &str, preset_path: PathBuf, id: u64) -> Arc<AtomicBool> {
+        let warm = self.project(slug, preset_path);
+        self.begin_preview_on(&warm, id).0
+    }
+
+    fn begin_preview_on(&self, warm: &ProjectWarm, id: u64) -> (Arc<AtomicBool>, Arc<AtomicBool>) {
+        let mut slot = warm.preview.lock().unwrap();
+        if id == 0 {
+            let viewshed = Self::arm_coord_warm_cancel(warm);
+            return (Arc::new(AtomicBool::new(false)), viewshed);
+        }
+        if id < slot.id {
+            let dead = Arc::new(AtomicBool::new(true));
+            return (dead.clone(), dead);
+        }
+        if id == slot.id {
+            return (slot.preview_cancel.clone(), slot.viewshed_cancel.clone());
+        }
+        slot.preview_cancel.store(true, Ordering::Relaxed);
+        slot.viewshed_cancel.store(true, Ordering::Relaxed);
+        if let Some(prev) = warm.coord_warm_cancel.lock().unwrap().as_ref() {
+            prev.store(true, Ordering::Relaxed);
+        }
+        let preview_cancel = Arc::new(AtomicBool::new(false));
+        let viewshed_cancel = Arc::new(AtomicBool::new(false));
+        slot.id = id;
+        slot.preview_cancel = preview_cancel.clone();
+        slot.viewshed_cancel = viewshed_cancel.clone();
+        *warm.coord_warm_cancel.lock().unwrap() = Some(viewshed_cancel.clone());
+        (preview_cancel, viewshed_cancel)
+    }
+
+    fn arm_coord_warm_cancel(warm: &ProjectWarm) -> Arc<AtomicBool> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut slot = warm.coord_warm_cancel.lock().unwrap();
+        if let Some(prev) = slot.take() {
+            prev.store(true, Ordering::Relaxed);
+        }
+        *slot = Some(cancel.clone());
+        cancel
+    }
+
+    fn viewshed_progress_publisher(
+        hub: &WarmHub,
+        project_slug: &str,
+        site_slug: &str,
+        lat: Option<f64>,
+        lon: Option<f64>,
+    ) -> Arc<dyn Fn(f64, &str) + Send + Sync> {
+        let slug = site_slug.to_string();
+        let project = project_slug.to_string();
+        let hub = hub.clone();
+        let last_ms = Arc::new(AtomicU64::new(0));
+        let last_phase = Arc::new(AtomicU8::new(255));
+        Arc::new(move |fraction, phase| {
+            let phase_id: u8 = match phase {
+                "terrain" => 0,
+                "raster" => 1,
+                _ => 2,
+            };
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let prev_phase = last_phase.load(Ordering::Relaxed);
+            let prev = last_ms.load(Ordering::Relaxed);
+            let phase_changed = prev_phase != phase_id;
+            if !phase_changed && prev != 0 && now.saturating_sub(prev) < 250 {
+                return;
+            }
+            if last_ms
+                .compare_exchange(prev, now.max(1), Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+                && !phase_changed
+            {
+                return;
+            }
+            last_phase.store(phase_id, Ordering::Relaxed);
+            hub.publish_viewshed_running(&project, &slug, fraction, phase, lat, lon);
+        })
+    }
+
+    fn viewshed_warm_hooks_for_site(
+        hub: &WarmHub,
+        project_slug: &str,
+        site_slug: &str,
+    ) -> ViewshedWarmHooks {
+        ViewshedWarmHooks {
+            progress: Some(Self::viewshed_progress_publisher(
+                hub,
+                project_slug,
+                site_slug,
+                None,
+                None,
+            )),
+            cancel: None,
+        }
+    }
+
+    fn viewshed_warm_hooks_for_coords(
+        hub: &WarmHub,
+        project_slug: &str,
+        lat: f64,
+        lon: f64,
+        cancel: Arc<AtomicBool>,
+    ) -> ViewshedWarmHooks {
+        ViewshedWarmHooks {
+            progress: Some(Self::viewshed_progress_publisher(
+                hub,
+                project_slug,
+                DRAFT_VIEWSHED_SLUG,
+                Some(lat),
+                Some(lon),
+            )),
+            cancel: Some(cancel),
+        }
     }
 
     fn publish_links(&self, project_slug: &str, payload: Value) {
@@ -565,12 +731,13 @@ impl WarmHub {
             None,
             Some(hub.board_viewshed.as_ref()),
         ) {
-            Ok(Some(overlay)) => !Self::overlay_is_at_target(&overlay),
+            Ok(Some(_)) => false,
             _ => true,
         };
 
         if viewshed_needed {
-            if let Err(e) = ensure_viewshed_progressive_for_site_blocking(
+            let hooks = Self::viewshed_warm_hooks_for_site(&hub, &slug, &site_slug);
+            if let Err(e) = ensure_viewshed_progressive_for_site_blocking_with_hooks(
                 session.clone(),
                 &slug,
                 &preset_path,
@@ -579,6 +746,7 @@ impl WarmHub {
                 &site,
                 Some(hub.board_viewshed.as_ref()),
                 hub.verbose,
+                Some(&hooks),
                 |overlay| hub.publish_viewshed(&slug, overlay),
             ) {
                 tracing::warn!("viewshed warm {slug}/{site_slug}: {e:#}");
@@ -847,7 +1015,7 @@ impl WarmHub {
             Err(_) => return false,
         };
         let mut viewshed_needed = true;
-        if let Ok(Some(overlay)) = site_viewshed_overlay_if_ready(
+        if let Ok(Some(_overlay)) = site_viewshed_overlay_if_ready(
             &warm.slug,
             &warm.preset_path,
             site_slug,
@@ -856,9 +1024,7 @@ impl WarmHub {
             None,
             Some(self.board_viewshed.as_ref()),
         ) {
-            if Self::overlay_is_at_target(&overlay) {
-                viewshed_needed = false;
-            }
+            viewshed_needed = false;
         } else if Self::site_coverage_exists(&warm.preset_path, &key) {
             let _ = std::fs::remove_dir_all(resolved_viewshed_root(&warm.preset_path).join(&key));
         }
@@ -987,9 +1153,7 @@ impl WarmHub {
                 Some(self.board_viewshed.as_ref()),
             ) {
                 self.publish_viewshed(slug, overlay.clone());
-                if Self::overlay_is_at_target(&overlay) {
-                    continue;
-                }
+                continue;
             }
             if self.submit_site_warm(warm.clone(), &preset, site_slug, site, priority) {
                 queued += 1;
@@ -1052,6 +1216,7 @@ impl WarmHub {
         lat: f64,
         lon: f64,
         sim: ViewshedSimOverrides,
+        cancel: Arc<AtomicBool>,
     ) {
         let preset_path = warm.preset_path.clone();
         let session = self.session.clone();
@@ -1066,7 +1231,11 @@ impl WarmHub {
             }
         };
 
-        if let Err(e) = ensure_viewshed_progressive_for_coords_blocking(
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        let hooks = Self::viewshed_warm_hooks_for_coords(&hub, &slug, lat, lon, cancel);
+        if let Err(e) = ensure_viewshed_progressive_for_coords_blocking_with_hooks(
             session,
             &slug,
             &preset_path,
@@ -1075,8 +1244,12 @@ impl WarmHub {
             lon,
             &sim,
             hub.verbose,
+            Some(&hooks),
             |overlay| hub.publish_viewshed(&slug, overlay),
         ) {
+            if e.to_string().contains("cancelled") {
+                return;
+            }
             tracing::warn!("viewshed warm coords {slug}: {e:#}");
             hub.events.publish(
                 &slug,
@@ -1101,9 +1274,26 @@ impl WarmHub {
         lat: f64,
         lon: f64,
         sim: ViewshedSimOverrides,
+        preview_id: u64,
     ) -> Result<Value, String> {
         preview_site_at(lat, lon).map_err(|e| e.0)?;
         let preset = load_preset(&preset_path).map_err(|e| e.to_string())?;
+        let warm = self.project(slug, preset_path.clone());
+        let cancel = if preview_id > 0 {
+            let (preview_cancel, viewshed_cancel) = self.begin_preview_on(&warm, preview_id);
+            if preview_cancel.load(Ordering::Relaxed) {
+                return Ok(json!({
+                    "project": slug,
+                    "slug": DRAFT_VIEWSHED_SLUG,
+                    "status": "cancelled",
+                    "lat": lat,
+                    "lon": lon,
+                }));
+            }
+            viewshed_cancel
+        } else {
+            Self::arm_coord_warm_cancel(&warm)
+        };
         if let Ok(Some(overlay)) =
             coords_viewshed_overlay_if_ready(slug, &preset_path, &preset, lat, lon, Some(&sim))
         {
@@ -1114,7 +1304,6 @@ impl WarmHub {
             return Ok(Value::Object(payload));
         }
 
-        let warm = self.project(slug, preset_path.clone());
         let key = Self::coords_coverage_key(&preset_path, &preset, lat, lon, &sim)
             .map_err(|e| e.to_string())?;
         let hub = self.clone();
@@ -1122,7 +1311,7 @@ impl WarmHub {
         warm.queue.submit(
             key,
             PRIORITY_INTERACTIVE,
-            Box::new(move || hub.warm_coords_job(warm2, lat, lon, sim)),
+            Box::new(move || hub.warm_coords_job(warm2, lat, lon, sim, cancel)),
         );
         self.events.publish(
             slug,

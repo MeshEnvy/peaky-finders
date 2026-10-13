@@ -4,12 +4,9 @@ use std::collections::HashMap;
 
 use axum::http::StatusCode;
 use peaky_preset::{
-    effective_target_raster_dimension, effective_viewshed_quality, site_viewshed_radius_km,
-    BoardViewshedResolver, Preset, SiteEntry, VIEWSHED_QUALITY_MAX, VIEWSHED_QUALITY_MIN,
-    VIEWSHED_RASTER_MAX, VIEWSHED_RASTER_MIN,
+    effective_target_raster_dimension, site_viewshed_radius_km, BoardViewshedResolver, Preset,
+    SiteEntry, VIEWSHED_RASTER_MAX, VIEWSHED_RASTER_MIN,
 };
-
-pub use peaky_preset::raster_upgrade_ladder;
 
 pub const MIN_SERVE_RADIUS_KM: f64 = 1.0;
 pub const MAX_SERVE_RADIUS_KM: f64 = 100.0;
@@ -19,18 +16,18 @@ pub const MAX_SERVE_RASTER_DIMENSION: u32 = VIEWSHED_RASTER_MAX;
 #[derive(Debug, Clone, Default)]
 pub struct ViewshedSimOverrides {
     pub radius_km: Option<f64>,
-    pub quality: Option<u8>,
-    /// Explicit pixel target (progressive ladder steps only; not exposed via HTTP).
-    pub raster_dimension: Option<u32>,
 }
 
 impl ViewshedSimOverrides {
     pub fn active(&self) -> bool {
-        self.radius_km.is_some() || self.quality.is_some()
+        self.radius_km.is_some()
     }
 }
 
 pub fn parse_viewshed_sim_params(params: &HashMap<String, String>) -> Result<ViewshedSimOverrides, String> {
+    if params.get("quality").map(String::as_str).is_some_and(|s| !s.is_empty()) {
+        return Err("quality is removed; viewshed resolution is DEM-native from radius_km".into());
+    }
     let radius_km = match params.get("radius_km").map(String::as_str) {
         None | Some("") => None,
         Some(raw) => {
@@ -45,25 +42,7 @@ pub fn parse_viewshed_sim_params(params: &HashMap<String, String>) -> Result<Vie
             Some(v)
         }
     };
-    let quality = match params.get("quality").map(String::as_str) {
-        None | Some("") => None,
-        Some(raw) => {
-            let v: u8 = raw
-                .parse::<f64>()
-                .map_err(|_| "quality must be an integer".to_string())? as u8;
-            if !(VIEWSHED_QUALITY_MIN..=VIEWSHED_QUALITY_MAX).contains(&v) {
-                return Err(format!(
-                    "quality must be between {VIEWSHED_QUALITY_MIN} and {VIEWSHED_QUALITY_MAX}"
-                ));
-            }
-            Some(v)
-        }
-    };
-    Ok(ViewshedSimOverrides {
-        radius_km,
-        quality,
-        ..Default::default()
-    })
+    Ok(ViewshedSimOverrides { radius_km })
 }
 
 pub fn parse_lat_lon_params(params: &HashMap<String, String>) -> Result<(f64, f64), String> {
@@ -95,14 +74,8 @@ pub fn sim_status_from_err(msg: String) -> StatusCode {
 }
 
 pub fn effective_target_raster_for_preset(preset: &Preset, sim: Option<&ViewshedSimOverrides>) -> u32 {
-    if let Some(sim) = sim {
-        if let Some(px) = sim.raster_dimension {
-            return px.clamp(MIN_SERVE_RASTER_DIMENSION, MAX_SERVE_RASTER_DIMENSION);
-        }
-    }
     let radius_km = sim.and_then(|s| s.radius_km);
-    let quality = sim.and_then(|s| s.quality);
-    effective_target_raster_dimension(preset, radius_km, quality)
+    effective_target_raster_dimension(preset, radius_km)
 }
 
 pub fn effective_target_raster_for_site(
@@ -111,21 +84,9 @@ pub fn effective_target_raster_for_site(
     board_viewshed: Option<&BoardViewshedResolver>,
     sim: Option<&ViewshedSimOverrides>,
 ) -> u32 {
-    if let Some(sim) = sim {
-        if let Some(px) = sim.raster_dimension {
-            return px.clamp(MIN_SERVE_RASTER_DIMENSION, MAX_SERVE_RASTER_DIMENSION);
-        }
-    }
     let site_radius_km = site_viewshed_radius_km(preset, site, board_viewshed);
-    let radius_km = sim
-        .and_then(|s| s.radius_km)
-        .or(Some(site_radius_km));
-    let quality = sim.and_then(|s| s.quality);
-    effective_target_raster_dimension(preset, radius_km, quality)
-}
-
-pub fn effective_viewshed_quality_for_preset(preset: &Preset, sim: Option<&ViewshedSimOverrides>) -> u8 {
-    effective_viewshed_quality(preset, sim.and_then(|s| s.quality))
+    let radius_km = sim.and_then(|s| s.radius_km).or(Some(site_radius_km));
+    effective_target_raster_dimension(preset, radius_km)
 }
 
 #[cfg(test)]
@@ -134,20 +95,15 @@ mod tests {
     use peaky_preset::Preset;
 
     #[test]
-    fn parse_quality_param() {
+    fn rejects_quality_query_param() {
         let mut params = HashMap::new();
         params.insert("quality".into(), "3".into());
-        let sim = parse_viewshed_sim_params(&params).unwrap();
-        assert_eq!(sim.quality, Some(3));
+        assert!(parse_viewshed_sim_params(&params).is_err());
     }
 
     #[test]
-    fn effective_target_respects_quality_override() {
+    fn effective_target_is_dem_native() {
         let preset = Preset::default();
-        let sim = ViewshedSimOverrides {
-            quality: Some(1),
-            ..Default::default()
-        };
-        assert_eq!(effective_target_raster_for_preset(&preset, Some(&sim)), 128);
+        assert_eq!(effective_target_raster_for_preset(&preset, None), 1667);
     }
 }

@@ -5,7 +5,7 @@
 #
 # Each entry under ``environment_presets:`` defines propagation pessimism for a terrain /
 # clutter scenario. Antenna heights and viewshed grid size stay in the project preset
-# (``simulation.transmitter`` / ``receiver``, ``radius_km``, ``viewshed_quality``).
+# (``simulation.transmitter`` / ``receiver``, ``radius_km``).
 #
 # ── Field reference ───────────────────────────────────────────────────────────
 #

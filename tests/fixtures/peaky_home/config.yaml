@@ -1,7 +1,6 @@
 # Test fixture copy of bundled defaults (fixture RF catalog names).
 simulation:
   radius_km: 50.0
-  viewshed_quality: 3
   modem: fixture-modem
   environment: fixture-desert
   transmitter:

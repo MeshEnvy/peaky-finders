@@ -19,13 +19,11 @@ export function createRootStore(config, savedMapState) {
   const simDefaults = /** @type {Record<string, unknown>} */ (config.simulation || {})
   const { min: radiusMin, max: radiusMax } = viewshedRadiusBounds(simDefaults)
   const defaultRadiusKm = Number(simDefaults.radius_km) || 25
-  const defaultQuality = Number(simDefaults.viewshed_quality) || 3
 
   const store = reactive({
     projectSlug,
     simulation: {
       radiusKm: defaultRadiusKm,
-      quality: defaultQuality,
       radiusMin,
       radiusMax,
       defaults: simDefaults,

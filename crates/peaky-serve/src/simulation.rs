@@ -5,8 +5,7 @@ use std::path::Path;
 
 use peaky_preset::{
     effective_target_raster_dimension, environment_catalog_from_preset, load_preset,
-    modem_catalog_from_preset, SimulationConfig, VIEWSHED_QUALITY_MAX, VIEWSHED_QUALITY_MIN,
-    SKADI_DEM_SPACING_M,
+    modem_catalog_from_preset, SimulationConfig, SKADI_DEM_SPACING_M,
 };
 use serde_json::{json, Value};
 
@@ -27,12 +26,11 @@ pub fn serialize_simulation(sim: &SimulationConfig) -> Value {
         simulation: sim.clone(),
         ..Default::default()
     };
-    let raster_dimension = effective_target_raster_dimension(&preset, None, None);
+    let raster_dimension = effective_target_raster_dimension(&preset, None);
     json!({
         "modem": sim.modem.as_ref().map(yaml_to_json),
         "environment": sim.environment.as_ref().map(yaml_to_json),
         "radius_km": radius_km,
-        "viewshed_quality": sim.viewshed_quality,
         "raster_dimension": raster_dimension,
         "transmitter": sim.transmitter.iter().map(|(k, v)| (k.clone(), yaml_to_json(v))).collect::<HashMap<_, _>>(),
         "receiver": sim.receiver.iter().map(|(k, v)| (k.clone(), yaml_to_json(v))).collect::<HashMap<_, _>>(),
@@ -52,8 +50,6 @@ pub fn project_simulation_payload(preset_path: &Path) -> Result<Value, String> {
         "simulation": effective,
         "radius_km_min": MIN_SERVE_RADIUS_KM,
         "radius_km_max": MAX_SERVE_RADIUS_KM,
-        "viewshed_quality_min": VIEWSHED_QUALITY_MIN,
-        "viewshed_quality_max": VIEWSHED_QUALITY_MAX,
         "dem_spacing_m": SKADI_DEM_SPACING_M,
         "modem_names": modems.keys().collect::<Vec<_>>(),
         "environment_names": environments.keys().collect::<Vec<_>>(),

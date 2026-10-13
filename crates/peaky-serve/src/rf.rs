@@ -241,16 +241,10 @@ pub fn preset_to_request_with_sim(
         if let Some(radius_km) = sim.radius_km {
             req.radius = radius_km * 1000.0;
         }
-        if let Some(raster_dimension) = sim.raster_dimension {
-            req.raster_dimension = raster_dimension;
-        } else {
-            let radius_for_raster = sim.radius_km.or(site_radius_km);
-            req.raster_dimension =
-                effective_target_raster_dimension(preset, radius_for_raster, sim.quality);
-        }
+        let radius_for_raster = sim.radius_km.or(site_radius_km);
+        req.raster_dimension = effective_target_raster_dimension(preset, radius_for_raster);
     } else {
-        req.raster_dimension =
-            effective_target_raster_dimension(preset, site_radius_km, None);
+        req.raster_dimension = effective_target_raster_dimension(preset, site_radius_km);
     }
     Ok(req)
 }
@@ -337,7 +331,7 @@ fn preset_to_request_inner(
         colormap: preset.display.colormap.clone(),
         min_dbm: preset.display.min_dbm,
         max_dbm: preset.display.max_dbm,
-        raster_dimension: effective_target_raster_dimension(preset, Some(radius_km), None),
+        raster_dimension: effective_target_raster_dimension(preset, Some(radius_km)),
         modem: LoRaModemParams {
             spreading_factor: mapping_get(&modem_map, "spreading_factor")
                 .and_then(|v| v.as_i64())

@@ -63,7 +63,6 @@ modem_presets:
     spreading_factor: 10
 simulation:
   radius_km: 50
-  viewshed_quality: 3
 sites:
   a:
     name: A

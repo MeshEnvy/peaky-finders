@@ -1,6 +1,8 @@
 //! HTTP API and page routes.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
@@ -66,6 +68,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/elev", get(crate::dem::place_elev))
         .route("/api/p/{slug}/sites", get(list_sites).post(add_site))
         .route("/api/p/{slug}/sites/prefetch", get(sites_prefetch))
+        .route("/api/p/{slug}/preview/cancel", post(preview_cancel))
         .route(
             "/api/p/{slug}/sites/{site_slug}",
             patch(patch_site).delete(delete_site),
@@ -244,6 +247,33 @@ async fn add_site(State(state): State<AppState>,
     ))
 }
 
+fn preview_param(params: &HashMap<String, String>) -> u64 {
+    params
+        .get("preview")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+fn preview_cancel_flag(state: &AppState, id: u64) -> Arc<AtomicBool> {
+    if id == 0 {
+        return Arc::new(AtomicBool::new(false));
+    }
+    state.warm.begin_preview(&state.slug, state.preset_path(), id)
+}
+
+async fn preview_cancel(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> StatusCode {
+    let id = preview_param(&params);
+    if id == 0 {
+        return StatusCode::BAD_REQUEST;
+    }
+    let _ = preview_cancel_flag(&state, id);
+    StatusCode::NO_CONTENT
+}
+
 async fn sites_prefetch(
     State(state): State<AppState>,
     Path(_slug): Path<String>,
@@ -258,6 +288,16 @@ async fn sites_prefetch(
     if !path.is_file() {
         return Err((StatusCode::NOT_FOUND, "project not found".to_string()));
     }
+    let cancel = preview_cancel_flag(&state, preview_param(&params));
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(Json(json!({
+            "status": "cancelled",
+            "lat": lat,
+            "lon": lon,
+            "links": [],
+            "links_geojson": { "type": "FeatureCollection", "features": [] },
+        })));
+    }
     let payload = load_site_placement_prefetch(
         state.session.clone(),
         &path,
@@ -269,6 +309,15 @@ async fn sites_prefetch(
     .map_err(|e| match e {
         SitePrefetchError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
     })?;
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(Json(json!({
+            "status": "cancelled",
+            "lat": lat,
+            "lon": lon,
+            "links": [],
+            "links_geojson": { "type": "FeatureCollection", "features": [] },
+        })));
+    }
     let mut obj = payload
         .as_object()
         .cloned()
@@ -567,7 +616,11 @@ async fn viewshed_prefetch_warm(
         )
     })?;
     let path = state.preset_path();
-    match state.warm.warm_coords_viewshed(&state.slug, path, lat, lon, sim) {
+    let preview_id = params
+        .get("preview")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    match state.warm.warm_coords_viewshed(&state.slug, path, lat, lon, sim, preview_id) {
         Ok(payload) => {
             let status = if payload.get("status").and_then(|v| v.as_str()) == Some("ready") {
                 StatusCode::OK
@@ -656,19 +709,18 @@ async fn viewshed_meta(State(state): State<AppState>,
         Some(state.board_viewshed.as_ref()),
         Some(&sim),
     );
-    let digest = crate::viewshed::viewshed_digest_for_raster(
+    let digest = crate::viewshed::viewshed_digest_for_site(
         &preset,
         site,
-        target_raster,
         Some(state.board_viewshed.as_ref()),
     )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(json!({
         "slug": site_slug,
         "digest": digest,
         "url": viewshed_cache_png_api_path(&state.slug, &digest),
         "ready": false,
-        "raster_target": target_raster,
+        "raster_dimension": target_raster,
     })))
 }
 
@@ -843,7 +895,8 @@ async fn place_access(
     let warm = params.get("warm").map(|v| v == "1" || v == "true").unwrap_or(false);
     let lat = params.get("lat").and_then(|s| s.parse().ok());
     let lon = params.get("lon").and_then(|s| s.parse().ok());
-    place_access_resolved(state, place_slug, warm, lat, lon)
+    let preview_id = preview_param(&params);
+    place_access_resolved(state, place_slug, warm, lat, lon, preview_id)
         .await
         .map(Json)
         .map_err(|_| StatusCode::NOT_FOUND)
@@ -862,7 +915,8 @@ async fn place_access_warm(
         .get("lon")
         .and_then(|s| s.parse().ok())
         .ok_or((StatusCode::BAD_REQUEST, "lon required".into()))?;
-    place_access_resolved(state, place_slug, true, Some(lat), Some(lon))
+    let preview_id = preview_param(&params);
+    place_access_resolved(state, place_slug, true, Some(lat), Some(lon), preview_id)
         .await
         .map(Json)
         .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))
@@ -874,8 +928,13 @@ async fn place_access_resolved(
     warm: bool,
     lat: Option<f64>,
     lon: Option<f64>,
+    preview_id: u64,
 ) -> Result<Value, anyhow::Error> {
+    let cancel = preview_cancel_flag(&state, preview_id);
     tokio::task::spawn_blocking(move || {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(json!({ "status": "cancelled" }));
+        }
         if let Some(cached) = crate::peaks::place_access_from_probe_cache(
             &state.preset_path(),
             &place_slug,
@@ -890,8 +949,14 @@ async fn place_access_resolved(
                     lon,
                 )?;
             if !rebuild_options {
+                if cancel.load(Ordering::Relaxed) {
+                    return Ok(json!({ "status": "cancelled" }));
+                }
                 return Ok(cached);
             }
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(json!({ "status": "cancelled" }));
         }
         let routing = if warm {
             let extra = match (lat, lon) {
@@ -902,7 +967,10 @@ async fn place_access_resolved(
         } else {
             None
         };
-        place_access_payload(
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(json!({ "status": "cancelled" }));
+        }
+        let payload = place_access_payload(
             &state.preset_path(),
             &state.session,
             &place_slug,
@@ -910,7 +978,11 @@ async fn place_access_resolved(
             lat,
             lon,
             routing.as_deref(),
-        )
+        )?;
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(json!({ "status": "cancelled" }));
+        }
+        Ok(payload)
     })
     .await
     .map_err(|e| anyhow::anyhow!("place access task: {e}"))?

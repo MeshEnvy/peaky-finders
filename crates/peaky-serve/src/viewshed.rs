@@ -2,13 +2,14 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use peaky_preset::{load_preset, resolved_viewshed_root, BoardViewshedResolver, Preset, SiteEntry};
 use serde_json::Value;
-use splatter::Session;
+use splatter::{CoverageRunContext, Session};
 use tokio::task::spawn_blocking;
 
 use crate::rf::{preset_to_request_with_sim, viewshed_workspace_digest};
@@ -17,11 +18,15 @@ use crate::viewshed_index::{
 };
 use crate::viewshed_log::{viewshed_progress_log, viewshed_progress_log_verbose};
 use crate::viewshed_sim::{
-    effective_target_raster_for_preset, effective_target_raster_for_site, raster_upgrade_ladder,
-    ViewshedSimOverrides, MIN_SERVE_RASTER_DIMENSION,
+    effective_target_raster_for_preset, effective_target_raster_for_site, ViewshedSimOverrides,
 };
 
 pub const DRAFT_VIEWSHED_SLUG: &str = "_draft";
+
+pub struct ViewshedWarmHooks {
+    pub progress: Option<Arc<dyn Fn(f64, &str) + Send + Sync>>,
+    pub cancel: Option<Arc<AtomicBool>>,
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -111,6 +116,7 @@ pub async fn ensure_viewshed_for_site(
             &site,
             Some(&board_viewshed),
             verbose,
+            None,
         )
     })
     .await
@@ -125,6 +131,7 @@ pub fn ensure_viewshed_for_site_blocking(
     site: &SiteEntry,
     board_viewshed: Option<&BoardViewshedResolver>,
     verbose: bool,
+    hooks: Option<&ViewshedWarmHooks>,
 ) -> Result<PathBuf> {
     ensure_viewshed_blocking(
         session,
@@ -137,6 +144,7 @@ pub fn ensure_viewshed_for_site_blocking(
         board_viewshed,
         verbose,
         site_slug,
+        hooks,
     )
 }
 
@@ -145,50 +153,7 @@ pub fn target_viewshed_digest_for_site(
     site: &SiteEntry,
     board_viewshed: Option<&BoardViewshedResolver>,
 ) -> Result<String> {
-    let req = preset_to_request_with_sim(
-        preset,
-        site.loc[0],
-        site.loc[1],
-        Some(site),
-        None,
-        board_viewshed,
-    )?;
-    viewshed_workspace_digest(&req)
-}
-
-pub fn viewshed_workdir_for_raster(
-    preset_path: &Path,
-    preset: &Preset,
-    site: &SiteEntry,
-    raster_dimension: u32,
-    board_viewshed: Option<&BoardViewshedResolver>,
-) -> Result<PathBuf> {
-    let sim = ViewshedSimOverrides {
-        raster_dimension: Some(raster_dimension),
-        ..Default::default()
-    };
-    resolve_viewshed_workdir(preset_path, preset, site, Some(&sim), board_viewshed)
-}
-
-pub fn viewshed_digest_for_raster(
-    preset: &Preset,
-    site: &SiteEntry,
-    raster_dimension: u32,
-    board_viewshed: Option<&BoardViewshedResolver>,
-) -> Result<String> {
-    let sim = ViewshedSimOverrides {
-        raster_dimension: Some(raster_dimension),
-        ..Default::default()
-    };
-    let req = preset_to_request_with_sim(
-        preset,
-        site.loc[0],
-        site.loc[1],
-        Some(site),
-        Some(&sim),
-        board_viewshed,
-    )?;
-    viewshed_workspace_digest(&req)
+    viewshed_digest_for_site(preset, site, board_viewshed)
 }
 
 pub fn viewshed_overlay_at_workdir(
@@ -197,9 +162,6 @@ pub fn viewshed_overlay_at_workdir(
     workdir: &Path,
     digest: &str,
     raster_dimension: u32,
-    raster_target: u32,
-    ladder_step: Option<u32>,
-    ladder_total: Option<u32>,
 ) -> Result<Option<Value>> {
     let png = workdir.join("splat.png");
     if !png.is_file() {
@@ -209,28 +171,16 @@ pub fn viewshed_overlay_at_workdir(
         return Ok(None);
     };
     let coordinates = image_coordinates_from_bbox(&bounds)?;
-    let at_target = raster_dimension >= raster_target;
-    let mut overlay = serde_json::json!({
+    Ok(Some(serde_json::json!({
         "slug": site_slug,
         "digest": digest,
         "url": viewshed_cache_png_api_path(project_slug, digest),
         "coordinates": coordinates,
         "raster_dimension": raster_dimension,
-        "raster_target": raster_target,
-        "at_target": at_target,
-    });
-    if let Some(obj) = overlay.as_object_mut() {
-        if let Some(step) = ladder_step {
-            obj.insert("ladder_step".into(), serde_json::json!(step));
-        }
-        if let Some(total) = ladder_total {
-            obj.insert("ladder_total".into(), serde_json::json!(total));
-        }
-    }
-    Ok(Some(overlay))
+    })))
 }
 
-/// Generate (or reuse cache for) each rung on the pixel ladder, invoking ``publish`` after every ready step.
+/// Generate (or reuse cache for) the DEM-native viewshed, invoking ``publish`` when ready.
 pub fn ensure_viewshed_progressive_for_site_blocking<F>(
     session: Arc<Session>,
     project_slug: &str,
@@ -245,29 +195,56 @@ pub fn ensure_viewshed_progressive_for_site_blocking<F>(
 where
     F: FnMut(Value),
 {
+    ensure_viewshed_progressive_for_site_blocking_with_hooks(
+        session,
+        project_slug,
+        preset_path,
+        preset,
+        site_slug,
+        site,
+        board_viewshed,
+        verbose,
+        None,
+        publish,
+    )
+}
+
+pub fn ensure_viewshed_progressive_for_site_blocking_with_hooks<F>(
+    session: Arc<Session>,
+    project_slug: &str,
+    preset_path: &Path,
+    preset: &Preset,
+    site_slug: &str,
+    site: &SiteEntry,
+    board_viewshed: Option<&BoardViewshedResolver>,
+    verbose: bool,
+    hooks: Option<&ViewshedWarmHooks>,
+    mut publish: F,
+) -> Result<()>
+where
+    F: FnMut(Value),
+{
     let target = effective_target_raster_for_site(preset, site, board_viewshed, None);
-    let ladder = raster_upgrade_ladder(MIN_SERVE_RASTER_DIMENSION, target);
-    let ladder_total = ladder.len() as u32;
     viewshed_progress_log_verbose(
         verbose,
-        &format!(
-            "progressive {site_slug}: target={target}px, {} rung(s) {:?}",
-            ladder_total, ladder
-        ),
+        &format!("warm {site_slug}: native target={target}px"),
     );
-    for (step_idx, raster) in ladder.iter().copied().enumerate() {
-        let step_n = step_idx as u32 + 1;
-        let sim = ViewshedSimOverrides {
-            raster_dimension: Some(raster),
-            ..Default::default()
-        };
-        let digest = viewshed_digest_for_raster(preset, site, raster, board_viewshed)?;
-        let workdir = resolved_viewshed_root(preset_path).join(&digest);
-        let png = workdir.join("splat.png");
-        if !png.is_file() {
-            viewshed_progress_log(&format!(
-                "{site_slug} [{step_n}/{ladder_total}] generating {raster}px…"
-            ));
+    let digest = viewshed_digest_for_site(preset, site, board_viewshed)?;
+    let workdir = resolved_viewshed_root(preset_path).join(&digest);
+    let png = workdir.join("splat.png");
+    if !png.is_file() {
+        let req = preset_to_request_with_sim(
+            preset,
+            site.loc[0],
+            site.loc[1],
+            Some(site),
+            None,
+            board_viewshed,
+        )?;
+        if crate::viewshed_index::adopt_coord_noise_viewshed(preset_path, &workdir, &req)? {
+            viewshed_progress_log(&format!("{site_slug} {target}px cache reuse (coord drift)"));
+        } else {
+            viewshed_progress_log(&format!("{site_slug} generating {target}px…"));
             let t0 = Instant::now();
             ensure_viewshed_blocking(
                 session.clone(),
@@ -276,41 +253,40 @@ where
                 site.loc[0],
                 site.loc[1],
                 Some(site),
-                Some(&sim),
+                None,
                 board_viewshed,
                 verbose,
                 site_slug,
+                hooks,
             )?;
             viewshed_progress_log(&format!(
-                "{site_slug} [{step_n}/{ladder_total}] {raster}px done ({:.1}s)",
+                "{site_slug} {target}px done ({:.1}s)",
                 t0.elapsed().as_secs_f64()
             ));
-        } else {
-            viewshed_progress_log_verbose(
-                verbose,
-                &format!("{site_slug} [{step_n}/{ladder_total}] {raster}px cache hit"),
-            );
         }
-        if let Some(overlay) = viewshed_overlay_at_workdir(
-            project_slug,
-            site_slug,
-            &workdir,
-            &digest,
-            raster,
-            target,
-            Some(step_n),
-            Some(ladder_total),
-        )? {
-            publish(overlay);
-        }
+    } else {
+        viewshed_progress_log_verbose(verbose, &format!("{site_slug} {target}px cache hit"));
     }
-    viewshed_progress_log(&format!(
-        "{site_slug} progressive warm complete (target={target}px)"
-    ));
+    if hooks
+        .and_then(|h| h.cancel.as_ref())
+        .is_some_and(|c| c.load(Ordering::Relaxed))
+    {
+        return Ok(());
+    }
+    if let Some(overlay) = viewshed_overlay_at_workdir(
+        project_slug,
+        site_slug,
+        &workdir,
+        &digest,
+        target,
+    )? {
+        publish(overlay);
+    }
+    viewshed_progress_log(&format!("{site_slug} warm complete (target={target}px)"));
     Ok(())
 }
 
-/// Progressive warm for coordinate draft viewsheds (seek hops, placement preview).
+/// Native warm for coordinate draft viewsheds (seek hops, placement preview).
 pub fn ensure_viewshed_progressive_for_coords_blocking<F>(
     session: Arc<Session>,
     project_slug: &str,
@@ -325,40 +301,58 @@ pub fn ensure_viewshed_progressive_for_coords_blocking<F>(
 where
     F: FnMut(Value),
 {
+    ensure_viewshed_progressive_for_coords_blocking_with_hooks(
+        session,
+        project_slug,
+        preset_path,
+        preset,
+        lat,
+        lon,
+        sim,
+        verbose,
+        None,
+        publish,
+    )
+}
+
+pub fn ensure_viewshed_progressive_for_coords_blocking_with_hooks<F>(
+    session: Arc<Session>,
+    project_slug: &str,
+    preset_path: &Path,
+    preset: &Preset,
+    lat: f64,
+    lon: f64,
+    sim: &ViewshedSimOverrides,
+    verbose: bool,
+    hooks: Option<&ViewshedWarmHooks>,
+    mut publish: F,
+) -> Result<()>
+where
+    F: FnMut(Value),
+{
     let site = preview_site_at(lat, lon).map_err(|e| anyhow::anyhow!(e.0))?;
     let target = effective_target_raster_for_preset(preset, Some(sim));
-    let ladder = raster_upgrade_ladder(MIN_SERVE_RASTER_DIMENSION, target);
-    let ladder_total = ladder.len() as u32;
     let label = DRAFT_VIEWSHED_SLUG;
     viewshed_progress_log_verbose(
         verbose,
-        &format!(
-            "progressive {label}: target={target}px, {} rung(s) {:?}",
-            ladder_total, ladder
-        ),
+        &format!("warm {label}: native target={target}px"),
     );
-    for (step_idx, raster) in ladder.iter().copied().enumerate() {
-        let step_n = step_idx as u32 + 1;
-        let step_sim = ViewshedSimOverrides {
-            radius_km: sim.radius_km,
-            raster_dimension: Some(raster),
-            ..Default::default()
-        };
-        let req = preset_to_request_with_sim(
-            preset,
-            lat,
-            lon,
-            Some(&site),
-            Some(&step_sim),
-            None,
-        )?;
-        let digest = viewshed_workspace_digest(&req)?;
-        let workdir = resolved_viewshed_root(preset_path).join(&digest);
-        let png = workdir.join("splat.png");
-        if !png.is_file() {
-            viewshed_progress_log(&format!(
-                "{label} [{step_n}/{ladder_total}] generating {raster}px…"
-            ));
+    let req = preset_to_request_with_sim(
+        preset,
+        lat,
+        lon,
+        Some(&site),
+        Some(sim),
+        None,
+    )?;
+    let digest = viewshed_workspace_digest(&req)?;
+    let workdir = resolved_viewshed_root(preset_path).join(&digest);
+    let png = workdir.join("splat.png");
+    if !png.is_file() {
+        if crate::viewshed_index::adopt_coord_noise_viewshed(preset_path, &workdir, &req)? {
+            viewshed_progress_log(&format!("{label} {target}px cache reuse (coord drift)"));
+        } else {
+            viewshed_progress_log(&format!("{label} generating {target}px…"));
             let t0 = Instant::now();
             ensure_viewshed_blocking(
                 session.clone(),
@@ -367,41 +361,40 @@ where
                 lat,
                 lon,
                 Some(&site),
-                Some(&step_sim),
+                Some(sim),
                 None,
                 verbose,
                 label,
+                hooks,
             )?;
             viewshed_progress_log(&format!(
-                "{label} [{step_n}/{ladder_total}] {raster}px done ({:.1}s)",
+                "{label} {target}px done ({:.1}s)",
                 t0.elapsed().as_secs_f64()
             ));
-        } else {
-            viewshed_progress_log_verbose(
-                verbose,
-                &format!("{label} [{step_n}/{ladder_total}] {raster}px cache hit"),
-            );
         }
-        if let Some(mut overlay) = viewshed_overlay_at_workdir(
-            project_slug,
-            label,
-            &workdir,
-            &digest,
-            raster,
-            target,
-            Some(step_n),
-            Some(ladder_total),
-        )? {
-            if let Some(obj) = overlay.as_object_mut() {
-                obj.insert("lat".into(), serde_json::json!(lat));
-                obj.insert("lon".into(), serde_json::json!(lon));
-            }
-            publish(overlay);
-        }
+    } else {
+        viewshed_progress_log_verbose(verbose, &format!("{label} {target}px cache hit"));
     }
-    viewshed_progress_log(&format!(
-        "{label} progressive warm complete (target={target}px)"
-    ));
+    if hooks
+        .and_then(|h| h.cancel.as_ref())
+        .is_some_and(|c| c.load(Ordering::Relaxed))
+    {
+        return Ok(());
+    }
+    if let Some(mut overlay) = viewshed_overlay_at_workdir(
+        project_slug,
+        label,
+        &workdir,
+        &digest,
+        target,
+    )? {
+        if let Some(obj) = overlay.as_object_mut() {
+            obj.insert("lat".into(), serde_json::json!(lat));
+            obj.insert("lon".into(), serde_json::json!(lon));
+        }
+        publish(overlay);
+    }
+    viewshed_progress_log(&format!("{label} warm complete (target={target}px)"));
     Ok(())
 }
 
@@ -425,6 +418,7 @@ pub fn ensure_coords_viewshed_blocking(
         None,
         verbose,
         DRAFT_VIEWSHED_SLUG,
+        None,
     )
 }
 
@@ -439,7 +433,14 @@ fn ensure_viewshed_blocking(
     board_viewshed: Option<&BoardViewshedResolver>,
     verbose: bool,
     label: &str,
+    hooks: Option<&ViewshedWarmHooks>,
 ) -> Result<PathBuf> {
+    if hooks
+        .and_then(|h| h.cancel.as_ref())
+        .is_some_and(|c| c.load(Ordering::Relaxed))
+    {
+        bail!("viewshed cancelled");
+    }
     let req = preset_to_request_with_sim(preset, lat, lon, site, sim, board_viewshed)?;
     let digest = viewshed_workspace_digest(&req)?;
     let workdir = resolved_viewshed_root(preset_path).join(&digest);
@@ -447,11 +448,28 @@ fn ensure_viewshed_blocking(
     if png.is_file() {
         return Ok(png);
     }
+    if crate::viewshed_index::adopt_coord_noise_viewshed(preset_path, &workdir, &req)? {
+        return Ok(png);
+    }
     fs::create_dir_all(&workdir)?;
     let req_json = serde_json::to_string_pretty(&req)?;
     fs::write(workdir.join("request.json"), req_json)?;
     let t0 = Instant::now();
-    session.run(&workdir)?;
+    let on_progress: Option<&(dyn Fn(f64, &str) + Send + Sync)> = hooks
+        .and_then(|h| h.progress.as_ref())
+        .map(|arc| arc.as_ref());
+    let cancel: Option<&AtomicBool> = hooks
+        .and_then(|h| h.cancel.as_ref())
+        .map(|arc| arc.as_ref());
+    let run_ctx = CoverageRunContext {
+        verbose,
+        on_progress,
+        cancel,
+    };
+    session.run_with_context(&workdir, run_ctx)?;
+    if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+        bail!("viewshed cancelled");
+    }
     viewshed_progress_log_verbose(
         verbose,
         &format!(
@@ -494,46 +512,33 @@ pub fn coords_viewshed_overlay_if_ready(
 ) -> Result<Option<Value>> {
     let site = preview_site_at(lat, lon).map_err(|e| anyhow::anyhow!(e.0))?;
     let target_raster = effective_target_raster_for_preset(preset, sim);
-    let viewshed_root = resolved_viewshed_root(preset_path);
-    let ladder = raster_upgrade_ladder(MIN_SERVE_RASTER_DIMENSION, target_raster);
-    for raster in ladder.iter().rev().copied() {
-        let step_sim = ViewshedSimOverrides {
-            radius_km: sim.and_then(|s| s.radius_km),
-            raster_dimension: Some(raster),
-            ..Default::default()
-        };
-        let req = preset_to_request_with_sim(
-            preset,
-            lat,
-            lon,
-            Some(&site),
-            Some(&step_sim),
-            None,
-        )?;
-        let digest = viewshed_workspace_digest(&req)?;
-        let workdir = viewshed_root.join(&digest);
-        let png = workdir.join("splat.png");
-        if !png.is_file() {
-            continue;
-        }
-        let bounds = load_bounds_from_manifest(&workdir.join("manifest.json"));
-        let Some(bounds) = bounds else {
-            continue;
-        };
-        let coordinates = image_coordinates_from_bbox(&bounds)?;
-        return Ok(Some(serde_json::json!({
-            "slug": DRAFT_VIEWSHED_SLUG,
-            "digest": digest,
-            "url": viewshed_cache_png_api_path(project_slug, &digest),
-            "coordinates": coordinates,
-            "lat": lat,
-            "lon": lon,
-            "raster_dimension": raster,
-            "raster_target": target_raster,
-            "at_target": raster == target_raster,
-        })));
+    let workdir = resolve_viewshed_workdir(preset_path, preset, &site, sim, None)?;
+    let digest = viewshed_workspace_digest(&preset_to_request_with_sim(
+        preset,
+        lat,
+        lon,
+        Some(&site),
+        sim,
+        None,
+    )?)?;
+    let png = workdir.join("splat.png");
+    if !png.is_file() {
+        return Ok(None);
     }
-    Ok(None)
+    let bounds = load_bounds_from_manifest(&workdir.join("manifest.json"));
+    let Some(bounds) = bounds else {
+        return Ok(None);
+    };
+    let coordinates = image_coordinates_from_bbox(&bounds)?;
+    Ok(Some(serde_json::json!({
+        "slug": DRAFT_VIEWSHED_SLUG,
+        "digest": digest,
+        "url": viewshed_cache_png_api_path(project_slug, &digest),
+        "coordinates": coordinates,
+        "lat": lat,
+        "lon": lon,
+        "raster_dimension": target_raster,
+    })))
 }
 
 pub fn read_coords_viewshed_png_if_ready(

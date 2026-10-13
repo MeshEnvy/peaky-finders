@@ -5,7 +5,6 @@
 #
 simulation:
   radius_km: 50.0
-  viewshed_quality: 3
   max_workers:
     coverage: 2
     dem: 4

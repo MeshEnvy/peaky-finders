@@ -1,6 +1,7 @@
 // @ts-check
 
 import { COORD_PREFETCH_MS, DRAFT_VIEWSHED_SLUG } from '../constants.js'
+import { beginPreview, currentPreview } from '../preview-session.js'
 import * as apiUrls from '../api/urls.js'
 import {
   applyDraftLinksLayer,
@@ -31,6 +32,7 @@ export function createEditPreviewDomain(ctx) {
     isViewshedVisible,
     placeDraftMarker,
     isSiteMapHidden,
+    ensureDraftAccess,
   } = ctx
 
   let draftPlacementLat = null
@@ -178,12 +180,6 @@ export function createEditPreviewDomain(ctx) {
 
   function onDraftViewshedReady() {
     draftViewshedLoading = false
-    // Edit prefetch already requested links with exclude_site. The create
-    // placement fetch does not, and would draw a line back to the old pin.
-    if (store.ui.relocateMode) return
-    if (draftPlacementLat != null && draftPlacementLon != null) {
-      void loadPlacementPrefetchAt(draftPlacementLat, draftPlacementLon)
-    }
   }
 
   async function tryLoadDraftViewshedFromCache(lat, lon) {
@@ -193,14 +189,11 @@ export function createEditPreviewDomain(ctx) {
       const resp = await fetch(url)
       if (!resp.ok) return false
       const overlay = await resp.json()
-      if (overlay.url && overlay.coordinates) {
-        vs()?.acceptViewshedOverlay?.({ ...overlay, slug: DRAFT_VIEWSHED_SLUG, status: 'ready' })
-        return true
-      }
+      if (overlay.url && overlay.coordinates) return overlay
     } catch (_) {
       /* cache probe optional */
     }
-    return false
+    return null
   }
 
   async function loadDraftViewshedAt(lat, lon, options) {
@@ -214,14 +207,15 @@ export function createEditPreviewDomain(ctx) {
     }
     draftViewshedLoading = true
     viewshedLoading.add(DRAFT_VIEWSHED_SLUG)
-    const epoch = vs()?.getViewshedLoadEpoch?.()
+    const epoch = vs()?.bumpViewshedLoadEpoch?.()
     viewshedPendingEpoch.set(DRAFT_VIEWSHED_SLUG, epoch)
     updatePinOverlays?.()
-    if (await tryLoadDraftViewshedFromCache(lat, lon)) {
-      if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) === epoch) {
-        viewshedPendingEpoch.delete(DRAFT_VIEWSHED_SLUG)
-        draftViewshedLoading = false
-      }
+    const cached = await tryLoadDraftViewshedFromCache(lat, lon)
+    if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return
+    if (cached) {
+      vs()?.acceptViewshedOverlay?.({ ...cached, slug: DRAFT_VIEWSHED_SLUG, status: 'ready' })
+      viewshedPendingEpoch.delete(DRAFT_VIEWSHED_SLUG)
+      draftViewshedLoading = false
       return
     }
     try {
@@ -230,7 +224,7 @@ export function createEditPreviewDomain(ctx) {
         clearDraftViewshedLoading()
         return
       }
-      const resp = await fetch(url, { method: 'POST' })
+      const resp = await fetch(url, { method: 'POST', signal: currentPreview().signal })
       if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return
       if (!resp.ok) {
         clearDraftViewshedLoading()
@@ -257,13 +251,16 @@ export function createEditPreviewDomain(ctx) {
     const gen = ++placementPrefetchGen
     removeDraftLinksLayer?.()
     try {
+      const preview = currentPreview()
       const resp = await fetch(
-        apiUrls.sitesPrefetchUrl(projectSlug, lat, lon, editingSiteSlug()),
+        apiUrls.sitesPrefetchUrl(projectSlug, lat, lon, editingSiteSlug(), preview.id || undefined),
+        { signal: preview.signal },
       )
       if (gen !== placementPrefetchGen) return
       if (!resp.ok) return
       let payload = await resp.json()
       if (gen !== placementPrefetchGen) return
+      if (payload?.status === 'cancelled') return
       payload = filterEditSitePrefetchPayload(payload)
       if (payload?.links_geojson) addDraftLinksLayer?.(payload.links_geojson)
       else removeDraftLinksLayer?.()
@@ -312,6 +309,7 @@ export function createEditPreviewDomain(ctx) {
 
   async function runEditPrefetchAt(lat, lon) {
     if (!store.ui.relocateMode) return
+    beginPreview()
     const gen = ++editPrefetchGen
     const atOriginal = coordsMatchEditSnapshot(lat, lon)
     removeDraftLinksLayer?.()
@@ -328,13 +326,22 @@ export function createEditPreviewDomain(ctx) {
       removeDraftViewshed()
       removeDraftLinksLayer?.()
     }
+    ensureDraftAccess?.(lat, lon)
     try {
-      const url = apiUrls.sitesPrefetchUrl(projectSlug, lat, lon, store.ui.relocateSlug)
-      const resp = await fetch(url)
+      const preview = currentPreview()
+      const url = apiUrls.sitesPrefetchUrl(
+        projectSlug,
+        lat,
+        lon,
+        store.ui.relocateSlug,
+        preview.id || undefined,
+      )
+      const resp = await fetch(url, { signal: preview.signal })
       if (gen !== editPrefetchGen) return
       if (!resp.ok) return
       let payload = await resp.json()
       if (gen !== editPrefetchGen) return
+      if (payload?.status === 'cancelled') return
       payload = filterEditSitePrefetchPayload(payload)
       if (payload.links_geojson) addDraftLinksLayer?.(payload.links_geojson)
       else removeDraftLinksLayer?.()

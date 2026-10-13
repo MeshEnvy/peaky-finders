@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -20,6 +20,24 @@ use serde_json::json;
 
 /// Effective Earth radius factor (standard 4/3 atmosphere).
 const K_EFFECTIVE: f64 = 4.0 / 3.0;
+
+const RAY_PHASE_FRAC: f64 = 0.12;
+
+pub struct CoverageRunContext<'a> {
+    pub verbose: bool,
+    pub on_progress: Option<&'a (dyn Fn(f64, &'static str) + Send + Sync)>,
+    pub cancel: Option<&'a AtomicBool>,
+}
+
+impl<'a> CoverageRunContext<'a> {
+    pub fn verbose_only(verbose: bool) -> Self {
+        Self {
+            verbose,
+            on_progress: None,
+            cancel: None,
+        }
+    }
+}
 
 struct PreparedJob {
     req: CovRequest,
@@ -154,15 +172,23 @@ pub fn run_coverage(work_dir: &Path, verbose: bool) -> Result<()> {
         serde_json::from_str(&raw).context("parse request.json as SplatCoverageRequest")?;
     let tiles = required_tile_names(parsed.lat, parsed.lon, parsed.radius);
     let dem = DemMosaic::load_mirror(&mirror_root, &tiles, verbose, None).context("DEM mosaic")?;
-    run_coverage_with_dem(work_dir, &dem, verbose)
+    run_coverage_with_dem(work_dir, &dem, CoverageRunContext::verbose_only(verbose))
 }
 
-pub fn run_coverage_with_dem(work_dir: &Path, dem: &DemMosaic, verbose: bool) -> Result<()> {
+pub fn run_coverage_with_dem(
+    work_dir: &Path,
+    dem: &DemMosaic,
+    ctx: CoverageRunContext<'_>,
+) -> Result<()> {
     let log = |msg: &str| {
-        if verbose {
+        if ctx.verbose {
             eprintln!("[splatter] {}", msg);
         }
     };
+
+    if ctx.cancel.is_some_and(|f| f.load(Ordering::Relaxed)) {
+        bail!("coverage cancelled");
+    }
 
     let req_path = work_dir.join("request.json");
     let raw = fs::read_to_string(&req_path)
@@ -170,7 +196,7 @@ pub fn run_coverage_with_dem(work_dir: &Path, dem: &DemMosaic, verbose: bool) ->
     let parsed: CovRequest =
         serde_json::from_str(&raw).context("parse request.json as SplatCoverageRequest")?;
     let job = prepare_job(parsed)?;
-    run_one_coverage(&job, dem, work_dir, verbose).context("coverage run")?;
+    run_one_coverage(&job, dem, work_dir, &ctx).context("coverage run")?;
     log("done.");
     Ok(())
 }
@@ -206,8 +232,9 @@ fn run_one_coverage(
     job: &PreparedJob,
     dem: &DemMosaic,
     work_dir: &Path,
-    verbose: bool,
+    ctx: &CoverageRunContext<'_>,
 ) -> Result<()> {
+    let verbose = ctx.verbose;
     let log = |msg: &str| {
         if verbose {
             eprintln!("[splatter] {}", msg);
@@ -257,7 +284,10 @@ fn run_one_coverage(
     let cmap = req.colormap.trim().to_lowercase();
 
     let num_rays = (w as usize * 4).max(720);
-    let terrain_cache = RayTerrainCache::build(
+    if let Some(cb) = ctx.on_progress {
+        cb(0.0, "terrain");
+    }
+    let terrain_cache = RayTerrainCache::build_with_hooks(
         dem,
         req.lat,
         req.lon,
@@ -266,7 +296,13 @@ fn run_one_coverage(
         profile_step_m,
         clutter,
         verbose,
+        ctx.on_progress,
+        ctx.cancel,
+        RAY_PHASE_FRAC,
     );
+    if ctx.cancel.is_some_and(|f| f.load(Ordering::Relaxed)) {
+        bail!("coverage cancelled");
+    }
 
     let mut rgb: Vec<u8> = vec![255u8; (w * h * 3) as usize];
 
@@ -275,9 +311,15 @@ fn run_one_coverage(
     let log_mx = Mutex::new(());
     let report_every = ((h as usize) / 20).max(1);
 
+    if let Some(cb) = ctx.on_progress {
+        cb(RAY_PHASE_FRAC, "raster");
+    }
     let rows: Vec<Vec<u8>> = (0..h)
         .into_par_iter()
         .map(|py| {
+            if ctx.cancel.is_some_and(|f| f.load(Ordering::Relaxed)) {
+                return vec![255u8; (w * 3) as usize];
+            }
             raster_row(
                 py,
                 w,
@@ -301,9 +343,14 @@ fn run_one_coverage(
                 &log_mx,
                 report_every,
                 raster_started,
+                ctx.on_progress,
+                ctx.cancel,
             )
         })
         .collect();
+    if ctx.cancel.is_some_and(|f| f.load(Ordering::Relaxed)) {
+        bail!("coverage cancelled");
+    }
 
     if verbose {
         log(&format!(
@@ -384,9 +431,14 @@ fn raster_row(
     log_mx: &Mutex<()>,
     report_every: usize,
     raster_started: Instant,
+    on_progress: Option<&(dyn Fn(f64, &'static str) + Send + Sync)>,
+    cancel: Option<&AtomicBool>,
 ) -> Vec<u8> {
     let mut row = vec![255u8; (w * 3) as usize];
     for px in 0..w {
+        if px % 256 == 0 && cancel.is_some_and(|f| f.load(Ordering::Relaxed)) {
+            return row;
+        }
         let (rlat, rlon) = pixel_lat_lon(px, py, w, h, north, south, east, west);
         let d = haversine_m(req.lat, req.lon, rlat, rlon);
         let off = (px * 3) as usize;
@@ -418,8 +470,16 @@ fn raster_row(
         row[off + 1] = c[1];
         row[off + 2] = c[2];
     }
+    let n = rows_done.fetch_add(1, Ordering::Relaxed) + 1;
+    if let Some(cb) = on_progress {
+        let total = h.max(1) as usize;
+        if n == 1 || n == total || n % 32 == 0 {
+            let raster_span = 1.0 - RAY_PHASE_FRAC;
+            let frac = RAY_PHASE_FRAC + raster_span * (n as f64 / total as f64);
+            cb(frac.min(1.0), "raster");
+        }
+    }
     if verbose {
-        let n = rows_done.fetch_add(1, Ordering::Relaxed) + 1;
         if n % report_every == 0 || n == h as usize {
             let _lk = log_mx.lock().unwrap();
             eprintln!(

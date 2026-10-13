@@ -1,6 +1,7 @@
 // @ts-check
 
 import * as apiUrls from '../api/urls.js'
+import { currentPreview } from '../preview-session.js'
 import {
   ALTERNATE_VIEWSHED_SLUG,
   FORTIFY_VIEWSHED_SLUG,
@@ -12,10 +13,7 @@ import {
 import { viewshedLayerId } from '../constants.js'
 import { coordsUsableForMarker } from '../geo.js'
 import { osmRoadsProgressLabel } from '../stores/access.js'
-import {
-  buildViewshedPreviewSimQueryParams,
-  buildViewshedSimQueryParams,
-} from '../stores/simulation.js'
+import { buildViewshedSimQueryParams } from '../stores/simulation.js'
 import {
   raiseViewshedLayersBelowStack,
   stackFloorBeforeId,
@@ -72,6 +70,7 @@ const OUTBOUND_LINKS_PARALLEL = 3
  * @param {() => void} [opts.onDraftViewshedReady]
  * @param {() => void} [opts.onDraftViewshedLoadingClear]
  * @param {() => void} [opts.onDraftViewshedLayerAdded]
+ * @param {(slug: string) => void} [opts.onBookedViewshedShown]
  * @param {() => boolean} [opts.viewshedLoadingHasDraft]
  * @param {() => { lat: number, lon: number }|null} [opts.getDraftPlacement]
  * @param {() => Iterable<string>} [opts.getLinkSolverHopViewshedSlugs]
@@ -99,6 +98,7 @@ export function createViewshedDomain(opts) {
     syncViewshedCheckbox,
     onDraftViewshedReady,
     onDraftViewshedLoadingClear,
+    onBookedViewshedShown,
     onDraftViewshedLayerAdded,
     viewshedLoadingHasDraft,
     getDraftPlacement,
@@ -139,14 +139,10 @@ export function createViewshedDomain(opts) {
       return 'links…'
     }
     const p = sitePinProgress.get(slug)
-    if (p?.step > 0 && p?.total > 0 && p?.raster > 0) {
-      return `${p.step}/${p.total} · ${p.raster}px`
-    }
-    if (p?.step > 0 && p?.total > 0) {
-      return `${p.step}/${p.total}`
-    }
-    if (p?.raster > 0 && p?.target > 0) {
-      return `${p.raster}/${p.target}px`
+    if (p?.phase === 'terrain') return 'terrain…'
+    if (p?.phase === 'raster') return 'raster…'
+    if (p?.raster > 0) {
+      return `${p.raster}px`
     }
     return 'warm…'
   }
@@ -155,11 +151,8 @@ export function createViewshedDomain(opts) {
     if (siteViewshedReady.has(slug) && siteOutboundLinksReady.has(slug)) return 1
     if (siteViewshedReady.has(slug) && !siteOutboundLinksReady.has(slug)) return 0.92
     const p = sitePinProgress.get(slug)
-    if (p?.total > 0 && p.step > 0) {
-      return Math.min(0.88, 0.06 + 0.82 * (p.step / p.total))
-    }
-    if (p?.target > 0 && p.raster > 0) {
-      return Math.min(0.88, 0.06 + 0.82 * (p.raster / p.target))
+    if (typeof p?.fraction === 'number' && p.fraction > 0) {
+      return Math.min(0.88, 0.06 + 0.82 * p.fraction)
     }
     return 0.06
   }
@@ -253,22 +246,20 @@ export function createViewshedDomain(opts) {
   }
 
   function viewshedSimQueryParams() {
-    return buildViewshedSimQueryParams(store.simulation.radiusKm, store.simulation.quality)
+    return buildViewshedSimQueryParams(store.simulation.radiusKm)
   }
 
-  function viewshedPreviewSimQueryParams() {
-    return buildViewshedPreviewSimQueryParams(store.simulation.radiusKm)
-  }
-
-  function viewshedPrefetchWarmUrl(lat, lon, { preview = true } = {}) {
-    const params = preview ? viewshedPreviewSimQueryParams() : viewshedSimQueryParams()
+  function viewshedPrefetchWarmUrl(lat, lon) {
+    const params = viewshedSimQueryParams()
     params.set('lat', String(lat))
     params.set('lon', String(lon))
+    const preview = currentPreview()
+    if (preview.id) params.set('preview', String(preview.id))
     return apiUrls.viewshedPrefetchWarmUrl(projectSlug, params)
   }
 
   function viewshedPrefetchMetaUrl(lat, lon) {
-    const params = viewshedPreviewSimQueryParams()
+    const params = viewshedSimQueryParams()
     params.set('lat', String(lat))
     params.set('lon', String(lon))
     return apiUrls.viewshedPrefetchMetaUrl(projectSlug, params)
@@ -364,6 +355,7 @@ export function createViewshedDomain(opts) {
       () => viewshedAddTicket.get(vs.slug) === ticket && viewshedLayerShouldShow(vs.slug),
     ).then(() => {
       if (viewshedAddTicket.get(vs.slug) !== ticket) return
+      if (!isEphemeralViewshedSlug(vs.slug)) onBookedViewshedShown?.(vs.slug)
       setViewshedLayerVisibility(map, vs.slug, viewshedLayerShouldShow(vs.slug))
       if (store) clearViewshedLoadingInStore(store, vs.slug)
       else viewshedLoading.delete(vs.slug)
@@ -396,30 +388,15 @@ export function createViewshedDomain(opts) {
     } else {
       viewshedLoadEpoch += 1
     }
-  }
-
-  function viewshedAtTarget(vs) {
-    if (vs?.at_target === false) return false
-    const raster = Number(vs?.raster_dimension)
-    const target = Number(vs?.raster_target)
-    if (Number.isFinite(raster) && Number.isFinite(target)) {
-      return raster >= target
-    }
-    return true
+    return viewshedLoadEpoch
   }
 
   function finalizeViewshedReady(vs) {
     if (vs?.slug) {
       setSitePinProgress(vs.slug, {
         raster: Number(vs.raster_dimension) || 0,
-        target: Number(vs.raster_target) || 0,
-        step: Number(vs.ladder_step) || 0,
-        total: Number(vs.ladder_total) || 0,
+        fraction: 1,
       })
-    }
-    if (!viewshedAtTarget(vs)) {
-      updatePinOverlays()
-      return
     }
     markSiteViewshedReady(vs.slug)
     if (vs.slug === DRAFT_VIEWSHED_SLUG && onDraftViewshedReady) {
@@ -489,19 +466,67 @@ export function createViewshedDomain(opts) {
     return routed
   }
 
+  let pinOverlayFrame = 0
+
+  function schedulePinOverlays() {
+    if (pinOverlayFrame) return
+    pinOverlayFrame = requestAnimationFrame(() => {
+      pinOverlayFrame = 0
+      updatePinOverlays()
+    })
+  }
+
   function handleViewshedEvent(data) {
     if (!data || !data.slug) return
+    if (data.status === 'running') {
+      const partial = {
+        fraction: Number(data.fraction) || 0,
+        phase: data.phase || '',
+      }
+      const apply = (slug) => {
+        if (!viewshedLoading.has(slug) && !viewshedPendingEpoch.has(slug)) return
+        setSitePinProgress(slug, partial)
+      }
+      if (data.slug === DRAFT_VIEWSHED_SLUG && data.lat != null && data.lon != null) {
+        const linkSolverHopCoords = getLinkSolverHopViewshedCoords?.()
+        if (linkSolverHopCoords) {
+          for (const [slug, coords] of linkSolverHopCoords) {
+            if (!viewshedPendingEpoch.has(slug)) continue
+            if (!coordsMatchDraftEvent(coords, data)) continue
+            apply(slug)
+          }
+        }
+        const pendingCoords = store?.viewshed?.pendingCoords
+        if (pendingCoords) {
+          for (const [slug, coords] of pendingCoords) {
+            if (!viewshedPendingEpoch.has(slug)) continue
+            if (!coordsMatchDraftEvent(coords, data)) continue
+            apply(slug)
+          }
+        }
+        const place = getDraftPlacement?.()
+        if (place && coordsMatchDraftEvent(place, data)) apply(DRAFT_VIEWSHED_SLUG)
+      } else {
+        apply(data.slug)
+      }
+      schedulePinOverlays()
+      return
+    }
     if (data.status === 'ready') {
-      if (data.raster_dimension != null || data.ladder_step != null) {
+      if (data.slug === DRAFT_VIEWSHED_SLUG) {
+        routeDraftViewshedToPendingSlugs(data)
+        const place = getDraftPlacement?.()
+        const forDraft =
+          place && data.lat != null && data.lon != null && coordsMatchDraftEvent(place, data)
+        if (!forDraft) return
+      }
+      if (data.raster_dimension != null) {
         setSitePinProgress(data.slug, {
           raster: Number(data.raster_dimension) || 0,
-          target: Number(data.raster_target) || 0,
-          step: Number(data.ladder_step) || 0,
-          total: Number(data.ladder_total) || 0,
+          fraction: 1,
         })
         updatePinOverlays()
       }
-      if (routeDraftViewshedToPendingSlugs(data)) return
       const epoch = viewshedPendingEpoch.get(data.slug)
       if (epoch != null) {
         handleViewshedReady(data, epoch)
@@ -631,19 +656,16 @@ export function createViewshedDomain(opts) {
     return false
   }
 
-  async function tryLoadCoordViewshedFromCache(slug, lat, lon) {
+  async function tryLoadCoordViewshedFromCache(_slug, lat, lon) {
     try {
       const resp = await fetch(viewshedPrefetchMetaUrl(lat, lon))
-      if (!resp.ok) return false
+      if (!resp.ok) return null
       const overlay = await resp.json()
-      if (overlay.url && overlay.coordinates) {
-        acceptViewshedOverlay({ ...overlay, slug, status: 'ready' })
-        return true
-      }
+      if (overlay.url && overlay.coordinates) return overlay
     } catch (_) {
       /* cache probe optional */
     }
-    return false
+    return null
   }
 
   async function fetchOutboundLinksParallel(slugs) {
@@ -699,18 +721,24 @@ export function createViewshedDomain(opts) {
     removeViewshedLayer(slug)
     resetSiteProgress(slug)
     viewshedLoading.add(slug)
-    const epoch = viewshedLoadEpoch
+    const epoch = bumpViewshedLoadEpoch()
     viewshedPendingEpoch.set(slug, epoch)
     if (store) setPendingCoordsInStore(store, slug, lat, lon)
     updatePinOverlays()
     if (slug === store.ui.selectedSlug) syncViewshedCheckbox()
     void (async () => {
-      if (await tryLoadCoordViewshedFromCache(slug, lat, lon)) {
+      const cached = await tryLoadCoordViewshedFromCache(slug, lat, lon)
+      if (viewshedPendingEpoch.get(slug) !== epoch) return
+      if (cached) {
+        acceptViewshedOverlay({ ...cached, slug, status: 'ready' })
         raiseViewshedLayers()
         return
       }
       try {
-        const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), { method: 'POST' })
+        const resp = await fetch(viewshedPrefetchWarmUrl(lat, lon), {
+          method: 'POST',
+          signal: currentPreview().signal,
+        })
         if (viewshedPendingEpoch.get(slug) !== epoch) return
         if (!resp.ok) {
           clearViewshedLoadingState(slug)
@@ -753,7 +781,6 @@ export function createViewshedDomain(opts) {
   }
 
   function scheduleViewshedLoad(site) {
-    removeViewshedLayer(site.slug)
     resetSiteProgress(site.slug)
     viewshedLoading.add(site.slug)
     viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch)
@@ -782,7 +809,6 @@ export function createViewshedDomain(opts) {
       const readySlugs = []
       const readyOverlays = []
       const missing = []
-      const upgrades = []
       for (const site of getSites()) {
         if (!isViewshedHostVisible(site.slug) || !isViewshedVisible(site.slug)) continue
         const entry = siteEntries[site.slug]
@@ -794,7 +820,6 @@ export function createViewshedDomain(opts) {
             ...entry,
           })
           readySlugs.push(site.slug)
-          if (entry.at_target === false) upgrades.push(site.slug)
         } else {
           missing.push(site)
         }
@@ -803,9 +828,6 @@ export function createViewshedDomain(opts) {
       void fetchOutboundLinksParallel(readySlugs)
       for (const site of missing) {
         scheduleViewshedLoad(site)
-      }
-      if (upgrades.length) {
-        void bumpWarmPriorities(upgrades, warmPriorityViewport)
       }
       if (missing.length) syncWarmPriorities()
     } catch (_) {
@@ -868,7 +890,6 @@ export function createViewshedDomain(opts) {
     sitePinSpinning,
     isSiteOutboundLinksReady,
     viewshedSimQueryParams,
-    viewshedPreviewSimQueryParams,
     viewshedPrefetchWarmUrl,
     viewshedPrefetchMetaUrl,
     viewshedOverlaySlugs,

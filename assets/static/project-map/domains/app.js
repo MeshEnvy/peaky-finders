@@ -36,12 +36,14 @@ import { createSiteAccessDomain } from './site-access.js'
 import { createAccessNetworkDomain } from './access-network.js'
 import { createEntityChromeDomain } from './entity-chrome.js'
 import { bootProjectMap, createMapChromeDomain } from './map-chrome.js'
+import { initPreviewSession } from '../preview-session.js'
 
 /** @param {{ store?: object, onStoreSync?: () => void }} [ctx] */
 export function runApp(ctx = {}) {
   const store = ctx.store
   const config = window.PEAKY_PROJECT || {}
   const projectSlug = config.slug
+  initPreviewSession(String(projectSlug || ''))
   const sitesDomain = store
     ? createSitesDomain({ store, projectSlug: String(store.projectSlug || projectSlug || '') })
     : null
@@ -105,11 +107,7 @@ export function runApp(ctx = {}) {
 
   store.simulation.radiusMin = VIEWSHED_RADIUS_KM_MIN
   store.simulation.radiusMax = VIEWSHED_RADIUS_KM_MAX
-  setSimulation(
-    store,
-    Number(simDefaults.radius_km) || store.simulation.radiusKm,
-    Number(simDefaults.viewshed_quality) || store.simulation.quality,
-  )
+  setSimulation(store, Number(simDefaults.radius_km) || store.simulation.radiusKm)
 
   const { map, toolbar, compassButton } = bootProjectMap({
     basemapKey: currentBasemapKey,
@@ -249,6 +247,12 @@ export function runApp(ctx = {}) {
       onDraftViewshedReady: () => editPreviewDomain?.onDraftViewshedReady(),
       onDraftViewshedLoadingClear: () => editPreviewDomain?.clearDraftViewshedLoading(),
       onDraftViewshedLayerAdded: () => editPreviewDomain?.onDraftViewshedReady(),
+      onBookedViewshedShown: (slug) => {
+        if (!store.ui.createMode && slug === store.ui.selectedSlug) {
+          editPreviewDomain?.removeDraftViewshed()
+        }
+        peaksDomain?.releaseHandedOffViewshed?.(slug)
+      },
       viewshedLoadingHasDraft: () => viewshedLoading.has(DRAFT_VIEWSHED_SLUG),
       getDraftPlacement: () => editPreviewDomain?.getDraftPlacement() ?? null,
       getLinkSolverHopViewshedSlugs: () =>
@@ -364,6 +368,7 @@ export function runApp(ctx = {}) {
         isViewshedVisible: (slug) => viewshedDomain.isViewshedVisible(slug),
         placeDraftMarker: (lat, lon) => placementDomain?.placeDraftMarker(lat, lon),
         isSiteMapHidden: (slug) => siteLayers.isSiteMapHidden(slug),
+        ensureDraftAccess: (lat, lon) => siteAccessDomain?.ensureDraftAccess(lat, lon),
       })
     }
     if (!placementDomain) {
@@ -397,6 +402,7 @@ export function runApp(ctx = {}) {
         removeDraftViewshed: (...args) => editPreviewDomain.removeDraftViewshed(...args),
         removeDraftLinksLayer: () => editPreviewDomain.removeDraftLinksLayer(),
         loadDraftViewshedAt: (...args) => editPreviewDomain.loadDraftViewshedAt(...args),
+        loadPlacementPrefetchAt: (...args) => editPreviewDomain.loadPlacementPrefetchAt(...args),
         onStartRelocate: (entity) => editPreviewDomain.startEditSession(entity),
         onCancelRelocate: () => editPreviewDomain.endEditSession(),
         onCleanupRelocate: () => editPreviewDomain.cleanupEditSave(),
@@ -755,7 +761,7 @@ export function runApp(ctx = {}) {
 
   return {
     reloadViewshedsForSimChange,
-    setViewshedSimulation: (radiusKm, quality) => setSimulation(store, radiusKm, quality),
+    setViewshedSimulation: (radiusKm) => setSimulation(store, radiusKm),
     setViewshedVisible: (slug, visible) => viewshedDomain.setViewshedVisible(slug, visible),
     getMap: () => map,
     getStore: () => store,

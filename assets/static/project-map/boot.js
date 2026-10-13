@@ -34,7 +34,7 @@ export function bootProjectMap() {
 
   window.PEAKY_MAP = {
     reloadViewshedsForSimChange: () => appApi.reloadViewshedsForSimChange(),
-    setViewshedSimulation: (radiusKm, quality) => appApi.setViewshedSimulation(radiusKm, quality),
+    setViewshedSimulation: (radiusKm) => appApi.setViewshedSimulation(radiusKm),
   }
 
   return appApi
