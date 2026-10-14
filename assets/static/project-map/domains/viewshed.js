@@ -307,21 +307,26 @@ export function createViewshedDomain(opts) {
     return stackFloorBeforeId(map)
   }
 
+  function mountedViewshedLayerIds() {
+    if (!getMapReady()) return []
+    const layers = map.getStyle()?.layers
+    if (!layers) return []
+    return layers
+      .map((layer) => layer.id)
+      .filter((id) => id.startsWith('viewshed-') && id.endsWith('-raster'))
+  }
+
   function raiseViewshedLayers() {
     if (!getMapReady()) return
     const beforeId = stackFloorBeforeId(map)
     if (!beforeId) return
-    const layerIds = viewshedOverlaySlugs()
-      .map((slug) => viewshedLayerId(slug))
-      .filter((id) => map.getLayer(id))
-    raiseViewshedLayersBelowStack(map, beforeId, layerIds)
+    raiseViewshedLayersBelowStack(map, beforeId, mountedViewshedLayerIds())
   }
 
   function applyViewshedOpacityToAllLayers() {
     if (!getMapReady()) return
     const opacity = getViewshedOpacity()
-    for (const slug of viewshedOverlaySlugs()) {
-      const layerId = viewshedLayerId(slug)
+    for (const layerId of mountedViewshedLayerIds()) {
       if (map.getLayer(layerId)) {
         map.setPaintProperty(layerId, 'raster-opacity', opacity)
       }
@@ -365,7 +370,8 @@ export function createViewshedDomain(opts) {
     updatePinOverlays()
   }
 
-  function addViewshedLayer(vs) {
+  function addViewshedLayer(vs, opts = {}) {
+    const skipRaiseSiteLayers = opts.skipRaiseSiteLayers === true
     const ticket = (viewshedAddTicket.get(vs.slug) || 0) + 1
     viewshedAddTicket.set(vs.slug, ticket)
     void addViewshedRasterLayer(
@@ -386,7 +392,7 @@ export function createViewshedDomain(opts) {
       if (vs.slug === DRAFT_VIEWSHED_SLUG) {
         if (onDraftViewshedLayerAdded) onDraftViewshedLayerAdded()
       }
-      raiseSiteLayers()
+      if (!skipRaiseSiteLayers) raiseSiteLayers()
     }).catch(() => {})
   }
 
@@ -442,10 +448,10 @@ export function createViewshedDomain(opts) {
     }
   }
 
-  function acceptViewshedOverlay(vs) {
+  function acceptViewshedOverlay(vs, opts = {}) {
     if (!vs || !vs.slug || !vs.url || !vs.coordinates) return
     if (!isViewshedHostVisible(vs.slug) || !isViewshedVisible(vs.slug)) return
-    addViewshedLayer(vs)
+    addViewshedLayer(vs, opts)
     finalizeViewshedReady(vs)
     if (!skipOutboundLinksForViewshedSlug(vs.slug)) {
       void loadSingleSiteLinks(vs.slug)
@@ -642,11 +648,13 @@ export function createViewshedDomain(opts) {
   }
 
   async function applyViewshedOverlaysBatched(overlays) {
+    const batchOpts = { skipRaiseSiteLayers: true }
     for (let i = 0; i < overlays.length; i += VIEWSHED_OVERLAY_BATCH) {
       const batch = overlays.slice(i, i + VIEWSHED_OVERLAY_BATCH)
       for (const overlay of batch) {
-        acceptViewshedOverlay(overlay)
+        acceptViewshedOverlay(overlay, batchOpts)
       }
+      raiseSiteLayers()
       if (i + VIEWSHED_OVERLAY_BATCH < overlays.length) {
         await waitForMapIdle()
       }
@@ -705,11 +713,14 @@ export function createViewshedDomain(opts) {
   }
 
   function probeViewshedCacheForSite(site) {
-    removeViewshedLayer(site.slug)
-    resetSiteProgress(site.slug)
-    viewshedLoading.add(site.slug)
-    viewshedPendingEpoch.set(site.slug, viewshedLoadEpoch)
-    void tryLoadViewshedFromCache(site.slug)
+    const slug = site.slug
+    if (map.getLayer(viewshedLayerId(slug))) {
+      removeViewshedLayer(slug)
+    }
+    resetSiteProgress(slug)
+    viewshedLoading.add(slug)
+    viewshedPendingEpoch.set(slug, viewshedLoadEpoch)
+    void tryLoadViewshedFromCache(slug, site)
   }
 
   function ensureViewshedsForNewlyVisibleSites(opts = {}) {

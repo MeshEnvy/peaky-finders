@@ -79,11 +79,16 @@ export function createEntityChromeDomain(ctx) {
     setEntityPanelOpen(!store.ui.entityPanelOpen)
   }
 
-  function applyEntityVisibility() {
+  /**
+   * @param {{ skipEnsureViewsheds?: boolean }} [opts]
+   */
+  function applyEntityVisibility(opts = {}) {
     applySiteLayerFilters?.()
     applyViewshedVisibilityForMountedLayers?.()
     refreshFilteredLinks?.()
-    ensureViewshedsForNewlyVisibleSites?.({ sitesOnly: true })
+    if (!opts.skipEnsureViewsheds) {
+      ensureViewshedsForNewlyVisibleSites?.({ sitesOnly: true })
+    }
     renderEntityPanel?.()
   }
 

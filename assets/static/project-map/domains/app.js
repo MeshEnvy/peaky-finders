@@ -644,33 +644,37 @@ export function runApp(ctx = {}) {
     store.ui.mapReady = true
     map.resize()
     siteLayers.addSiteLayers()
-    siteAccessDomain?.refreshLayers()
-    mapInteractionsDomain.install()
-    connectProjectEvents()
-    landDomain.bumpLandPanel()
-    entityChrome.setEntityTab(store.ui.entityPanelTab)
     syncTagFilterVisibility(store)
-    entityChrome.applyEntityVisibility()
-    mapChrome.syncBasemapMenu()
-    mapChrome.setBasemap(mapChrome.getBasemapKey())
-    if (savedMapState) {
-      mapChrome.setShowSiteLinks(mapChrome.getShowSiteLinks())
-      mapChrome.syncTerrainFromPitch()
-    } else {
-      mapChrome.fitSites()
-    }
-    void landDomain.refreshLandMapLayers()
-    void accessNetworkDomain?.refreshOnMapLoad()
-    const bootLink = parseDeepLink()
-    if (bootLink.site || bootLink.peak) {
-      void applyDeepLinkSelection(bootLink, { replaceHistory: true })
-    } else {
-      void peaksDomain.loadPeaks()
-      store.ui.restoring = false
-    }
-    map.once('idle', () => {
-      void viewshedDomain.loadViewshedIndex()
-      void linksDomain.loadSiteLinks()
+    siteLayers.applySiteLayerFilters()
+    entityChrome.setEntityTab(store.ui.entityPanelTab)
+
+    requestAnimationFrame(() => {
+      siteAccessDomain?.refreshLayers()
+      mapInteractionsDomain.install()
+      connectProjectEvents()
+      landDomain.bumpLandPanel()
+      entityChrome.applyEntityVisibility({ skipEnsureViewsheds: true })
+      mapChrome.syncBasemapMenu()
+      mapChrome.setBasemap(mapChrome.getBasemapKey())
+      if (savedMapState) {
+        mapChrome.setShowSiteLinks(mapChrome.getShowSiteLinks())
+        mapChrome.syncTerrainFromPitch()
+      } else {
+        mapChrome.fitSites()
+      }
+      void landDomain.refreshLandMapLayers()
+      void accessNetworkDomain?.refreshOnMapLoad()
+      const bootLink = parseDeepLink()
+      if (bootLink.site || bootLink.peak) {
+        void applyDeepLinkSelection(bootLink, { replaceHistory: true })
+      } else {
+        void peaksDomain.loadPeaks()
+        store.ui.restoring = false
+      }
+      map.once('idle', () => {
+        void viewshedDomain.loadViewshedIndex()
+        void linksDomain.loadSiteLinks()
+      })
     })
   })
 
