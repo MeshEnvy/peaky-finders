@@ -422,7 +422,10 @@ export function createSiteAccessDomain(opts) {
         return
       }
       const warmed = await warmResp.json()
-      if (warmed?.status === 'cancelled') return
+      if (warmed?.status === 'cancelled') {
+        console.warn('place access warm cancelled', slug)
+        return
+      }
       if (active() || opts.prefetchOnly) {
         ingestAccess(slug, warmed, meta)
       }
@@ -602,6 +605,10 @@ export function createSiteAccessDomain(opts) {
     ).finally(() => {
       if (store.ui.createLat === lat && store.ui.createLon === lon) {
         store.access.draftLoading = false
+        const row = store.access.bySlug[DRAFT_VIEWSHED_SLUG]
+        if (!accessHasRouteProfiles(row)) {
+          notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'access', 'access…', 1)
+        }
         opts.updatePinOverlays?.()
       }
     })

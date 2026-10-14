@@ -523,6 +523,25 @@ impl WarmHub {
         self.begin_preview_on(&warm, id).0
     }
 
+    /// Mark this preview cancelled. The in-flight requests already hold the same flag.
+    pub fn cancel_preview(&self, slug: &str, preset_path: PathBuf, id: u64) {
+        let warm = self.project(slug, preset_path);
+        let mut slot = warm.preview.lock().unwrap();
+        if slot.id == id {
+            slot.preview_cancel.store(true, Ordering::Relaxed);
+            slot.viewshed_cancel.store(true, Ordering::Relaxed);
+            if let Some(prev) = warm.coord_warm_cancel.lock().unwrap().as_ref() {
+                prev.store(true, Ordering::Relaxed);
+            }
+            return;
+        }
+        drop(slot);
+        if id > 0 {
+            let (preview_cancel, _) = self.begin_preview_on(&warm, id);
+            preview_cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
     fn begin_preview_on(&self, warm: &ProjectWarm, id: u64) -> (Arc<AtomicBool>, Arc<AtomicBool>) {
         let mut slot = warm.preview.lock().unwrap();
         if id == 0 {
@@ -530,6 +549,7 @@ impl WarmHub {
             return (Arc::new(AtomicBool::new(false)), viewshed);
         }
         if id < slot.id {
+            tracing::info!(id, current = slot.id, "preview request dropped; stale id");
             let dead = Arc::new(AtomicBool::new(true));
             return (dead.clone(), dead);
         }

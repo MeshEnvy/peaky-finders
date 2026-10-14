@@ -295,7 +295,9 @@ async fn preview_cancel(
     if id == 0 {
         return StatusCode::BAD_REQUEST;
     }
-    let _ = preview_cancel_flag(&state, id);
+    state
+        .warm
+        .cancel_preview(&state.slug, state.preset_path(), id);
     StatusCode::NO_CONTENT
 }
 

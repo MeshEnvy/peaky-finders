@@ -12,7 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
-- **Access `/warm`** — a pin no longer runs a fresh jeep Dijkstra per park, and it no longer materializes every paved anchor. The route comes from the paved-reach tree already built at boot. A second flood that includes custom roads runs only when a custom segment is within jeep range of that pin.
+- **Draft pin access after reload** — preview ids are millisecond timestamps, so a reloaded page is newer than the previous session. A counter that restarted at 1 was older than the server’s high-water mark, and every `/warm` came back `cancelled` with no route.
 - **Access profile reload** — `GET …/access/{slug}` returns the stored probe and does not start a route compute. A miss is one `POST …/warm` on the shared routing graph, so the statewide jeep flood runs once per graph instead of again for the same point.
 - **Hidden site viewsheds** — a site raster stays off while that pin is hidden, including when the slug is also a catalog peak.
 

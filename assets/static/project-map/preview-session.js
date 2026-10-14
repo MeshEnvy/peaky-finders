@@ -2,7 +2,8 @@
 
 /**
  * One id for the three pin requests (links, viewshed, route).
- * Moving or dismissing the pin aborts the browser fetches and tells the server to drop that id.
+ * Each placement gets a millisecond timestamp, so a reloaded page is newer
+ * than the previous one instead of restarting a counter at 1.
  */
 
 let projectSlug = ''
@@ -15,19 +16,24 @@ export function initPreviewSession(slug) {
   projectSlug = slug || ''
 }
 
+function mintPreviewId() {
+  const now = Date.now()
+  id = now > id ? now : id + 1
+  return id
+}
+
 export function beginPreview() {
   controller?.abort()
-  id += 1
+  mintPreviewId()
   controller = new AbortController()
   return currentPreview()
 }
 
 export function cancelPreview() {
+  const cancelId = id
   controller?.abort()
   controller = null
-  id += 1
-  if (!projectSlug) return
-  const cancelId = id
+  if (!projectSlug || !cancelId) return
   void fetch(`/api/p/${encodeURIComponent(projectSlug)}/preview/cancel?preview=${cancelId}`, {
     method: 'POST',
   }).catch(() => {})
