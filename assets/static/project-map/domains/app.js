@@ -211,6 +211,7 @@ export function runApp(ctx = {}) {
       deselectPeak: () => peaksDomain?.deselectPeak(),
       ensureSiteAccess: (site) => site && siteAccessDomain?.ensureSiteAccess(site),
       refreshSiteAccessLayers: () => siteAccessDomain?.refreshLayers(),
+      linkFilterNeedsJsSubset: () => editPreviewDomain?.linkFilterNeedsJsSubset?.() ?? false,
     })
 
     viewshedDomain = createViewshedDomain({
@@ -288,8 +289,6 @@ export function runApp(ctx = {}) {
     store,
     getMap: () => map,
     getMapReady: () => store.ui.mapReady,
-    getSites: () => sites,
-    getPeaks: () => store.peaks.list,
     mapShell,
     entityPanel: document.getElementById('entity-panel'),
     entityPanelToggle: document.getElementById('entity-panel-toggle'),
@@ -301,15 +300,15 @@ export function runApp(ctx = {}) {
     activeTagFilters,
     scheduleSaveMapState: () => mapChrome.scheduleSaveMapState(),
     applySiteLayerFilters: () => siteLayers.applySiteLayerFilters(),
-    applyViewshedVisibilityForSite: (slug) =>
-      viewshedDomain?.applyViewshedVisibilityForSite(slug),
+    applyViewshedVisibilityForMountedLayers: () =>
+      viewshedDomain?.applyViewshedVisibilityForMountedLayers(),
     refreshFilteredLinks: () => {
       linksDomain?.refreshFilteredLinks()
       editPreviewDomain?.refreshFilteredDraftLinks()
     },
     updatePinOverlays: () => viewshedDomain?.updatePinOverlays(),
-    ensureViewshedsForNewlyVisibleSites: () =>
-      viewshedDomain?.ensureViewshedsForNewlyVisibleSites(),
+    ensureViewshedsForNewlyVisibleSites: (opts) =>
+      viewshedDomain?.ensureViewshedsForNewlyVisibleSites(opts),
     ensureAccessForVisibleSites: () =>
       siteAccessDomain?.ensureAccessForVisibleSites(),
     pruneActiveTagFilters: () => siteLayers.pruneActiveTagFilters(),

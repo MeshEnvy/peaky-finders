@@ -115,6 +115,7 @@ export function createRootStore(config, savedMapState) {
     },
     links: {
       payload: null,
+      meshIsFull: false,
     },
     land: {
       sources: [],

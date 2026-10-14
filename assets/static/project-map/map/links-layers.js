@@ -168,6 +168,41 @@ export function applyLinksMeshGeoJson(map, geojson, opts = {}) {
   else map.addLayer(labels)
 }
 
+/**
+ * Hide link features when either endpoint slug is hidden or matches relocate slug.
+ * @param {string[]} hiddenSlugs
+ * @param {string|null|undefined} relocateSlug
+ */
+export function siteLinksEndpointFilter(hiddenSlugs, relocateSlug) {
+  const parts = []
+  const hidden = Array.isArray(hiddenSlugs) ? hiddenSlugs.filter(Boolean) : []
+  if (hidden.length) {
+    parts.push(['!', ['in', ['get', 'a'], ['literal', hidden]]])
+    parts.push(['!', ['in', ['get', 'b'], ['literal', hidden]]])
+  }
+  const relocate = String(relocateSlug || '').trim()
+  if (relocate) {
+    parts.push(['!=', ['get', 'a'], relocate])
+    parts.push(['!=', ['get', 'b'], relocate])
+  }
+  if (!parts.length) return true
+  if (parts.length === 1) return parts[0]
+  return ['all', ...parts]
+}
+
+/** @param {maplibregl.Map} map @param {boolean|object} endpointFilter */
+export function applySiteLinksMeshFilter(map, endpointFilter) {
+  if (!map.getLayer(LINKS_LAYER)) return
+  const lineFilter = endpointFilter === true ? true : endpointFilter
+  map.setFilter(LINKS_LAYER, lineFilter)
+  if (!map.getLayer(LINKS_LABELS_LAYER)) return
+  const labelFilter =
+    lineFilter === true
+      ? ['!=', ['get', 'label'], '']
+      : ['all', lineFilter, ['!=', ['get', 'label'], '']]
+  map.setFilter(LINKS_LABELS_LAYER, labelFilter)
+}
+
 /** @param {maplibregl.Map} map @param {boolean} visible */
 export function setLinksLayerVisibility(map, visible) {
   const vis = visible ? 'visible' : 'none'

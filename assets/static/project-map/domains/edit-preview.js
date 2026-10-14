@@ -134,6 +134,15 @@ export function createEditPreviewDomain(ctx) {
     return lineTouchesLonLat(feature, editSnapshot.lon, editSnapshot.lat)
   }
 
+  function linkFilterNeedsJsSubset() {
+    return (
+      store.ui.relocateMode &&
+      !!store.ui.relocateSlug &&
+      !!editSnapshot &&
+      editCoordsMovedFromSnapshot()
+    )
+  }
+
   function editingSiteSlug() {
     return store.ui.relocateMode && store.ui.relocateSlug ? store.ui.relocateSlug : null
   }
@@ -409,6 +418,7 @@ export function createEditPreviewDomain(ctx) {
     coordsMatchEditSnapshot,
     editCoordsMovedFromSnapshot,
     linkFeatureTouchesSnapshotCoords,
+    linkFilterNeedsJsSubset,
     removeDraftViewshed,
     removeDraftLinksLayer,
     addDraftLinksLayer,

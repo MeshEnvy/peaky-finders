@@ -1,14 +1,16 @@
 // @ts-check
 
 import * as apiUrls from '../api/urls.js'
-import { LINKS_LAYER, SITES_CIRCLE } from '../constants.js'
+import { LINKS_LAYER, LINKS_SOURCE, SITES_CIRCLE } from '../constants.js'
 import { compareHuman } from '../geo.js'
 import {
   applyLinksMeshGeoJson,
+  applySiteLinksMeshFilter,
   clearLinksMesh,
   linksGeoJsonWithLabels,
   linksLinePaint,
   setLinksLayerVisibility,
+  siteLinksEndpointFilter,
 } from '../map/links-layers.js'
 import { bumpWarmPriorities as bumpWarmPrioritiesApi } from '../stores/links.js'
 
@@ -40,6 +42,7 @@ const WARM_VIEWPORT_SLUG_CAP = 48
  * @param {() => void} [opts.deselectPeak]
  * @param {(site: object|undefined) => void} [opts.ensureSiteAccess]
  * @param {() => void} [opts.refreshSiteAccessLayers]
+ * @param {() => boolean} [opts.linkFilterNeedsJsSubset]
  */
 export function createLinksDomain(opts) {
   const {
@@ -64,6 +67,7 @@ export function createLinksDomain(opts) {
     isSiteOutboundLinksReady,
     renderSelectedPanel,
     getSiteBySlug,
+    linkFilterNeedsJsSubset,
   } = opts
 
   const singleSiteLinksInflight = new Set()
@@ -206,10 +210,59 @@ export function createLinksDomain(opts) {
     return feats[0] || null
   }
 
-  function addSiteLinksLayer(geojson) {
+  function hiddenLinkEndpointSlugs() {
+    const hidden = []
+    for (const site of getSites()) {
+      if (isSiteMapHidden(site.slug)) hidden.push(site.slug)
+    }
+    return hidden
+  }
+
+  function relocateLinkFilterSlug() {
+    return store.ui.relocateMode && store.ui.relocateSlug ? store.ui.relocateSlug : null
+  }
+
+  function linksEndpointVisibilityFilter() {
+    return siteLinksEndpointFilter(hiddenLinkEndpointSlugs(), relocateLinkFilterSlug())
+  }
+
+  function installFullLinksMesh(geojson) {
+    const labeled = linksGeoJsonWithLabels(geojson)
+    const features = labeled?.features
+    if (!features || !features.length) {
+      clearLinksMesh(map)
+      store.links.meshIsFull = false
+      return false
+    }
+    applyLinksMeshGeoJson(map, labeled, {
+      visible: getShowSiteLinks(),
+      beforeId: SITES_CIRCLE,
+    })
+    store.links.meshIsFull = true
+    return true
+  }
+
+  function syncLinksMeshAfterPayloadChange() {
+    const geojson = store.links.payload?.geojson
+    if (!geojson) return
+    if (linkFilterNeedsJsSubset?.()) {
+      addSiteLinksLayerJsSubset(geojson)
+      return
+    }
+    if (!installFullLinksMesh(geojson)) {
+      raiseSiteLayers()
+      return
+    }
+    applySiteLinksMeshFilter(map, linksEndpointVisibilityFilter())
+    updateSelectedLinkHighlight()
+    raiseSiteLayers()
+  }
+
+  function addSiteLinksLayerJsSubset(geojson) {
     const filtered = filterSiteLinksGeoJson(geojson)
     if (!filtered || !filtered.features || !filtered.features.length) {
       clearLinksMesh(map)
+      store.links.meshIsFull = false
       raiseSiteLayers()
       return
     }
@@ -218,14 +271,27 @@ export function createLinksDomain(opts) {
       visible: getShowSiteLinks(),
       beforeId: SITES_CIRCLE,
     })
+    store.links.meshIsFull = false
     updateSelectedLinkHighlight()
     raiseSiteLayers()
   }
 
   function refreshFilteredLinks() {
-    if (store.links.payload && store.links.payload.geojson) {
-      addSiteLinksLayer(store.links.payload.geojson)
+    if (!store.links.payload?.geojson) return
+    const geojson = store.links.payload.geojson
+    if (linkFilterNeedsJsSubset?.()) {
+      addSiteLinksLayerJsSubset(geojson)
+      return
     }
+    if (!store.links.meshIsFull || !map.getSource(LINKS_SOURCE)) {
+      if (!installFullLinksMesh(geojson)) {
+        raiseSiteLayers()
+        return
+      }
+    }
+    applySiteLinksMeshFilter(map, linksEndpointVisibilityFilter())
+    updateSelectedLinkHighlight()
+    raiseSiteLayers()
   }
 
   function mergeSingleSiteLinks(slug, payload) {
@@ -259,7 +325,7 @@ export function createLinksDomain(opts) {
       links,
       geojson: { type: 'FeatureCollection', features: mergedFeatures },
     }
-    addSiteLinksLayer(store.links.payload.geojson)
+    syncLinksMeshAfterPayloadChange()
     if (payload.outbound_ready !== false) {
       markSiteOutboundLinksReady(slug)
     }
@@ -295,7 +361,7 @@ export function createLinksDomain(opts) {
       return
     }
     store.links.payload = payload
-    if (payload.geojson) addSiteLinksLayer(payload.geojson)
+    if (payload.geojson) syncLinksMeshAfterPayloadChange()
     if (payload.status === 'ready' && !payload.partial) {
       for (const site of getSites()) {
         markSiteOutboundLinksReady(site.slug)
@@ -386,7 +452,7 @@ export function createLinksDomain(opts) {
         ? store.links.payload.links.filter((r) => !touches(r || {}))
         : store.links.payload.links,
     }
-    addSiteLinksLayer(store.links.payload.geojson)
+    syncLinksMeshAfterPayloadChange()
   }
 
   function linkedPeersForSite(slug) {
@@ -463,7 +529,6 @@ export function createLinksDomain(opts) {
     mergeSeededLinks,
     loadSiteLinks,
     loadSingleSiteLinks,
-    addSiteLinksLayer,
     refreshFilteredLinks,
     setSiteLinksVisible,
     purgeSiteLinksForSlug,

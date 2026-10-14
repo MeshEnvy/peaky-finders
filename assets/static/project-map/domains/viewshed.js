@@ -37,6 +37,7 @@ import {
   resetSiteProgress as resetSiteProgressInStore,
   isViewshedVisible as isViewshedVisibleInStore,
   isViewshedHostVisible as isViewshedHostVisibleInStore,
+  siteRowBySlug,
   setViewshedVisible as setViewshedVisibleInStore,
   clearViewshedLoadingState as clearViewshedLoadingStateInStore,
   clearPendingEpoch as clearPendingEpochInStore,
@@ -163,10 +164,16 @@ export function createViewshedDomain(opts) {
   }
 
   function getSiteBySlug(slug) {
+    if (store) return siteRowBySlug(store, slug) || null
     return getSites().find((site) => site.slug === slug) || null
   }
 
   function isCatalogPeakSlug(slug) {
+    const value = String(slug || '')
+    if (store) {
+      if (siteRowBySlug(store, value)) return false
+      return (store.peaks?.list || []).some((peak) => peak.slug === value)
+    }
     return !!(store?.peaks?.list || []).find((peak) => peak.slug === slug)
   }
 
@@ -267,14 +274,17 @@ export function createViewshedDomain(opts) {
 
   function viewshedOverlaySlugs() {
     const slugs = getSites().map((site) => site.slug)
+    const vis = store?.viewshed?.visible
     for (const peak of store?.peaks?.list || []) {
+      const slug = peak.slug
+      const explicitOn = vis?.has(slug) && vis.get(slug) !== false
       if (
-        isViewshedVisible(peak.slug) ||
-        viewshedPendingEpoch.has(peak.slug) ||
-        viewshedLoading.has(peak.slug) ||
-        (getMapReady() && map.getLayer(viewshedLayerId(peak.slug)))
+        explicitOn ||
+        viewshedPendingEpoch.has(slug) ||
+        viewshedLoading.has(slug) ||
+        (getMapReady() && map.getLayer(viewshedLayerId(slug)))
       ) {
-        slugs.push(peak.slug)
+        slugs.push(slug)
       }
     }
     slugs.push(
@@ -320,6 +330,18 @@ export function createViewshedDomain(opts) {
 
   function applyViewshedVisibilityForSite(slug) {
     setViewshedLayerVisibility(map, slug, viewshedLayerShouldShow(slug))
+  }
+
+  function applyViewshedVisibilityForMountedLayers() {
+    if (!getMapReady()) return
+    const style = map.getStyle()
+    if (!style?.layers) return
+    for (const layer of style.layers) {
+      const id = layer.id
+      if (!id.startsWith('viewshed-') || !id.endsWith('-raster')) continue
+      const slug = id.slice('viewshed-'.length, -'-raster'.length)
+      applyViewshedVisibilityForSite(slug)
+    }
   }
 
   function setViewshedVisible(slug, visible) {
@@ -690,7 +712,8 @@ export function createViewshedDomain(opts) {
     void tryLoadViewshedFromCache(site.slug)
   }
 
-  function ensureViewshedsForNewlyVisibleSites() {
+  function ensureViewshedsForNewlyVisibleSites(opts = {}) {
+    const sitesOnly = opts.sitesOnly === true
     let queued = false
     for (const site of getSites()) {
       if (!viewshedLayerShouldShow(site.slug)) continue
@@ -699,16 +722,18 @@ export function createViewshedDomain(opts) {
       probeViewshedCacheForSite(site)
       queued = true
     }
-    for (const peak of store?.peaks?.list || []) {
-      if (getSiteBySlug(peak.slug)) continue
-      if (!viewshedLayerShouldShow(peak.slug)) continue
-      if (map.getLayer(viewshedLayerId(peak.slug))) continue
-      if (sitePinSpinning(peak.slug) || viewshedPendingEpoch.has(peak.slug)) continue
-      const lat = Number(peak.lat)
-      const lon = Number(peak.lon)
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
-      scheduleCoordViewshedLoad(peak.slug, lat, lon)
-      queued = true
+    if (!sitesOnly) {
+      for (const peak of store?.peaks?.list || []) {
+        if (getSiteBySlug(peak.slug)) continue
+        if (!viewshedLayerShouldShow(peak.slug)) continue
+        if (map.getLayer(viewshedLayerId(peak.slug))) continue
+        if (sitePinSpinning(peak.slug) || viewshedPendingEpoch.has(peak.slug)) continue
+        const lat = Number(peak.lat)
+        const lon = Number(peak.lon)
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
+        scheduleCoordViewshedLoad(peak.slug, lat, lon)
+        queued = true
+      }
     }
     if (queued) {
       updatePinOverlays()
@@ -897,6 +922,7 @@ export function createViewshedDomain(opts) {
     raiseViewshedLayers,
     applyViewshedOpacityToAllLayers,
     applyViewshedVisibilityForSite,
+    applyViewshedVisibilityForMountedLayers,
     setViewshedVisible,
     removeViewshedLayer,
     addViewshedLayer,

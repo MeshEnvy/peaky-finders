@@ -2,6 +2,40 @@
 
 import { isPeakMapVisible } from './peaks.js'
 
+/** @type {number} */
+let siteSlugIndexRevision = -1
+/** @type {Map<string, object>} */
+let siteSlugIndex = new Map()
+/** @type {object[]|null} */
+let peakSlugIndexList = null
+/** @type {Set<string>} */
+let peakSlugSet = new Set()
+
+/** @param {object} store */
+function ensureSiteSlugIndex(store) {
+  const rev = store.sites?.revision ?? 0
+  if (rev === siteSlugIndexRevision) return
+  siteSlugIndex = new Map()
+  for (const site of store.sites?.list || []) {
+    if (site?.slug) siteSlugIndex.set(String(site.slug), site)
+  }
+  siteSlugIndexRevision = rev
+}
+
+/** @param {object} store */
+function ensurePeakSlugSet(store) {
+  const list = store.peaks?.list
+  if (list === peakSlugIndexList) return
+  peakSlugIndexList = list || []
+  peakSlugSet = new Set(peakSlugIndexList.map((peak) => String(peak.slug)))
+}
+
+/** @param {object} store @param {string} slug */
+export function siteRowBySlug(store, slug) {
+  ensureSiteSlugIndex(store)
+  return siteSlugIndex.get(String(slug || ''))
+}
+
 /**
  * Viewshed domain store helpers. Runtime state lives on root store.viewshed.
  * SSE commits should update store.viewshed then call map/viewshed-layers adapters.
@@ -94,10 +128,11 @@ export function setViewshedVisible(store, slug, visible) {
 
 /** @param {object} store @param {string} slug */
 export function isViewshedVisible(store, slug) {
-  if (store.viewshed.visible.has(slug)) return store.viewshed.visible.get(slug) !== false
-  const isSite = (store.sites?.list || []).some((site) => site.slug === slug)
-  if (isSite) return true
-  if ((store.peaks?.list || []).some((peak) => peak.slug === slug)) return false
+  const value = String(slug || '')
+  if (store.viewshed.visible.has(value)) return store.viewshed.visible.get(value) !== false
+  if (siteRowBySlug(store, value)) return true
+  ensurePeakSlugSet(store)
+  if (peakSlugSet.has(value)) return false
   return true
 }
 
@@ -119,8 +154,8 @@ export function isViewshedHostVisible(store, slug, opts) {
   if (getSiteBySlug?.(slug)) {
     return !isSiteMapHidden(slug)
   }
-  const peak = store.peaks?.list?.find((row) => row.slug === slug)
-  if (peak) {
+  ensurePeakSlugSet(store)
+  if (peakSlugSet.has(String(slug || ''))) {
     return isPeakMapVisible(store, slug)
   }
   return false

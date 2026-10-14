@@ -11,8 +11,6 @@ export function createEntityChromeDomain(ctx) {
     store,
     getMap,
     getMapReady,
-    getSites,
-    getPeaks,
     mapShell,
     entityPanel,
     entityPanelToggle,
@@ -24,7 +22,7 @@ export function createEntityChromeDomain(ctx) {
     activeTagFilters,
     scheduleSaveMapState,
     applySiteLayerFilters,
-    applyViewshedVisibilityForSite,
+    applyViewshedVisibilityForMountedLayers,
     refreshFilteredLinks,
     updatePinOverlays,
     renderEntityPanel,
@@ -83,14 +81,9 @@ export function createEntityChromeDomain(ctx) {
 
   function applyEntityVisibility() {
     applySiteLayerFilters?.()
-    for (const site of getSites()) {
-      applyViewshedVisibilityForSite?.(site.slug)
-    }
-    for (const peak of getPeaks?.() || []) {
-      applyViewshedVisibilityForSite?.(peak.slug)
-    }
+    applyViewshedVisibilityForMountedLayers?.()
     refreshFilteredLinks?.()
-    ensureViewshedsForNewlyVisibleSites?.()
+    ensureViewshedsForNewlyVisibleSites?.({ sitesOnly: true })
     renderEntityPanel?.()
   }
 
@@ -98,7 +91,6 @@ export function createEntityChromeDomain(ctx) {
     clearManualSiteVisibility(store)
     syncTagFilterVisibility(store)
     applyEntityVisibility()
-    ensureViewshedsForNewlyVisibleSites?.()
     ensureAccessForVisibleSites?.()
     scheduleSaveMapState?.()
   }
