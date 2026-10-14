@@ -7,6 +7,8 @@ import {
   applyDraftLinksLayer,
   removeDraftLinksLayer as clearDraftLinksOnMap,
 } from '../map/links-layers.js'
+import { clearPinStatusJobs, notePinStatusJob } from '../stores/pin-status.js'
+import { resetSiteProgress } from '../stores/viewshed.js'
 
 /**
  * Draft viewshed + link prefetch for create/edit, plus the edit snapshot
@@ -177,6 +179,7 @@ export function createEditPreviewDomain(ctx) {
     draftViewshedLoading = false
     draftPlacementLat = null
     draftPlacementLon = null
+    clearPinStatusJobs(store, DRAFT_VIEWSHED_SLUG)
     updatePinOverlays?.()
   }
 
@@ -184,6 +187,7 @@ export function createEditPreviewDomain(ctx) {
     viewshedPendingEpoch.delete(DRAFT_VIEWSHED_SLUG)
     viewshedLoading.delete(DRAFT_VIEWSHED_SLUG)
     draftViewshedLoading = false
+    notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'viewshed', 'warm…', 1)
     updatePinOverlays?.()
   }
 
@@ -214,10 +218,12 @@ export function createEditPreviewDomain(ctx) {
       draftPlacementLat = lat
       draftPlacementLon = lon
     }
+    resetSiteProgress(store, DRAFT_VIEWSHED_SLUG)
     draftViewshedLoading = true
     viewshedLoading.add(DRAFT_VIEWSHED_SLUG)
     const epoch = vs()?.bumpViewshedLoadEpoch?.()
     viewshedPendingEpoch.set(DRAFT_VIEWSHED_SLUG, epoch)
+    notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'viewshed', 'warm…', 0)
     updatePinOverlays?.()
     const cached = await tryLoadDraftViewshedFromCache(lat, lon)
     if (viewshedPendingEpoch.get(DRAFT_VIEWSHED_SLUG) !== epoch) return

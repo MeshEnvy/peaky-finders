@@ -12,7 +12,7 @@ import {
 } from '../constants.js'
 import { viewshedLayerId } from '../constants.js'
 import { coordsUsableForMarker } from '../geo.js'
-import { osmRoadsProgressLabel } from '../stores/access.js'
+import { pinStatusDisplay, notePinStatusJob } from '../stores/pin-status.js'
 import { buildViewshedSimQueryParams } from '../stores/simulation.js'
 import {
   raiseViewshedLayersBelowStack,
@@ -61,6 +61,7 @@ const OUTBOUND_LINKS_PARALLEL = 3
  * @param {(slug: string) => boolean} opts.isSiteMapHidden
  * @param {(slug: string) => boolean} opts.isEphemeralViewshedSlug
  * @param {(slug: string) => void} opts.loadSingleSiteLinks
+ * @param {(slug: string) => boolean} [opts.isOutboundLinksCached]
  * @param {(slugs: string[], priority: number) => void} opts.bumpWarmPriorities
  * @param {() => void} opts.syncWarmPriorities
  * @param {number} opts.warmPriorityInteractive
@@ -90,6 +91,7 @@ export function createViewshedDomain(opts) {
     isSiteMapHidden,
     isEphemeralViewshedSlug,
     loadSingleSiteLinks,
+    isOutboundLinksCached,
     bumpWarmPriorities,
     syncWarmPriorities,
     warmPriorityInteractive,
@@ -419,6 +421,17 @@ export function createViewshedDomain(opts) {
     return viewshedLoadEpoch
   }
 
+  function noteDraftViewshedRunning(data) {
+    if (!store) return
+    const phase = data.phase || ''
+    let label = 'warm…'
+    if (phase === 'terrain') label = 'terrain…'
+    else if (phase === 'raster') label = 'raster…'
+    const raw = Number(data.fraction) || 0
+    const progressFraction = raw > 0 ? Math.min(0.88, 0.06 + 0.82 * raw) : 0.06
+    notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'viewshed', label, progressFraction)
+  }
+
   function finalizeViewshedReady(vs) {
     if (vs?.slug) {
       setSitePinProgress(vs.slug, {
@@ -426,10 +439,25 @@ export function createViewshedDomain(opts) {
         fraction: 1,
       })
     }
+    if (vs?.slug === DRAFT_VIEWSHED_SLUG && store) {
+      notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'viewshed', 'warm…', 1)
+    }
     markSiteViewshedReady(vs.slug)
     if (vs.slug === DRAFT_VIEWSHED_SLUG && onDraftViewshedReady) {
       onDraftViewshedReady()
     }
+  }
+
+  function ensureOutboundLinksForSite(slug) {
+    if (skipOutboundLinksForViewshedSlug(slug)) {
+      markSiteOutboundLinksReady(slug)
+      return
+    }
+    if (isOutboundLinksCached?.(slug)) {
+      markSiteOutboundLinksReady(slug)
+      return
+    }
+    void loadSingleSiteLinks(slug)
   }
 
   function handleViewshedReady(vs, epoch) {
@@ -441,11 +469,7 @@ export function createViewshedDomain(opts) {
     if (epoch != null && pendingEpoch != null && pendingEpoch !== epoch) return
     addViewshedLayer(vs)
     finalizeViewshedReady(vs)
-    if (!skipOutboundLinksForViewshedSlug(vs.slug)) {
-      void loadSingleSiteLinks(vs.slug)
-    } else {
-      markSiteOutboundLinksReady(vs.slug)
-    }
+    ensureOutboundLinksForSite(vs.slug)
   }
 
   function acceptViewshedOverlay(vs, opts = {}) {
@@ -453,11 +477,7 @@ export function createViewshedDomain(opts) {
     if (!isViewshedHostVisible(vs.slug) || !isViewshedVisible(vs.slug)) return
     addViewshedLayer(vs, opts)
     finalizeViewshedReady(vs)
-    if (!skipOutboundLinksForViewshedSlug(vs.slug)) {
-      void loadSingleSiteLinks(vs.slug)
-    } else {
-      markSiteOutboundLinksReady(vs.slug)
-    }
+    ensureOutboundLinksForSite(vs.slug)
   }
 
   function coordsMatchDraftEvent(coords, data) {
@@ -514,6 +534,7 @@ export function createViewshedDomain(opts) {
       const apply = (slug) => {
         if (!viewshedLoading.has(slug) && !viewshedPendingEpoch.has(slug)) return
         setSitePinProgress(slug, partial)
+        if (slug === DRAFT_VIEWSHED_SLUG) noteDraftViewshedRunning(data)
       }
       if (data.slug === DRAFT_VIEWSHED_SLUG && data.lat != null && data.lon != null) {
         const linkSolverHopCoords = getLinkSolverHopViewshedCoords?.()
@@ -565,6 +586,9 @@ export function createViewshedDomain(opts) {
       return
     }
     if (data.status === 'error') {
+      if (data.slug === DRAFT_VIEWSHED_SLUG && store) {
+        notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'viewshed', 'warm…', 1)
+      }
       clearViewshedLoadingState(data.slug)
     }
   }
@@ -578,28 +602,25 @@ export function createViewshedDomain(opts) {
         progressFraction: sitePinProgressFraction(slug),
       })
       for (const site of getSites()) {
+        if (
+          siteViewshedReady.has(site.slug) &&
+          !siteOutboundLinksReady.has(site.slug) &&
+          isOutboundLinksCached?.(site.slug)
+        ) {
+          markSiteOutboundLinksReady(site.slug)
+        }
+      }
+      for (const site of getSites()) {
         if (!sitePinSpinning(site.slug)) continue
         if (!coordsUsableForMarker(site.lon, site.lat)) continue
         active.add(site.slug)
         renderPinLoadOverlay(site.slug, site.lon, site.lat, progressFor(site.slug))
       }
-      const osm = store?.access?.osm
-      const osmBusy = osm?.status === 'parsing'
-      const accessBusy = !!store?.access?.draftLoading || osmBusy
-      if ((viewshedLoadingHasDraft?.() || accessBusy) && getDraftPlacement) {
+      if (getDraftPlacement && store) {
         const draft = getDraftPlacement()
-        if (draft) {
+        const progress = pinStatusDisplay(store, DRAFT_VIEWSHED_SLUG)
+        if (draft && progress) {
           active.add(DRAFT_VIEWSHED_SLUG)
-          const vsBusy =
-            viewshedLoadingHasDraft?.() && !siteViewshedReady.has(DRAFT_VIEWSHED_SLUG)
-          const progress = vsBusy
-            ? progressFor(DRAFT_VIEWSHED_SLUG)
-            : osmBusy
-              ? {
-                  progressLabel: osmRoadsProgressLabel(osm) || 'roads…',
-                  progressFraction: Number(osm.fraction) > 0 ? Number(osm.fraction) : 0.12,
-                }
-              : { progressLabel: 'access…', progressFraction: 0.9 }
           renderPinLoadOverlay(DRAFT_VIEWSHED_SLUG, draft.lon, draft.lat, progress)
         }
       }

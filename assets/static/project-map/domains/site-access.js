@@ -8,9 +8,11 @@ import { ensureSiteAccessLayers, setSiteAccessLayerData } from '../map/site-acce
 import {
   activeAccessPreviewSlug,
   isAccessVisible as isAccessVisibleInStore,
+  osmRoadsProgressLabel,
   setAccessVisible as setAccessVisibleInStore,
   siteAccessShouldShow,
 } from '../stores/access.js'
+import { clearPinStatusJobs, notePinStatusJob } from '../stores/pin-status.js'
 
 /**
  * Site jeep/hike access overlay: independent of viewshed visibility.
@@ -152,12 +154,26 @@ export function createSiteAccessDomain(opts) {
     }
     row = rowWithAccessChoice(row, choiceId)
     store.access.bySlug[slug] = row
+    if (slug === DRAFT_VIEWSHED_SLUG && accessHasRouteProfiles(row)) {
+      notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'access', 'access…', 1)
+    }
     if (store.ui.selectedSlug === slug) {
       store.access.selected = store.access.bySlug[slug]
     }
     if (siteAccessShowing(slug)) {
       refreshLayers()
     }
+  }
+
+  function draftPinPlacementActive() {
+    return (
+      (store.ui?.createMode &&
+        Number.isFinite(store.ui.createLat) &&
+        Number.isFinite(store.ui.createLon)) ||
+      (store.ui?.relocateMode &&
+        Number.isFinite(store.ui.relocateLat) &&
+        Number.isFinite(store.ui.relocateLon))
+    )
   }
 
   function handleAccessEvent(data) {
@@ -175,12 +191,22 @@ export function createSiteAccessDomain(opts) {
       total: Number(data.total) || 4,
       fraction: Number(data.fraction) || 0,
     }
-    opts.updatePinOverlays?.()
     const phase = String(data.phase || '').toLowerCase()
     const ready =
       phase === 'ready' ||
       (data.status === 'ready' && Number(data.fraction) >= 1) ||
       Number(data.fraction) >= 1
+    if (draftPinPlacementActive()) {
+      const osm = store.access.osm
+      if (ready) {
+        notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'osm', 'roads…', 1)
+      } else if (osm.status === 'parsing') {
+        const label = osmRoadsProgressLabel(osm) || 'roads…'
+        const frac = Number(osm.fraction) > 0 ? Number(osm.fraction) : 0.12
+        notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'osm', label, frac)
+      }
+    }
+    opts.updatePinOverlays?.()
     if (ready && store.access.pendingRewarmAfterRoads) {
       store.access.pendingRewarmAfterRoads = false
       void rewarmAfterRoadsBookChange()
@@ -252,6 +278,7 @@ export function createSiteAccessDomain(opts) {
       const lat = store.ui.createLat
       const lon = store.ui.createLon
       store.access.draftLoading = true
+      notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'access', 'access…', 0)
       opts.updatePinOverlays?.()
       jobs.push(
         ensurePlaceAccessProfiles(
@@ -505,6 +532,7 @@ export function createSiteAccessDomain(opts) {
     placeInflight.delete(DRAFT_VIEWSHED_SLUG)
     store.access.draftLoading = false
     store.access.draftAccessChoice = null
+    clearPinStatusJobs(store, DRAFT_VIEWSHED_SLUG)
     refreshLayers()
   }
 
@@ -554,6 +582,7 @@ export function createSiteAccessDomain(opts) {
     placeInflight.delete(DRAFT_VIEWSHED_SLUG)
     store.access.draftAccessChoice = null
     store.access.draftLoading = true
+    notePinStatusJob(store, DRAFT_VIEWSHED_SLUG, 'access', 'access…', 0)
     opts.updatePinOverlays?.()
     void ensurePlaceAccessProfiles(
       DRAFT_VIEWSHED_SLUG,

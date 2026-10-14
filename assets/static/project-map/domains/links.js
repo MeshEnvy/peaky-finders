@@ -242,20 +242,52 @@ export function createLinksDomain(opts) {
     return true
   }
 
+  /** Outbound link warm can be skipped when the mesh already holds this site's slice. */
+  function siteOutboundLinksCached(slug) {
+    if (!slug) return false
+    const payload = store.links.payload
+    if (!payload) return false
+    if (payload.status === 'ready' && store.links.meshIsFull) {
+      return true
+    }
+    const features = payload.geojson?.features
+    if (!Array.isArray(features)) return false
+    return features.some((f) => {
+      const p = f.properties || {}
+      return p.a === slug || p.b === slug
+    })
+  }
+
+  function reconcileOutboundLinksReady(slug) {
+    if (!slug || isSiteOutboundLinksReady(slug)) return
+    if (siteOutboundLinksCached(slug)) {
+      markSiteOutboundLinksReady(slug)
+    }
+  }
+
+  function reconcileAllOutboundLinksReady() {
+    for (const site of getSites()) {
+      reconcileOutboundLinksReady(site.slug)
+    }
+  }
+
   function syncLinksMeshAfterPayloadChange() {
     const geojson = store.links.payload?.geojson
     if (!geojson) return
     if (linkFilterNeedsJsSubset?.()) {
       addSiteLinksLayerJsSubset(geojson)
+      reconcileAllOutboundLinksReady()
       return
     }
     if (!installFullLinksMesh(geojson)) {
       raiseSiteLayers()
+      reconcileAllOutboundLinksReady()
       return
     }
     applySiteLinksMeshFilter(map, linksEndpointVisibilityFilter())
     updateSelectedLinkHighlight()
     raiseSiteLayers()
+    reconcileAllOutboundLinksReady()
   }
 
   function addSiteLinksLayerJsSubset(geojson) {
@@ -541,6 +573,8 @@ export function createLinksDomain(opts) {
     selectedSiteLinks,
     findSiteLinkFeature,
     ensureSiteLinksForSlug,
+    siteOutboundLinksCached,
+    reconcileOutboundLinksReady,
     selectLink,
     deselectLink,
     clearLinkSelection,

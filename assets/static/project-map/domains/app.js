@@ -227,6 +227,7 @@ export function runApp(ctx = {}) {
       isSiteMapHidden: (slug) => siteLayers.isSiteMapHidden(slug),
       isEphemeralViewshedSlug: (slug) => siteLayers.isEphemeralViewshedSlug(slug),
       loadSingleSiteLinks: (slug) => linksDomain.loadSingleSiteLinks(slug),
+      isOutboundLinksCached: (slug) => linksDomain.siteOutboundLinksCached(slug),
       bumpWarmPriorities: (slugs, pri) => linksDomain.bumpWarmPriorities(slugs, pri),
       syncWarmPriorities: () => linksDomain.syncWarmPriorities(),
       warmPriorityInteractive: linksDomain.WARM_PRIORITY_INTERACTIVE,
