@@ -6,9 +6,9 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result};
 use peaky_preset::{
-    classify_link_kind, project::ProjectLayout, read_pair_cache, write_pair_cache,
-    prune_link_cache, BoardViewshedResolver, LinkCacheKind, PairLinkCacheRecord, Preset,
-    SiteEntry, LINKS_MODEL,
+    classify_link_kind, manual_link_pairs_for_project, project::ProjectLayout, read_pair_cache,
+    write_pair_cache, prune_link_cache, BoardViewshedResolver, LinkCacheKind, PairLinkCacheRecord,
+    Preset, SiteEntry, LINKS_MODEL,
 };
 use serde_json::{json, Value};
 use splatter::{propagate::LinkLegs, Session};
@@ -38,16 +38,9 @@ pub fn canonical_site_pair(slug_a: &str, slug_b: &str) -> LinkPair {
     }
 }
 
-pub fn manual_link_pairs(preset: &Preset) -> HashSet<LinkPair> {
-    preset
-        .links
-        .iter()
-        .filter_map(|link| {
-            link.slug_pair()
-                .ok()
-                .map(|[a, b]| canonical_site_pair(&a, &b))
-        })
-        .collect()
+fn manual_link_pairs(preset_path: &Path) -> Result<HashSet<LinkPair>> {
+    let layout = project_layout(preset_path)?;
+    manual_link_pairs_for_project(&layout)
 }
 
 pub fn links_input_fingerprint(preset_path: &Path, preset: &Preset) -> Result<String> {
@@ -82,14 +75,10 @@ pub fn links_input_fingerprint(preset_path: &Path, preset: &Preset) -> Result<St
             .cmp(b.get(0).and_then(|v| v.as_str()).unwrap_or(""))
     });
 
-    let mut manual: Vec<Value> = preset
-        .links
+    let manual_pairs = manual_link_pairs(preset_path)?;
+    let mut manual: Vec<Value> = manual_pairs
         .iter()
-        .filter_map(|link| link.slug_pair().ok())
-        .map(|[a, b]| {
-            let (a, b) = canonical_site_pair(&a, &b);
-            json!([a, b])
-        })
+        .map(|(a, b)| json!([a, b]))
         .collect();
     manual.sort_by(|a, b| {
         let aa = a.get(0).and_then(|v| v.as_str()).unwrap_or("");
@@ -373,6 +362,8 @@ fn cache_record_from_legs(
         kind,
         distance_km,
         at: utc_date_iso(),
+        manual: false,
+        field_at: None,
     })
 }
 
@@ -477,8 +468,12 @@ fn line_feature(
     })
 }
 
-fn manual_only_payload(preset: &Preset, boards: &BoardViewshedResolver) -> Value {
-    let manual_pairs = manual_link_pairs(preset);
+fn manual_only_payload(
+    preset_path: &Path,
+    preset: &Preset,
+    boards: &BoardViewshedResolver,
+) -> Result<Value> {
+    let manual_pairs = manual_link_pairs(preset_path)?;
     let mut records = Vec::new();
     let mut features = Vec::new();
     for (a, b) in manual_pairs {
@@ -504,11 +499,11 @@ fn manual_only_payload(preset: &Preset, boards: &BoardViewshedResolver) -> Value
         let bb = b.get("a").and_then(|v| v.as_str()).unwrap_or("");
         aa.cmp(bb)
     });
-    json!({
+    Ok(json!({
         "status": "pending",
         "links": records,
         "geojson": { "type": "FeatureCollection", "features": features },
-    })
+    }))
 }
 
 fn ensure_dem_for_site_links(session: &Session, preset: &Preset) -> Result<()> {
@@ -533,7 +528,7 @@ pub fn compute_project_site_links_p2p(
 ) -> Result<Value> {
     let boards = load_board_viewshed(preset_path);
     ensure_dem_for_site_links(session.as_ref(), preset)?;
-    let manual_pairs = manual_link_pairs(preset);
+    let manual_pairs = manual_link_pairs(preset_path)?;
     let slug_list: Vec<&String> = preset.sites.keys().collect();
 
     let mut rf_pair_slugs: Vec<LinkPair> = Vec::new();
@@ -690,7 +685,7 @@ pub fn compute_single_site_links_p2p(
             max_hop_range_m(preset),
         )
         .context("ensure dem tiles for single-site links")?;
-    let manual_pairs = manual_link_pairs(preset);
+    let manual_pairs = manual_link_pairs(preset_path)?;
 
     let mut rf_slugs = Vec::new();
     let mut records = Vec::new();
@@ -772,7 +767,7 @@ pub fn load_project_site_links(
     if let Some(cached) = cached_project_site_links(preset_path, preset)? {
         return Ok(cached);
     }
-    Ok(manual_only_payload(preset, &load_board_viewshed(preset_path)))
+    manual_only_payload(preset_path, preset, &load_board_viewshed(preset_path))
 }
 
 pub fn warm_project_site_links(
@@ -808,7 +803,7 @@ pub fn load_coords_site_links(
     }
 
     let exclude = exclude_site_slug.unwrap_or("").trim();
-    let manual_pairs = manual_link_pairs(preset);
+    let manual_pairs = manual_link_pairs(preset_path).unwrap_or_default();
     let boards = load_board_viewshed(preset_path);
     let draft_h = crate::rf::default_candidate_tx_height(preset, lat, lon);
     let mut candidates: Vec<(String, f64, f64, f64, f64)> = Vec::new();
@@ -923,8 +918,29 @@ pub fn site_pair_link_detail(
     let in_hop_range = pair_within_hop_range_sites(preset, site_a, site_b, boards.as_ref());
     let boards_ref = boards.as_ref().expect("boards loaded");
     let layout = project_layout(preset_path).map_err(|e| LinksError(e.to_string()))?;
+    let cached_meta = read_pair_cache(&layout, &a, &b).map_err(|e| LinksError(e.to_string()))?;
+    let is_manual = cached_meta.as_ref().is_some_and(|c| c.manual);
 
-    let (forward_margin_db, reverse_margin_db, kind_str, linked) = if in_hop_range {
+    if !in_hop_range && is_manual {
+        let kind = cached_meta
+            .as_ref()
+            .map(|c| c.kind.as_str())
+            .unwrap_or("none");
+        return Ok(json!({
+            "a": a,
+            "b": b,
+            "linked": true,
+            "manual": true,
+            "kind": kind,
+            "forward_margin_db": cached_meta.as_ref().and_then(|c| c.forward_margin_db),
+            "reverse_margin_db": cached_meta.as_ref().and_then(|c| c.reverse_margin_db),
+            "margin_db": Value::Null,
+            "distance_km": cached_meta.as_ref().map(|c| c.distance_km).unwrap_or(distance_km),
+            "hop_range_km": hop_range_km,
+        }));
+    }
+
+    let (forward_margin_db, reverse_margin_db, kind_str, linked, manual) = if in_hop_range {
         let fp = pair_link_fingerprint(preset, boards_ref, &a, &b)
             .map_err(|e| LinksError(e.to_string()))?;
         if let Some(cached) = read_pair_cache(&layout, &a, &b)
@@ -935,7 +951,8 @@ pub fn site_pair_link_detail(
                 return Ok(json!({
                     "a": a,
                     "b": b,
-                    "linked": cached.kind.mesh_linked(false),
+                    "linked": cached.kind.mesh_linked(cached.manual),
+                    "manual": cached.manual,
                     "kind": kind,
                     "forward_margin_db": cached.forward_margin_db.map(|m| (m * 10.0).round() / 10.0),
                     "reverse_margin_db": cached.reverse_margin_db.map(|m| (m * 10.0).round() / 10.0),
@@ -960,14 +977,19 @@ pub fn site_pair_link_detail(
             .map_err(|e| LinksError(e.to_string()))?;
         write_pair_cache(&layout, &record).map_err(|e| LinksError(e.to_string()))?;
         let kind = record.kind.as_str();
+        let manual = read_pair_cache(&layout, &a, &b)
+            .map_err(|e| LinksError(e.to_string()))?
+            .map(|c| c.manual)
+            .unwrap_or(is_manual);
         (
             record.forward_margin_db,
             record.reverse_margin_db,
             kind.to_string(),
-            record.kind.mesh_linked(false),
+            record.kind.mesh_linked(manual),
+            manual,
         )
     } else {
-        (None, None, "none".to_string(), false)
+        (None, None, "none".to_string(), false, is_manual)
     };
 
     let margin_db = match (forward_margin_db, reverse_margin_db) {
@@ -979,7 +1001,8 @@ pub fn site_pair_link_detail(
     Ok(json!({
         "a": a,
         "b": b,
-        "linked": linked,
+        "linked": if manual { true } else { linked },
+        "manual": manual,
         "kind": kind_str,
         "forward_margin_db": forward_margin_db.map(|m| (m * 10.0).round() / 10.0),
         "reverse_margin_db": reverse_margin_db.map(|m| (m * 10.0).round() / 10.0),

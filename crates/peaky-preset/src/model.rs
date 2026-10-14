@@ -1,6 +1,6 @@
 //! Preset YAML schema (serve-only slim schema).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
@@ -1073,34 +1073,6 @@ pub struct LandConfig {
     pub refresh_interval_days: u32,
 }
 
-/// Operator manual RF override row in ``links.json``.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BookLinkRecord {
-    pub a: String,
-    pub b: String,
-    #[serde(default)]
-    pub field_at: Option<String>,
-}
-
-/// Manual override only (``links.json``). Computed RF lives under ``links/``.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum BookLink {
-    Legacy([String; 2]),
-    Record(BookLinkRecord),
-}
-
-impl BookLink {
-    pub fn slug_pair(&self) -> PresetResult<[String; 2]> {
-        let (a, b) = match self {
-            BookLink::Legacy([a, b]) => (a.as_str(), b.as_str()),
-            BookLink::Record(rec) => (rec.a.as_str(), rec.b.as_str()),
-        };
-        normalize_link_pair(&[a.to_string(), b.to_string()], 0)
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preset {
@@ -1111,8 +1083,6 @@ pub struct Preset {
     pub simulation: SimulationConfig,
     pub display: DisplayConfig,
     pub sites: HashMap<String, SiteEntry>,
-    #[serde(default)]
-    pub links: Vec<BookLink>,
     #[serde(default)]
     pub land: LandConfig,
     #[serde(default)]
@@ -1129,7 +1099,6 @@ impl Default for Preset {
             simulation: SimulationConfig::default(),
             display: DisplayConfig::default(),
             sites: HashMap::new(),
-            links: Vec::new(),
             land: LandConfig::default(),
             sources: SourcesConfig::default(),
             scan: ScanConfig::default(),
@@ -1200,21 +1169,12 @@ pub fn slugify_files_segment(site_name: &str) -> String {
     }
 }
 
-fn normalize_link_pair(item: &[String; 2], index: usize) -> PresetResult<[String; 2]> {
-    let a = item[0].trim();
-    let b = item[1].trim();
-    if a.is_empty() || b.is_empty() {
-        return Err(err(format!("links[{index}] slugs must be non-empty")));
-    }
-    let mut pair = [a.to_string(), b.to_string()];
-    pair.sort();
-    Ok(pair)
-}
-
 pub fn validate_project_preset_document(raw: &serde_yaml::Mapping) -> PresetResult<()> {
-    for key in ["mesh", "suggest", "goals"] {
+    for key in ["mesh", "suggest", "goals", "links"] {
         if raw.contains_key(serde_yaml::Value::String(key.to_string())) {
-            return Err(err(format!("top-level {key}: is removed in serve-only presets")));
+            return Err(err(format!(
+                "top-level {key}: is removed; manual RF overrides live in links/<a>/<b>.json (manual: true)"
+            )));
         }
     }
     if let Some(sim) = raw.get(&serde_yaml::Value::String("simulation".into())) {
@@ -1243,7 +1203,7 @@ pub fn validate_project_preset_document(raw: &serde_yaml::Mapping) -> PresetResu
                 if let serde_yaml::Value::Mapping(site_map) = site {
                     if site_map.contains_key(serde_yaml::Value::String("sees".into())) {
                         return Err(err(format!(
-                            "sites.{slug_s}.sees is removed; use top-level links: [[site-a, site-b], ...]"
+                            "sites.{slug_s}.sees is removed; set manual: true on links/<a>/<b>.json"
                         )));
                     }
                     if site_map.contains_key(serde_yaml::Value::String("type".into())) {
@@ -1271,23 +1231,6 @@ pub fn validate_preset(preset: &Preset) -> PresetResult<()> {
     };
     if radius > 100.0 {
         return Err(err("simulation.radius_km must be <= 100"));
-    }
-
-    let mut seen_links: HashSet<[String; 2]> = HashSet::new();
-    for link in &preset.links {
-        let [a, b] = link.slug_pair()?;
-        if a == b {
-            return Err(err(format!("links pair [{a:?}, {b:?}] must not link a site to itself")));
-        }
-        if !preset.sites.contains_key(&a) {
-            return Err(err(format!("links references unknown site slug {a:?}")));
-        }
-        if !preset.sites.contains_key(&b) {
-            return Err(err(format!("links references unknown site slug {b:?}")));
-        }
-        if !seen_links.insert([a.clone(), b.clone()]) {
-            return Err(err(format!("duplicate links pair [{a:?}, {b:?}]")));
-        }
     }
 
     Ok(())

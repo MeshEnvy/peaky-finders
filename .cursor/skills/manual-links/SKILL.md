@@ -2,7 +2,7 @@
 name: manual-links
 description: >-
   When and how to add manual RF link overrides in Peaky presets. Use when editing
-  links.json, serve map mesh gaps, or spine/corridor planning docs.
+  links/<a>/<b>.json, serve map mesh gaps, or spine/corridor planning docs.
 ---
 
 # Manual links
@@ -13,9 +13,9 @@ Read [MEMORY.md](../../MEMORY.md) first.
 
 Force-draw a site pair on the serve map when **P2P RF does not show the link** but field reality says the hop exists.
 
-Implementation: `peaky-serve/src/links.rs` — manual pairs skip P2P, render teal (`manual: true`).
+Implementation: `peaky-serve/src/links.rs` — manual pairs skip P2P, render teal (`manual: true` on the pair file and in mesh GeoJSON).
 
-Computed RF (blue two-way, red one-way) lives in git-tracked **`links/<a>/<b>.json`**, not in `links.json`.
+Computed and manual hops share **`links/<a>/<b>.json`**. RF rows get margins and `kind`; manual overrides add **`manual: true`** (sticky across RF refresh).
 
 ## When to add
 
@@ -33,28 +33,34 @@ Computed RF (blue two-way, red one-way) lives in git-tracked **`links/<a>/<b>.js
 
 ## File location
 
-| Layout | Manual overrides |
-|--------|------------------|
-| Split book | **`links.json`** next to `sites.yaml` |
-| Monolithic | `links:` in **`config.yaml`** |
+Git-tracked **`links/<a>/<b>.json`** next to `sites.yaml` / `config.yaml` (canonical slug order: `a <= b`).
 
-`peaky-preset` merges `links.json` when split. Saves write manual rows to **`links.json`**.
+## Pair format
 
-## Pair format (`links.json`)
+Edit or create the pair file (camelCase matches serve output):
 
 ```json
 {
-  "links": [
-    ["slug-a", "slug-b"],
-    { "a": "slug-c", "b": "slug-d", "field_at": "2026-09-09" }
-  ]
+  "a": "slug-a",
+  "b": "slug-b",
+  "fingerprint": "",
+  "linksModel": "p2p-v8",
+  "forwardMarginDb": null,
+  "reverseMarginDb": null,
+  "kind": "none",
+  "distanceKm": 0,
+  "at": "2026-10-14",
+  "manual": true,
+  "fieldAt": "2026-09-09"
 }
 ```
 
 - Slugs must match keys under `sites:`.
-- Order within a pair does not matter; keep pairs sorted for readable diffs.
-- Both endpoints must exist before adding.
-- Unknown keys on record rows fail preset load (greenfield).
+- **`manual: true`** is required for a field override. Clearing it requires setting `"manual": false` before the next RF write (refresh alone will not clear it).
+- Optional **`fieldAt`** is operator metadata (field verification date).
+- Serve may fill fingerprint, margins, and `kind` on warm or link-sheet query; manual metadata is preserved.
+
+Library helper: `write_manual_link_override` in `peaky-preset` (finder patch uses this).
 
 ## advert_name (site-bound radios)
 

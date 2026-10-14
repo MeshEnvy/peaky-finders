@@ -1,0 +1,12 @@
+{
+  "a": "hub",
+  "b": "peer-c",
+  "fingerprint": "",
+  "linksModel": "p2p-v8",
+  "forwardMarginDb": null,
+  "reverseMarginDb": null,
+  "kind": "none",
+  "distanceKm": 0,
+  "at": "2026-10-14",
+  "manual": true
+}

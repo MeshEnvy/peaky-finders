@@ -17,13 +17,9 @@ Roles like `installed` or `planned` are **tags**, not schema fields.
 
 ## Links
 
-Manual **RF overrides** only in **`links.json`** (split book) or `links:` in monolithic `config.yaml`. Not spine declaration or "should hear" planning.
+Manual **RF overrides** on **`links/<a>/<b>.json`** with **`manual: true`** (optional **`fieldAt`**). Same file holds computed RF (`kind`, margins). Not spine declaration or "should hear" planning.
 
-Computed RF cache: **`links/<a>/<b>.json`** (serve read/write; not manual).
-
-```json
-"links": [["site-a", "site-b"], {"a": "site-c", "b": "site-d", "field_at": "2026-09-09"}]
-```
+Preset **`links:`** and **`links.json`** are removed.
 
 Add a pair only after serve map / P2P omits a hop that field reality requires. See skill **`manual-links`**.
 

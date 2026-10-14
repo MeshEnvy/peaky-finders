@@ -6,8 +6,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use peaky_preset::{
-    load_preset_raw, site_row_from_entry, slugify, unique_site_slug, write_preset_document,
-    Preset, SiteEntry,
+    load_preset_raw, project::ProjectLayout, site_row_from_entry, slugify, unique_site_slug,
+    write_manual_link_override, write_preset_document, Preset, SiteEntry,
 };
 use serde::{Deserialize, Serialize};
 use serde_yaml::Mapping;
@@ -151,7 +151,7 @@ pub fn print_patch_diff(plan: &PatchPlan) {
         );
     }
     for [a, b] in &plan.link_pairs {
-        let _ = writeln!(io::stderr(), "  + links: [{a}, {b}]");
+        let _ = writeln!(io::stderr(), "  + links/{a}/{b}.json (manual)");
     }
     let _ = writeln!(io::stderr(), "  chain: {}", plan.chain_slugs.join(" → "));
 }
@@ -188,32 +188,6 @@ pub fn apply_patch(
         }
     }
 
-    let links_val = map
-        .entry(serde_yaml::Value::from("links"))
-        .or_insert_with(|| serde_yaml::Value::Sequence(vec![]));
-    if let serde_yaml::Value::Sequence(links_seq) = links_val {
-        let existing_pairs: HashSet<(String, String)> = links_seq
-            .iter()
-            .filter_map(|v| {
-                v.as_sequence().and_then(|seq| {
-                    let a = seq.first()?.as_str()?.to_string();
-                    let b = seq.get(1)?.as_str()?.to_string();
-                    Some(normalize_pair(a, b))
-                })
-            })
-            .collect();
-        for [a, b] in &plan.link_pairs {
-            let key = normalize_pair(a.clone(), b.clone());
-            if existing_pairs.contains(&key) {
-                continue;
-            }
-            links_seq.push(serde_yaml::Value::Sequence(vec![
-                serde_yaml::Value::from(a.clone()),
-                serde_yaml::Value::from(b.clone()),
-            ]));
-        }
-    }
-
     let finder_meta = serde_yaml::Mapping::from_iter([
         (
             serde_yaml::Value::from("last_run_digest"),
@@ -238,21 +212,19 @@ pub fn apply_patch(
     );
 
     write_preset_document(preset_path, map)?;
+
+    let layout = ProjectLayout::from_config_path(preset_path)?;
+    for [a, b] in &plan.link_pairs {
+        write_manual_link_override(&layout, a, b, None)?;
+    }
+
     let _ = writeln!(
         io::stderr(),
-        "finder patch config.yaml +{} sites +{} links",
+        "finder patch config.yaml +{} sites +{} manual link pairs",
         plan.new_sites.len(),
         plan.link_pairs.len()
     );
     Ok(())
-}
-
-fn normalize_pair(a: String, b: String) -> (String, String) {
-    if a <= b {
-        (a, b)
-    } else {
-        (b, a)
-    }
 }
 
 pub fn patch_summary_rows(plan: &PatchPlan, preset: &Preset) -> Vec<serde_json::Value> {

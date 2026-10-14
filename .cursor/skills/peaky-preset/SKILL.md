@@ -23,8 +23,9 @@ Read [MEMORY.md](../../MEMORY.md) first.
 | `simulation` | `modem` / `environment` names, `radius_km`, `raster_dimension`, chains |
 | `display` | Viewshed colormap / transparency |
 | `sites` | `name`, `loc`, optional `tags`, `height_m`, metadata — **no `type`** |
-| `links` | Manual RF override pairs `[[a, b], …]` — split layout: `sites.yaml`; else `config.yaml` |
 | `land` | Project-only GDB overlay registry (`land.sources`, `land.sidebar`) — attribute filters + style-by-value v2 |
+
+Manual RF overrides are **not** in preset YAML. Use **`links/<a>/<b>.json`** with `manual: true` (see [manual-links](../manual-links/SKILL.md)).
 
 `load_preset` deep-merges global ← project. Writes prune keys equal to defaults.
 

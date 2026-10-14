@@ -22,7 +22,7 @@ fn silver_triangle_kml_parses_17_vertices() {
 fn cache_hit_on_second_bool_read() {
     let dir = tempfile::tempdir().unwrap();
     let preset = dir.path().join("config.yaml");
-    std::fs::write(&preset, "sites: {}\nlinks: []\n").unwrap();
+    std::fs::write(&preset, "sites: {}\n").unwrap();
     let cache = FinderCache::new(&preset).unwrap();
     let mut ledger = CacheLedger::new(false);
     let key = digest_hex(&["test-bool"]);

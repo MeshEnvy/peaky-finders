@@ -15,8 +15,3 @@ sites:
   peer-c:
     name: Peer C
     loc: [40.40376, -119.6]
-
-links:
-  - [hub, peer-a]
-  - [hub, peer-b]
-  - [hub, peer-c]

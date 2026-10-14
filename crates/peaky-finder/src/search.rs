@@ -1608,7 +1608,7 @@ mod tests {
     fn gap_overview_cache_hit_on_second_run() {
         let dir = tempfile::tempdir().unwrap();
         let preset = dir.path().join("config.yaml");
-        std::fs::write(&preset, "sites: {}\nlinks: []\n").unwrap();
+        std::fs::write(&preset, "sites: {}\n").unwrap();
         let cache = FinderCache::new(&preset).unwrap();
         let square = Polygon::new(
             LineString::from(vec![
