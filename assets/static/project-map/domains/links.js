@@ -218,12 +218,50 @@ export function createLinksDomain(opts) {
     return hidden
   }
 
+  function knownSiteSlugs() {
+    return getSites()
+      .map((site) => site?.slug)
+      .filter(Boolean)
+  }
+
+  /** @param {Set<string>} valid */
+  function linkRowEndpointsKnown(row, valid) {
+    const a = row?.a
+    const b = row?.b
+    return Boolean(a && b && valid.has(a) && valid.has(b))
+  }
+
+  /** Drop mesh rows/features whose endpoints are not current sites (stale warm / delete). */
+  function sanitizeLinksPayload(payload) {
+    if (!payload) return payload
+    const valid = new Set(knownSiteSlugs())
+    const unknownEndpoints = (row) => !linkRowEndpointsKnown(row || {}, valid)
+    const out = { ...payload }
+    if (Array.isArray(out.links)) {
+      out.links = out.links.filter((row) => !unknownEndpoints(row))
+    }
+    const geojson = out.geojson
+    if (geojson && Array.isArray(geojson.features)) {
+      out.geojson = {
+        ...geojson,
+        features: geojson.features.filter(
+          (f) => !unknownEndpoints(f.properties || {}),
+        ),
+      }
+    }
+    return out
+  }
+
   function relocateLinkFilterSlug() {
     return store.ui.relocateMode && store.ui.relocateSlug ? store.ui.relocateSlug : null
   }
 
   function linksEndpointVisibilityFilter() {
-    return siteLinksEndpointFilter(hiddenLinkEndpointSlugs(), relocateLinkFilterSlug())
+    return siteLinksEndpointFilter(
+      hiddenLinkEndpointSlugs(),
+      relocateLinkFilterSlug(),
+      knownSiteSlugs(),
+    )
   }
 
   function installFullLinksMesh(geojson) {
@@ -368,9 +406,10 @@ export function createLinksDomain(opts) {
   function applySiteLinksPayload(payload) {
     if (!payload) return
     if (payload.partial && payload.site) {
-      mergeSingleSiteLinks(payload.site, payload)
+      mergeSingleSiteLinks(payload.site, sanitizeLinksPayload(payload))
       return
     }
+    payload = sanitizeLinksPayload(payload)
     const prevFeatures = store.links.payload?.geojson?.features
     const prevCount = Array.isArray(prevFeatures) ? prevFeatures.length : 0
     const nextFeatures = payload.geojson?.features

@@ -1014,9 +1014,72 @@ pub fn site_pair_link_detail(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::fs;
+
+    use peaky_preset::{
+        load_preset, prune_link_cache, read_pair_cache, remove_preset_site, write_pair_cache,
+        project::ProjectLayout, LinkCacheKind, PairLinkCacheRecord, LINKS_MODEL,
+    };
+
     use super::*;
+
     #[test]
     fn canonical_pair_orders() {
         assert_eq!(canonical_site_pair("b", "a"), ("a".into(), "b".into()));
+    }
+
+    #[test]
+    fn remove_site_prunes_pair_files_and_clears_mesh_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.yaml");
+        fs::write(&config, "simulation:\n  radius_km: 50\n").unwrap();
+        fs::write(
+            dir.path().join("sites.yaml"),
+            "sites:\n  alpha:\n    name: Alpha\n    loc: [36.0, -116.0]\n  beta:\n    name: Beta\n    loc: [36.1, -116.1]\n",
+        )
+        .unwrap();
+        let layout = ProjectLayout::from_config_path(&config).unwrap();
+        write_pair_cache(
+            &layout,
+            &PairLinkCacheRecord {
+                a: "alpha".into(),
+                b: "beta".into(),
+                fingerprint: "fp".into(),
+                links_model: LINKS_MODEL.into(),
+                forward_margin_db: Some(1.0),
+                reverse_margin_db: Some(1.0),
+                kind: LinkCacheKind::TwoWay,
+                distance_km: 12.0,
+                at: "2026-10-14".into(),
+                manual: false,
+                field_at: None,
+            },
+        )
+        .unwrap();
+
+        remove_preset_site(&config, "beta").unwrap();
+        let preset = load_preset(&config).unwrap();
+        let slugs: HashSet<String> = preset.sites.keys().cloned().collect();
+        prune_link_cache(&layout, &slugs).unwrap();
+        assert!(read_pair_cache(&layout, "alpha", "beta").unwrap().is_none());
+
+        let payload = json!({
+            "status": "ready",
+            "links_model": LINKS_MODEL,
+            "links": [{"a": "alpha", "b": "beta", "linked": true, "manual": false, "kind": "two_way"}],
+            "geojson": {
+                "type": "FeatureCollection",
+                "features": [{
+                    "type": "Feature",
+                    "geometry": { "type": "LineString", "coordinates": [[-116.0, 36.0], [-116.1, 36.1]] },
+                    "properties": { "a": "alpha", "b": "beta", "kind": "two_way", "distance_km": 12.0 }
+                }]
+            }
+        });
+        store_project_site_links_cache(&config, &preset, &payload).unwrap();
+        assert!(cached_project_site_links(&config, &preset).unwrap().is_some());
+        invalidate_project_site_links_cache(&config);
+        assert!(cached_project_site_links(&config, &preset).unwrap().is_none());
     }
 }

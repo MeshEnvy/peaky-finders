@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Site delete and link mesh** — deleting a site prunes its `links/` pair files, drops the in-memory mesh cache, and re-warms RF links so blue/teal hop lines do not stay on the map at the old pin.
 - **Draft pin access after reload** — preview ids are millisecond timestamps, so a reloaded page is newer than the previous session. A counter that restarted at 1 was older than the server’s high-water mark, and every `/warm` came back `cancelled` with no route.
 - **Access profile reload** — `GET …/access/{slug}` returns the stored probe and does not start a route compute. A miss is one `POST …/warm` on the shared routing graph, so the statewide jeep flood runs once per graph instead of again for the same point.
 - **Hidden site viewsheds** — a site raster stays off while that pin is hidden, including when the slug is also a catalog peak.

@@ -18,7 +18,8 @@ use peaky_peaks::{
     NetworkViewCacheKey, OsmParsePhase, OsmRoutingOpts, ProjectRouting, OSM_ROUTE_PAD_DEG,
 };
 use peaky_preset::{
-    load_preset, resolved_viewshed_root, BoardViewshedResolver, Preset, RoadsBook, SiteEntry,
+    load_preset, prune_link_cache, project::ProjectLayout, resolved_viewshed_root,
+    BoardViewshedResolver, Preset, RoadsBook, SiteEntry,
 };
 use serde_json::{json, Value};
 use splatter::{
@@ -27,7 +28,10 @@ use splatter::{
 };
 
 use crate::events::ServeEventHub;
-use crate::links::{store_project_site_links_cache, warm_project_site_links};
+use crate::links::{
+    invalidate_project_site_links_cache, store_project_site_links_cache,
+    warm_project_site_links,
+};
 use crate::network_geo_cache::NetworkGeoByteCache;
 use crate::peaks::access_payload_json;
 use crate::rf::{max_hop_range_m, preset_to_request_with_sim, viewshed_workspace_digest};
@@ -682,6 +686,7 @@ impl WarmHub {
     }
 
     fn refresh_project_links_blocking(&self, warm: Arc<ProjectWarm>) -> Result<()> {
+        let gen_at_start = warm.links_refresh_gen.load(Ordering::SeqCst);
         self.set_links_phase(
             warm.as_ref(),
             LinksPhase {
@@ -696,6 +701,10 @@ impl WarmHub {
         let slug = warm.slug.clone();
         let preset = load_preset(&preset_path)?;
         let payload = warm_project_site_links(session, &preset_path, &preset)?;
+        if warm.links_refresh_gen.load(Ordering::SeqCst) != gen_at_start {
+            self.set_links_phase(warm.as_ref(), LinksPhase::default());
+            return Ok(());
+        }
         store_project_site_links_cache(&warm.preset_path, &preset, &payload)?;
         let mut wire = payload.as_object().cloned().unwrap_or_default();
         wire.insert("project".into(), json!(slug));
@@ -1462,5 +1471,26 @@ impl WarmHub {
         });
         self.ensure_project_warm(slug, preset_path);
         json!({ "project": slug, "status": "started" })
+    }
+
+    /// Call before mutating `sites.yaml` so an in-flight link mesh warm cannot publish stale GeoJSON.
+    pub fn bump_links_refresh_before_site_book_change(&self, slug: &str, preset_path: PathBuf) {
+        let warm = self.project(slug, preset_path);
+        warm.links_refresh_gen.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// After a site row is removed: prune pair files, drop the in-memory mesh cache, re-warm links.
+    pub fn refresh_links_after_site_book_change(
+        &self,
+        slug: &str,
+        preset_path: PathBuf,
+    ) -> Result<()> {
+        let preset = load_preset(&preset_path)?;
+        let layout = ProjectLayout::from_config_path(&preset_path)?;
+        let site_slugs: HashSet<String> = preset.sites.keys().cloned().collect();
+        prune_link_cache(&layout, &site_slugs)?;
+        invalidate_project_site_links_cache(&preset_path);
+        self.start_links_warm(slug, preset_path);
+        Ok(())
     }
 }

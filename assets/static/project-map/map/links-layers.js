@@ -169,12 +169,21 @@ export function applyLinksMeshGeoJson(map, geojson, opts = {}) {
 }
 
 /**
- * Hide link features when either endpoint slug is hidden or matches relocate slug.
+ * Hide link features when either endpoint slug is hidden, unknown, or matches relocate slug.
  * @param {string[]} hiddenSlugs
  * @param {string|null|undefined} relocateSlug
+ * @param {string[]|null|undefined} validSlugs When set, both endpoints must be in this list.
  */
-export function siteLinksEndpointFilter(hiddenSlugs, relocateSlug) {
+export function siteLinksEndpointFilter(hiddenSlugs, relocateSlug, validSlugs) {
   const parts = []
+  const valid = Array.isArray(validSlugs) ? validSlugs.filter(Boolean) : null
+  if (valid !== null) {
+    if (!valid.length) {
+      return ['==', ['get', 'a'], '__none__']
+    }
+    parts.push(['in', ['get', 'a'], ['literal', valid]])
+    parts.push(['in', ['get', 'b'], ['literal', valid]])
+  }
   const hidden = Array.isArray(hiddenSlugs) ? hiddenSlugs.filter(Boolean) : []
   if (hidden.length) {
     parts.push(['!', ['in', ['get', 'a'], ['literal', hidden]]])

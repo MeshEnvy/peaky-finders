@@ -405,7 +405,14 @@ async fn delete_site(
             "cannot delete last site".to_string(),
         ));
     }
+    state
+        .warm
+        .bump_links_refresh_before_site_book_change(&state.slug, path.clone());
     remove_preset_site(&path, &site_slug)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    state
+        .warm
+        .refresh_links_after_site_book_change(&state.slug, path)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
 }

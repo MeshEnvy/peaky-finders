@@ -157,8 +157,10 @@ export function createSiteLayersDomain(ctx) {
 
   function filterSiteLinksGeoJson(geojson) {
     if (!geojson || !geojson.features) return geojson
+    const validSlugs = new Set(sites().map((s) => s.slug).filter(Boolean))
     const features = geojson.features.filter((feature) => {
       const props = feature.properties || {}
+      if (!validSlugs.has(props.a) || !validSlugs.has(props.b)) return false
       if (isSiteMapHidden(props.a) || isSiteMapHidden(props.b)) return false
       if (store.ui.relocateMode && store.ui.relocateSlug) {
         if (props.a === store.ui.relocateSlug || props.b === store.ui.relocateSlug) return false
