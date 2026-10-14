@@ -10,34 +10,32 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use peaky_peaks::{
-    ensure_osm_pbf, invalidate_osm_routing_caches, load_routing_for_points_progress,
-    osm_routing_opts_from_preset, routing_bbox_for_points,
-    routing_coverage_bbox,     inventory_all_geojson_bytes, routing_network_drive_geojson_bytes,
+    ensure_osm_pbf, invalidate_osm_routing_caches, inventory_all_geojson_bytes,
+    load_routing_for_points_progress, osm_routing_opts_from_preset, routing_bbox_for_points,
+    routing_coverage_bbox, routing_network_drive_geojson_bytes,
     routing_network_layer_geojson_bytes, warm_place_access_with_routing, NetworkLayer,
     NetworkViewBBox, NetworkViewCacheKey, OsmParsePhase, OsmRoutingOpts, ProjectRouting,
     OSM_ROUTE_PAD_DEG,
 };
-use peaky_preset::{
-    load_preset, resolved_viewshed_root, BoardViewshedResolver, Preset, SiteEntry,
-};
+use peaky_preset::{load_preset, resolved_viewshed_root, BoardViewshedResolver, Preset, SiteEntry};
 use serde_json::{json, Value};
-use splatter::{propagate::required_tile_names_for_points, PRIORITY_DEM_BACKGROUND, PRIORITY_DEM_VIEWPORT, Session};
+use splatter::{
+    propagate::required_tile_names_for_points, Session, PRIORITY_DEM_BACKGROUND,
+    PRIORITY_DEM_VIEWPORT,
+};
 
 use crate::events::ServeEventHub;
-use crate::links::{
-    store_project_site_links_cache, warm_project_site_links,
-};
+use crate::links::{store_project_site_links_cache, warm_project_site_links};
+use crate::network_geo_cache::NetworkGeoByteCache;
 use crate::peaks::access_payload_json;
 use crate::rf::{max_hop_range_m, preset_to_request_with_sim, viewshed_workspace_digest};
 use crate::viewshed::{
-    coords_viewshed_overlay_if_ready,
-    ensure_viewshed_progressive_for_coords_blocking_with_hooks,
+    coords_viewshed_overlay_if_ready, ensure_viewshed_progressive_for_coords_blocking_with_hooks,
     ensure_viewshed_progressive_for_site_blocking_with_hooks, preview_site_at,
     target_viewshed_digest_for_site, ViewshedWarmHooks, DRAFT_VIEWSHED_SLUG,
 };
 use crate::viewshed_index::site_viewshed_overlay_if_ready;
 use crate::viewshed_log::viewshed_progress_log;
-use crate::network_geo_cache::NetworkGeoByteCache;
 use crate::viewshed_sim::ViewshedSimOverrides;
 
 pub const PRIORITY_INTERACTIVE: i32 = 0;
@@ -187,9 +185,7 @@ impl CoverageQueue {
         if let Some(state) = inner.jobs.get_mut(key) {
             state.priority = priority;
             state.seq = seq;
-            inner
-                .heap
-                .push((Reverse((priority, seq)), key.to_string()));
+            inner.heap.push((Reverse((priority, seq)), key.to_string()));
         }
     }
 
@@ -303,6 +299,8 @@ pub struct WarmHub {
     osm_epoch: Arc<AtomicU64>,
     /// Single-flight lock so prefetch and HTTP warm share one PBF parse.
     osm_build: Arc<Mutex<()>>,
+    /// One in-flight compute per destination so a second request waits for the probe write.
+    access_flights: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     osm_status: Arc<Mutex<OsmStatus>>,
     osm_last_pub: Arc<Mutex<Option<Instant>>>,
     project_slug: String,
@@ -329,6 +327,7 @@ impl WarmHub {
             osm_routing: Arc::new(Mutex::new(None)),
             osm_epoch: Arc::new(AtomicU64::new(0)),
             osm_build: Arc::new(Mutex::new(())),
+            access_flights: Arc::new(Mutex::new(HashMap::new())),
             osm_status: Arc::new(Mutex::new(OsmStatus::default())),
             osm_last_pub: Arc::new(Mutex::new(None)),
             project_slug,
@@ -401,13 +400,8 @@ impl WarmHub {
         view: NetworkViewBBox,
     ) -> Result<Vec<u8>> {
         let routing = self.ensure_osm_covering(preset_path, &[])?;
-        let cache_key = NetworkViewCacheKey::from_view(
-            view.west,
-            view.south,
-            view.east,
-            view.north,
-            -1.0,
-        );
+        let cache_key =
+            NetworkViewCacheKey::from_view(view.west, view.south, view.east, view.north, -1.0);
         if let Some(hit) = self
             .network_geo_cache
             .lock()
@@ -439,14 +433,12 @@ impl WarmHub {
             let q = queue.clone();
             thread::Builder::new()
                 .name(format!("coverage-queue-{i}"))
-                .spawn(move || {
-                    loop {
-                        let Some((key, job)) = q.pop_job() else {
-                            continue;
-                        };
-                        job();
-                        q.finish(&key);
-                    }
+                .spawn(move || loop {
+                    let Some((key, job)) = q.pop_job() else {
+                        continue;
+                    };
+                    job();
+                    q.finish(&key);
                 })
                 .expect("spawn coverage worker");
         }
@@ -483,7 +475,9 @@ impl WarmHub {
     }
 
     fn site_coverage_exists(preset_path: &PathBuf, key: &str) -> bool {
-        let png = resolved_viewshed_root(preset_path).join(key).join("splat.png");
+        let png = resolved_viewshed_root(preset_path)
+            .join(key)
+            .join("splat.png");
         png.is_file()
     }
 
@@ -491,7 +485,8 @@ impl WarmHub {
         let mut data = overlay.as_object().cloned().unwrap_or_default();
         data.insert("project".into(), json!(project_slug));
         data.insert("status".into(), json!("ready"));
-        self.events.publish(project_slug, "viewshed", Value::Object(data));
+        self.events
+            .publish(project_slug, "viewshed", Value::Object(data));
     }
 
     fn publish_viewshed_running(
@@ -507,10 +502,7 @@ impl WarmHub {
         data.insert("project".into(), json!(project_slug));
         data.insert("slug".into(), json!(site_slug));
         data.insert("status".into(), json!("running"));
-        data.insert(
-            "fraction".into(),
-            json!((fraction * 100.0).round() / 100.0),
-        );
+        data.insert("fraction".into(), json!((fraction * 100.0).round() / 100.0));
         data.insert("phase".into(), json!(phase));
         if let Some(v) = lat {
             data.insert("lat".into(), json!(v));
@@ -518,7 +510,8 @@ impl WarmHub {
         if let Some(v) = lon {
             data.insert("lon".into(), json!(v));
         }
-        self.events.publish(project_slug, "viewshed", Value::Object(data));
+        self.events
+            .publish(project_slug, "viewshed", Value::Object(data));
     }
 
     /// Register a pin preview. A higher id cancels the previous pin's links, route, and viewshed.
@@ -644,7 +637,8 @@ impl WarmHub {
     fn publish_links(&self, project_slug: &str, payload: Value) {
         let mut data = payload.as_object().cloned().unwrap_or_default();
         data.insert("project".into(), json!(project_slug));
-        self.events.publish(project_slug, "links", Value::Object(data));
+        self.events
+            .publish(project_slug, "links", Value::Object(data));
     }
 
     fn set_links_phase(&self, warm: &ProjectWarm, phase: LinksPhase) {
@@ -758,7 +752,7 @@ impl WarmHub {
             }
         }
 
-        // Access is warmed only via GET/POST place access (`warm=1`), not viewshed jobs.
+        // Access is warmed only via POST place access `/warm`, not viewshed jobs.
         let _ = warm_access;
     }
 
@@ -827,12 +821,28 @@ impl WarmHub {
         if cached.epoch != epoch {
             return None;
         }
-        if extra.is_empty() || extra.iter().all(|&(lat, lon)| cached.covers(lat, lon, OSM_COVER_PAD_DEG))
+        if extra.is_empty()
+            || extra
+                .iter()
+                .all(|&(lat, lon)| cached.covers(lat, lon, OSM_COVER_PAD_DEG))
         {
             Some(cached.routing.clone())
         } else {
             None
         }
+    }
+
+    /// Run ``f`` while holding the single-flight lock for one destination.
+    pub fn with_access_point<T>(&self, key: &str, f: impl FnOnce() -> T) -> T {
+        let gate = {
+            let mut flights = self.access_flights.lock().unwrap();
+            flights
+                .entry(key.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        let _guard = gate.lock().unwrap();
+        f()
     }
 
     /// OSM graph covering booked sites plus ``extra`` points (0.5° pad).
@@ -851,7 +861,8 @@ impl WarmHub {
         }
         let started = self.osm_epoch.load(Ordering::Acquire);
         let preset = load_preset(preset_path)?;
-        let mut points: Vec<(f64, f64)> = preset.sites.values().map(|s| (s.lat(), s.lon())).collect();
+        let mut points: Vec<(f64, f64)> =
+            preset.sites.values().map(|s| (s.lat(), s.lon())).collect();
         points.extend_from_slice(extra);
         let project_dir = preset_path
             .parent()
@@ -1141,7 +1152,11 @@ impl WarmHub {
             let Some(site) = preset.sites.get(site_slug) else {
                 continue;
             };
-            self.prefetch_dem_for_sites(&preset, std::slice::from_ref(site_slug), priority.min(PRIORITY_DEM_VIEWPORT));
+            self.prefetch_dem_for_sites(
+                &preset,
+                std::slice::from_ref(site_slug),
+                priority.min(PRIORITY_DEM_VIEWPORT),
+            );
             let key = self.site_coverage_key(&preset_path, &preset, site)?;
             if let Ok(Some(overlay)) = site_viewshed_overlay_if_ready(
                 slug,

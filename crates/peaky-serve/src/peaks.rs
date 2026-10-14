@@ -3,17 +3,17 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::peaks_cache::cached_peaks_list;
 use anyhow::{Context, Result};
 use peaky_peaks::{
     ensure_site_access_options_on_probe, load_probe_cache, probe_cache_path,
-    project_gtlf_fingerprint, project_pbf_fingerprint, warm_place_access,
-    warm_place_access_with_routing, ProjectRouting, SessionElev, OSM_ROUTE_PAD_DEG,
+    project_gtlf_fingerprint, project_pbf_fingerprint, warm_place_access_with_routing,
+    ProjectRouting, SessionElev, OSM_ROUTE_PAD_DEG,
 };
-use crate::peaks_cache::cached_peaks_list;
 use peaky_preset::{
     ensure_roads_book, load_latest_peaks_index, load_preset, prefs_key_for_project,
-    roads_global_fingerprint, roads_local_fingerprint, PeakHikeProfile, PeakJeepProfile,
-    PlaceAccess, SiteAccessOption, resolve_site_display_route,
+    resolve_site_display_route, roads_global_fingerprint, roads_local_fingerprint, PeakHikeProfile,
+    PeakJeepProfile, PlaceAccess, SiteAccessOption,
 };
 use serde_json::{json, Value};
 use splatter::Session;
@@ -131,11 +131,7 @@ fn access_json(
     value
 }
 
-pub fn access_payload_json(
-    slug: &str,
-    access: &PlaceAccess,
-    preset_path: &Path,
-) -> Value {
+pub fn access_payload_json(slug: &str, access: &PlaceAccess, preset_path: &Path) -> Value {
     let preset = load_preset(preset_path).unwrap_or_default();
     let site_picker = place_uses_site_access_picker(&preset, slug);
     let access_choice = preset
@@ -255,6 +251,39 @@ pub fn site_probe_cache_needs_options(
     Ok(!site_options_ready(&probe))
 }
 
+/// How `GET /access` and `POST /access/warm` share one probe.
+///
+/// A cache read must not load the routing graph. A miss is computed once, on
+/// the shared in-memory graph, so the paved-reach tree is not built again for
+/// the same point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaceAccessAction {
+    ReturnCached,
+    NotCached,
+    Compute,
+}
+
+pub fn place_access_action(warm: bool, cache_hit: bool, needs_options: bool) -> PlaceAccessAction {
+    if cache_hit && !(warm && needs_options) {
+        PlaceAccessAction::ReturnCached
+    } else if !warm {
+        PlaceAccessAction::NotCached
+    } else {
+        PlaceAccessAction::Compute
+    }
+}
+
+/// Single-flight key for one destination. Same rounding as the probe file name.
+pub fn place_access_flight_key(
+    preset_path: &Path,
+    place_slug: &str,
+    warm_lat: Option<f64>,
+    warm_lon: Option<f64>,
+) -> Result<String> {
+    let (lat, lon) = resolve_point(preset_path, place_slug, warm_lat, warm_lon)?;
+    Ok(format!("{lat:.5},{lon:.5}"))
+}
+
 pub fn place_access_payload(
     preset_path: &Path,
     session: &Arc<Session>,
@@ -275,7 +304,7 @@ pub fn place_access_payload(
         let meta = preset.resolved_access_meta();
         warm_place_access_with_routing(preset_path, session, routing, &meta, lat, lon)?
     } else {
-        warm_place_access(preset_path, session, place_slug, lat, lon)?
+        None
     };
     if let Some(ref mut probe) = access {
         if site_picker {
@@ -325,7 +354,10 @@ pub fn catalog_peaks_filtered(
 mod tests {
     use super::*;
     use peaky_peaks::save_probe_cache;
-    use peaky_preset::model::{AccessProbe, AccessRoute, PeakHikeProfile, PeakHikeProfilePoint, PeakJeepProfile, PeakJeepProfilePoint};
+    use peaky_preset::model::{
+        AccessProbe, AccessRoute, PeakHikeProfile, PeakHikeProfilePoint, PeakJeepProfile,
+        PeakJeepProfilePoint,
+    };
     use std::fs;
 
     fn stamp_probe_roads(config: &Path, lat: f64, lon: f64, mut probe: AccessProbe) -> AccessProbe {
@@ -421,8 +453,14 @@ mod tests {
         let payload = place_access_from_probe_cache(&config, "test-peak", Some(lat), Some(lon))
             .unwrap()
             .expect("probe cache hit");
-        assert_eq!(payload.get("slug").and_then(|v| v.as_str()), Some("test-peak"));
-        assert_eq!(payload.get("status").and_then(|v| v.as_str()), Some("ready"));
+        assert_eq!(
+            payload.get("slug").and_then(|v| v.as_str()),
+            Some("test-peak")
+        );
+        assert_eq!(
+            payload.get("status").and_then(|v| v.as_str()),
+            Some("ready")
+        );
         let hike_profile = payload
             .pointer("/hike/profile")
             .and_then(|v| v.as_array())
@@ -465,7 +503,10 @@ mod tests {
         let payload = place_access_from_probe_cache(&config, "toulon-south", Some(lat), Some(lon))
             .unwrap()
             .expect("site coord probe hit");
-        assert_eq!(payload.get("slug").and_then(|v| v.as_str()), Some("toulon-south"));
+        assert_eq!(
+            payload.get("slug").and_then(|v| v.as_str()),
+            Some("toulon-south")
+        );
         assert_eq!(payload.get("jeep_m").and_then(|v| v.as_f64()), Some(3000.0));
     }
 
@@ -474,7 +515,36 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("config.yaml");
         fs::write(&config, "simulation: {}\nscan: {}\n").unwrap();
-        let hit = place_access_from_probe_cache(&config, "missing", Some(39.0), Some(-117.0)).unwrap();
+        let hit =
+            place_access_from_probe_cache(&config, "missing", Some(39.0), Some(-117.0)).unwrap();
         assert!(hit.is_none());
+    }
+
+    #[test]
+    fn cache_read_does_not_compute() {
+        assert_eq!(
+            place_access_action(false, true, true),
+            PlaceAccessAction::ReturnCached
+        );
+        assert_eq!(
+            place_access_action(false, false, false),
+            PlaceAccessAction::NotCached
+        );
+    }
+
+    #[test]
+    fn warm_computes_only_on_miss_or_missing_options() {
+        assert_eq!(
+            place_access_action(true, true, false),
+            PlaceAccessAction::ReturnCached
+        );
+        assert_eq!(
+            place_access_action(true, true, true),
+            PlaceAccessAction::Compute
+        );
+        assert_eq!(
+            place_access_action(true, false, false),
+            PlaceAccessAction::Compute
+        );
     }
 }

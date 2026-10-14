@@ -288,7 +288,7 @@ export function createSiteAccessDomain(opts) {
   }
 
   /**
-   * Fetch access for a site (cache-first GET; warm=1 so server computes if missing).
+   * Fetch access for a site. GET reads the probe cache only; POST /warm computes a miss.
    * @param {object} site
    */
   function accessHasRouteProfiles(row) {

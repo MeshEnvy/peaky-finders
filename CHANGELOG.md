@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- **Access profile reload** — `GET …/access/{slug}` returns the stored probe and does not start a route compute. A miss is one `POST …/warm` on the shared routing graph, so the statewide jeep flood runs once per graph instead of again for the same point.
 - **Hidden site viewsheds** — a site raster stays off while that pin is hidden, including when the slug is also a catalog peak.
 
 ### Changed

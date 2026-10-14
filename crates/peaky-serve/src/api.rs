@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context as _;
 use axum::{
     body::Body,
     extract::{Path, Query, State},
@@ -14,53 +15,55 @@ use axum::{
     Json, Router,
 };
 use peaky_geo::{parse_kml_point_placemarks, parse_kmz_point_placemarks};
-use anyhow::Context as _;
 use peaky_preset::{
     insert_preset_site, load_preset, load_preset_raw, load_site_entry, patch_preset_site,
-    patch_preset_sites_tags, place_slugs, preset_site_slugs, remove_preset_site,
-    unique_place_slug, unique_site_slug, validate_coords, LandSidebar, SiteEntry,
+    patch_preset_sites_tags, place_slugs, preset_site_slugs, remove_preset_site, unique_place_slug,
+    unique_site_slug, validate_coords, LandSidebar, SiteEntry,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::alternates::parse_alternates_request;
 use crate::events::sse_keepalive_interval;
+use crate::fortify::parse_fortify_request;
 use crate::html::{project_error_html, project_html, site_api_row};
+use crate::land::{
+    land_data_gdbs_payload, land_delete_source, land_import_preview_payload, land_import_source,
+    land_patch_sidebar, land_patch_source, land_preview_fields_payload,
+    land_preview_geojson_filtered_payload, land_preview_geojson_payload,
+    land_preview_values_payload, list_land_payload, read_layer_geojson_bytes,
+    read_overlay_geojson_bytes, read_overlay_part_geojson_bytes, LandImportBody,
+    LandPatchSourceBody, LandPreviewGeoJsonBody,
+};
+use crate::link_solver::{
+    accept_link_solver_route, link_solver_progress_key, parse_link_solver_request,
+    routes_like_from_json, LinkSolverError,
+};
 use crate::links::{
     compute_links_for_slugs, invalidate_project_site_links_cache, load_project_site_links,
     load_single_site_links, site_pair_link_detail,
 };
-use crate::fortify::parse_fortify_request;
-use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
-use crate::state::AppState;
 use crate::peaks::{
-    list_peaks_payload, place_access_payload,
-};
-use crate::land::{
-    land_data_gdbs_payload, land_delete_source, land_import_preview_payload, land_import_source,
-    land_patch_sidebar, land_patch_source, land_preview_fields_payload,
-    land_preview_geojson_filtered_payload, land_preview_geojson_payload, land_preview_values_payload,
-    list_land_payload, read_layer_geojson_bytes, read_overlay_geojson_bytes,
-    read_overlay_part_geojson_bytes, LandImportBody,
-    LandPatchSourceBody, LandPreviewGeoJsonBody,
+    list_peaks_payload, place_access_action, place_access_flight_key, place_access_payload,
+    PlaceAccessAction,
 };
 use crate::roads::{
     roads_book_get, roads_book_put, roads_network_all_geojson_bytes,
     roads_network_drive_geojson_bytes, roads_network_layer_geojson_bytes,
 };
-use peaky_preset::RoadsBook;
-use peaky_peaks::{NetworkLayer, NetworkViewBBox};
 use crate::simulation::project_simulation_payload;
+use crate::site_kmz::export_sites_kmz_blocking;
+use crate::site_prefetch::{load_site_placement_prefetch, SitePrefetchError};
+use crate::state::AppState;
 use crate::viewshed::{
     coords_viewshed_overlay_if_ready, ensure_viewshed_png, read_coords_viewshed_png_if_ready,
 };
-use crate::alternates::parse_alternates_request;
-use crate::link_solver::{
-    accept_link_solver_route, link_solver_progress_key, parse_link_solver_request,
-    routes_like_from_json, LinkSolverError,
+use crate::viewshed_index::{
+    build_viewshed_index, site_viewshed_overlay_if_ready, viewshed_cache_png_api_path,
 };
-use crate::site_kmz::export_sites_kmz_blocking;
-use crate::viewshed_index::{build_viewshed_index, site_viewshed_overlay_if_ready, viewshed_cache_png_api_path};
 use crate::viewshed_sim::{parse_lat_lon_params, parse_viewshed_sim_params, sim_status_from_err};
+use peaky_peaks::{NetworkLayer, NetworkViewBBox};
+use peaky_preset::RoadsBook;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -75,10 +78,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/p/{slug}/sites/tags/bulk", post(bulk_tags))
         .route("/api/p/{slug}/sites/export/kmz", post(sites_export_kmz))
-        .route(
-            "/api/p/{slug}/sites/import/preview",
-            post(import_preview),
-        )
+        .route("/api/p/{slug}/sites/import/preview", post(import_preview))
         .route("/api/p/{slug}/sites/import", post(import_sites))
         .route(
             "/api/p/{slug}/viewsheds/prefetch/warm",
@@ -88,15 +88,15 @@ pub fn router() -> Router<AppState> {
             "/api/p/{slug}/viewsheds/prefetch/splat.png",
             get(viewshed_prefetch_png),
         )
-        .route("/api/p/{slug}/viewsheds/prefetch", get(viewshed_prefetch_meta))
+        .route(
+            "/api/p/{slug}/viewsheds/prefetch",
+            get(viewshed_prefetch_meta),
+        )
         .route(
             "/api/p/{slug}/viewsheds/{site_slug}/splat.png",
             get(viewshed_png),
         )
-        .route(
-            "/api/p/{slug}/viewsheds/{site_slug}",
-            get(viewshed_meta),
-        )
+        .route("/api/p/{slug}/viewsheds/{site_slug}", get(viewshed_meta))
         .route("/api/p/{slug}/viewsheds/index", get(viewshed_index))
         .route(
             "/api/p/{slug}/cache/viewsheds/{digest}/splat.png",
@@ -111,7 +111,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/p/{slug}/events", get(project_events))
         .route("/api/p/{slug}/peaks", get(peaks_list))
         .route("/api/p/{slug}/access/{place_slug}", get(place_access))
-        .route("/api/p/{slug}/access/{place_slug}/warm", post(place_access_warm))
+        .route(
+            "/api/p/{slug}/access/{place_slug}/warm",
+            post(place_access_warm),
+        )
         .route(
             "/api/p/{slug}/roads/network/drive/geojson",
             get(roads_network_drive_geojson),
@@ -120,7 +123,10 @@ pub fn router() -> Router<AppState> {
             "/api/p/{slug}/roads/network/all/geojson",
             get(roads_network_all_geojson),
         )
-        .route("/api/p/{slug}/roads", get(roads_book_get_handler).put(roads_book_put_handler))
+        .route(
+            "/api/p/{slug}/roads",
+            get(roads_book_get_handler).put(roads_book_put_handler),
+        )
         .route(
             "/api/p/{slug}/roads/network/{layer}/geojson",
             get(roads_network_layer_geojson),
@@ -135,7 +141,10 @@ pub fn router() -> Router<AppState> {
             get(land_overlay_part_geojson),
         )
         .route("/api/p/{slug}/land/data-gdbs", get(land_data_gdbs))
-        .route("/api/p/{slug}/land/import/preview", post(land_import_preview))
+        .route(
+            "/api/p/{slug}/land/import/preview",
+            post(land_import_preview),
+        )
         .route(
             "/api/p/{slug}/land/import/preview/fields",
             get(land_import_preview_fields),
@@ -145,7 +154,10 @@ pub fn router() -> Router<AppState> {
             get(land_import_preview_values),
         )
         .route("/api/p/{slug}/land/import", post(land_import))
-        .route("/api/p/{slug}/land/preview/geojson", get(land_preview_geojson_get).post(land_preview_geojson_post))
+        .route(
+            "/api/p/{slug}/land/preview/geojson",
+            get(land_preview_geojson_get).post(land_preview_geojson_post),
+        )
         .route("/api/p/{slug}/land/sidebar", patch(land_sidebar_patch))
         .route(
             "/api/p/{slug}/land/sources/{source_id}",
@@ -157,11 +169,17 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/p/{slug}/simulation", get(project_simulation))
         .route("/api/p/{slug}/link-solver", get(link_solver_scan))
-        .route("/api/p/{slug}/link-solver/scan-progress", get(link_solver_progress))
+        .route(
+            "/api/p/{slug}/link-solver/scan-progress",
+            get(link_solver_progress),
+        )
         .route("/api/p/{slug}/link-solver/like", get(link_solver_like))
         .route("/api/p/{slug}/link-solver/accept", post(link_solver_accept))
         .route("/api/p/{slug}/alternates", get(alternates_scan))
-        .route("/api/p/{slug}/alternates/scan-progress", get(alternates_progress))
+        .route(
+            "/api/p/{slug}/alternates/scan-progress",
+            get(alternates_progress),
+        )
         .route("/api/p/{slug}/fortify", get(fortify_scan))
         .route("/api/p/{slug}/fortify/scan-progress", get(fortify_progress))
         .route("/api/home/modems", get(home_modems))
@@ -171,21 +189,23 @@ pub fn router() -> Router<AppState> {
         .route("/api/dem/hillshade/{z}/{x}/{y}", get(dem_hillshade_tile))
 }
 
-async fn project_page(
-    State(state): State<AppState>,
-) -> Result<Html<String>, Html<String>> {
+async fn project_page(State(state): State<AppState>) -> Result<Html<String>, Html<String>> {
     let path = state.preset_path();
     match load_preset(&path) {
         Ok(preset) => {
-            state.warm.ensure_aoi_dem_prefetch(&state.slug, path.clone());
+            state
+                .warm
+                .ensure_aoi_dem_prefetch(&state.slug, path.clone());
             Ok(Html(project_html(&state.slug, &preset, &path)))
         }
         Err(e) => Err(Html(project_error_html(&state.slug, &e.to_string()))),
     }
 }
 
-async fn list_sites(State(state): State<AppState>,
-    Path(_slug): Path<String>) -> Result<Json<Value>, StatusCode> {
+async fn list_sites(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
     let preset = load_preset(&state.preset_path()).map_err(|_| StatusCode::NOT_FOUND)?;
     let sites: Vec<Value> = preset
         .sites
@@ -208,14 +228,16 @@ struct AddSiteBody {
     preferred_slug: Option<String>,
 }
 
-async fn add_site(State(state): State<AppState>,
-    
+async fn add_site(
+    State(state): State<AppState>,
+
     Path(_slug): Path<String>,
     Json(body): Json<AddSiteBody>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
     validate_coords(body.lat, body.lon).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let path = state.preset_path();
-    let mut existing = place_slugs(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut existing =
+        place_slugs(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     // Allow reusing a peak slug when promoting (peak row may remain; access is shared by slug).
     if let Some(pref) = body.preferred_slug.as_deref() {
         existing.remove(pref);
@@ -236,11 +258,12 @@ async fn add_site(State(state): State<AppState>,
     };
     insert_preset_site(&path, &site_slug, &entry)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let preset = load_preset(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let site = preset
-        .sites
-        .get(&site_slug)
-        .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "site missing after insert".to_string()))?;
+    let preset =
+        load_preset(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let site = preset.sites.get(&site_slug).ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "site missing after insert".to_string(),
+    ))?;
     Ok((
         StatusCode::CREATED,
         Json(json!({ "site": site_api_row(&site_slug, site) })),
@@ -258,7 +281,9 @@ fn preview_cancel_flag(state: &AppState, id: u64) -> Arc<AtomicBool> {
     if id == 0 {
         return Arc::new(AtomicBool::new(false));
     }
-    state.warm.begin_preview(&state.slug, state.preset_path(), id)
+    state
+        .warm
+        .begin_preview(&state.slug, state.preset_path(), id)
 }
 
 async fn preview_cancel(
@@ -279,7 +304,8 @@ async fn sites_prefetch(
     Path(_slug): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let (lat, lon) = parse_lat_lon_params(&params).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let (lat, lon) =
+        parse_lat_lon_params(&params).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let exclude_site = params
         .get("exclude_site")
         .map(|s| s.trim())
@@ -298,17 +324,12 @@ async fn sites_prefetch(
             "links_geojson": { "type": "FeatureCollection", "features": [] },
         })));
     }
-    let payload = load_site_placement_prefetch(
-        state.session.clone(),
-        &path,
-        lat,
-        lon,
-        exclude_site,
-    )
-    .await
-    .map_err(|e| match e {
-        SitePrefetchError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-    })?;
+    let payload =
+        load_site_placement_prefetch(state.session.clone(), &path, lat, lon, exclude_site)
+            .await
+            .map_err(|e| match e {
+                SitePrefetchError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            })?;
     if cancel.load(Ordering::Relaxed) {
         return Ok(Json(json!({
             "status": "cancelled",
@@ -318,10 +339,7 @@ async fn sites_prefetch(
             "links_geojson": { "type": "FeatureCollection", "features": [] },
         })));
     }
-    let mut obj = payload
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
+    let mut obj = payload.as_object().cloned().unwrap_or_default();
     obj.insert("project".into(), json!(state.slug));
     Ok(Json(Value::Object(obj)))
 }
@@ -339,8 +357,9 @@ struct PatchSiteBody {
     access_choice: Option<Option<String>>,
 }
 
-async fn patch_site(State(state): State<AppState>,
-    
+async fn patch_site(
+    State(state): State<AppState>,
+
     Path((_slug, site_slug)): Path<(String, String)>,
     Json(body): Json<PatchSiteBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
@@ -368,8 +387,9 @@ async fn patch_site(State(state): State<AppState>,
     Ok(Json(json!({ "site": site_api_row(&site_slug, &site) })))
 }
 
-async fn delete_site(State(state): State<AppState>,
-    
+async fn delete_site(
+    State(state): State<AppState>,
+
     Path((_slug, site_slug)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let path = state.preset_path();
@@ -378,9 +398,13 @@ async fn delete_site(State(state): State<AppState>,
         return Err((StatusCode::NOT_FOUND, "site not found".to_string()));
     }
     if preset.sites.len() <= 1 {
-        return Err((StatusCode::BAD_REQUEST, "cannot delete last site".to_string()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "cannot delete last site".to_string(),
+        ));
     }
-    remove_preset_site(&path, &site_slug).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    remove_preset_site(&path, &site_slug)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -449,10 +473,7 @@ async fn sites_export_kmz(
     let filename = format!("{project_slug}-viewport.kmz");
     Ok(Response::builder()
         .status(StatusCode::OK)
-        .header(
-            header::CONTENT_TYPE,
-            "application/vnd.google-earth.kmz",
-        )
+        .header(header::CONTENT_TYPE, "application/vnd.google-earth.kmz")
         .header(
             header::CONTENT_DISPOSITION,
             format!("attachment; filename=\"{filename}\""),
@@ -461,13 +482,17 @@ async fn sites_export_kmz(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?)
 }
 
-async fn bulk_tags(State(state): State<AppState>,
-    
+async fn bulk_tags(
+    State(state): State<AppState>,
+
     Path(_slug): Path<String>,
     Json(body): Json<BulkTagsBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     if body.slugs.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "slugs must be a non-empty list".to_string()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "slugs must be a non-empty list".to_string(),
+        ));
     }
     if body.add_tags.is_empty() && body.remove_tags.is_empty() {
         return Err((
@@ -510,9 +535,13 @@ async fn import_preview(
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let points = if body.starts_with(b"PK") {
-        parse_kmz_point_placemarks(&body).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?.0
+        parse_kmz_point_placemarks(&body)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
+            .0
     } else {
-        parse_kml_point_placemarks(&body).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?.0
+        parse_kml_point_placemarks(&body)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
+            .0
     };
     Ok(Json(json!({
         "points": points.iter().map(|p| json!({
@@ -537,8 +566,9 @@ struct ImportPoint {
     lon: f64,
 }
 
-async fn import_sites(State(state): State<AppState>,
-    
+async fn import_sites(
+    State(state): State<AppState>,
+
     Path(_slug): Path<String>,
     Json(body): Json<ImportSitesBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
@@ -546,7 +576,10 @@ async fn import_sites(State(state): State<AppState>,
     let mut slugs = Vec::new();
     for pt in body.points {
         let raw = load_preset_raw(&path).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
-        let map = raw.as_mapping().ok_or((StatusCode::INTERNAL_SERVER_ERROR, "invalid preset".to_string()))?;
+        let map = raw.as_mapping().ok_or((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid preset".to_string(),
+        ))?;
         let existing = preset_site_slugs(map);
         let site_slug = unique_site_slug(&existing, &pt.name);
         insert_preset_site(
@@ -568,8 +601,9 @@ async fn import_sites(State(state): State<AppState>,
     Ok(Json(json!({ "slugs": slugs })))
 }
 
-async fn viewshed_prefetch_meta(State(state): State<AppState>,
-    
+async fn viewshed_prefetch_meta(
+    State(state): State<AppState>,
+
     Path(_slug): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, StatusCode> {
@@ -577,14 +611,16 @@ async fn viewshed_prefetch_meta(State(state): State<AppState>,
     let sim = parse_viewshed_sim_params(&params).map_err(sim_status_from_err)?;
     let path = state.preset_path();
     let preset = load_preset(&path).map_err(|_| StatusCode::NOT_FOUND)?;
-    let overlay = coords_viewshed_overlay_if_ready(&state.slug, &path, &preset, lat, lon, Some(&sim))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let overlay =
+        coords_viewshed_overlay_if_ready(&state.slug, &path, &preset, lat, lon, Some(&sim))
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(overlay))
 }
 
-async fn viewshed_prefetch_png(State(state): State<AppState>,
-    
+async fn viewshed_prefetch_png(
+    State(state): State<AppState>,
+
     Path(_slug): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, StatusCode> {
@@ -620,7 +656,10 @@ async fn viewshed_prefetch_warm(
         .get("preview")
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
-    match state.warm.warm_coords_viewshed(&state.slug, path, lat, lon, sim, preview_id) {
+    match state
+        .warm
+        .warm_coords_viewshed(&state.slug, path, lat, lon, sim, preview_id)
+    {
         Ok(payload) => {
             let status = if payload.get("status").and_then(|v| v.as_str()) == Some("ready") {
                 StatusCode::OK
@@ -649,19 +688,22 @@ async fn viewshed_png(
         state.board_viewshed.as_ref(),
         state.verbose,
     )
-        .await
-        .map_err(|e| {
-            tracing::error!("viewshed {project_slug}/{site_slug}: {e:#}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    .await
+    .map_err(|e| {
+        tracing::error!("viewshed {project_slug}/{site_slug}: {e:#}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     serve_file_png(&png, false)
 }
 
-async fn viewshed_cache_png(State(state): State<AppState>,
-    
+async fn viewshed_cache_png(
+    State(state): State<AppState>,
+
     Path((_slug, digest)): Path<(String, String)>,
 ) -> Result<Response, StatusCode> {
-    let png = peaky_preset::resolved_viewshed_root(state.preset_path()).join(&digest).join("splat.png");
+    let png = peaky_preset::resolved_viewshed_root(state.preset_path())
+        .join(&digest)
+        .join("splat.png");
     if !png.is_file() {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -681,8 +723,9 @@ fn serve_file_png(path: &std::path::Path, immutable: bool) -> Result<Response, S
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-async fn viewshed_meta(State(state): State<AppState>,
-    
+async fn viewshed_meta(
+    State(state): State<AppState>,
+
     Path((_slug, site_slug)): Path<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, StatusCode> {
@@ -690,17 +733,15 @@ async fn viewshed_meta(State(state): State<AppState>,
     let preset = load_preset(&path).map_err(|_| StatusCode::NOT_FOUND)?;
     let site = preset.sites.get(&site_slug).ok_or(StatusCode::NOT_FOUND)?;
     let sim = parse_viewshed_sim_params(&params).map_err(sim_status_from_err)?;
-    if let Ok(Some(overlay)) =
-        site_viewshed_overlay_if_ready(
-            &state.slug,
-            &path,
-            &site_slug,
-            site,
-            &preset,
-            Some(&sim),
-            Some(state.board_viewshed.as_ref()),
-        )
-    {
+    if let Ok(Some(overlay)) = site_viewshed_overlay_if_ready(
+        &state.slug,
+        &path,
+        &site_slug,
+        site,
+        &preset,
+        Some(&sim),
+        Some(state.board_viewshed.as_ref()),
+    ) {
         return Ok(Json(overlay));
     }
     let target_raster = crate::viewshed_sim::effective_target_raster_for_site(
@@ -724,8 +765,10 @@ async fn viewshed_meta(State(state): State<AppState>,
     })))
 }
 
-async fn viewshed_index(State(state): State<AppState>,
-    Path(_slug): Path<String>) -> Result<Json<Value>, StatusCode> {
+async fn viewshed_index(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
     let path = state.preset_path();
     let preset = load_preset(&path).map_err(|_| StatusCode::NOT_FOUND)?;
     build_viewshed_index(
@@ -734,8 +777,8 @@ async fn viewshed_index(State(state): State<AppState>,
         &preset,
         Some(state.board_viewshed.as_ref()),
     )
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    .map(Json)
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn links_mesh(
@@ -744,7 +787,8 @@ async fn links_mesh(
 ) -> Result<Json<Value>, StatusCode> {
     let path = state.preset_path();
     let preset = load_preset(&path).map_err(|_| StatusCode::NOT_FOUND)?;
-    let payload = load_project_site_links(&path, &preset).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let payload =
+        load_project_site_links(&path, &preset).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if payload.get("status").and_then(|v| v.as_str()) != Some("ready") {
         state.warm.start_links_warm(&state.slug, path.clone());
     }
@@ -753,10 +797,7 @@ async fn links_mesh(
     Ok(Json(Value::Object(out)))
 }
 
-async fn links_warm(
-    State(state): State<AppState>,
-    Path(_slug): Path<String>,
-) -> Json<Value> {
+async fn links_warm(State(state): State<AppState>, Path(_slug): Path<String>) -> Json<Value> {
     let path = state.preset_path();
     Json(state.warm.start_links_warm(&state.slug, path))
 }
@@ -870,9 +911,8 @@ async fn project_events(
             }
         }
     };
-    axum::response::Sse::new(stream).keep_alive(
-        axum::response::sse::KeepAlive::new().interval(Duration::from_secs(15)),
-    )
+    axum::response::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
 async fn peaks_list(
@@ -892,7 +932,10 @@ async fn place_access(
     Path((_slug, place_slug)): Path<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, StatusCode> {
-    let warm = params.get("warm").map(|v| v == "1" || v == "true").unwrap_or(false);
+    let warm = params
+        .get("warm")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
     let lat = params.get("lat").and_then(|s| s.parse().ok());
     let lon = params.get("lon").and_then(|s| s.parse().ok());
     let preview_id = preview_param(&params);
@@ -935,61 +978,73 @@ async fn place_access_resolved(
         if cancel.load(Ordering::Relaxed) {
             return Ok(json!({ "status": "cancelled" }));
         }
-        if let Some(cached) = crate::peaks::place_access_from_probe_cache(
-            &state.preset_path(),
-            &place_slug,
-            lat,
-            lon,
-        )? {
-            let rebuild_options = warm
-                && crate::peaks::site_probe_cache_needs_options(
-                    &state.preset_path(),
-                    &place_slug,
-                    lat,
-                    lon,
-                )?;
-            if !rebuild_options {
+        let preset_path = state.preset_path();
+        let cached =
+            crate::peaks::place_access_from_probe_cache(&preset_path, &place_slug, lat, lon)?;
+        let needs_options = if warm {
+            crate::peaks::site_probe_cache_needs_options(&preset_path, &place_slug, lat, lon)?
+        } else {
+            false
+        };
+        match place_access_action(warm, cached.is_some(), needs_options) {
+            PlaceAccessAction::ReturnCached => {
+                tracing::info!(slug = %place_slug, "access probe cache hit");
                 if cancel.load(Ordering::Relaxed) {
                     return Ok(json!({ "status": "cancelled" }));
                 }
-                return Ok(cached);
+                return Ok(cached.expect("cache hit"));
             }
+            PlaceAccessAction::NotCached => {
+                tracing::info!(slug = %place_slug, "access probe cache miss");
+                anyhow::bail!("access not cached for {place_slug}");
+            }
+            PlaceAccessAction::Compute => {}
         }
-        if cancel.load(Ordering::Relaxed) {
-            return Ok(json!({ "status": "cancelled" }));
-        }
-        let routing = if warm {
+        let flight_key = place_access_flight_key(&preset_path, &place_slug, lat, lon)?;
+        state.warm.with_access_point(&flight_key, || {
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(json!({ "status": "cancelled" }));
+            }
+            let cached =
+                crate::peaks::place_access_from_probe_cache(&preset_path, &place_slug, lat, lon)?;
+            let needs_options =
+                crate::peaks::site_probe_cache_needs_options(&preset_path, &place_slug, lat, lon)?;
+            if cached.is_some() && !needs_options {
+                tracing::info!(slug = %place_slug, "access probe cache hit");
+                return Ok(cached.expect("cache hit"));
+            }
+            tracing::info!(slug = %place_slug, "access probe computing");
             let extra = match (lat, lon) {
                 (Some(la), Some(lo)) => vec![(la, lo)],
                 _ => Vec::new(),
             };
-            Some(state.warm.ensure_osm_covering(&state.preset_path(), &extra)?)
-        } else {
-            None
-        };
-        if cancel.load(Ordering::Relaxed) {
-            return Ok(json!({ "status": "cancelled" }));
-        }
-        let payload = place_access_payload(
-            &state.preset_path(),
-            &state.session,
-            &place_slug,
-            warm,
-            lat,
-            lon,
-            routing.as_deref(),
-        )?;
-        if cancel.load(Ordering::Relaxed) {
-            return Ok(json!({ "status": "cancelled" }));
-        }
-        Ok(payload)
+            let routing = state.warm.ensure_osm_covering(&preset_path, &extra)?;
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(json!({ "status": "cancelled" }));
+            }
+            let payload = place_access_payload(
+                &preset_path,
+                &state.session,
+                &place_slug,
+                true,
+                lat,
+                lon,
+                Some(routing.as_ref()),
+            )?;
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(json!({ "status": "cancelled" }));
+            }
+            Ok(payload)
+        })
     })
     .await
     .map_err(|e| anyhow::anyhow!("place access task: {e}"))?
 }
 
-async fn land_list(State(state): State<AppState>,
-    Path(_slug): Path<String>) -> Result<Json<Value>, StatusCode> {
+async fn land_list(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
     let path = state.preset_path();
     list_land_payload(&path)
         .map(Json)
@@ -1000,12 +1055,14 @@ async fn land_data_gdbs(
     State(state): State<AppState>,
     Path(_slug): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    land_data_gdbs_payload(&state.preset_path()).map(Json).map_err(|e| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "error": e.to_string() })),
-        )
-    })
+    land_data_gdbs_payload(&state.preset_path())
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        })
 }
 
 #[derive(Deserialize)]
@@ -1415,16 +1472,15 @@ async fn land_overlay_geojson(
 ) -> Result<Response, (StatusCode, Json<Value>)> {
     let path = state.preset_path();
     let kind_owned = kind.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        read_overlay_geojson_bytes(&path, &kind_owned)
-    })
-    .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "overlay task failed" })),
-        )
-    })?;
+    let result =
+        tokio::task::spawn_blocking(move || read_overlay_geojson_bytes(&path, &kind_owned))
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "overlay task failed" })),
+                )
+            })?;
     let (bytes, digest) = result.map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -1444,8 +1500,9 @@ async fn land_overlay_geojson(
         })
 }
 
-async fn land_layer_geojson(State(state): State<AppState>,
-    
+async fn land_layer_geojson(
+    State(state): State<AppState>,
+
     Path((_slug, source_id, layer_key)): Path<(String, String, String)>,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
     let path = state.preset_path();
@@ -1470,8 +1527,10 @@ async fn land_layer_geojson(State(state): State<AppState>,
         })
 }
 
-async fn project_simulation(State(state): State<AppState>,
-    Path(_slug): Path<String>) -> Result<Json<Value>, StatusCode> {
+async fn project_simulation(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
     project_simulation_payload(&state.preset_path())
         .map(Json)
         .map_err(|_| StatusCode::NOT_FOUND)
@@ -1618,11 +1677,14 @@ async fn link_solver_accept(
                 .collect()
         })
         .or_else(|| {
-            result.get("created_slugs").and_then(|v| v.as_array()).map(|rows| {
-                rows.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
+            result
+                .get("created_slugs")
+                .and_then(|v| v.as_array())
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
         })
         .unwrap_or_default();
     if !created_slugs.is_empty() {
@@ -1642,9 +1704,10 @@ async fn link_solver_accept(
                 );
                 obj.insert(
                     "geojson".to_string(),
-                    links.get("geojson").cloned().unwrap_or_else(|| {
-                        json!({ "type": "FeatureCollection", "features": [] })
-                    }),
+                    links
+                        .get("geojson")
+                        .cloned()
+                        .unwrap_or_else(|| json!({ "type": "FeatureCollection", "features": [] })),
                 );
             }
         }
@@ -1668,13 +1731,12 @@ async fn alternates_scan(
             Json(json!({ "slug": state.slug.clone(), "error": "not found" })),
         ));
     }
-    let request =
-        parse_alternates_request(state.preset_path(), &q).map_err(|e| {
-            (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
-            )
-        })?;
+    let request = parse_alternates_request(state.preset_path(), &q).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": e.0 })),
+        )
+    })?;
     let gen = state.alternates.enqueue(request).map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -1707,7 +1769,9 @@ async fn link_pair_detail(
     if slug_a.is_empty() || slug_b.is_empty() {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "slug": state.slug.clone(), "error": "a and b query parameters are required" })),
+            Json(
+                json!({ "slug": state.slug.clone(), "error": "a and b query parameters are required" }),
+            ),
         ));
     }
     let preset = load_preset(&state.preset_path()).map_err(|e| {
