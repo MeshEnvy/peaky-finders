@@ -40,8 +40,9 @@ pub fn roads_book_get(preset_path: &Path) -> Result<RoadsBook> {
 }
 
 pub fn roads_book_put(preset_path: &Path, warm: &WarmHub, book: &RoadsBook) -> Result<()> {
+    let previous = roads_book_get(preset_path)?;
     let path = roads_path_for_config(preset_path)?;
     save_roads_book(&path, book)?;
-    warm.invalidate_osm_routing(preset_path)?;
+    warm.apply_roads_book_to_cached_routing(preset_path, &previous, book)?;
     Ok(())
 }

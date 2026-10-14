@@ -16,9 +16,7 @@ use crate::hike::{
     haversine_m, profile_passes, stored_peak_hike, zero_hike_at, HikeProfile, HikeSampleElev,
 };
 use crate::jeep::{
-    jeep_class_usage, jeep_path_undirected_edges, reconstruct_jeep_route,
-    shortest_horiz_prev_from_paved, stored_peak_jeep, JeepLengthBudget, JeepRoadSegment,
-    PavedReachTree,
+    jeep_class_usage, stored_peak_jeep, JeepLengthBudget, JeepRoadSegment, PavedReachTree,
 };
 use crate::osm::OsmRouting;
 use crate::trail::{route_trail_closest_approach, trail_park_candidates, TrailRouting, TRAIL_MAX_M};
@@ -387,7 +385,7 @@ pub fn probe<E: HikeSampleElev>(
     dest_lon: f64,
     ctx: &AccessContext<'_>,
 ) -> Option<AccessProbe> {
-    if ctx.routing.paved.all_sources().is_empty() {
+    if ctx.routing.paved.anchor_count() == 0 {
         return None;
     }
 
@@ -457,7 +455,7 @@ pub fn probe_explain<E: HikeSampleElev>(
     dest_lon: f64,
     ctx: &AccessContext<'_>,
 ) -> Option<(AccessProbe, Vec<ProbeCandidateReport>)> {
-    if ctx.routing.paved.all_sources().is_empty() {
+    if ctx.routing.paved.anchor_count() == 0 {
         return None;
     }
 
@@ -540,8 +538,6 @@ pub fn probe_explain<E: HikeSampleElev>(
 
 const MAX_SITE_PARKS: usize = 4;
 const MIN_SITE_PARK_SEP_M: f64 = 400.0;
-const MAX_ALT_PATH_LENGTH_RATIO: f64 = 1.75;
-const MAX_ALT_PATH_EDGE_SHARE: f64 = 0.70;
 /// Extra hike still treated as the same pull-off. Farther than this is an early stop.
 const SAME_PULL_OFF_HIKE_M: f64 = 40.0;
 
@@ -675,14 +671,6 @@ pub fn drop_early_jeep_stops(options: Vec<SiteAccessOption>) -> Vec<SiteAccessOp
     kept
 }
 
-fn path_edge_share(first: &HashSet<(u32, u32)>, second: &HashSet<(u32, u32)>) -> f64 {
-    if first.is_empty() {
-        return 1.0;
-    }
-    let shared = first.intersection(second).count();
-    shared as f64 / first.len() as f64
-}
-
 fn build_option_at_park<E: HikeSampleElev>(
     elev: &E,
     ctx: &AccessContext<'_>,
@@ -776,17 +764,9 @@ pub fn build_site_access_options<E: HikeSampleElev>(
         budget_extra,
     );
 
-    let paved_nodes: HashSet<u32> = ctx
-        .routing
-        .paved
-        .all_sources()
-        .iter()
-        .map(|(_, _, node)| *node)
-        .collect();
-    let graph = &ctx.routing.graph;
     let mut options = Vec::new();
+    let prev0 = ctx.tree.prev();
     for park in parks {
-        let prev0 = ctx.tree.prev();
         let rec_flag = rec_park_node == Some(park.park_node);
         if let Some(opt) = build_option_at_park(
             elev,
@@ -799,48 +779,6 @@ pub fn build_site_access_options<E: HikeSampleElev>(
             rec_flag,
         ) {
             options.push(opt);
-        }
-
-        let first_edges = jeep_path_undirected_edges(prev0, park.park_node);
-        let first_horiz = ctx
-            .tree
-            .dist_horiz(park.park_node)
-            .unwrap_or(f64::INFINITY);
-        // Distance alternate to the same pull-off. Weighted search keeps the
-        // easy road; this keeps a shorter track even when it shares the stem.
-        let Some(prev_short) = shortest_horiz_prev_from_paved(
-            graph,
-            &paved_nodes,
-            park.park_node,
-            first_horiz,
-        ) else {
-            continue;
-        };
-        let route_short = reconstruct_jeep_route(graph, &prev_short, park.park_node);
-        let short_edges = jeep_path_undirected_edges(&prev_short, park.park_node);
-        let share = path_edge_share(&first_edges, &short_edges);
-        let meaningfully_shorter = route_short.horiz_m + 200.0 < first_horiz;
-        let distinct = share < MAX_ALT_PATH_EDGE_SHARE
-            && route_short.horiz_m <= first_horiz * MAX_ALT_PATH_LENGTH_RATIO + 1.0;
-        tracing::info!(
-            "site access alt park={} weighted_m={first_horiz:.0} shortest_m={:.0} share={share:.2} keep={}",
-            park.park_node,
-            route_short.horiz_m,
-            meaningfully_shorter || distinct
-        );
-        if meaningfully_shorter || distinct {
-            if let Some(opt) = build_option_at_park(
-                elev,
-                ctx,
-                park.park_node,
-                &prev_short,
-                dest_lat,
-                dest_lon,
-                1,
-                false,
-            ) {
-                options.push(opt);
-            }
         }
     }
     let mut options = drop_early_jeep_stops(options);

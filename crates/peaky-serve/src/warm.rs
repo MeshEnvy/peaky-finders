@@ -11,13 +11,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use peaky_peaks::{
     ensure_osm_pbf, invalidate_osm_routing_caches, inventory_all_geojson_bytes,
-    load_routing_for_points_progress, osm_routing_opts_from_preset, routing_bbox_for_points,
-    routing_coverage_bbox, routing_network_drive_geojson_bytes,
-    routing_network_layer_geojson_bytes, warm_place_access_with_routing, NetworkLayer,
-    NetworkViewBBox, NetworkViewCacheKey, OsmParsePhase, OsmRoutingOpts, ProjectRouting,
-    OSM_ROUTE_PAD_DEG,
+    load_routing_for_points_progress, osm_routing_opts_from_preset, patch_preserves_trusted_reach,
+    repatch_project_routing, routing_bbox_for_points, routing_coverage_bbox,
+    routing_network_drive_geojson_bytes, routing_network_layer_geojson_bytes,
+    warm_place_access_with_routing, warm_trusted_reach_trees, NetworkLayer, NetworkViewBBox,
+    NetworkViewCacheKey, OsmParsePhase, OsmRoutingOpts, ProjectRouting, OSM_ROUTE_PAD_DEG,
 };
-use peaky_preset::{load_preset, resolved_viewshed_root, BoardViewshedResolver, Preset, SiteEntry};
+use peaky_preset::{
+    load_preset, resolved_viewshed_root, BoardViewshedResolver, Preset, RoadsBook, SiteEntry,
+};
 use serde_json::{json, Value};
 use splatter::{
     propagate::required_tile_names_for_points, Session, PRIORITY_DEM_BACKGROUND,
@@ -902,11 +904,77 @@ impl WarmHub {
         };
         *self.osm_routing.lock().unwrap() = Some(cached);
         self.publish_osm_progress(OsmParsePhase::Ready, 1.0, true);
+        drop(_build);
+        self.spawn_reach_tree_warm(preset_path, routing.clone());
         Ok(routing)
     }
 
-    /// Clear in-memory OSM routing and on-disk PBF-side caches after ``roads.yaml`` changes.
-    pub fn invalidate_osm_routing(&self, preset_path: &Path) -> anyhow::Result<()> {
+    /// Load or build trusted paved-reach trees without holding ``osm_build``.
+    fn spawn_reach_tree_warm(&self, preset_path: &Path, routing: Arc<ProjectRouting>) {
+        if routing.preloaded_trees_snapshot().is_some() || routing.initialized_trees().is_some()
+        {
+            tracing::info!("server ready");
+            return;
+        }
+        let Some(project_dir) = preset_path.parent() else {
+            return;
+        };
+        let project_dir = project_dir.to_path_buf();
+        thread::spawn(move || {
+            if let Err(e) = warm_trusted_reach_trees(&project_dir, routing.as_ref()) {
+                tracing::warn!(path = %project_dir.display(), "reach tree warm: {e:#}");
+            } else {
+                tracing::info!(path = %project_dir.display(), "server ready");
+            }
+        });
+    }
+
+    /// Re-apply ``roads.yaml`` to the in-memory graph without deleting routing bins.
+    pub fn apply_roads_book_to_cached_routing(
+        &self,
+        preset_path: &Path,
+        previous: &RoadsBook,
+        next: &RoadsBook,
+    ) -> anyhow::Result<()> {
+        self.network_geo_cache.lock().unwrap().clear();
+        let preset = load_preset(preset_path)?;
+        let meta = preset.resolved_access_meta();
+        let sample_step = meta.road_sample_step_m;
+        let keep_reach = patch_preserves_trusted_reach(previous, next);
+        let mut guard = self.osm_routing.lock().unwrap();
+        let Some(cached) = guard.as_ref() else {
+            return Ok(());
+        };
+        let epoch = cached.epoch;
+        let bounds = (cached.west, cached.south, cached.east, cached.north);
+        let mut patched = repatch_project_routing(cached.routing.as_ref(), next, sample_step);
+        if keep_reach {
+            if let Some(trees) = cached
+                .routing
+                .initialized_trees()
+                .or_else(|| cached.routing.preloaded_trees_snapshot())
+            {
+                patched.set_preloaded_trees(trees);
+            }
+        }
+        let routing = Arc::new(patched);
+        *guard = Some(CachedOsmRouting {
+            routing: routing.clone(),
+            epoch,
+            west: bounds.0,
+            south: bounds.1,
+            east: bounds.2,
+            north: bounds.3,
+        });
+        drop(guard);
+        if !keep_reach {
+            self.spawn_reach_tree_warm(preset_path, routing);
+        }
+        Ok(())
+    }
+
+    /// Drop on-disk routing bins after PBF/GTLF source changes (not ``roads.yaml``).
+    pub fn invalidate_osm_routing_caches_disk(&self, preset_path: &Path) -> anyhow::Result<()> {
         self.osm_epoch.fetch_add(1, Ordering::AcqRel);
         *self.osm_routing.lock().unwrap() = None;
         self.network_geo_cache.lock().unwrap().clear();
@@ -920,8 +988,23 @@ impl WarmHub {
 
     /// Prefetch the site-bbox graph after listen so the first draft click is a route, not a PBF parse.
     pub fn prefetch_osm_routing(&self, preset_path: &Path) {
+        let preset = match load_preset(preset_path) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("osm routing prefetch: preset {e:#}");
+                return;
+            }
+        };
+        tracing::info!(
+            booked_sites = preset.sites.len(),
+            "osm prefetch: load statewide graph (cache hit expected)"
+        );
         match self.ensure_osm_covering(preset_path, &[]) {
-            Ok(_) => tracing::info!("osm routing graph ready"),
+            Ok(routing) => tracing::info!(
+                graph_nodes = routing.osm().graph.node_count(),
+                jeep_samples = routing.osm().jeep_roads.point_count,
+                "osm routing graph ready"
+            ),
             Err(e) => tracing::warn!("osm routing prefetch: {e:#}"),
         }
     }

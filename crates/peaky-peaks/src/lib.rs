@@ -19,6 +19,7 @@ mod trail;
 mod network_geojson;
 mod network_index;
 mod road_inventory;
+mod roads_patch;
 mod segment_groups;
 mod universe;
 
@@ -28,8 +29,8 @@ pub use access_warm::{
     probe_cache_path, project_gtlf_fingerprint, project_pbf_fingerprint, resolve_probe,
     routing_bbox_for_points,
     routing_coverage_bbox, save_probe_cache, ensure_site_access_options_on_probe,
-    warm_place_access, warm_place_access_with_routing, ProjectRouting, RoutingTrees,
-    SessionElev, OSM_ROUTE_PAD_DEG,
+    warm_place_access, warm_place_access_with_routing, warm_trusted_reach_trees,
+    repatch_project_routing, ProjectRouting, RoutingTrees, SessionElev, OSM_ROUTE_PAD_DEG,
 };
 pub use access_probe::{
     access_route_uses_custom, append_draft_site_access_options, build_site_access_options,
@@ -44,6 +45,10 @@ pub use gtlf::{
 pub use road_inventory::{
     inventory_all_geojson, inventory_all_geojson_bytes, classify_osm_inventory_from_opts,
     InventoryRole, OsmRoadInventory, GtlfRoadInventory,
+};
+pub use roads_patch::{
+    apply_roads_book_patch, osm_routing_base_for_cache, patch_preserves_trusted_reach,
+    refresh_inventory_roles, strip_custom_drive_segments,
 };
 pub use trail::{
     build_trail_graph, route_trail_closest_approach, trail_park_candidates, TrailRouting,
@@ -70,13 +75,14 @@ pub use jeep::{
     JeepProfileDetailed, PavedReachTree,
 };
 pub use osm::{
-    build_osm_routing, ensure_osm_pbf, osm_routing_opts_with_roads, OsmRoutingBuild, JeepRoadIndex,
-    OsmParsePhase, OsmRouting, OsmRoutingOpts,
-    JEEP_HIGHWAY_TAGS, OSM_BUILD_PAD_DEG, PAVED_HIGHWAY_TAGS,
+    build_osm_routing, duplicate_osm_routing, ensure_osm_pbf, osm_routing_opts_with_roads,
+    OsmRoutingBuild, JeepRoadIndex, OsmParsePhase, OsmRouting, OsmRoutingOpts, JEEP_HIGHWAY_TAGS,
+    OSM_BUILD_PAD_DEG, PAVED_HIGHWAY_TAGS,
 };
 pub use osm_cache::{
     invalidate_osm_routing_caches, save_merged_routing_cache, save_osm_routing_cache,
-    try_load_merged_routing_cache, try_load_osm_routing_cache, try_load_road_inventory_cache,
+    save_reach_trees_cache, try_load_merged_routing_cache, try_load_osm_routing_cache,
+    try_load_reach_trees_cache, try_load_road_inventory_cache,
 };
 pub use corridor::{corridor_polygon, parse_corridor_coords, resolve_corridor_sites, MI_TO_M};
 pub use probe::{

@@ -1014,6 +1014,7 @@ async fn place_access_resolved(
                 return Ok(cached.expect("cache hit"));
             }
             tracing::info!(slug = %place_slug, "access probe computing");
+            let started = std::time::Instant::now();
             let extra = match (lat, lon) {
                 (Some(la), Some(lo)) => vec![(la, lo)],
                 _ => Vec::new(),
@@ -1031,6 +1032,11 @@ async fn place_access_resolved(
                 lon,
                 Some(routing.as_ref()),
             )?;
+            tracing::info!(
+                slug = %place_slug,
+                elapsed_ms = started.elapsed().as_millis(),
+                "access probe ready"
+            );
             if cancel.load(Ordering::Relaxed) {
                 return Ok(json!({ "status": "cancelled" }));
             }

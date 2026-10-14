@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::network_geojson::NetworkViewBBox;
 use crate::osm::{is_jeep_highway, is_paved_anchor, OsmRoutingOpts, WayTags};
 
-pub const ROAD_INVENTORY_CACHE_VERSION: u32 = 2;
+pub const ROAD_INVENTORY_CACHE_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -311,7 +311,6 @@ pub(crate) struct RoadInventoryDisk {
     pub north: f64,
     pub jeep_highways: Vec<String>,
     pub paved_highways: Vec<String>,
-    pub roads_fingerprint: String,
     pub ways: Vec<OsmInventoryWayDisk>,
 }
 
@@ -392,7 +391,6 @@ pub(crate) fn inventory_to_disk(
         north,
         jeep_highways: opts.jeep_highways.clone(),
         paved_highways: opts.paved_highways.clone(),
-        roads_fingerprint: opts.roads_fingerprint.clone(),
         ways: inventory.ways.iter().map(OsmInventoryWayDisk::from).collect(),
     }
 }

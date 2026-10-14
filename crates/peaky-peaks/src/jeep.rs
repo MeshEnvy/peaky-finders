@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use peaky_preset::{jeep_budget_class_key, JeepExtremeBands, PeakJeepProfile};
 
@@ -37,6 +37,16 @@ impl JeepLengthBudget {
             .or_else(|| self.class_m.get("grade5"))
             .copied()
             .unwrap_or(self.overall_m)
+    }
+
+    pub fn cache_key_vectors(&self) -> (f64, Vec<String>, Vec<f64>) {
+        let mut keys: Vec<String> = self.class_m.keys().cloned().collect();
+        keys.sort();
+        let vals: Vec<f64> = keys
+            .iter()
+            .filter_map(|k| self.class_m.get(k).copied())
+            .collect();
+        (self.overall_m, keys, vals)
     }
 }
 
@@ -432,12 +442,38 @@ pub fn shortest_horiz_prev_from_paved(
 
 const REACHABLE_PARK_RINGS_M: [f64; 6] = [2_500.0, 5_000.0, 10_000.0, 20_000.0, 40_000.0, 80_000.0];
 
+/// On-disk paved-reach flood (paired unconstrained + budgeted).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PavedReachTreeDisk {
+    pub dist_cost: HashMap<u32, f64>,
+    pub dist_horiz: HashMap<u32, f64>,
+    pub prev: HashMap<u32, (u32, crate::osm::GraphEdge)>,
+}
+
 /// Paved-anchor Dijkstra flood retained for park-candidate lookup.
 #[derive(Debug, Clone)]
 pub struct PavedReachTree {
     dist_cost: HashMap<u32, f64>,
     dist_horiz: HashMap<u32, f64>,
     prev: HashMap<u32, (u32, crate::osm::GraphEdge)>,
+}
+
+impl PavedReachTree {
+    pub fn from_disk(d: PavedReachTreeDisk) -> Self {
+        Self {
+            dist_cost: d.dist_cost,
+            dist_horiz: d.dist_horiz,
+            prev: d.prev,
+        }
+    }
+
+    pub fn to_disk(&self) -> PavedReachTreeDisk {
+        PavedReachTreeDisk {
+            dist_cost: self.dist_cost.clone(),
+            dist_horiz: self.dist_horiz.clone(),
+            prev: self.prev.clone(),
+        }
+    }
 }
 
 impl PavedReachTree {

@@ -15,13 +15,17 @@ use crate::osm::{
     GraphEdge, GraphNodeIndex, JeepRoadGraph, JeepRoadIndex, OsmRouting, OsmRoutingOpts,
     PavedAnchorIndex, PavedPoint, RoadPoint,
 };
+use crate::jeep::{JeepLengthBudget, PavedReachTree, PavedReachTreeDisk};
 use crate::road_inventory::{
     inventory_from_disk, inventory_to_disk, OsmRoadInventory, RoadInventoryDisk,
     ROAD_INVENTORY_CACHE_VERSION,
 };
+use crate::roads_patch::osm_routing_base_for_cache;
+use crate::segment_groups::{RoadSegmentGroup, SegmentGroupKey, SegmentGroupTags};
 
-pub const OSM_ROUTING_CACHE_VERSION: u32 = 6;
-pub const MERGED_ROUTING_CACHE_VERSION: u32 = 6;
+pub const OSM_ROUTING_CACHE_VERSION: u32 = 7;
+pub const MERGED_ROUTING_CACHE_VERSION: u32 = 7;
+pub const REACH_TREES_CACHE_VERSION: u32 = 1;
 
 const NONE: u8 = 255;
 
@@ -56,7 +60,7 @@ struct OsmRoutingDisk {
     sample_step_m: f64,
     jeep_highways: Vec<String>,
     paved_highways: Vec<String>,
-    roads_fingerprint: String,
+    segment_groups: Vec<SegmentGroupDisk>,
     jeep_way_count: u32,
     jeep_lat: Vec<f32>,
     jeep_lon: Vec<f32>,
@@ -86,6 +90,106 @@ struct MergedRoutingDisk {
     inner: OsmRoutingDisk,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SegmentGroupDisk {
+    key_tag: u8,
+    osm_id: i64,
+    gtlf_layer: String,
+    gtlf_hash: String,
+    lat: Vec<f32>,
+    lon: Vec<f32>,
+    highway: String,
+    tracktype: Option<String>,
+    surface: Option<String>,
+    fourwd_only: bool,
+    role: u8,
+    reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReachTreesDisk {
+    version: u32,
+    pbf_len: u64,
+    pbf_mtime: u64,
+    gtlf_fingerprint: String,
+    max_jeep_m: f64,
+    budget_overall_m: f64,
+    budget_class_keys: Vec<String>,
+    budget_class_vals: Vec<f64>,
+    unconstrained: PavedReachTreeDisk,
+    budgeted: PavedReachTreeDisk,
+}
+
+fn segment_group_to_disk(g: &RoadSegmentGroup) -> Option<SegmentGroupDisk> {
+    if matches!(g.key, SegmentGroupKey::Custom { .. }) {
+        return None;
+    }
+    let (key_tag, osm_id, gtlf_layer, gtlf_hash) = match &g.key {
+        SegmentGroupKey::Osm { osm_id } => (0u8, *osm_id, String::new(), String::new()),
+        SegmentGroupKey::Gtlf {
+            layer_id,
+            coord_hash,
+        } => (1u8, 0, layer_id.clone(), coord_hash.clone()),
+        SegmentGroupKey::Custom { .. } => return None,
+    };
+    let mut lat = Vec::with_capacity(g.coords.len());
+    let mut lon = Vec::with_capacity(g.coords.len());
+    for &(la, lo) in &g.coords {
+        lat.push(la as f32);
+        lon.push(lo as f32);
+    }
+    Some(SegmentGroupDisk {
+        key_tag,
+        osm_id,
+        gtlf_layer,
+        gtlf_hash,
+        lat,
+        lon,
+        highway: g.tags.highway.clone(),
+        tracktype: g.tags.tracktype.clone(),
+        surface: g.tags.surface.clone(),
+        fourwd_only: g.tags.fourwd_only,
+        role: road_role_to_u8(g.role),
+        reason: g.reason.clone(),
+    })
+}
+
+fn segment_group_from_disk(d: SegmentGroupDisk) -> RoadSegmentGroup {
+    let coords: Vec<(f64, f64)> = d
+        .lat
+        .into_iter()
+        .zip(d.lon)
+        .map(|(lat, lon)| (lat as f64, lon as f64))
+        .collect();
+    let key = match d.key_tag {
+        1 => SegmentGroupKey::Gtlf {
+            layer_id: d.gtlf_layer,
+            coord_hash: d.gtlf_hash,
+        },
+        _ => SegmentGroupKey::Osm { osm_id: d.osm_id },
+    };
+    RoadSegmentGroup {
+        key,
+        coords,
+        tags: SegmentGroupTags {
+            highway: d.highway,
+            tracktype: d.tracktype,
+            surface: d.surface,
+            fourwd_only: d.fourwd_only,
+        },
+        role: road_role_from_u8(d.role),
+        reason: d.reason,
+    }
+}
+
+fn reach_cache_path(pbf_path: &Path) -> std::path::PathBuf {
+    pbf_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("routing-reach-v1.bin")
+}
+
+
 fn cache_path(pbf_path: &Path) -> std::path::PathBuf {
     pbf_path
         .parent()
@@ -100,9 +204,14 @@ fn merged_cache_path(pbf_path: &Path) -> std::path::PathBuf {
         .join("routing-merged.bin")
 }
 
-/// Drop OSM routing caches so the next load reparses the PBF (e.g. after ``roads.yaml`` save).
+/// Drop OSM routing caches so the next load reparses the PBF (PBF/GTLF source change only).
 pub fn invalidate_osm_routing_caches(pbf_path: &Path) {
-    for name in ["routing-v1.bin", "routing-merged.bin", "road-inventory-v1.bin"] {
+    for name in [
+        "routing-v1.bin",
+        "routing-merged.bin",
+        "road-inventory-v1.bin",
+        "routing-reach-v1.bin",
+    ] {
         let path = pbf_path
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -207,9 +316,6 @@ pub fn try_load_osm_routing_cache(
     if (disk.sample_step_m - opts.road_sample_step_m).abs() > 0.01 {
         return None;
     }
-    if disk.roads_fingerprint != opts.roads_fingerprint {
-        return None;
-    }
     if !bbox_covers((disk.west, disk.south, disk.east, disk.north), west, south, east, north) {
         return None;
     }
@@ -283,13 +389,28 @@ fn routing_from_disk(disk: OsmRoutingDisk) -> Result<OsmRouting> {
         });
     }
     let graph = JeepRoadGraph::from_parts(nodes, adj);
-    Ok(OsmRouting {
-        jeep_roads: JeepRoadIndex::from_samples(jeep, disk.jeep_way_count as usize),
+    let segment_groups: Vec<RoadSegmentGroup> = disk
+        .segment_groups
+        .into_iter()
+        .map(segment_group_from_disk)
+        .collect();
+    let jeep_point_count = jeep.len();
+    let paved_count = paved.len();
+    let routing = OsmRouting {
+        jeep_roads: JeepRoadIndex::from_vec(jeep, disk.jeep_way_count as usize),
         graph_nodes: GraphNodeIndex::from_graph(&graph),
         graph,
         paved: PavedAnchorIndex::from_points(paved),
-        segment_groups: Vec::new(),
-    })
+        segment_groups,
+    };
+    info!(
+        jeep_points = jeep_point_count,
+        graph_nodes = routing.graph.node_count(),
+        paved_anchors = paved_count,
+        segment_groups = routing.segment_groups.len(),
+        "peaks: routing indexes ready (jeep R-tree lazy until queried)"
+    );
+    Ok(routing)
 }
 
 fn road_role_from_u8(v: u8) -> RoadRole {
@@ -379,7 +500,11 @@ fn routing_to_disk(
         sample_step_m: opts.road_sample_step_m,
         jeep_highways: opts.jeep_highways.clone(),
         paved_highways: opts.paved_highways.clone(),
-        roads_fingerprint: opts.roads_fingerprint.clone(),
+        segment_groups: routing
+            .segment_groups
+            .iter()
+            .filter_map(segment_group_to_disk)
+            .collect(),
         jeep_way_count: routing.jeep_roads.way_count as u32,
         jeep_lat,
         jeep_lon,
@@ -438,9 +563,6 @@ fn disk_matches_request(
     if (disk.sample_step_m - opts.road_sample_step_m).abs() > 0.01 {
         return false;
     }
-    if disk.roads_fingerprint != opts.roads_fingerprint {
-        return false;
-    }
     bbox_covers((disk.west, disk.south, disk.east, disk.north), west, south, east, north)
 }
 
@@ -460,9 +582,6 @@ fn inventory_disk_matches(
         return false;
     };
     if disk.pbf_len != pbf_len || disk.pbf_mtime != pbf_mtime {
-        return false;
-    }
-    if disk.roads_fingerprint != opts.roads_fingerprint {
         return false;
     }
     bbox_covers((disk.west, disk.south, disk.east, disk.north), west, south, east, north)
@@ -502,7 +621,8 @@ pub fn save_osm_routing_cache(
     routing: &OsmRouting,
     inventory: &OsmRoadInventory,
 ) -> Result<()> {
-    let disk = routing_to_disk(pbf_path, west, south, east, north, opts, routing)?;
+    let base = osm_routing_base_for_cache(routing);
+    let disk = routing_to_disk(pbf_path, west, south, east, north, opts, &base)?;
     let path = cache_path(pbf_path);
     write_bincode(&path, &disk)?;
     info!(path = %path.display(), "peaks: OSM routing cache written");
@@ -534,7 +654,8 @@ pub fn save_merged_routing_cache(
     routing: &OsmRouting,
     gtlf_fingerprint: &str,
 ) -> Result<()> {
-    let inner = routing_to_disk(pbf_path, west, south, east, north, opts, routing)?;
+    let base = osm_routing_base_for_cache(routing);
+    let inner = routing_to_disk(pbf_path, west, south, east, north, opts, &base)?;
     let disk = MergedRoutingDisk {
         version: MERGED_ROUTING_CACHE_VERSION,
         gtlf_fingerprint: gtlf_fingerprint.to_string(),
@@ -606,6 +727,88 @@ pub fn try_load_merged_routing_cache(
     }
 }
 
+/// Persist trusted paved-reach floods beside the merged routing bin.
+pub fn save_reach_trees_cache(
+    pbf_path: &Path,
+    gtlf_fingerprint: &str,
+    max_jeep_m: f64,
+    budget: &JeepLengthBudget,
+    unconstrained: &PavedReachTree,
+    budgeted: &PavedReachTree,
+) -> Result<()> {
+    let (pbf_len, pbf_mtime) = pbf_fingerprint(pbf_path)?;
+    let (budget_overall_m, budget_class_keys, budget_class_vals) = budget.cache_key_vectors();
+    let disk = ReachTreesDisk {
+        version: REACH_TREES_CACHE_VERSION,
+        pbf_len,
+        pbf_mtime,
+        gtlf_fingerprint: gtlf_fingerprint.to_string(),
+        max_jeep_m,
+        budget_overall_m,
+        budget_class_keys,
+        budget_class_vals,
+        unconstrained: unconstrained.to_disk(),
+        budgeted: budgeted.to_disk(),
+    };
+    write_bincode(&reach_cache_path(pbf_path), &disk)?;
+    info!(path = %reach_cache_path(pbf_path).display(), "peaks: reach trees cache written");
+    Ok(())
+}
+
+fn reach_disk_matches(
+    disk: &ReachTreesDisk,
+    pbf_path: &Path,
+    gtlf_fingerprint: &str,
+    max_jeep_m: f64,
+    budget: &JeepLengthBudget,
+) -> bool {
+    if disk.version != REACH_TREES_CACHE_VERSION {
+        return false;
+    }
+    let Ok((pbf_len, pbf_mtime)) = pbf_fingerprint(pbf_path) else {
+        return false;
+    };
+    if disk.pbf_len != pbf_len || disk.pbf_mtime != pbf_mtime {
+        return false;
+    }
+    if disk.gtlf_fingerprint != gtlf_fingerprint {
+        return false;
+    }
+    if (disk.max_jeep_m - max_jeep_m).abs() > 0.5 {
+        return false;
+    }
+    let (overall, keys, vals) = budget.cache_key_vectors();
+    if (disk.budget_overall_m - overall).abs() > 0.5 {
+        return false;
+    }
+    disk.budget_class_keys == keys && disk.budget_class_vals == vals
+}
+
+/// Load cached trusted reach trees when keys match the live graph sources.
+pub fn try_load_reach_trees_cache(
+    pbf_path: &Path,
+    gtlf_fingerprint: &str,
+    max_jeep_m: f64,
+    budget: &JeepLengthBudget,
+) -> Option<(PavedReachTree, PavedReachTree)> {
+    let path = reach_cache_path(pbf_path);
+    let version = peek_cache_version(&path)?;
+    if version != REACH_TREES_CACHE_VERSION {
+        remove_stale_cache(&path, version, REACH_TREES_CACHE_VERSION);
+        return None;
+    }
+    let file = File::open(&path).ok()?;
+    let disk: ReachTreesDisk = bincode::deserialize_from(BufReader::new(file)).ok()?;
+    if !reach_disk_matches(&disk, pbf_path, gtlf_fingerprint, max_jeep_m, budget) {
+        return None;
+    }
+    info!(path = %path.display(), "peaks: reach trees cache hit");
+    Some((
+        PavedReachTree::from_disk(disk.unconstrained),
+        PavedReachTree::from_disk(disk.budgeted),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,12 +828,11 @@ mod tests {
     }
 
     fn test_opts() -> OsmRoutingOpts {
-        let book = peaky_preset::seed_roads_book();
         OsmRoutingOpts {
             road_sample_step_m: 30.0,
             jeep_highways: vec!["track".into()],
             paved_highways: vec!["primary".into()],
-            roads_fingerprint: peaky_preset::roads_fingerprint(&book),
+            roads_fingerprint: String::new(),
         }
     }
 
@@ -655,6 +857,62 @@ mod tests {
             &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "disabled"
         )
         .is_none());
+    }
+
+    #[test]
+    fn merged_cache_omits_custom_edges_on_disk() {
+        use crate::osm::{JeepRoadGraph, JeepRoadIndex, GraphNodeIndex, PavedAnchorIndex};
+
+        let dir = tempfile::tempdir().unwrap();
+        let pbf = dir.path().join("nevada-latest.osm.pbf");
+        std::fs::write(&pbf, b"fake-pbf").unwrap();
+        let opts = test_opts();
+        let mut graph = JeepRoadGraph::new();
+        let a = graph.insert_node(38.0, -117.0);
+        let b = graph.insert_node(38.001, -117.0);
+        graph.add_way_segment_classified(
+            a,
+            b,
+            38.0,
+            -117.0,
+            38.001,
+            -117.0,
+            "custom",
+            None,
+            None,
+            false,
+            peaky_preset::RoadRole::Jeep,
+            0,
+        );
+        let graph_nodes = GraphNodeIndex::from_graph(&graph);
+        let routing = OsmRouting {
+            jeep_roads: JeepRoadIndex::from_samples(Vec::new(), 0),
+            graph,
+            paved: PavedAnchorIndex::from_points(Vec::new()),
+            graph_nodes,
+            segment_groups: vec![crate::segment_groups::RoadSegmentGroup {
+                key: crate::segment_groups::SegmentGroupKey::Custom {
+                    id: "draft-1".into(),
+                },
+                coords: vec![(38.0, -117.0), (38.001, -117.0)],
+                tags: crate::segment_groups::SegmentGroupTags {
+                    highway: "custom".into(),
+                    tracktype: None,
+                    surface: None,
+                    fourwd_only: false,
+                },
+                role: peaky_preset::RoadRole::Jeep,
+                reason: None,
+            }],
+        };
+        save_merged_routing_cache(&pbf, -120.0, 36.0, -114.0, 42.0, &opts, &routing, "abc123")
+            .unwrap();
+        let loaded = try_load_merged_routing_cache(
+            &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "abc123",
+        )
+        .expect("load merged");
+        assert!(loaded.segment_groups.is_empty());
+        assert!(loaded.graph.adj_slice().iter().all(|adj| adj.is_empty()));
     }
 
     #[test]

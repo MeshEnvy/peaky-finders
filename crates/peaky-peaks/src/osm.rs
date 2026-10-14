@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -144,27 +145,93 @@ impl RTreeObject for RoadPoint {
     }
 }
 
+enum JeepIndexStorage {
+    /// Loaded from disk or after a small append — spatial queries build the tree on demand.
+    Lazy(Vec<RoadPoint>),
+    Ready(RTree<RoadPoint>),
+}
+
 pub struct JeepRoadIndex {
-    tree: RTree<RoadPoint>,
+    storage: RwLock<JeepIndexStorage>,
     pub point_count: usize,
     pub way_count: usize,
 }
 
 impl JeepRoadIndex {
-    pub(crate) fn from_samples(samples: Vec<RoadPoint>, way_count: usize) -> Self {
+    /// Store samples without building the R-tree (used after routing cache load).
+    pub(crate) fn from_vec(samples: Vec<RoadPoint>, way_count: usize) -> Self {
         let point_count = samples.len();
-        if point_count >= 1_000_000 {
-            info!(jeep_points = point_count, "peaks: building jeep R-tree");
-        }
         Self {
-            tree: RTree::bulk_load(samples),
+            storage: RwLock::new(JeepIndexStorage::Lazy(samples)),
             point_count,
             way_count,
         }
     }
 
+    pub(crate) fn from_samples(samples: Vec<RoadPoint>, way_count: usize) -> Self {
+        let point_count = samples.len();
+        if point_count >= 1_000_000 {
+            info!(jeep_points = point_count, "peaks: building jeep R-tree");
+            Self {
+                storage: RwLock::new(JeepIndexStorage::Ready(RTree::bulk_load(samples))),
+                point_count,
+                way_count,
+            }
+        } else {
+            Self::from_vec(samples, way_count)
+        }
+    }
+
+    fn ensure_tree(&self) {
+        let mut guard = self.storage.write().unwrap();
+        if matches!(*guard, JeepIndexStorage::Ready(_)) {
+            return;
+        }
+        let JeepIndexStorage::Lazy(samples) =
+            std::mem::replace(&mut *guard, JeepIndexStorage::Lazy(Vec::new()))
+        else {
+            return;
+        };
+        if samples.len() >= 1_000_000 {
+            info!(jeep_points = samples.len(), "peaks: building jeep R-tree");
+        }
+        *guard = JeepIndexStorage::Ready(RTree::bulk_load(samples));
+    }
+
+    fn with_tree<R>(&self, f: impl FnOnce(&RTree<RoadPoint>) -> R) -> R {
+        self.ensure_tree();
+        let guard = self.storage.read().unwrap();
+        match &*guard {
+            JeepIndexStorage::Ready(tree) => f(tree),
+            JeepIndexStorage::Lazy(_) => unreachable!("ensure_tree"),
+        }
+    }
+
+    /// Append samples after a small graph weld without rebuilding a statewide tree.
+    pub(crate) fn append_samples(&mut self, extra: Vec<RoadPoint>, added_ways: usize) {
+        let extra_len = extra.len();
+        if extra_len == 0 && added_ways == 0 {
+            return;
+        }
+        let mut guard = self.storage.write().unwrap();
+        match &mut *guard {
+            JeepIndexStorage::Lazy(v) => v.extend(extra),
+            JeepIndexStorage::Ready(tree) => {
+                let mut v: Vec<RoadPoint> = tree.iter().copied().collect();
+                v.extend(extra);
+                *guard = JeepIndexStorage::Lazy(v);
+            }
+        }
+        self.point_count = self.point_count.saturating_add(extra_len);
+        self.way_count = self.way_count.saturating_add(added_ways);
+    }
+
     pub(crate) fn sample_points(&self) -> Vec<RoadPoint> {
-        self.tree.iter().copied().collect()
+        let guard = self.storage.read().unwrap();
+        match &*guard {
+            JeepIndexStorage::Lazy(v) => v.clone(),
+            JeepIndexStorage::Ready(tree) => tree.iter().copied().collect(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -183,12 +250,14 @@ impl JeepRoadIndex {
         }
         let envelope = Self::envelope_for_radius(lat, lon, max_m);
         let mut out = Vec::new();
-        for pt in self.tree.locate_in_envelope_intersecting(&envelope) {
-            let d = haversine_m(lat, lon, pt.lat, pt.lon);
-            if d <= max_m + 1.0 {
-                out.push((pt.lat, pt.lon, d));
+        self.with_tree(|tree| {
+            for pt in tree.locate_in_envelope_intersecting(&envelope) {
+                let d = haversine_m(lat, lon, pt.lat, pt.lon);
+                if d <= max_m + 1.0 {
+                    out.push((pt.lat, pt.lon, d));
+                }
             }
-        }
+        });
         out
     }
 
@@ -200,7 +269,7 @@ impl JeepRoadIndex {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GraphEdge {
     pub to: u32,
     pub length_m: f64,
@@ -250,6 +319,10 @@ impl JeepRoadGraph {
 
     pub(crate) fn adj_slice(&self) -> &[Vec<GraphEdge>] {
         &self.adj
+    }
+
+    pub(crate) fn adj_slice_mut(&mut self) -> &mut [Vec<GraphEdge>] {
+        &mut self.adj
     }
 
     pub fn is_empty(&self) -> bool {
@@ -605,6 +678,10 @@ impl PavedAnchorIndex {
         self.tree.iter().copied().collect()
     }
 
+    pub fn anchor_count(&self) -> usize {
+        self.tree.size()
+    }
+
     pub fn from_nodes(_graph: &JeepRoadGraph, nodes: &[(u32, f64, f64)]) -> Self {
         let points: Vec<PavedPoint> = nodes
             .iter()
@@ -697,6 +774,10 @@ pub struct GraphNodeIndex {
 }
 
 impl GraphNodeIndex {
+    pub fn len(&self) -> usize {
+        self.tree.size()
+    }
+
     pub fn from_graph(graph: &JeepRoadGraph) -> Self {
         let points: Vec<GraphNodePoint> = graph
             .nodes_slice()
@@ -778,7 +859,7 @@ pub fn duplicate_osm_routing(src: &OsmRouting) -> OsmRouting {
         src.graph.nodes_slice().to_vec(),
         src.graph.adj_slice().to_vec(),
     );
-    let jeep_roads = JeepRoadIndex::from_samples(
+    let jeep_roads = JeepRoadIndex::from_vec(
         src.jeep_roads.sample_points(),
         src.jeep_roads.way_count,
     );
@@ -973,7 +1054,7 @@ pub(crate) fn sample_way_public(nodes: &[(f64, f64)], step_m: f64) -> Vec<RoadPo
     sample_way(nodes, step_m)
 }
 
-fn sample_way(nodes: &[(f64, f64)], step_m: f64) -> Vec<RoadPoint> {
+pub(crate) fn sample_way(nodes: &[(f64, f64)], step_m: f64) -> Vec<RoadPoint> {
     if nodes.len() < 2 {
         return nodes
             .iter()
@@ -1027,7 +1108,7 @@ fn dist_point_to_segment_m(lat: f64, lon: f64, lat1: f64, lon1: f64, lat2: f64, 
 }
 
 /// Interpolated paved samples for proximity snap; each ties to the nearer graph endpoint.
-fn paved_interpolated_samples(
+pub(crate) fn paved_interpolated_samples(
     coords: &[(f64, f64)],
     vert_nodes: &[u32],
     sample_step: f64,
@@ -1299,7 +1380,6 @@ where
 
     progress(OsmParsePhase::Index, 0.88);
     let jeep_point_count = jeep_samples.len();
-    let jeep_tree = RTree::bulk_load(jeep_samples);
     let paved_tree = RTree::bulk_load(paved_points);
 
     info!(
@@ -1316,11 +1396,7 @@ where
     let graph_nodes = GraphNodeIndex::from_graph(&graph);
     Ok(OsmRoutingBuild {
         routing: OsmRouting {
-            jeep_roads: JeepRoadIndex {
-                tree: jeep_tree,
-                point_count: jeep_point_count,
-                way_count: jeep_way_count,
-            },
+            jeep_roads: JeepRoadIndex::from_samples(jeep_samples, jeep_way_count),
             graph,
             paved: PavedAnchorIndex { tree: paved_tree },
             graph_nodes,
@@ -1417,6 +1493,107 @@ pub fn merge_supplemental_jeep_lines(
     merge_supplemental_jeep_lines_progress(routing, lines, sample_step_m, &mut |_| {});
 }
 
+/// Weld a handful of lines into a large cached graph without cloning/rebuilding the statewide jeep R-tree.
+const LIGHTWEIGHT_SUPPLEMENTAL_MAX: usize = 64;
+
+fn merge_supplemental_jeep_lines_lightweight(
+    routing: &mut OsmRouting,
+    lines: &[SupplementalLine],
+    sample_step_m: f64,
+    progress: &mut impl FnMut(f64),
+) {
+    let total = lines.len();
+    progress(0.05);
+    info!(
+        lines = total,
+        jeep_points = routing.jeep_roads.point_count,
+        "gtlf: lightweight supplemental jeep weld (graph + lazy samples)"
+    );
+    let mut graph_node_map: HashMap<i64, u32> = HashMap::new();
+    let mut next_id: i64 = -1_000_000;
+    let mut added_ways = 0usize;
+    let mut extra_samples = Vec::new();
+    for (idx, line) in lines.iter().enumerate() {
+        if line.coords.len() < 2 {
+            continue;
+        }
+        added_ways += 1;
+        extra_samples.extend(sample_way(&line.coords, sample_step_m));
+
+        let group_id = if line.group_id == u32::MAX {
+            let layer = line.gtlf_layer.clone().unwrap_or_else(|| "gtlf".into());
+            let coord_hash = peaky_preset::gtlf_coord_hash(&layer, &line.coords);
+            let id = routing.segment_groups.len() as u32;
+            routing.segment_groups.push(RoadSegmentGroup {
+                key: SegmentGroupKey::Gtlf {
+                    layer_id: layer,
+                    coord_hash,
+                },
+                coords: line.coords.clone(),
+                tags: SegmentGroupTags {
+                    highway: line.highway.clone(),
+                    tracktype: line.tracktype.clone(),
+                    surface: None,
+                    fourwd_only: false,
+                },
+                role: line.role,
+                reason: None,
+            });
+            id
+        } else {
+            line.group_id
+        };
+
+        let mut vert_nodes = Vec::with_capacity(line.coords.len());
+        for &(lat, lon) in &line.coords {
+            let n = resolve_vertex_welded(
+                &mut routing.graph,
+                &mut routing.graph_nodes,
+                lat,
+                lon,
+                MERGE_ENDPOINT_SNAP_M,
+                &mut next_id,
+                &mut graph_node_map,
+            );
+            vert_nodes.push(n);
+        }
+        for i in 0..vert_nodes.len().saturating_sub(1) {
+            let a = vert_nodes[i];
+            let b = vert_nodes[i + 1];
+            let (lat1, lon1) = routing.graph.node_coords(a);
+            let (lat2, lon2) = routing.graph.node_coords(b);
+            routing.graph.add_way_segment_classified(
+                a,
+                b,
+                lat1,
+                lon1,
+                lat2,
+                lon2,
+                &line.highway,
+                line.tracktype.as_deref(),
+                None,
+                false,
+                line.role,
+                group_id,
+            );
+        }
+        if idx + 1 == total {
+            progress(1.0);
+        } else {
+            progress(0.05 + 0.9 * ((idx + 1) as f64 / total as f64));
+        }
+    }
+    routing
+        .jeep_roads
+        .append_samples(extra_samples, added_ways);
+    info!(
+        lines = total,
+        added = added_ways,
+        jeep_points = routing.jeep_roads.point_count,
+        "gtlf: lightweight supplemental jeep weld done"
+    );
+}
+
 /// Same as [`merge_supplemental_jeep_lines`], reporting 0.0–1.0 merge fraction.
 pub fn merge_supplemental_jeep_lines_progress<F>(
     routing: &mut OsmRouting,
@@ -1429,6 +1606,10 @@ pub fn merge_supplemental_jeep_lines_progress<F>(
     let total = lines.len();
     if total == 0 {
         progress(1.0);
+        return;
+    }
+    if total <= LIGHTWEIGHT_SUPPLEMENTAL_MAX && routing.jeep_roads.point_count >= 500_000 {
+        merge_supplemental_jeep_lines_lightweight(routing, lines, sample_step_m, progress);
         return;
     }
     progress(0.02);
@@ -1655,11 +1836,7 @@ pub(crate) fn test_index_from_points(points: &[(f64, f64)]) -> JeepRoadIndex {
         })
         .collect();
     let n = samples.len();
-    JeepRoadIndex {
-        tree: RTree::bulk_load(samples),
-        point_count: n,
-        way_count: n.max(1),
-    }
+    JeepRoadIndex::from_samples(samples, n.max(1))
 }
 
 #[cfg(test)]
@@ -1847,11 +2024,7 @@ mod tests {
         let n1 = graph.get_or_insert_node_public(id, 38.01, -117.0, &mut map);
         graph.add_way_segment_public(n0, n1, 38.0, -117.0, 38.01, -117.0, "primary", None, None, false);
         let mut routing = OsmRouting {
-            jeep_roads: JeepRoadIndex {
-                tree: RTree::bulk_load(vec![]),
-                point_count: 0,
-                way_count: 0,
-            },
+            jeep_roads: JeepRoadIndex::from_vec(vec![], 0),
             graph,
             paved: PavedAnchorIndex::test_from_points(&[(38.0, -117.0)]),
             graph_nodes: GraphNodeIndex::empty(),
@@ -1892,14 +2065,7 @@ mod tests {
         let n1 = graph.get_or_insert_node_public(id, 38.01, -117.0, &mut map);
         graph.add_way_segment_public(n0, n1, 38.0, -117.0, 38.01, -117.0, "track", None, None, false);
         let src = OsmRouting {
-            jeep_roads: JeepRoadIndex {
-                tree: RTree::bulk_load(vec![RoadPoint {
-                    lat: 38.0,
-                    lon: -117.0,
-                }]),
-                point_count: 1,
-                way_count: 1,
-            },
+            jeep_roads: test_index_from_points(&[(38.0, -117.0)]),
             graph,
             paved: PavedAnchorIndex::test_from_points(&[(38.0, -117.0)]),
             graph_nodes: GraphNodeIndex::empty(),
@@ -1914,11 +2080,7 @@ mod tests {
     fn supplemental_ohv_track_merges_into_jeep_graph() {
         let graph = JeepRoadGraph::new();
         let mut routing = OsmRouting {
-            jeep_roads: JeepRoadIndex {
-                tree: RTree::bulk_load(vec![]),
-                point_count: 0,
-                way_count: 0,
-            },
+            jeep_roads: JeepRoadIndex::from_vec(vec![], 0),
             graph,
             paved: PavedAnchorIndex::test_from_points(&[]),
             graph_nodes: GraphNodeIndex::empty(),

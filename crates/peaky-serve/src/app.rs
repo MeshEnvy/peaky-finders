@@ -107,6 +107,7 @@ pub async fn run_server(
 
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
     tracing::info!("peaky serve listening on http://{addr}");
+    tracing::info!("peaky serve: warming statewide road graph in the background…");
     std::thread::Builder::new()
         .name("osm-routing-prefetch".into())
         .spawn(move || osm_warm.prefetch_osm_routing(&osm_preset))
