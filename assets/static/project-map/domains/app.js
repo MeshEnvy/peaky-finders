@@ -827,6 +827,7 @@ export function runApp(ctx = {}) {
     getCreateCoordsLabel: () => placementDomain.getCreateCoordsLabel(),
     formatSiteHeight: (site) => formatSiteHeight(site, defaultTxHeightM),
     getSelectedSiteLinks: () => linksDomain.selectedSiteLinks({ visibleOnly: true }),
+    applyManualLinkChange: (payload) => linksDomain?.applyManualLinkChange(payload),
     toggleTagFilter: (tag) => entityChrome.toggleTagFilter(tag),
     onTagFilterChange: () => entityChrome.onTagFilterChange(),
     applyEntityVisibility: () => entityChrome.applyEntityVisibility(),

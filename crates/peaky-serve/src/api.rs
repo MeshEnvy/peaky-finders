@@ -11,7 +11,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
-    routing::{get, patch, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use peaky_geo::{parse_kml_point_placemarks, parse_kmz_point_placemarks};
@@ -40,8 +40,9 @@ use crate::link_solver::{
     routes_like_from_json, LinkSolverError,
 };
 use crate::links::{
-    compute_links_for_slugs, invalidate_project_site_links_cache, load_project_site_links,
-    load_single_site_links, site_pair_link_detail,
+    add_manual_site_link_pair, clear_manual_site_link_pair, compute_links_for_slugs,
+    invalidate_project_site_links_cache, load_project_site_links, load_single_site_links,
+    site_pair_link_detail,
 };
 use crate::peaks::{
     list_peaks_payload, place_access_action, place_access_flight_key, place_access_payload,
@@ -103,7 +104,12 @@ pub fn router() -> Router<AppState> {
             get(viewshed_cache_png),
         )
         .route("/api/p/{slug}/links", get(links_mesh))
-        .route("/api/p/{slug}/links/pair", get(link_pair_detail))
+        .route(
+            "/api/p/{slug}/links/pair",
+            get(link_pair_detail)
+                .post(link_pair_add_manual)
+                .delete(link_pair_clear_manual),
+        )
         .route("/api/p/{slug}/links/warm", post(links_warm))
         .route("/api/p/{slug}/sites/{site_slug}/links", get(site_links))
         .route("/api/p/{slug}/warm/priorities", post(warm_priorities))
@@ -1766,6 +1772,80 @@ async fn alternates_scan(
             "gen": gen,
         })),
     ))
+}
+
+#[derive(Deserialize)]
+struct LinkPairBody {
+    a: String,
+    b: String,
+}
+
+async fn link_pair_add_manual(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Json(body): Json<LinkPairBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let path = state.preset_path();
+    if !path.is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "slug": state.slug.clone(), "error": "not found" })),
+        ));
+    }
+    let preset = load_preset(&path).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": e.to_string() })),
+        )
+    })?;
+    let result = add_manual_site_link_pair(&path, &preset, body.a.trim(), body.b.trim()).map_err(
+        |e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "slug": state.slug.clone(), "error": e.to_string() })),
+            )
+        },
+    )?;
+    let mut out = result.as_object().cloned().unwrap_or_default();
+    out.insert("project".into(), json!(state.slug));
+    Ok(Json(Value::Object(out)))
+}
+
+async fn link_pair_clear_manual(
+    State(state): State<AppState>,
+    Path(_slug): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let path = state.preset_path();
+    if !path.is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "slug": state.slug.clone(), "error": "not found" })),
+        ));
+    }
+    let slug_a = q.get("a").map(String::as_str).unwrap_or("").trim();
+    let slug_b = q.get("b").map(String::as_str).unwrap_or("").trim();
+    if slug_a.is_empty() || slug_b.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": "a and b query parameters are required" })),
+        ));
+    }
+    let preset = load_preset(&path).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": e.to_string() })),
+        )
+    })?;
+    let result = clear_manual_site_link_pair(&path, &preset, slug_a, slug_b).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "slug": state.slug.clone(), "error": e.to_string() })),
+        )
+    })?;
+    let mut out = result.as_object().cloned().unwrap_or_default();
+    out.insert("project".into(), json!(state.slug));
+    Ok(Json(Value::Object(out)))
 }
 
 async fn link_pair_detail(

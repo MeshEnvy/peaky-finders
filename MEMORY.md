@@ -135,7 +135,7 @@ preset → CovRequest JSON (rf_json)
 
 **Topo ↔ Skadi trust:** In practice, Skadi SRTM elevations align almost exactly with USGS Topo contours/shading where both are visible. When reviewing candidate sites on topo (or satellite/street), the parallel Skadi DEM used for placement and viewsheds is likely nearly identical at that location even though the basemap pixels come from a different provider.
 
-**Links book layout:** **`links/<a>/<b>.json`** — one record per site pair (`links_model: p2p-v8`, fingerprint, margins, `kind`, optional **`manual: true`** + **`fieldAt`**). Serve read-through/write-back on mesh warm; RF refresh preserves sticky manual metadata. Prune drops files when either slug leaves `sites:`. In-memory mesh payload cache keyed by whole-book fingerprint. Map colors: manual teal, two-way blue, one-way red dashed.
+**Links book layout:** **`links/<a>/<b>.json`** — one record per site pair (`links_model: p2p-v8`, fingerprint, margins, `kind`, optional **`manual: true`** + **`fieldAt`**). Serve read-through/write-back on mesh warm; RF refresh preserves sticky manual metadata. Prune drops files when either slug leaves `sites:`. In-memory mesh payload cache keyed by whole-book fingerprint. Map colors: manual teal, two-way blue, one-way red dashed. Site sheet **+** / **−** writes or clears manual overrides (`POST` / `DELETE` `…/links/pair`); picker uses viewport-visible sites.
 
 ## Serve (implemented vs stub)
 

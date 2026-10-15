@@ -102,17 +102,28 @@ pub fn write_pair_cache(layout: &ProjectLayout, record: &PairLinkCacheRecord) ->
     } else {
         record.clone()
     };
-    let path = pair_cache_path(layout, &to_write.a, &to_write.b);
+    write_pair_cache_direct(layout, &to_write)
+}
+
+fn write_pair_cache_direct(layout: &ProjectLayout, record: &PairLinkCacheRecord) -> Result<()> {
+    let path = pair_cache_path(layout, &record.a, &record.b);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create link cache dir: {}", parent.display()))?;
     }
     let tmp = path.with_extension("json.partial");
-    let text = serde_json::to_string_pretty(&to_write).context("serialize link cache")?;
+    let text = serde_json::to_string_pretty(record).context("serialize link cache")?;
     fs::write(&tmp, format!("{text}\n"))
         .with_context(|| format!("write link cache temp: {}", tmp.display()))?;
     fs::rename(&tmp, &path).with_context(|| format!("replace link cache: {}", path.display()))?;
     Ok(())
+}
+
+fn pair_cache_is_manual_stub(record: &PairLinkCacheRecord) -> bool {
+    record.kind == LinkCacheKind::None
+        && record.fingerprint.is_empty()
+        && record.forward_margin_db.is_none()
+        && record.reverse_margin_db.is_none()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -248,6 +259,32 @@ pub fn write_manual_link_override(
         field_at: field_at.map(str::to_string),
     };
     write_pair_cache(layout, &record)
+}
+
+/// Clear ``manual: true`` on a pair file. Stubs are deleted; RF rows keep margins with ``manual: false``.
+pub fn clear_manual_link_override(
+    layout: &ProjectLayout,
+    slug_a: &str,
+    slug_b: &str,
+) -> Result<Option<PairLinkCacheRecord>> {
+    let (a, b) = canonical_link_pair(slug_a, slug_b);
+    let Some(mut existing) = read_pair_cache(layout, &a, &b)? else {
+        return Ok(None);
+    };
+    if !existing.manual {
+        anyhow::bail!("pair is not a manual link override");
+    }
+    existing.manual = false;
+    if pair_cache_is_manual_stub(&existing) {
+        let path = pair_cache_path(layout, &a, &b);
+        if path.is_file() {
+            fs::remove_file(&path)
+                .with_context(|| format!("remove manual link stub: {}", path.display()))?;
+        }
+        return Ok(None);
+    }
+    write_pair_cache_direct(layout, &existing)?;
+    Ok(Some(existing))
 }
 
 pub fn manual_link_pairs_for_project(layout: &ProjectLayout) -> Result<HashSet<(String, String)>> {
@@ -448,6 +485,50 @@ mod tests {
         slugs.insert("alpha".into());
         prune_link_cache(&layout, &slugs).unwrap();
         assert!(read_pair_cache(&layout, "alpha", "gone").unwrap().is_none());
+    }
+
+    #[test]
+    fn clear_manual_stays_false_after_rf_refresh() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("config.yaml"), "simulation: {}\n").unwrap();
+        let layout = ProjectLayout::from_config_path(&dir.path().join("config.yaml")).unwrap();
+        write_manual_link_override(&layout, "alpha", "beta", None).unwrap();
+        clear_manual_link_override(&layout, "alpha", "beta").unwrap();
+        assert!(read_pair_cache(&layout, "alpha", "beta").unwrap().is_none());
+
+        write_pair_cache(
+            &layout,
+            &PairLinkCacheRecord {
+                a: "alpha".into(),
+                b: "beta".into(),
+                fingerprint: "fp2".into(),
+                links_model: LINKS_MODEL.into(),
+                forward_margin_db: Some(1.0),
+                reverse_margin_db: Some(2.0),
+                kind: LinkCacheKind::TwoWay,
+                distance_km: 5.0,
+                at: "2026-10-14".into(),
+                manual: true,
+                field_at: Some("2026-09-09".into()),
+            },
+        )
+        .unwrap();
+        clear_manual_link_override(&layout, "alpha", "beta").unwrap();
+        let rf = PairLinkCacheRecord {
+            fingerprint: "fp3".into(),
+            forward_margin_db: Some(3.0),
+            reverse_margin_db: Some(4.0),
+            kind: LinkCacheKind::TwoWay,
+            distance_km: 6.0,
+            at: "2026-10-15".into(),
+            manual: false,
+            field_at: None,
+            ..read_pair_cache(&layout, "alpha", "beta").unwrap().unwrap()
+        };
+        write_pair_cache(&layout, &rf).unwrap();
+        let read = read_pair_cache(&layout, "alpha", "beta").unwrap().unwrap();
+        assert!(!read.manual);
+        assert_eq!(read.kind, LinkCacheKind::TwoWay);
     }
 
     #[test]

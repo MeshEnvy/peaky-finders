@@ -60,7 +60,7 @@ pub use io::{
 };
 pub use link_cache::{
     canonical_link_pair, classify_link_kind, pair_cache_path, prune_link_cache, read_pair_cache,
-    manual_link_pairs_for_project, write_manual_link_override,
+    clear_manual_link_override, manual_link_pairs_for_project, write_manual_link_override,
     write_pair_cache, LinkCacheKind, PairLinkCacheRecord, LINKS_MODEL,
 };
 pub use yaml_io::read_preset_document;

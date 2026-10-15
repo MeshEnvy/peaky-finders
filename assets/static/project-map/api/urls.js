@@ -13,6 +13,10 @@ export function linkPairApiUrl(projectSlug, slugA, slugB) {
   return `/api/p/${projectSlug}/links/pair?${params}`
 }
 
+export function linkPairPostUrl(projectSlug) {
+  return `/api/p/${projectSlug}/links/pair`
+}
+
 export function linksWarmApiUrl(projectSlug) {
   return `/api/p/${projectSlug}/links/warm`
 }

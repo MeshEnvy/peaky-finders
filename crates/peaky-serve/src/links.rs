@@ -6,9 +6,10 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result};
 use peaky_preset::{
-    classify_link_kind, manual_link_pairs_for_project, project::ProjectLayout, read_pair_cache,
-    write_pair_cache, prune_link_cache, BoardViewshedResolver, LinkCacheKind, PairLinkCacheRecord,
-    Preset, SiteEntry, LINKS_MODEL,
+    classify_link_kind, clear_manual_link_override, manual_link_pairs_for_project,
+    project::ProjectLayout, read_pair_cache, write_manual_link_override, write_pair_cache,
+    prune_link_cache, BoardViewshedResolver, LinkCacheKind, PairLinkCacheRecord, Preset,
+    SiteEntry, LINKS_MODEL,
 };
 use serde_json::{json, Value};
 use splatter::{propagate::LinkLegs, Session};
@@ -134,6 +135,165 @@ pub fn invalidate_project_site_links_cache(preset_path: &Path) {
     if let Ok(mut cache) = LINKS_PAYLOAD_CACHE.lock() {
         cache.remove(&key);
     }
+}
+
+fn upsert_mesh_pair_row(payload: &mut Value, link: Option<Value>, feature: Option<Value>, a: &str, b: &str) {
+    let (ca, cb) = canonical_site_pair(a, b);
+    if let Some(rows) = payload.get_mut("links").and_then(|v| v.as_array_mut()) {
+        rows.retain(|row| {
+            row.get("a").and_then(|v| v.as_str()) != Some(ca.as_str())
+                || row.get("b").and_then(|v| v.as_str()) != Some(cb.as_str())
+        });
+        if let Some(link) = link {
+            rows.push(link);
+        }
+        rows.sort_by(|left, right| {
+            let la = left.get("a").and_then(|v| v.as_str()).unwrap_or("");
+            let ra = right.get("a").and_then(|v| v.as_str()).unwrap_or("");
+            la.cmp(ra)
+        });
+    }
+    if let Some(features) = payload
+        .pointer_mut("/geojson/features")
+        .and_then(|v| v.as_array_mut())
+    {
+        features.retain(|feat| {
+            let props = feat.get("properties").and_then(|v| v.as_object());
+            props.map(|p| {
+                p.get("a").and_then(|v| v.as_str()) != Some(ca.as_str())
+                    || p.get("b").and_then(|v| v.as_str()) != Some(cb.as_str())
+            }) != Some(false)
+        });
+        if let Some(feature) = feature {
+            features.push(feature);
+        }
+    }
+}
+
+fn patch_ready_links_cache_pair(
+    preset_path: &Path,
+    preset: &Preset,
+    slug_a: &str,
+    slug_b: &str,
+    link: Option<Value>,
+    feature: Option<Value>,
+) -> Result<()> {
+    let key = project_cache_key(preset_path);
+    let fingerprint = links_input_fingerprint(preset_path, preset)?;
+    let mut cache = LINKS_PAYLOAD_CACHE
+        .lock()
+        .map_err(|_| anyhow::anyhow!("links payload cache lock poisoned"))?;
+    let Some((_, payload)) = cache.get(&key).cloned() else {
+        return Ok(());
+    };
+    if payload.get("status").and_then(|v| v.as_str()) != Some("ready") {
+        return Ok(());
+    }
+    let mut payload = payload;
+    upsert_mesh_pair_row(&mut payload, link, feature, slug_a, slug_b);
+    cache.insert(key, (fingerprint, payload));
+    Ok(())
+}
+
+fn validate_link_pair_slugs(preset: &Preset, slug_a: &str, slug_b: &str) -> Result<(String, String)> {
+    let (a, b) = canonical_site_pair(slug_a, slug_b);
+    if a.is_empty() || b.is_empty() || a == b {
+        anyhow::bail!("a and b must be distinct site slugs");
+    }
+    if !preset.sites.contains_key(&a) || !preset.sites.contains_key(&b) {
+        anyhow::bail!("unknown site slug");
+    }
+    Ok((a, b))
+}
+
+/// Persist a manual override and return mesh row + line for the client.
+pub fn add_manual_site_link_pair(
+    preset_path: &Path,
+    preset: &Preset,
+    slug_a: &str,
+    slug_b: &str,
+) -> Result<Value> {
+    let (a, b) = validate_link_pair_slugs(preset, slug_a, slug_b)?;
+    let layout = project_layout(preset_path)?;
+    write_manual_link_override(&layout, &a, &b, None)?;
+    let boards = load_board_viewshed(preset_path);
+    let site_a = preset.sites.get(&a).context("site a")?;
+    let site_b = preset.sites.get(&b).context("site b")?;
+    let link = link_record(&a, &b, true, true, "manual");
+    let feature = line_feature(
+        preset,
+        Some(&boards),
+        &a,
+        &b,
+        site_a,
+        site_b,
+        true,
+        "manual",
+    );
+    patch_ready_links_cache_pair(
+        preset_path,
+        preset,
+        &a,
+        &b,
+        Some(link.clone()),
+        Some(feature.clone()),
+    )?;
+    Ok(json!({
+        "a": a,
+        "b": b,
+        "link": link,
+        "feature": feature,
+    }))
+}
+
+/// Clear manual override; RF rows may remain drawable.
+pub fn clear_manual_site_link_pair(
+    preset_path: &Path,
+    preset: &Preset,
+    slug_a: &str,
+    slug_b: &str,
+) -> Result<Value> {
+    let (a, b) = validate_link_pair_slugs(preset, slug_a, slug_b)?;
+    let layout = project_layout(preset_path)?;
+    let remaining = clear_manual_link_override(&layout, &a, &b)?;
+    let (link, feature) = match remaining {
+        None => (None, None),
+        Some(record) if record.kind.renders_on_map() => {
+            let boards = load_board_viewshed(preset_path);
+            let site_a = preset.sites.get(&a).context("site a")?;
+            let site_b = preset.sites.get(&b).context("site b")?;
+            let kind = record.kind.as_str();
+            let linked = record.kind.mesh_linked(false);
+            (
+                Some(link_record(&a, &b, linked, false, kind)),
+                Some(line_feature(
+                    preset,
+                    Some(&boards),
+                    &a,
+                    &b,
+                    site_a,
+                    site_b,
+                    false,
+                    kind,
+                )),
+            )
+        }
+        Some(_) => (None, None),
+    };
+    patch_ready_links_cache_pair(
+        preset_path,
+        preset,
+        &a,
+        &b,
+        link.clone(),
+        feature.clone(),
+    )?;
+    Ok(json!({
+        "a": a,
+        "b": b,
+        "link": link,
+        "feature": feature,
+    }))
 }
 
 /// P2P links from each slug to in-range sites (same stack as the site mesh).
@@ -1081,5 +1241,45 @@ mod tests {
         assert!(cached_project_site_links(&config, &preset).unwrap().is_some());
         invalidate_project_site_links_cache(&config);
         assert!(cached_project_site_links(&config, &preset).unwrap().is_none());
+    }
+
+    #[test]
+    fn patch_cached_mesh_adds_manual_pair() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.yaml");
+        fs::write(&config, "simulation:\n  radius_km: 50\n").unwrap();
+        fs::write(
+            dir.path().join("sites.yaml"),
+            "sites:\n  alpha:\n    name: Alpha\n    loc: [36.0, -116.0]\n  beta:\n    name: Beta\n    loc: [36.1, -116.1]\n",
+        )
+        .unwrap();
+        let preset = load_preset(&config).unwrap();
+        let payload = json!({
+            "status": "ready",
+            "links_model": LINKS_MODEL,
+            "links": [],
+            "geojson": {
+                "type": "FeatureCollection",
+                "features": [{
+                    "type": "Feature",
+                    "geometry": { "type": "LineString", "coordinates": [[-116.0, 36.0], [-116.2, 36.2]] },
+                    "properties": { "a": "alpha", "b": "gamma", "kind": "two_way", "manual": false }
+                }],
+            },
+        });
+        store_project_site_links_cache(&config, &preset, &payload).unwrap();
+        add_manual_site_link_pair(&config, &preset, "alpha", "beta").unwrap();
+        let cached = cached_project_site_links(&config, &preset)
+            .unwrap()
+            .expect("cached mesh");
+        let links = cached.get("links").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].get("manual").and_then(|v| v.as_bool()), Some(true));
+        clear_manual_site_link_pair(&config, &preset, "alpha", "beta").unwrap();
+        let cached = cached_project_site_links(&config, &preset)
+            .unwrap()
+            .expect("cached mesh");
+        let links = cached.get("links").and_then(|v| v.as_array()).unwrap();
+        assert!(links.is_empty());
     }
 }

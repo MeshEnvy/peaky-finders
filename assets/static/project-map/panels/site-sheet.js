@@ -2,9 +2,9 @@
 
 import { createApp, computed, ref, watch } from 'vue'
 import { DRAFT_VIEWSHED_SLUG } from '../constants.js'
-import { formatCoord, formatElevLabel } from '../geo.js'
+import { compareHuman, formatCoord, formatElevLabel } from '../geo.js'
 import { osmRoadsProgressLabel } from '../stores/access.js'
-import { allProjectTags } from '../stores/sites.js'
+import { allProjectTags, isSiteMapVisible, viewportSites } from '../stores/sites.js'
 import { apiFetch } from '../api/client.js'
 import * as apiUrls from '../api/urls.js'
 import { AccessProfilesPanel } from './access-profiles.js'
@@ -33,6 +33,8 @@ export function mountSiteSheet(store, appApi) {
       const createName = ref('')
       const createTags = ref([])
       const errorText = ref('')
+      const linkPickerOpen = ref(false)
+      const linkPickBusy = ref(false)
       const access = ref(/** @type {object|null} */ (null))
       const accessLoading = ref(false)
       const accessError = ref('')
@@ -469,6 +471,24 @@ export function mountSiteSheet(store, appApi) {
       })
 
       const peerLinks = computed(() => appApi.getSelectedSiteLinks?.() || [])
+      const linkAddCandidates = computed(() => {
+        void store.ui.viewportEpoch
+        const slug = store.ui.selectedSlug
+        if (!slug) return []
+        const linked = new Set(peerLinks.value.map((peer) => peer.slug))
+        return viewportSites(store, {
+          map: appApi.getMap?.(),
+          mapReady: store.ui.mapReady,
+          epoch: store.ui.viewportEpoch,
+        })
+          .filter(
+            (site) =>
+              site.slug !== slug &&
+              !linked.has(site.slug) &&
+              isSiteMapVisible(store, site.slug),
+          )
+          .sort((a, b) => compareHuman(a.name, b.name))
+      })
       const canFindAlternates = computed(() => peerLinks.value.length > 0)
       const alternatesForThisSite = computed(
         () =>
@@ -516,6 +536,51 @@ export function mountSiteSheet(store, appApi) {
         }
       }
 
+      watch(
+        () => store.ui.selectedSlug,
+        () => {
+          linkPickerOpen.value = false
+        },
+      )
+
+      async function addLinkToPeer(peerSlug) {
+        const selected = store.ui.selectedSlug
+        if (!selected || !peerSlug || linkPickBusy.value) return
+        errorText.value = ''
+        linkPickBusy.value = true
+        try {
+          const data = await apiFetch(apiUrls.linkPairPostUrl(store.projectSlug), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ a: selected, b: peerSlug }),
+          })
+          appApi.applyManualLinkChange?.(data)
+          linkPickerOpen.value = false
+        } catch (err) {
+          errorText.value = err instanceof Error ? err.message : 'Add link failed.'
+        } finally {
+          linkPickBusy.value = false
+        }
+      }
+
+      async function removeManualLink(peerSlug) {
+        const selected = store.ui.selectedSlug
+        if (!selected || !peerSlug || linkPickBusy.value) return
+        errorText.value = ''
+        linkPickBusy.value = true
+        try {
+          const data = await apiFetch(
+            apiUrls.linkPairApiUrl(store.projectSlug, selected, peerSlug),
+            { method: 'DELETE' },
+          )
+          appApi.applyManualLinkChange?.(data)
+        } catch (err) {
+          errorText.value = err instanceof Error ? err.message : 'Remove link failed.'
+        } finally {
+          linkPickBusy.value = false
+        }
+      }
+
       return {
         store,
         appApi,
@@ -551,6 +616,11 @@ export function mountSiteSheet(store, appApi) {
         elevLabel,
         hikeEndElevM,
         peerLinks,
+        linkPickerOpen,
+        linkPickBusy,
+        linkAddCandidates,
+        addLinkToPeer,
+        removeManualLink,
         canFindAlternates,
         alternatesForThisSite,
         alternatesBusy,
@@ -687,13 +757,47 @@ export function mountSiteSheet(store, appApi) {
               </li>
             </ul>
           </div>
-          <div v-if="peerLinks.length" class="site-panel__section">
-            <span class="site-panel__label">{{ peerLinks.length === 1 ? '1 link' : peerLinks.length + ' links' }}</span>
-            <div class="site-panel__link-list">
-              <button v-for="peer in peerLinks" :key="peer.slug" type="button"
-                class="site-panel__link" @click="appApi.selectSite(peer.slug)">
-                <span class="site-panel__link-name">{{ peer.name }}</span>
+          <div class="site-panel__section">
+            <div class="site-panel__links-head">
+              <span class="site-panel__label">{{ peerLinks.length === 1 ? '1 link' : peerLinks.length + ' links' }}</span>
+              <button
+                type="button"
+                class="site-panel__link-icon-btn"
+                title="Add link to a site in view"
+                aria-label="Add link"
+                :disabled="linkPickBusy"
+                @click="linkPickerOpen = !linkPickerOpen"
+              >+</button>
+            </div>
+            <div v-if="linkPickerOpen" class="site-panel__link-picker">
+              <p v-if="!linkAddCandidates.length" class="site-panel__value pf-muted">No other sites in view.</p>
+              <button
+                v-for="site in linkAddCandidates"
+                :key="site.slug"
+                type="button"
+                class="site-panel__link"
+                :disabled="linkPickBusy"
+                @click="addLinkToPeer(site.slug)"
+              >
+                <span class="site-panel__link-name">{{ site.name }}</span>
               </button>
+            </div>
+            <div v-if="peerLinks.length" class="site-panel__link-list">
+              <div v-for="peer in peerLinks" :key="peer.slug" class="site-panel__link-row">
+                <button type="button"
+                  class="site-panel__link" @click="appApi.selectSite(peer.slug)">
+                  <span class="site-panel__link-name">{{ peer.name }}</span>
+                </button>
+                <button
+                  v-if="peer.manual"
+                  type="button"
+                  class="site-panel__link-icon-btn site-panel__link-icon-btn--remove"
+                  title="Remove manual link"
+                  aria-label="Remove manual link"
+                  :disabled="linkPickBusy"
+                  @click.stop="removeManualLink(peer.slug)"
+                >−</button>
+              </div>
             </div>
           </div>
           <wa-callout v-if="errorText" variant="danger">{{ errorText }}</wa-callout>

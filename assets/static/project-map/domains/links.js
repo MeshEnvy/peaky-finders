@@ -564,9 +564,51 @@ export function createLinksDomain(opts) {
             }
           }
         }
-        return { slug: peerSlug, name: peer?.name || peerSlug, distanceKm }
+        let manual = false
+        for (const row of store.links.payload?.links || []) {
+          if (
+            (row.a === slug && row.b === peerSlug) ||
+            (row.b === slug && row.a === peerSlug)
+          ) {
+            manual = row.manual === true
+            break
+          }
+        }
+        return { slug: peerSlug, name: peer?.name || peerSlug, distanceKm, manual }
       })
       .sort((left, right) => compareHuman(left.name, right.name))
+  }
+
+  function applyManualLinkChange(payload) {
+    if (!payload?.a || !payload?.b) return
+    const ca = payload.a <= payload.b ? payload.a : payload.b
+    const cb = payload.a <= payload.b ? payload.b : payload.a
+    if (!store.links.payload) {
+      store.links.payload = {
+        status: 'ready',
+        links: [],
+        geojson: { type: 'FeatureCollection', features: [] },
+      }
+    }
+    const base = store.links.payload
+    const links = (Array.isArray(base.links) ? base.links : []).filter(
+      (row) => !(row.a === ca && row.b === cb),
+    )
+    if (payload.link) links.push(payload.link)
+    links.sort((left, right) => String(left.a || '').localeCompare(String(right.a || '')))
+    const features = (base.geojson?.features || []).filter((feat) => {
+      const props = feat.properties || {}
+      return !(props.a === ca && props.b === cb)
+    })
+    if (payload.feature) features.push(payload.feature)
+    store.links.payload = {
+      ...base,
+      links,
+      geojson: { type: 'FeatureCollection', features },
+    }
+    syncLinksMeshAfterPayloadChange()
+    const selectedSlug = store.ui.selectedSlug
+    if (selectedSlug) renderSelectedPanel(getSiteBySlug(selectedSlug))
   }
 
   function findSiteLinkFeature(slugA, slugB) {
@@ -610,6 +652,7 @@ export function createLinksDomain(opts) {
     linkedPeersForSite,
     visibleLinkedPeersForSite,
     selectedSiteLinks,
+    applyManualLinkChange,
     findSiteLinkFeature,
     ensureSiteLinksForSlug,
     siteOutboundLinksCached,

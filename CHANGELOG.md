@@ -10,6 +10,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Added
+
+- **Site sheet manual links** — plus lists other map-visible sites to add a teal manual hop; minus clears only manual overrides on that row.
+
 ### Fixed
 
 - **Site delete and link mesh** — deleting a site prunes its `links/` pair files, drops the in-memory mesh cache, and re-warms RF links so blue/teal hop lines do not stay on the map at the old pin.
