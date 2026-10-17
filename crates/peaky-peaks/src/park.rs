@@ -392,7 +392,12 @@ mod tests {
         );
     }
 
-    fn fake_hike(gain_m: f64, loss_m: f64, max_slope_deg: f64, hike_m_3d: f64) -> HikeProfileDetailed {
+    fn fake_hike(
+        gain_m: f64,
+        loss_m: f64,
+        max_slope_deg: f64,
+        hike_m_3d: f64,
+    ) -> HikeProfileDetailed {
         HikeProfileDetailed {
             hike_m_3d,
             horiz_m: hike_m_3d,

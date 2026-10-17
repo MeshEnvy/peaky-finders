@@ -141,11 +141,7 @@ mod tests {
             37.0,
             -116.0
         ));
-        assert!(!point_in_region(
-            &ScanRegion::Clip(poly),
-            37.0,
-            -118.5
-        ));
+        assert!(!point_in_region(&ScanRegion::Clip(poly), 37.0, -118.5));
     }
 
     #[test]

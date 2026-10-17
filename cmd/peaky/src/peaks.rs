@@ -3,13 +3,9 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use peaky_peaks::{
-    build_peaks_catalog, resolve_corridor_from_opts, PeaksBuildOptions,
-};
+use peaky_peaks::{build_peaks_catalog, resolve_corridor_from_opts, PeaksBuildOptions};
 use peaky_peaks::{project_gtlf_fingerprint, project_pbf_fingerprint};
-use peaky_preset::{
-    gc_stale_cache_dirs, load_preset, prefs_key_for_project, resolve_preset_path,
-};
+use peaky_preset::{gc_stale_cache_dirs, load_preset, prefs_key_for_project, resolve_preset_path};
 
 pub fn run_build(
     project: PathBuf,
@@ -32,11 +28,8 @@ pub fn run_build(
     }
 
     let preset = load_preset(&preset_path).context("load preset")?;
-    let corridor_coords = resolve_corridor_from_opts(
-        &preset,
-        corridor.as_deref(),
-        corridor_sites.as_deref(),
-    )?;
+    let corridor_coords =
+        resolve_corridor_from_opts(&preset, corridor.as_deref(), corridor_sites.as_deref())?;
 
     let parsed_bbox = bbox
         .as_deref()
@@ -93,9 +86,7 @@ pub fn run_gc(project: PathBuf, keep: usize, dry_run: bool) -> Result<()> {
             preset_path.display()
         );
     }
-    let project_dir = preset_path
-        .parent()
-        .context("preset path has no parent")?;
+    let project_dir = preset_path.parent().context("preset path has no parent")?;
     let gtlf = project_gtlf_fingerprint(project_dir);
     let pbf = project_pbf_fingerprint(project_dir);
     let current = prefs_key_for_project(&preset_path, &gtlf, &pbf)?;
@@ -151,10 +142,8 @@ pub fn run_probe(
             preset_path.display()
         );
     }
-    let region = bbox.is_some()
-        || polygon.is_some()
-        || corridor.is_some()
-        || corridor_sites.is_some();
+    let region =
+        bbox.is_some() || polygon.is_some() || corridor.is_some() || corridor_sites.is_some();
     match (lat_lon, region) {
         (Some(_lat_lon), true) => anyhow::bail!(
             "pass either LAT,LON or a region (--corridor / --corridor-sites / --bbox / --polygon)"
@@ -163,9 +152,9 @@ pub fn run_probe(
             let (lat, lon) = parse_lat_lon(&lat_lon)?;
             crate::probe::run_probe_point(&preset_path, lat, lon, force, explain)
         }
-        (None, false) => anyhow::bail!(
-            "need LAT,LON or --corridor / --corridor-sites / --bbox / --polygon"
-        ),
+        (None, false) => {
+            anyhow::bail!("need LAT,LON or --corridor / --corridor-sites / --bbox / --polygon")
+        }
         (None, true) => {
             let preset = load_preset(&preset_path).context("load preset")?;
             let corridor_coords = resolve_corridor_from_opts(

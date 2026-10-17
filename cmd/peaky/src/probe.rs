@@ -3,7 +3,9 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use peaky_peaks::{probe_access_point, probe_access_point_explain, probe_peaks_region, PeaksBuildOptions};
+use peaky_peaks::{
+    probe_access_point, probe_access_point_explain, probe_peaks_region, PeaksBuildOptions,
+};
 
 pub fn run_probe_point(
     preset_path: &Path,

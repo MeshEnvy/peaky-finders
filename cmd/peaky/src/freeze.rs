@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use peaky_freeze::{build_freeze_dir, default_freeze_output_dir, resolve_preset_path, FreezeOptions};
+use peaky_freeze::{
+    build_freeze_dir, default_freeze_output_dir, resolve_preset_path, FreezeOptions,
+};
 use peaky_preset::resolve_project_dir;
 
 pub fn run(
@@ -24,14 +26,8 @@ pub fn run(
     let output_dir = output.unwrap_or_else(|| default_freeze_output_dir(&preset_path));
 
     if verbose {
-        eprintln!(
-            "[peaky freeze] source: {}",
-            preset_path.display()
-        );
-        eprintln!(
-            "[peaky freeze] output: {}",
-            output_dir.display()
-        );
+        eprintln!("[peaky freeze] source: {}", preset_path.display());
+        eprintln!("[peaky freeze] output: {}", output_dir.display());
     }
 
     let summary = build_freeze_dir(

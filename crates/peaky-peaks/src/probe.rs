@@ -20,9 +20,7 @@ use crate::osm::OsmRoutingOpts;
 use crate::run::{
     filter_candidate, load_dem_candidates, resolve_scan, PeaksBuildOptions, PeaksFilterParams,
 };
-use crate::universe::{
-    dedup_nearby_with_drops, seed_candidates_from_sites, RawCandidate,
-};
+use crate::universe::{dedup_nearby_with_drops, seed_candidates_from_sites, RawCandidate};
 
 struct SessionElev<'a>(&'a Session);
 
@@ -197,7 +195,11 @@ pub fn probe_peaks_region(preset_path: &Path, opts: PeaksBuildOptions) -> Result
 
     println!(
         "probe region bbox={:.4},{:.4},{:.4},{:.4} project={}",
-        bbox.west, bbox.south, bbox.east, bbox.north, preset_path.display()
+        bbox.west,
+        bbox.south,
+        bbox.east,
+        bbox.north,
+        preset_path.display()
     );
 
     let land_parts =
@@ -264,8 +266,7 @@ pub fn probe_peaks_region(preset_path: &Path, opts: PeaksBuildOptions) -> Result
         .cloned()
         .collect();
     universe.retain(|c| point_in_region(&scan_region, c.lat, c.lon));
-    let (mut kept, dedup_drops) =
-        dedup_nearby_with_drops(universe, filter.candidate_dedup_m);
+    let (mut kept, dedup_drops) = dedup_nearby_with_drops(universe, filter.candidate_dedup_m);
     kept.sort_by(|a, b| {
         b.elev_m
             .unwrap_or(0.0)

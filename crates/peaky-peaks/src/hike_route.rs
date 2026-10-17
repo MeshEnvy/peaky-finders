@@ -52,10 +52,7 @@ fn nearest_cell(
 ) -> (i32, i32) {
     let row = ((lat - min_lat) / step_lat).round() as i32;
     let col = ((lon - min_lon) / step_lon).round() as i32;
-    (
-        row.clamp(0, rows - 1),
-        col.clamp(0, cols - 1),
-    )
+    (row.clamp(0, rows - 1), col.clamp(0, cols - 1))
 }
 
 struct HikeEdge {
@@ -170,11 +167,7 @@ fn route_hike_coords_limited<E: HikeSampleElev>(
     let h0 = haversine_m(start_lat, start_lon, goal_lat, goal_lon);
     g_score.insert(start_node, 0.0);
     g_len.insert(start_node, 0.0);
-    open.push(Reverse((
-        OrderedFloat(h0),
-        OrderedFloat(0.0),
-        start_node,
-    )));
+    open.push(Reverse((OrderedFloat(h0), OrderedFloat(0.0), start_node)));
 
     const NEIGHBORS: [(i32, i32); 8] = [
         (-1, -1),
@@ -192,14 +185,8 @@ fn route_hike_coords_limited<E: HikeSampleElev>(
             let mut path = Vec::new();
             let mut node = current;
             loop {
-                let (lat, lon) = cell_center(
-                    min_lat,
-                    min_lon,
-                    node.row,
-                    node.col,
-                    step_lat,
-                    step_lon,
-                );
+                let (lat, lon) =
+                    cell_center(min_lat, min_lon, node.row, node.col, step_lat, step_lon);
                 path.push((lat, lon));
                 if let Some(prev) = came_from.get(&node) {
                     node = *prev;
@@ -236,8 +223,7 @@ fn route_hike_coords_limited<E: HikeSampleElev>(
                 continue;
             }
             let next = Node { row: nr, col: nc };
-            let (n_lat, n_lon) =
-                cell_center(min_lat, min_lon, nr, nc, step_lat, step_lon);
+            let (n_lat, n_lon) = cell_center(min_lat, min_lon, nr, nc, step_lat, step_lon);
             let Some(edge) = segment_grade_ok(
                 elev,
                 cur_lat,
@@ -450,15 +436,7 @@ fn route_best_hike<E: HikeSampleElev>(
     );
     for cap in caps {
         if let Some(coords) = route_hike_coords_limited(
-            elev,
-            park_lat,
-            park_lon,
-            dest_lat,
-            dest_lon,
-            cap,
-            len_max,
-            pad_m,
-            sample_m,
+            elev, park_lat, park_lon, dest_lat, dest_lon, cap, len_max, pad_m, sample_m,
         ) {
             if let Some(detail) = profile_polyline_detailed(elev, &coords, sample_m) {
                 return Some(detail);
@@ -570,8 +548,8 @@ mod tests {
         let detail = gated;
         assert!(detail.max_slope_deg <= ceiling + 0.5);
         assert!(detail.hike_m_3d <= path_max_m() + 1.0);
-        let chord = profile_hike_detailed(&elev, park_lat, park_lon, dest_lat, dest_lon, 30.0)
-            .unwrap();
+        let chord =
+            profile_hike_detailed(&elev, park_lat, park_lon, dest_lat, dest_lon, 30.0).unwrap();
         assert!(chord.max_slope_deg > ceiling + 0.5);
         assert!(detail.horiz_m > chord.horiz_m * 0.95);
     }
@@ -698,8 +676,8 @@ mod tests {
         )
         .expect("manual pin should contour");
         assert!(detail.max_slope_deg <= ceiling + 0.5);
-        let chord = profile_hike_detailed(&elev, park_lat, park_lon, dest_lat, dest_lon, 30.0)
-            .unwrap();
+        let chord =
+            profile_hike_detailed(&elev, park_lat, park_lon, dest_lat, dest_lon, 30.0).unwrap();
         assert!(chord.max_slope_deg > ceiling + 0.5);
         assert!(detail.horiz_m > chord.horiz_m * 0.95);
     }
@@ -733,12 +711,7 @@ mod tests {
 
     impl HikeSampleElev for BumpThenSaddle {
         fn sample_elev_m(&self, lat: f64, lon: f64) -> f64 {
-            let total = haversine_m(
-                self.park_lat,
-                self.park_lon,
-                self.dest_lat,
-                self.dest_lon,
-            );
+            let total = haversine_m(self.park_lat, self.park_lon, self.dest_lat, self.dest_lon);
             if total <= 1.0 {
                 return self.base;
             }
@@ -792,10 +765,7 @@ mod tests {
             .iter()
             .map(|p| p.elev_m)
             .fold(f64::NEG_INFINITY, f64::max);
-        assert!(
-            crest < 1030.0,
-            "path crested the bump at {crest} m"
-        );
+        assert!(crest < 1030.0, "path crested the bump at {crest} m");
     }
 
     #[test]

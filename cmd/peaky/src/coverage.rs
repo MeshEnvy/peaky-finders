@@ -11,7 +11,8 @@ use peaky_preset::{
     resolved_viewshed_root,
 };
 use peaky_serve::viewshed::{
-    ensure_coords_viewshed_blocking, ensure_viewshed_for_site_blocking, target_viewshed_digest_for_site,
+    ensure_coords_viewshed_blocking, ensure_viewshed_for_site_blocking,
+    target_viewshed_digest_for_site,
 };
 use serde_json::json;
 use splatter::Session;
@@ -42,8 +43,8 @@ pub fn run_points(
     let dem_workers = resolved_dem_fetch_max_workers(&preset);
     let session = Arc::new(Session::new(mirror, verbose, dem_workers));
 
-    let text = std::fs::read_to_string(&geojson)
-        .with_context(|| format!("read {}", geojson.display()))?;
+    let text =
+        std::fs::read_to_string(&geojson).with_context(|| format!("read {}", geojson.display()))?;
     let gj: GeoJson = text.parse().context("parse points GeoJSON")?;
     let features = feature_list(&gj)?;
 
@@ -72,7 +73,9 @@ pub fn run_points(
         });
         match png {
             Ok(png) => {
-                let Some(workdir) = png.parent() else { continue };
+                let Some(workdir) = png.parent() else {
+                    continue;
+                };
                 rows.push(ManifestRow {
                     id: id.clone(),
                     class: "points".into(),
@@ -87,16 +90,15 @@ pub fn run_points(
     }
 
     write_manifest(&out, &rows)?;
-    info!("wrote {} point footprint(s) -> {}", rows.len(), out.display());
+    info!(
+        "wrote {} point footprint(s) -> {}",
+        rows.len(),
+        out.display()
+    );
     Ok(())
 }
 
-pub fn run_fleet(
-    project: PathBuf,
-    workers: usize,
-    out: PathBuf,
-    verbose: bool,
-) -> Result<()> {
+pub fn run_fleet(project: PathBuf, workers: usize, out: PathBuf, verbose: bool) -> Result<()> {
     let project_dir = peaky_preset::resolve_project_dir(&project.to_string_lossy());
     let preset_path = project_dir.join("config.yaml");
     let preset = load_preset(&preset_path)?;
@@ -134,7 +136,8 @@ pub fn run_fleet(
         });
         match png {
             Ok(png) => {
-                let Ok(digest) = target_viewshed_digest_for_site(&preset, &site.site, Some(&board_viewshed))
+                let Ok(digest) =
+                    target_viewshed_digest_for_site(&preset, &site.site, Some(&board_viewshed))
                 else {
                     continue;
                 };
@@ -153,7 +156,11 @@ pub fn run_fleet(
     }
 
     write_manifest(&out, &rows)?;
-    info!("wrote {} fleet footprint(s) -> {}", rows.len(), out.display());
+    info!(
+        "wrote {} fleet footprint(s) -> {}",
+        rows.len(),
+        out.display()
+    );
     Ok(())
 }
 

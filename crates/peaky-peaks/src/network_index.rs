@@ -119,8 +119,12 @@ mod tests {
         let n1 = graph.get_or_insert_node_public(id, 39.01, -119.0, &mut map);
         id -= 1;
         let n2 = graph.get_or_insert_node_public(id, 39.02, -119.0, &mut map);
-        graph.add_way_segment_public(n0, n1, 39.0, -119.0, 39.01, -119.0, "primary", None, None, false);
-        graph.add_way_segment_public(n1, n2, 39.01, -119.0, 39.02, -119.0, "primary", None, None, false);
+        graph.add_way_segment_public(
+            n0, n1, 39.0, -119.0, 39.01, -119.0, "primary", None, None, false,
+        );
+        graph.add_way_segment_public(
+            n1, n2, 39.01, -119.0, 39.02, -119.0, "primary", None, None, false,
+        );
 
         let index = GraphEdgeIndex::build(&graph);
         let set = index.undirected_edges_in_bbox(-120.0, 38.0, -118.0, 40.0);

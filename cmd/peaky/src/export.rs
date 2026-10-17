@@ -50,8 +50,7 @@ pub fn run(
     let kmz = export_sites_kmz_for_cli(&project_dir, &sites, &document_name, verbose)
         .context("build KMZ")?;
 
-    fs::write(&output_path, &kmz)
-        .with_context(|| format!("write {}", output_path.display()))?;
+    fs::write(&output_path, &kmz).with_context(|| format!("write {}", output_path.display()))?;
 
     if verbose {
         eprintln!(
@@ -66,11 +65,7 @@ pub fn run(
     Ok(())
 }
 
-fn site_matches_tags(
-    site: &SiteEntry,
-    include: &HashSet<&str>,
-    exclude: &HashSet<&str>,
-) -> bool {
+fn site_matches_tags(site: &SiteEntry, include: &HashSet<&str>, exclude: &HashSet<&str>) -> bool {
     let site_tags: HashSet<&str> = site.tags.iter().map(String::as_str).collect();
     if include.intersection(&site_tags).next().is_none() {
         return false;
@@ -119,7 +114,10 @@ mod tests {
     #[test]
     fn filter_or_include_and_exclude() {
         let mut sites = HashMap::new();
-        sites.insert("a".to_string(), site_with_tags(&["reno-vegas", "installed"]));
+        sites.insert(
+            "a".to_string(),
+            site_with_tags(&["reno-vegas", "installed"]),
+        );
         sites.insert("b".to_string(), site_with_tags(&["reno-vegas", "optional"]));
         sites.insert("c".to_string(), site_with_tags(&["other"]));
 

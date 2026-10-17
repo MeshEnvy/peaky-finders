@@ -95,9 +95,10 @@ pub fn dedup_nearby_with_drops(
             );
             last_log = Instant::now();
         }
-        if let Some(idx) = kept.iter().position(|k| {
-            crate::hike::haversine_m(c.lat, c.lon, k.lat, k.lon) < min_m
-        }) {
+        if let Some(idx) = kept
+            .iter()
+            .position(|k| crate::hike::haversine_m(c.lat, c.lon, k.lat, k.lon) < min_m)
+        {
             let dist_m = crate::hike::haversine_m(c.lat, c.lon, kept[idx].lat, kept[idx].lon);
             if candidate_elev(&c) > candidate_elev(&kept[idx]) {
                 drops.push(DedupDrop {
