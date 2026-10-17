@@ -2,11 +2,11 @@
 
 import { roadsBookApiUrl } from './urls.js'
 
-/** @typedef {'paved'|'jeep'|'hiking'|'other'} RoadRole */
+/** @typedef {'paved'|'jeep'|'hiking'|'other'|'private'} RoadRole */
 
 /**
  * @param {string} projectSlug
- * @returns {Promise<{ classes: object[], overrides: object[], customs: object[] }>}
+ * @returns {Promise<{ sources?: object, rules: object[] }>}
  */
 export async function fetchRoadsBook(projectSlug) {
   const resp = await fetch(roadsBookApiUrl(projectSlug))
@@ -36,48 +36,34 @@ export async function saveRoadsBook(projectSlug, book) {
   return payload
 }
 
-/** @param {object} props @returns {number|null} */
-export function osmIdFromProps(props) {
-  const raw = props?.osm_id
-  if (raw == null || raw === '') return null
-  const n = Number(raw)
-  return Number.isFinite(n) ? n : null
+/** @param {object} props @returns {string|null} */
+export function segmentIdFromProps(props) {
+  if (props?.id) return String(props.id)
+  const osmId = props?.osm_id
+  if (osmId != null && osmId !== '') return `osm:${osmId}`
+  return null
 }
 
 /** @param {object} props */
 export function overrideKeyFromProps(props) {
-  const osmId = osmIdFromProps(props)
-  if (osmId != null) return { kind: 'osm', osm_id: osmId }
-  if (props?.source === 'gtlf' && props?.gtlf_layer && props?.coord_hash) {
-    return {
-      kind: 'gtlf',
-      layer: String(props.gtlf_layer),
-      coord_hash: String(props.coord_hash),
-    }
-  }
+  const id = segmentIdFromProps(props)
+  if (id) return { kind: 'id', id }
   return null
 }
 
 /**
  * @param {object} book
- * @param {object} key from overrideKeyFromProps expanded
+ * @param {{ kind: 'id', id: string }} key
  * @param {RoadRole} role
  */
 export function upsertOverride(book, key, role) {
-  const overrides = Array.isArray(book.overrides) ? [...book.overrides] : []
-  const filtered = overrides.filter((ov) => {
-    if (key.kind === 'osm') return Number(ov.osm_id) !== Number(key.osm_id)
-    if (ov.gtlf) {
-      return !(ov.gtlf.layer === key.layer && ov.gtlf.coord_hash === key.coord_hash)
-    }
-    return true
+  if (!Array.isArray(book.rules)) book.rules = []
+  const rules = book.rules.filter((row) => {
+    const mid = row.match?.id
+    return !(mid && mid === key.id)
   })
-  if (key.kind === 'osm') {
-    filtered.push({ osm_id: key.osm_id, role })
-  } else {
-    filtered.push({ gtlf: { layer: key.layer, coord_hash: key.coord_hash }, role })
-  }
-  book.overrides = filtered
+  rules.push({ match: { id: key.id }, role })
+  book.rules = rules
 }
 
 /**
@@ -87,11 +73,10 @@ export function upsertOverride(book, key, role) {
  * @param {[number, number][]} coords lat/lon pairs
  */
 export function appendCustomRoad(book, id, role, coords) {
-  const customs = Array.isArray(book.customs) ? [...book.customs] : []
-  customs.push({
+  if (!Array.isArray(book.rules)) book.rules = []
+  book.rules.push({
     id,
     role,
     coords: coords.map(([lat, lon]) => [lat, lon]),
   })
-  book.customs = customs
 }

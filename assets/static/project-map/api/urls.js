@@ -122,7 +122,7 @@ export function landLayerGeoJsonUrl(projectSlug, sourceId, layer) {
   return `/api/p/${projectSlug}/land/sources/${encodeURIComponent(sourceId)}/layers/${encodeURIComponent(layer)}/geojson`
 }
 
-/** @param {string} projectSlug @param {'paved'|'jeep'|'hiking'} layer @param {{ west: number, south: number, east: number, north: number }} bbox @param {number} zoom map zoom (integer) */
+/** @param {string} projectSlug @param {'paved'|'jeep'|'hiking'|'other'|'private'} layer @param {{ west: number, south: number, east: number, north: number }} bbox @param {number} zoom map zoom (integer) */
 export function roadsNetworkLayerGeoJsonUrl(projectSlug, layer, bbox, zoom) {
   const q = new URLSearchParams({
     west: String(bbox.west),
@@ -132,17 +132,6 @@ export function roadsNetworkLayerGeoJsonUrl(projectSlug, layer, bbox, zoom) {
     z: String(Math.round(zoom)),
   })
   return `/api/p/${projectSlug}/roads/network/${layer}/geojson?${q}`
-}
-
-/** Full OSM + GTLF inventory (map "All" overlay). */
-export function roadsNetworkAllGeoJsonUrl(projectSlug, bbox) {
-  const q = new URLSearchParams({
-    west: String(bbox.west),
-    south: String(bbox.south),
-    east: String(bbox.east),
-    north: String(bbox.north),
-  })
-  return `/api/p/${projectSlug}/roads/network/all/geojson?${q}`
 }
 
 /** Combined paved + jeep from one drive-graph pass. */

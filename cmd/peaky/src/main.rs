@@ -7,6 +7,7 @@ mod freeze;
 mod map_export;
 mod peaks;
 mod probe;
+mod route;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -14,7 +15,11 @@ use peaky_serve::run_server;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "peaky", version, about = "Peaky Finders — LoRa mesh site planner")]
+#[command(
+    name = "peaky",
+    version,
+    about = "Peaky Finders — LoRa mesh site planner"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -22,6 +27,35 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Routes to a pin, as KML, using the master road graph
+    Route {
+        /// Destination latitude
+        #[arg(value_name = "LAT", allow_hyphen_values = true)]
+        lat: f64,
+        /// Destination longitude
+        #[arg(value_name = "LNG", allow_hyphen_values = true)]
+        lng: f64,
+        /// Project directory (or path to config.yaml)
+        #[arg(long, value_name = "PROJECT")]
+        project: PathBuf,
+        /// Write KML here (default: stdout)
+        #[arg(short, long, value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
+    /// Refresh road sources and build the base and master graphs
+    UpdateSources {
+        /// Project directory (or path to config.yaml)
+        #[arg(value_name = "PROJECT")]
+        project: PathBuf,
+        /// Build from cached GeoJSON. Do not run plugins.
+        #[arg(long, conflicts_with = "assume_fresh")]
+        no_fetch: bool,
+        /// Run a plugin only when its cached GeoJSON is missing.
+        #[arg(long, conflicts_with = "no_fetch")]
+        assume_fresh: bool,
+        #[arg(long)]
+        verbose: bool,
+    },
     /// Start the local web UI for one project
     Serve {
         /// Project directory (or path to config.yaml)
@@ -287,15 +321,47 @@ enum FindCommands {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| {
-                    "peaky=info,peaky_peaks=info,peaky_geo=info,tower_http=info".into()
-                }),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "peaky=info,peaky_peaks=info,peaky_geo=info,tower_http=info".into()
+            }),
         )
         .init();
 
     let cli = Cli::parse();
     match cli.command {
+        Commands::Route {
+            lat,
+            lng,
+            project,
+            output,
+        } => {
+            route::run(&project, lat, lng, output.as_deref())?;
+        }
+        Commands::UpdateSources {
+            project,
+            no_fetch,
+            assume_fresh,
+            verbose,
+        } => {
+            if verbose {
+                tracing::info!("update-sources: {}", project.display());
+            }
+            let fetch = if no_fetch {
+                peaky_peaks::SourceFetch::NoFetch
+            } else if assume_fresh {
+                peaky_peaks::SourceFetch::AssumeFresh
+            } else {
+                peaky_peaks::SourceFetch::Refresh
+            };
+            let project_dir = peaky_preset::ensure_project_initialized(&project)?;
+            let config_path = project_dir.join("config.yaml");
+            let book = peaky_preset::ensure_roads_book(&config_path)?;
+            if !book.has_unified_sources() {
+                anyhow::bail!("roads.yaml has no sources: add sources.osm (and plugins) first");
+            }
+            peaky_peaks::update_roads(&config_path, fetch)?;
+            tracing::info!("road graph refreshed");
+        }
         Commands::Serve {
             project,
             host,
@@ -403,24 +469,26 @@ async fn main() -> Result<()> {
             export::run(project, &tag, &exclude_tag, output, verbose)?;
         }
         Commands::Coverage {
-            command: CoverageCommands::Points {
-                project,
-                geojson,
-                workers,
-                out,
-                verbose,
-            },
+            command:
+                CoverageCommands::Points {
+                    project,
+                    geojson,
+                    workers,
+                    out,
+                    verbose,
+                },
         } => {
             let w = workers.unwrap_or_else(default_coverage_workers);
             coverage::run_points(project, geojson, w, out, verbose)?;
         }
         Commands::Coverage {
-            command: CoverageCommands::Fleet {
-                project,
-                workers,
-                out,
-                verbose,
-            },
+            command:
+                CoverageCommands::Fleet {
+                    project,
+                    workers,
+                    out,
+                    verbose,
+                },
         } => {
             let w = workers.unwrap_or_else(default_coverage_workers);
             coverage::run_fleet(project, w, out, verbose)?;

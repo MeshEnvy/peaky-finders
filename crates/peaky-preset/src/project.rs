@@ -46,6 +46,10 @@ impl ProjectLayout {
         self.project_dir.join("roads.yaml")
     }
 
+    pub fn roads_cache_dir(&self) -> PathBuf {
+        self.project_dir.join(".peaky/cache/roads")
+    }
+
     pub fn peak_overrides_path(&self) -> PathBuf {
         self.project_dir.join("peaks.yaml")
     }

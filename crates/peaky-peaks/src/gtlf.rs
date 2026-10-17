@@ -8,7 +8,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use geojson::{Feature, GeoJson, Geometry, Value as GeoValue};
 use peaky_geo::{download_featureserver_geojson_bbox, load_preset_aoi_union, LonLatBBox};
-use peaky_preset::{load_preset, RoadsBook, GtlfSourceConfig};
+use peaky_preset::{load_preset, GtlfSourceConfig, RoadsBook};
 
 use crate::osm::OsmRoutingOpts;
 use tracing::info;
@@ -40,7 +40,11 @@ pub fn gtlf_cache_dir(project_dir: &Path) -> PathBuf {
 }
 
 fn layer_cache_name(layer_url: &str) -> String {
-    let id = layer_url.trim_end_matches('/').rsplit('/').next().unwrap_or("0");
+    let id = layer_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("0");
     format!("gtlf-layer-{id}.geojson")
 }
 
@@ -153,9 +157,9 @@ pub fn ensure_gtlf_cache(project_dir: &Path, force: bool) -> Result<()> {
 }
 
 fn coords_in_bbox(coords: &[(f64, f64)], west: f64, south: f64, east: f64, north: f64) -> bool {
-    coords.iter().any(|&(lat, lon)| {
-        lon >= west && lon <= east && lat >= south && lat <= north
-    })
+    coords
+        .iter()
+        .any(|&(lat, lon)| lon >= west && lon <= east && lat >= south && lat <= north)
 }
 
 fn extract_line_coords(geom: &Geometry) -> Vec<(f64, f64)> {
@@ -202,7 +206,9 @@ fn parse_geojson_lines(path: &Path) -> Result<Vec<Vec<(f64, f64)>>> {
         .collect())
 }
 
-fn gtlf_highway_from_props(props: &serde_json::Map<String, serde_json::Value>) -> (String, Option<String>) {
+fn gtlf_highway_from_props(
+    props: &serde_json::Map<String, serde_json::Value>,
+) -> (String, Option<String>) {
     let class = props
         .get("PLAN_ASSET_CLASS")
         .or_else(|| props.get("plan_asset_class"))
@@ -232,9 +238,8 @@ fn load_jeep_lines(
         let t0 = Instant::now();
         info!(layer = layer_id, path = %path.display(), "gtlf: reading jeep layer");
         let bytes = std::fs::read(&path)?;
-        let geo: GeoJson = serde_json::from_slice(&bytes).with_context(|| {
-            format!("parse gtlf jeep layer {layer_id}")
-        })?;
+        let geo: GeoJson = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse gtlf jeep layer {layer_id}"))?;
         let features = match geo {
             GeoJson::FeatureCollection(fc) => fc.features,
             GeoJson::Feature(f) => vec![f],
@@ -276,7 +281,11 @@ fn load_jeep_lines(
     Ok(out)
 }
 
-fn load_foot_lines(project_dir: &Path, gtlf: &GtlfSourceConfig, bbox: LonLatBBox) -> Result<Vec<Vec<(f64, f64)>>> {
+fn load_foot_lines(
+    project_dir: &Path,
+    gtlf: &GtlfSourceConfig,
+    bbox: LonLatBBox,
+) -> Result<Vec<Vec<(f64, f64)>>> {
     let mut out = Vec::new();
     for url in &gtlf.foot_layers {
         let path = gtlf_cache_dir(project_dir).join(layer_cache_name(url));
@@ -388,8 +397,11 @@ where
         progress(0.92);
     }
     info!("gtlf: loading foot trails");
-    let mut foot_lines =
-        load_foot_lines(project_dir, &gtlf, LonLatBBox::new(west, south, east, north))?;
+    let mut foot_lines = load_foot_lines(
+        project_dir,
+        &gtlf,
+        LonLatBBox::new(west, south, east, north),
+    )?;
     foot_lines.extend(extra_foot_lines.iter().cloned());
     let t_trails = Instant::now();
     let foot_trails = build_trail_graph(&foot_lines, opts.road_sample_step_m);
@@ -439,7 +451,12 @@ pub fn load_gtlf_display_inventory(
         if !path.is_file() {
             continue;
         }
-        let layer_id = url.trim_end_matches('/').rsplit('/').next().unwrap_or("?").to_string();
+        let layer_id = url
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("?")
+            .to_string();
         let foot_layer = gtlf.foot_layers.iter().any(|u| u == url);
         let bytes = std::fs::read(&path)?;
         let geo: GeoJson = serde_json::from_slice(&bytes)
@@ -460,11 +477,7 @@ pub fn load_gtlf_display_inventory(
             }
             let road_role = roads.classify_gtlf_line(&layer_id, &coords, foot_layer);
             let role = crate::road_inventory::inventory_role_from_road(road_role);
-            let props = f
-                .properties
-                .as_ref()
-                .map(string_props)
-                .unwrap_or_default();
+            let props = f.properties.as_ref().map(string_props).unwrap_or_default();
             lines.push(GtlfInventoryLine {
                 coords,
                 role,

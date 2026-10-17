@@ -6,11 +6,11 @@ use geojson::{Feature, FeatureCollection, Geometry, Value as GjValue};
 use peaky_preset::load_preset;
 
 use crate::access_warm::ProjectRouting;
-use peaky_preset::RoadRole;
 use crate::hike::haversine_m;
 use crate::network_index::GraphEdgeIndex;
-use crate::osm::{GraphEdge, JeepRoadGraph, OsmRoutingOpts};
-use crate::trail::TrailRouting;
+use crate::osm::{JeepRoadGraph, OsmRoutingOpts};
+use crate::segment_groups::role_layer_geojson;
+use peaky_preset::RoadRole;
 
 /// Drop polylines shorter than a short dash at this zoom.
 const MIN_DRAW_PX: f64 = 12.0;
@@ -60,23 +60,6 @@ fn drive_min_length_m(zoom: f64, center_lat: f64) -> f64 {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum ZoomTier {
-    Full,
-    Medium,
-    Coarse,
-}
-
-fn zoom_tier(z: f64) -> ZoomTier {
-    if z >= 12.0 {
-        ZoomTier::Full
-    } else if z >= 9.0 {
-        ZoomTier::Medium
-    } else {
-        ZoomTier::Coarse
-    }
-}
-
 fn edge_highway(graph: &JeepRoadGraph, a: u32, b: u32) -> &str {
     graph
         .edges(a)
@@ -106,6 +89,8 @@ pub enum NetworkLayer {
     Paved,
     Jeep,
     Hiking,
+    Other,
+    Private,
 }
 
 impl NetworkLayer {
@@ -114,6 +99,8 @@ impl NetworkLayer {
             "paved" => Some(Self::Paved),
             "jeep" => Some(Self::Jeep),
             "hiking" => Some(Self::Hiking),
+            "other" => Some(Self::Other),
+            "private" => Some(Self::Private),
             _ => None,
         }
     }
@@ -152,18 +139,6 @@ fn collect_role_edges(
         }
     }
     out
-}
-
-fn collect_all_undirected_edges(
-    graph: &JeepRoadGraph,
-    index: &GraphEdgeIndex,
-    view: NetworkViewBBox,
-) -> HashSet<(u32, u32)> {
-    index
-        .undirected_edges_in_bbox(view.west, view.south, view.east, view.north)
-        .into_iter()
-        .filter(|&(a, b)| edge_in_view(graph, a, b, view))
-        .collect()
 }
 
 fn filter_drive_edges_for_zoom(
@@ -211,7 +186,8 @@ fn filter_drive_edges_for_zoom(
                 let Some(neighbors) = adj.get(&cur) else {
                     break;
                 };
-                let Some(next) = stroke_continue_neighbor(graph, cur, prev, neighbors, &kept) else {
+                let Some(next) = stroke_continue_neighbor(graph, cur, prev, neighbors, &kept)
+                else {
                     break;
                 };
                 let ek = undir_key(cur, next);
@@ -226,17 +202,6 @@ fn filter_drive_edges_for_zoom(
         }
     }
     kept
-}
-
-fn filter_trail_edges_for_zoom(
-    _graph: &JeepRoadGraph,
-    edges: HashSet<(u32, u32)>,
-    tier: ZoomTier,
-) -> HashSet<(u32, u32)> {
-    match tier {
-        ZoomTier::Coarse => HashSet::new(),
-        ZoomTier::Full | ZoomTier::Medium => edges,
-    }
 }
 
 fn polyline_length_m(coords: &[[f64; 2]]) -> f64 {
@@ -317,7 +282,8 @@ fn extend_stroke(
         let Some(neighbors) = adj.get(&cur) else {
             break;
         };
-        let Some(other) = stroke_continue_neighbor(graph, cur, came_from, neighbors, visited) else {
+        let Some(other) = stroke_continue_neighbor(graph, cur, came_from, neighbors, visited)
+        else {
             break;
         };
         visited.insert(undir_key(cur, other));
@@ -395,12 +361,7 @@ fn lines_to_fc(lines: Vec<Vec<[f64; 2]>>) -> FeatureCollection {
     }
     let multi: Vec<Vec<Vec<f64>>> = lines
         .into_iter()
-        .map(|coords| {
-            coords
-                .into_iter()
-                .map(|c| vec![c[0], c[1]])
-                .collect()
-        })
+        .map(|coords| coords.into_iter().map(|c| vec![c[0], c[1]]).collect())
         .collect();
     FeatureCollection {
         bbox: None,
@@ -429,57 +390,58 @@ fn drive_role_fc(
     lines_to_fc(filter_short_lines(chained, min_m))
 }
 
-fn hiking_fc(
+fn layer_role(layer: NetworkLayer) -> RoadRole {
+    match layer {
+        NetworkLayer::Paved => RoadRole::Paved,
+        NetworkLayer::Jeep => RoadRole::Jeep,
+        NetworkLayer::Hiking => RoadRole::Hiking,
+        NetworkLayer::Other => RoadRole::Other,
+        NetworkLayer::Private => RoadRole::Private,
+    }
+}
+
+fn role_fc(
     routing: &ProjectRouting,
-    trails: &TrailRouting,
+    role: RoadRole,
     view: NetworkViewBBox,
     zoom: f64,
-    tier: ZoomTier,
 ) -> FeatureCollection {
-    if zoom < 11.0 {
-        return empty_fc();
-    }
-    let index = routing.trail_edge_index();
-    let edges = collect_all_undirected_edges(&trails.graph, index, view);
-    let filtered = filter_trail_edges_for_zoom(&trails.graph, edges, tier);
-    let chained = chain_edges(&trails.graph, filtered);
+    let detailed = zoom >= 12.0;
     let center_lat = (view.south + view.north) * 0.5;
-    let min_m = if tier == ZoomTier::Medium {
-        drive_min_length_m(zoom, center_lat)
-    } else {
+    let min_m = if detailed {
         0.0
+    } else {
+        drive_min_length_m(zoom, center_lat)
     };
-    lines_to_fc(filter_short_lines(chained, min_m))
+    role_layer_geojson(
+        &routing.osm().segment_groups,
+        role,
+        view,
+        detailed,
+        min_m,
+    )
 }
 
 /// One access-network layer clipped to the map viewport.
 pub fn routing_network_layer_geojson(
     routing: &ProjectRouting,
-    opts: &OsmRoutingOpts,
+    _opts: &OsmRoutingOpts,
     layer: NetworkLayer,
     view: NetworkViewBBox,
     zoom: f64,
 ) -> FeatureCollection {
-    let tier = zoom_tier(zoom);
     match layer {
-        NetworkLayer::Hiking => {
-            let empty_trails = TrailRouting::empty();
-            hiking_fc(
-                routing,
-                routing.trails_opt().unwrap_or(&empty_trails),
-                view,
-                zoom,
-                tier,
-            )
+        NetworkLayer::Hiking if zoom < 11.0 => empty_fc(),
+        NetworkLayer::Hiking | NetworkLayer::Other | NetworkLayer::Private => {
+            role_fc(routing, layer_role(layer), view, zoom)
+        }
+        NetworkLayer::Paved | NetworkLayer::Jeep if zoom >= 12.0 => {
+            role_fc(routing, layer_role(layer), view, zoom)
         }
         NetworkLayer::Paved | NetworkLayer::Jeep => {
             let graph = &routing.osm().graph;
             let index = routing.drive_edge_index();
-            let role = if layer == NetworkLayer::Paved {
-                RoadRole::Paved
-            } else {
-                RoadRole::Jeep
-            };
+            let role = layer_role(layer);
             let edges = collect_role_edges(graph, index, view, role);
             drive_role_fc(graph, &edges, role, zoom, view)
         }
@@ -489,10 +451,16 @@ pub fn routing_network_layer_geojson(
 /// Paved and jeep FeatureCollections from one drive-graph classification pass.
 pub fn routing_network_drive_layers_geojson(
     routing: &ProjectRouting,
-    opts: &OsmRoutingOpts,
+    _opts: &OsmRoutingOpts,
     view: NetworkViewBBox,
     zoom: f64,
 ) -> (FeatureCollection, FeatureCollection) {
+    if zoom >= 12.0 {
+        return (
+            role_fc(routing, RoadRole::Paved, view, zoom),
+            role_fc(routing, RoadRole::Jeep, view, zoom),
+        );
+    }
     let graph = &routing.osm().graph;
     let index = routing.drive_edge_index();
     let paved_edges = collect_role_edges(graph, index, view, RoadRole::Paved);
@@ -529,9 +497,8 @@ pub fn routing_network_layer_geojson_bytes(
 /// Load preset access meta and build opts (serve handlers).
 pub fn osm_routing_opts_from_preset(config_path: &std::path::Path) -> OsmRoutingOpts {
     let preset = load_preset(config_path).unwrap_or_default();
-    let roads = peaky_preset::ensure_roads_book(config_path).unwrap_or_else(|_| {
-        peaky_preset::seed_roads_book()
-    });
+    let roads = peaky_preset::ensure_roads_book(config_path)
+        .unwrap_or_else(|_| peaky_preset::RoadsBook::default());
     crate::osm::osm_routing_opts_with_roads(&preset.resolved_access_meta(), &roads)
 }
 
@@ -611,7 +578,8 @@ mod tests {
             let n = graph.get_or_insert_node_public(id, lat, lon, &mut map);
             id -= 1;
             if let Some((pn, plat)) = prev {
-                graph.add_way_segment_public(pn, n, plat, lon, lat, lon, "track", None, None, false);
+                graph
+                    .add_way_segment_public(pn, n, plat, lon, lat, lon, "track", None, None, false);
             }
             prev = Some((n, lat));
             lat += dlat;
@@ -628,8 +596,12 @@ mod tests {
         let n1 = graph.get_or_insert_node_public(id, 39.01, -119.0, &mut map);
         id -= 1;
         let n2 = graph.get_or_insert_node_public(id, 39.02, -119.0, &mut map);
-        graph.add_way_segment_public(n0, n1, 39.0, -119.0, 39.01, -119.0, "primary", None, None, false);
-        graph.add_way_segment_public(n1, n2, 39.01, -119.0, 39.02, -119.0, "primary", None, None, false);
+        graph.add_way_segment_public(
+            n0, n1, 39.0, -119.0, 39.01, -119.0, "primary", None, None, false,
+        );
+        graph.add_way_segment_public(
+            n1, n2, 39.01, -119.0, 39.02, -119.0, "primary", None, None, false,
+        );
         let view = NetworkViewBBox {
             west: -120.0,
             south: 38.0,
@@ -657,13 +629,25 @@ mod tests {
         let west = graph.get_or_insert_node_public(id, 39.05, -119.002, &mut map);
         id -= 1;
         let east = graph.get_or_insert_node_public(id, 39.05, -118.998, &mut map);
-        graph.add_way_segment_public(south, mid, 39.0, -119.0, 39.05, -119.0, "track", None, None, false);
-        graph.add_way_segment_public(mid, north, 39.05, -119.0, 39.10, -119.0, "track", None, None, false);
-        graph.add_way_segment_public(west, mid, 39.05, -119.002, 39.05, -119.0, "track", None, None, false);
-        graph.add_way_segment_public(mid, east, 39.05, -119.0, 39.05, -118.998, "track", None, None, false);
+        graph.add_way_segment_public(
+            south, mid, 39.0, -119.0, 39.05, -119.0, "track", None, None, false,
+        );
+        graph.add_way_segment_public(
+            mid, north, 39.05, -119.0, 39.10, -119.0, "track", None, None, false,
+        );
+        graph.add_way_segment_public(
+            west, mid, 39.05, -119.002, 39.05, -119.0, "track", None, None, false,
+        );
+        graph.add_way_segment_public(
+            mid, east, 39.05, -119.0, 39.05, -118.998, "track", None, None, false,
+        );
 
         let coarse = jeep_lines(&graph, 8.0);
-        assert_eq!(coarse.len(), 1, "NS through-road should be one stroke at z8");
+        assert_eq!(
+            coarse.len(),
+            1,
+            "NS through-road should be one stroke at z8"
+        );
         let line = &coarse[0];
         let min_lat = line.iter().map(|c| c[1]).fold(f64::INFINITY, f64::min);
         let max_lat = line.iter().map(|c| c[1]).fold(f64::NEG_INFINITY, f64::max);
@@ -718,7 +702,11 @@ mod tests {
         add_track_run(&mut graph, 20, 0.01, -119.0, -1);
         add_track_run(&mut graph, 20, 0.01, -119.005, -10_000);
         let lines = jeep_lines(&graph, 8.0);
-        assert_eq!(lines.len(), 2, "parallel tracks stay distinct without corridor merge");
+        assert_eq!(
+            lines.len(),
+            2,
+            "parallel tracks stay distinct without corridor merge"
+        );
     }
 
     #[test]
@@ -903,12 +891,32 @@ mod tests {
         id -= 1;
         let n2 = graph.get_or_insert_node_public(id, 39.02, -119.00, &mut map);
         graph.add_way_segment_classified(
-            n0, n1, 39.00, -119.00, 39.01, -119.00, "tertiary", None, None, false,
-            RoadRole::Paved, 1,
+            n0,
+            n1,
+            39.00,
+            -119.00,
+            39.01,
+            -119.00,
+            "tertiary",
+            None,
+            None,
+            false,
+            RoadRole::Paved,
+            1,
         );
         graph.add_way_segment_classified(
-            n1, n2, 39.01, -119.00, 39.02, -119.00, "unclassified", None, Some("asphalt"), false,
-            RoadRole::Paved, 2,
+            n1,
+            n2,
+            39.01,
+            -119.00,
+            39.02,
+            -119.00,
+            "unclassified",
+            None,
+            Some("asphalt"),
+            false,
+            RoadRole::Paved,
+            2,
         );
         let paved_edges = drive_edges_in_view(&graph, wide_view(), RoadRole::Paved);
         let paved = filter_drive_edges_for_zoom(&graph, &paved_edges, RoadRole::Paved, 12.0);
@@ -934,7 +942,9 @@ mod tests {
         );
         let paved_edges = drive_edges_in_view(&graph, wide_view(), RoadRole::Paved);
         assert_eq!(paved_edges.len(), 1);
-        assert!(filter_drive_edges_for_zoom(&graph, &paved_edges, RoadRole::Paved, 11.0).is_empty());
+        assert!(
+            filter_drive_edges_for_zoom(&graph, &paved_edges, RoadRole::Paved, 11.0).is_empty()
+        );
         assert_eq!(
             filter_drive_edges_for_zoom(&graph, &paved_edges, RoadRole::Paved, 14.0).len(),
             1
@@ -951,8 +961,12 @@ mod tests {
         let n1 = graph.get_or_insert_node_public(id, 39.001, -119.0, &mut map);
         id -= 1;
         let n2 = graph.get_or_insert_node_public(id, 39.002, -119.0, &mut map);
-        graph.add_way_segment_public(n0, n1, 39.0, -119.0, 39.001, -119.0, "primary", None, None, false);
-        graph.add_way_segment_public(n1, n2, 39.001, -119.0, 39.002, -119.0, "primary", None, None, false);
+        graph.add_way_segment_public(
+            n0, n1, 39.0, -119.0, 39.001, -119.0, "primary", None, None, false,
+        );
+        graph.add_way_segment_public(
+            n1, n2, 39.001, -119.0, 39.002, -119.0, "primary", None, None, false,
+        );
         let edges: HashSet<_> = [(n0, n1), (n1, n2)].into_iter().collect();
         let lines = chain_edges(&graph, edges);
         assert_eq!(lines.len(), 1);

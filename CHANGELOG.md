@@ -12,6 +12,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **`peaky route <lat> <lng>`** — load the master road graph and write the site-sheet route options as KML (one folder per option: jeep, trail, and hike lines to a pin). Timings go to stderr. `./local-run.sh route` targets peaky-nevada.
+- **Unified road graph** — `roads.yaml` lists `sources` and one `rules` table (metadata matches or custom coords). `./local-run.sh update-sources` (and `peaky update-sources`) always reruns each source plugin, caches `.peaky/cache/roads/sources/<cache_key>.geojson` plus a content fingerprint (same bytes, same hash; the hash does not mean the feed is fresh), then builds the base and master graphs. `--no-fetch` skips plugins and builds from those caches. `--assume-fresh` fetches only a source whose GeoJSON is missing. Serve calls `update_roads()` before accept to build cached base, internal, and master graphs. Map toggles are paved, jeep, hiking, other, and private. At zoom 12 and closer each segment is its own line with id, role, source, kind, surface, grade, and access; a click writes an id rule. Private draws as a red dash and is left out of routing.
 - **Site sheet manual links** — plus lists other map-visible sites to add a teal manual hop; minus clears only manual overrides on that row.
 
 ### Fixed

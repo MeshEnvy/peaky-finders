@@ -14,6 +14,7 @@ use peaky_preset::{
     ensure_roads_book, load_preset, probe_key, probe_prefs_key, roads_global_fingerprint,
     roads_local_fingerprint, AccessMeta, AccessPreferenceConfig, AccessProbe,
     PeaksDifficultyConfig, PeaksScanConfig, PlaceAccess, RoadCustom, RoadRole, RoadsBook,
+    SiteAccessOption,
 };
 use splatter::Session;
 
@@ -24,9 +25,9 @@ use crate::gtlf::{
     apply_gtlf_to_routing_progress, ensure_gtlf_cache, gtlf_cache_fingerprint,
     load_gtlf_display_inventory,
 };
-use crate::road_inventory::{GtlfRoadInventory, InventoryRole, OsmRoadInventory};
 use crate::hike::HikeSampleElev;
 use crate::jeep::{JeepLengthBudget, PavedReachTree};
+use crate::network_index::GraphEdgeIndex;
 use crate::osm::{
     build_osm_routing_with_progress, duplicate_osm_routing, ensure_osm_pbf, osm_cache_path,
     osm_routing_opts_with_roads, JeepRoadGraph, JeepRoadIndex, OsmParsePhase, OsmRouting,
@@ -37,8 +38,9 @@ use crate::osm_cache::{
     try_load_merged_routing_cache, try_load_osm_routing_cache, try_load_reach_trees_cache,
     try_load_road_inventory_cache,
 };
+use crate::road_inventory::{GtlfRoadInventory, InventoryRole, OsmRoadInventory};
 use crate::roads_patch::apply_roads_book_patch;
-use crate::network_index::GraphEdgeIndex;
+use crate::roads_pipeline::{build_project_routing_from_master, update_roads};
 use crate::trail::TrailRouting;
 
 pub struct SessionElev<'a>(pub &'a Session);
@@ -68,7 +70,6 @@ pub struct ProjectRouting {
     draft_trees: OnceLock<RoutingTrees>,
     preloaded_trees: Mutex<Option<RoutingTrees>>,
     drive_edge_index: OnceLock<GraphEdgeIndex>,
-    trail_edge_index: OnceLock<GraphEdgeIndex>,
 }
 
 impl ProjectRouting {
@@ -84,7 +85,26 @@ impl ProjectRouting {
             draft_trees: OnceLock::new(),
             preloaded_trees: Mutex::new(None),
             drive_edge_index: OnceLock::new(),
-            trail_edge_index: OnceLock::new(),
+        }
+    }
+
+    pub fn from_unified_graph(
+        osm: OsmRouting,
+        trails: TrailRouting,
+        inventory: OsmRoadInventory,
+        customs: Vec<RoadCustom>,
+    ) -> Self {
+        Self {
+            osm,
+            trails,
+            gtlf_fingerprint: "unified".into(),
+            osm_inventory: inventory,
+            gtlf_inventory: GtlfRoadInventory::default(),
+            roads_customs: customs,
+            trees: OnceLock::new(),
+            draft_trees: OnceLock::new(),
+            preloaded_trees: Mutex::new(None),
+            drive_edge_index: OnceLock::new(),
         }
     }
 
@@ -103,11 +123,6 @@ impl ProjectRouting {
     pub(crate) fn drive_edge_index(&self) -> &GraphEdgeIndex {
         self.drive_edge_index
             .get_or_init(|| GraphEdgeIndex::build(&self.osm.graph))
-    }
-
-    pub(crate) fn trail_edge_index(&self) -> &GraphEdgeIndex {
-        self.trail_edge_index
-            .get_or_init(|| GraphEdgeIndex::build(&self.trails.graph))
     }
 
     pub fn osm(&self) -> &OsmRouting {
@@ -171,10 +186,7 @@ impl ProjectRouting {
     }
 
     pub fn has_draft_customs(&self) -> bool {
-        self.osm
-            .segment_groups
-            .iter()
-            .any(|g| g.is_custom_drive())
+        self.osm.segment_groups.iter().any(|g| g.is_custom_drive())
     }
 }
 
@@ -183,9 +195,9 @@ impl ProjectRouting {
 fn drive_custom_near(routing: &ProjectRouting, lat: f64, lon: f64, max_m: f64) -> bool {
     routing.osm.segment_groups.iter().any(|g| {
         g.is_custom_drive()
-            && g.coords.iter().any(|&(clat, clon)| {
-                crate::hike::haversine_m(clat, clon, lat, lon) <= max_m
-            })
+            && g.coords
+                .iter()
+                .any(|&(clat, clon)| crate::hike::haversine_m(clat, clon, lat, lon) <= max_m)
     })
 }
 
@@ -203,7 +215,7 @@ fn hiking_lines_from_inventory(inv: &OsmRoadInventory) -> Vec<Vec<(f64, f64)>> {
 }
 
 fn custom_hiking_lines(book: &RoadsBook) -> Vec<Vec<(f64, f64)>> {
-    book.customs
+    book.customs()
         .iter()
         .filter(|c| c.role == RoadRole::Hiking && c.coords.len() >= 2)
         .map(|c| c.coords.iter().map(|[lat, lon]| (*lat, *lon)).collect())
@@ -251,12 +263,11 @@ where
         gtlf_fingerprint: bundle.fingerprint,
         osm_inventory: OsmRoadInventory::default(),
         gtlf_inventory,
-        roads_customs: roads.customs.clone(),
+        roads_customs: roads.customs(),
         trees: OnceLock::new(),
         draft_trees: OnceLock::new(),
         preloaded_trees: Mutex::new(None),
         drive_edge_index: OnceLock::new(),
-        trail_edge_index: OnceLock::new(),
     })
 }
 
@@ -272,7 +283,7 @@ fn finalize_project_routing(
         roads,
         sample_step_m,
     );
-    loaded.roads_customs = roads.customs.clone();
+    loaded.roads_customs = roads.customs();
     tracing::info!("routing: roads.yaml patch applied");
     loaded
 }
@@ -290,15 +301,20 @@ pub fn warm_trusted_reach_trees(project_dir: &Path, routing: &ProjectRouting) ->
     let max_jeep_m = display_jeep_max_m();
     let pbf = ensure_osm_pbf(project_dir, false)?;
     let gtlf_fp = routing.gtlf_fingerprint.clone();
-    if let Some((unconstrained, budgeted)) =
-        try_load_reach_trees_cache(&pbf, &gtlf_fp, max_jeep_m, &jeep_budget)
-    {
-        routing.set_preloaded_trees(RoutingTrees {
-            unconstrained,
-            budgeted,
-        });
-        tracing::info!("reach trees: warm done (disk cache)");
-        return Ok(());
+    // The unified master graph's node indexes are not the PBF graph's. A reach
+    // tree saved for one bbox must not be applied to another.
+    let unified = gtlf_fp == "unified";
+    if !unified {
+        if let Some((unconstrained, budgeted)) =
+            try_load_reach_trees_cache(&pbf, &gtlf_fp, max_jeep_m, &jeep_budget)
+        {
+            routing.set_preloaded_trees(RoutingTrees {
+                unconstrained,
+                budgeted,
+            });
+            tracing::info!("reach trees: warm done (disk cache)");
+            return Ok(());
+        }
     }
     tracing::info!(
         graph_nodes = routing.osm.graph.node_count(),
@@ -321,15 +337,17 @@ pub fn warm_trusted_reach_trees(project_dir: &Path, routing: &ProjectRouting) ->
             true,
         ),
     };
-    if let Err(e) = save_reach_trees_cache(
-        &pbf,
-        &gtlf_fp,
-        max_jeep_m,
-        &jeep_budget,
-        &trees.unconstrained,
-        &trees.budgeted,
-    ) {
-        tracing::warn!("reach trees cache write: {e:#}");
+    if !unified {
+        if let Err(e) = save_reach_trees_cache(
+            &pbf,
+            &gtlf_fp,
+            max_jeep_m,
+            &jeep_budget,
+            &trees.unconstrained,
+            &trees.budgeted,
+        ) {
+            tracing::warn!("reach trees cache write: {e:#}");
+        }
     }
     routing.set_preloaded_trees(trees);
     tracing::info!("reach trees: warm done (computed + saved)");
@@ -342,10 +360,7 @@ fn clone_trail_routing(src: &TrailRouting) -> TrailRouting {
             src.graph.nodes_slice().to_vec(),
             src.graph.adj_slice().to_vec(),
         ),
-        samples: JeepRoadIndex::from_samples(
-            src.samples.sample_points(),
-            src.samples.way_count,
-        ),
+        samples: JeepRoadIndex::from_samples(src.samples.sample_points(), src.samples.way_count),
     }
 }
 
@@ -364,12 +379,11 @@ pub fn repatch_project_routing(
         gtlf_fingerprint: src.gtlf_fingerprint.clone(),
         osm_inventory: inv,
         gtlf_inventory: src.gtlf_inventory.clone(),
-        roads_customs: roads.customs.clone(),
+        roads_customs: roads.customs(),
         trees: OnceLock::new(),
         draft_trees: OnceLock::new(),
         preloaded_trees: Mutex::new(None),
         drive_edge_index: OnceLock::new(),
-        trail_edge_index: OnceLock::new(),
     }
 }
 
@@ -378,19 +392,11 @@ fn coord5(v: f64) -> String {
 }
 
 fn probe_cache_dir(project_dir: &Path, prefs_key: &str) -> PathBuf {
-    project_dir
-        .join(".peaky/cache/probe")
-        .join(prefs_key)
+    project_dir.join(".peaky/cache/probe").join(prefs_key)
 }
 
-pub fn probe_cache_path(
-    project_dir: &Path,
-    prefs_key: &str,
-    lat: f64,
-    lon: f64,
-) -> PathBuf {
-    probe_cache_dir(project_dir, prefs_key)
-        .join(format!("{}_{}.json", coord5(lat), coord5(lon)))
+pub fn probe_cache_path(project_dir: &Path, prefs_key: &str, lat: f64, lon: f64) -> PathBuf {
+    probe_cache_dir(project_dir, prefs_key).join(format!("{}_{}.json", coord5(lat), coord5(lon)))
 }
 
 pub fn load_probe_cache(path: &Path) -> Option<AccessProbe> {
@@ -568,7 +574,10 @@ pub fn display_jeep_max_m() -> f64 {
 }
 
 /// Axis-aligned bbox covering ``points`` plus ``pad_deg`` (before the build pad).
-pub fn routing_bbox_for_points(points: &[(f64, f64)], pad_deg: f64) -> Option<(f64, f64, f64, f64)> {
+pub fn routing_bbox_for_points(
+    points: &[(f64, f64)],
+    pad_deg: f64,
+) -> Option<(f64, f64, f64, f64)> {
     if points.is_empty() {
         return None;
     }
@@ -582,7 +591,12 @@ pub fn routing_bbox_for_points(points: &[(f64, f64)], pad_deg: f64) -> Option<(f
         south = south.min(lat);
         north = north.max(lat);
     }
-    Some((west - pad_deg, south - pad_deg, east + pad_deg, north + pad_deg))
+    Some((
+        west - pad_deg,
+        south - pad_deg,
+        east + pad_deg,
+        north + pad_deg,
+    ))
 }
 
 /// Effective coverage after ``build_osm_routing`` adds its inner pad.
@@ -725,6 +739,66 @@ pub fn warm_place_access_with_routing(
     ))
 }
 
+/// Site-sheet routes for one pin. Does not read the probe disk cache.
+pub fn compute_pin_routes(
+    project_dir: &Path,
+    session: &Session,
+    routing: &ProjectRouting,
+    lat: f64,
+    lon: f64,
+) -> Result<Vec<SiteAccessOption>> {
+    let config_path = project_dir.join("config.yaml");
+    let preset = load_preset(&config_path)?;
+    let meta = preset.resolved_access_meta();
+    let scan = preset.scan.peaks.clone();
+    let max_slope_deg = preset.peak_access_rules().max_slope_deg;
+    let jeep_budget = JeepLengthBudget::from_extreme(&scan.difficulty.jeep.extreme);
+    let max_jeep_m = display_jeep_max_m();
+    warm_trusted_reach_trees(project_dir, routing)?;
+    session
+        .ensure_tiles_for_points(&[(lat, lon)], meta.place_road_search_m)
+        .context("preload DEM for pin routes")?;
+    let elev = SessionElev(session);
+    let trees = routing.trees(max_jeep_m, &jeep_budget);
+    let ctx = access_context(
+        routing,
+        trees,
+        &meta,
+        &scan,
+        max_jeep_m,
+        max_slope_deg,
+        jeep_budget.clone(),
+        scan.preference.clone(),
+        scan.difficulty.clone(),
+    );
+    let probe = probe(&elev, lat, lon, &ctx).context("no paved road in the loaded graph")?;
+    let mut options = build_site_access_options(&elev, lat, lon, &ctx, &probe);
+    if drive_custom_near(routing, lat, lon, max_jeep_m) {
+        let draft_trees = routing.draft_trees(max_jeep_m, &jeep_budget);
+        let draft_ctx = access_context_on_osm(
+            routing.osm(),
+            routing.trails_opt(),
+            draft_trees,
+            &meta,
+            max_jeep_m,
+            max_slope_deg,
+            jeep_budget,
+            scan.preference.clone(),
+            scan.difficulty.clone(),
+        );
+        append_draft_site_access_options(&elev, lat, lon, &draft_ctx, &probe, &mut options);
+    }
+    if options.is_empty() {
+        options.push(SiteAccessOption {
+            id: format!("{lat:.4}#{lon:.4}#0"),
+            recommended: true,
+            passes_budget: true,
+            route: probe.recommended,
+        });
+    }
+    Ok(options)
+}
+
 /// Load OSM + GTLF routing covering all ``points`` plus ``pad_deg``.
 pub fn load_routing_for_points(
     project_dir: &Path,
@@ -733,7 +807,14 @@ pub fn load_routing_for_points(
     force_osm: bool,
     opts: &OsmRoutingOpts,
 ) -> Result<ProjectRouting> {
-    load_routing_for_points_progress(project_dir, points, pad_deg, force_osm, opts, &mut |_, _| {})
+    load_routing_for_points_progress(
+        project_dir,
+        points,
+        pad_deg,
+        force_osm,
+        opts,
+        &mut |_, _| {},
+    )
 }
 
 pub fn load_routing_for_points_progress<F>(
@@ -750,7 +831,14 @@ where
     let (west, south, east, north) = routing_bbox_for_points(points, pad_deg)
         .ok_or_else(|| anyhow::anyhow!("no points for OSM routing"))?;
     load_routing_for_bbox_progress(
-        project_dir, west, south, east, north, force_osm, opts, progress,
+        project_dir,
+        west,
+        south,
+        east,
+        north,
+        force_osm,
+        opts,
+        progress,
     )
 }
 
@@ -793,6 +881,31 @@ where
     let roads = ensure_roads_book(&config_path)?;
     let preset = load_preset(&config_path)?;
     let opts = osm_routing_opts_with_roads(&preset.resolved_access_meta(), &roads);
+    if roads.has_unified_sources() {
+        tracing::info!(
+            force_osm,
+            west,
+            south,
+            east,
+            north,
+            "roads warm: load_routing_for_bbox — unified roads path"
+        );
+        let fetch = if force_osm {
+            crate::roads_pipeline::SourceFetch::Refresh
+        } else {
+            crate::roads_pipeline::SourceFetch::AssumeFresh
+        };
+        update_roads(&config_path, fetch)?;
+        progress(OsmParsePhase::Cache, 0.2);
+        let routing =
+            build_project_routing_from_master(project_dir, west, south, east, north, &opts)?;
+        progress(OsmParsePhase::Ready, 1.0);
+        tracing::info!(
+            graph_nodes = routing.osm.graph.node_count(),
+            "roads warm: load_routing_for_bbox — unified routing ready"
+        );
+        return Ok(routing);
+    }
     let pbf = ensure_osm_pbf(project_dir, force_osm)?;
     progress(OsmParsePhase::Cache, 0.06);
     if !force_osm {
@@ -845,14 +958,7 @@ where
             (routing, inv, hiking)
         } else {
             let build = build_osm_routing_with_progress(
-                &pbf,
-                west,
-                south,
-                east,
-                north,
-                &opts,
-                &roads,
-                progress,
+                &pbf, west, south, east, north, &opts, &roads, progress,
             )?;
             if let Err(e) = save_osm_routing_cache(
                 &pbf,
@@ -870,14 +976,7 @@ where
         }
     } else {
         let build = build_osm_routing_with_progress(
-            &pbf,
-            west,
-            south,
-            east,
-            north,
-            &opts,
-            &roads,
-            progress,
+            &pbf, west, south, east, north, &opts, &roads, progress,
         )?;
         if let Err(e) = save_osm_routing_cache(
             &pbf,

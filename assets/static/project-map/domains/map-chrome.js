@@ -266,7 +266,8 @@ export function createMapChromeDomain(ctx) {
       accessPavedVisible: store?.accessNetwork?.pavedVisible === true,
       accessJeepVisible: store?.accessNetwork?.jeepVisible === true,
       accessHikingVisible: store?.accessNetwork?.hikingVisible === true,
-      accessAllVisible: store?.accessNetwork?.allVisible === true,
+      accessOtherVisible: store?.accessNetwork?.otherVisible === true,
+      accessPrivateVisible: store?.accessNetwork?.privateVisible === true,
     })
   }
 

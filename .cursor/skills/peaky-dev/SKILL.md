@@ -13,10 +13,11 @@ For publishing releases, use skill `peaky-release`.
 
 ## Host
 
-Local interactive serve is `./local-run.sh`. It builds `--profile fast` (`target/fast/peaky`: release opts, no fat LTO, incremental), sets `PEAKY_STATIC_DIR` to `assets/static`, and serves peaky-nevada on `127.0.0.1:8080`. JS, CSS, and HTML templates are read from disk on each request, so frontend edits do not need a rebuild. Extra args are appended to `serve`. `--release` remains the fat-LTO shipping binary.
+Local interactive serve is `./local-run.sh`. It builds `--profile fast` (`target/fast/peaky`: release opts, no fat LTO, incremental), sets `PEAKY_STATIC_DIR` to `assets/static`, and serves peaky-nevada on `127.0.0.1:8080`. JS, CSS, and HTML templates are read from disk on each request, so frontend edits do not need a rebuild. Flags are appended to `serve`. `./local-run.sh update-sources` refreshes that book's road plugins and builds the road graph instead of serving. `--no-fetch` builds from the cache. `--assume-fresh` fetches only a missing source. `--release` remains the fat-LTO shipping binary.
 
 ```bash
 ./local-run.sh
+./local-run.sh update-sources
 cargo build
 cargo build --profile fast -p peaky
 cargo build --locked --release -p peaky

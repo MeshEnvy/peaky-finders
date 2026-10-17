@@ -101,12 +101,17 @@ pub fn route_trail_closest_approach(
     if trails.graph.is_empty() {
         return None;
     }
-    let start = trails.graph.nearest_node(start_lat, start_lon, TRAIL_PARK_SNAP_M)?;
+    let start = trails
+        .graph
+        .nearest_node(start_lat, start_lon, TRAIL_PARK_SNAP_M)?;
     let mut dist = HashMap::<u32, f64>::new();
     let mut prev = HashMap::<u32, (u32, GraphEdge)>::new();
     let mut heap = BinaryHeap::new();
     dist.insert(start, 0.0);
-    heap.push(HeapState { cost: 0.0, node: start });
+    heap.push(HeapState {
+        cost: 0.0,
+        node: start,
+    });
 
     while let Some(HeapState { cost, node }) = heap.pop() {
         if cost > *dist.get(&node).unwrap_or(&f64::INFINITY) + 1e-9 {
@@ -158,7 +163,10 @@ pub fn trail_park_candidates<E: HikeSampleElev>(
     }
 
     let mut seeds = HashSet::<u32>::new();
-    for (lat, lon, crow) in trails.samples.points_within(dest_lat, dest_lon, hike_path_max_m) {
+    for (lat, lon, crow) in trails
+        .samples
+        .points_within(dest_lat, dest_lon, hike_path_max_m)
+    {
         let path_max = hike_path_max_m.max(crow * 2.0 + 500.0);
         if resolve_hike(
             elev,
@@ -227,10 +235,7 @@ pub fn trail_park_candidates<E: HikeSampleElev>(
 
 const TRAIL_WELD_SNAP_M: f64 = 40.0;
 
-pub fn build_trail_graph(
-    lines: &[Vec<(f64, f64)>],
-    sample_step_m: f64,
-) -> TrailRouting {
+pub fn build_trail_graph(lines: &[Vec<(f64, f64)>], sample_step_m: f64) -> TrailRouting {
     let mut graph = JeepRoadGraph::new();
     let mut node_map: HashMap<i64, u32> = HashMap::new();
     let mut node_index = GraphNodeIndex::empty();

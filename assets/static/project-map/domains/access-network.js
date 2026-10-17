@@ -1,7 +1,6 @@
 // @ts-check
 
 import {
-  ACCESS_NETWORK_ALL_LINE,
   ALTERNATES_CANDIDATES_LAYER,
   DRAFT_LINKS_LAYER,
   FORTIFY_CANDIDATES_LAYER,
@@ -22,11 +21,15 @@ import {
   upsertOverride,
 } from '../api/roads-book.js'
 import {
+  ACCESS_NETWORK_LINE_IDS,
   ensureAccessNetworkLayers,
-  setAccessNetworkAllData,
+  setAccessNetworkHit,
   setAccessNetworkLayerData,
   syncAccessNetworkVisibility,
 } from '../map/access-network-layers.js'
+
+const NETWORK_KINDS = ['paved', 'jeep', 'hiking', 'other', 'private']
+const ROAD_ROLES = ['paved', 'jeep', 'hiking', 'other', 'private']
 
 const VIEW_PAD_DEG = 0.04
 /** Refetch when the view moves this far past the last fetch bbox (degrees). */
@@ -113,22 +116,16 @@ function escapeHtml(s) {
 export function createAccessNetworkDomain(opts) {
   const { store, projectSlug, getMap, getMapReady, raiseSiteLayers, scheduleSaveMapState } = opts
 
-  /** @type {Record<'paved'|'jeep'|'hiking', object|null>} */
-  const layerCache = { paved: null, jeep: null, hiking: null }
-  /** @type {Record<'paved'|'jeep'|'hiking', { west: number, south: number, east: number, north: number }|null>} */
-  const layerFetchBBox = { paved: null, jeep: null, hiking: null }
-  /** @type {Record<'paved'|'jeep'|'hiking', number|null>} last fetch zoom key */
-  const layerFetchTier = { paved: null, jeep: null, hiking: null }
-  /** @type {Record<'paved'|'jeep'|'hiking', Promise<void>|null>} */
-  const inflight = { paved: null, jeep: null, hiking: null }
+  /** @type {Record<'paved'|'jeep'|'hiking'|'other'|'private', object|null>} */
+  const layerCache = { paved: null, jeep: null, hiking: null, other: null, private: null }
+  /** @type {Record<'paved'|'jeep'|'hiking'|'other'|'private', { west: number, south: number, east: number, north: number }|null>} */
+  const layerFetchBBox = { paved: null, jeep: null, hiking: null, other: null, private: null }
+  /** @type {Record<'paved'|'jeep'|'hiking'|'other'|'private', number|null>} last fetch zoom key */
+  const layerFetchTier = { paved: null, jeep: null, hiking: null, other: null, private: null }
+  /** @type {Record<'paved'|'jeep'|'hiking'|'other'|'private', Promise<void>|null>} */
+  const inflight = { paved: null, jeep: null, hiking: null, other: null, private: null }
   /** @type {Promise<void>|null} */
   let driveInflight = null
-  /** @type {object|null} */
-  let allCache = null
-  /** @type {{ west: number, south: number, east: number, north: number }|null} */
-  let allFetchBBox = null
-  /** @type {Promise<void>|null} */
-  let allInflight = null
   /** Bumped when ``roads.yaml`` changes so stale in-flight GeoJSON cannot repopulate the client cache. */
   let networkFetchGen = 0
   let moveHookInstalled = false
@@ -202,8 +199,8 @@ export function createAccessNetworkDomain(opts) {
       setDrawRoadActive(false)
       return
     }
-    const role = window.prompt('Role for this road: paved, jeep, hiking, or other', 'jeep')
-    if (!role || !['paved', 'jeep', 'hiking', 'other'].includes(role)) {
+    const role = window.prompt('Role for this road: paved, jeep, hiking, other, or private', 'jeep')
+    if (!role || !ROAD_ROLES.includes(role)) {
       setDrawRoadActive(false)
       return
     }
@@ -235,14 +232,21 @@ export function createAccessNetworkDomain(opts) {
         pavedVisible: false,
         jeepVisible: false,
         hikingVisible: false,
-        allVisible: false,
+        otherVisible: false,
+        privateVisible: false,
       }
     )
   }
 
   function anyVisible() {
     const v = visState()
-    return v.pavedVisible || v.jeepVisible || v.hikingVisible || v.allVisible
+    return (
+      v.pavedVisible ||
+      v.jeepVisible ||
+      v.hikingVisible ||
+      v.otherVisible ||
+      v.privateVisible
+    )
   }
 
   function viewBBox() {
@@ -278,7 +282,7 @@ export function createAccessNetworkDomain(opts) {
   }
 
   /**
-   * @param {'paved'|'jeep'|'hiking'} kind
+   * @param {'paved'|'jeep'|'hiking'|'other'|'private'} kind
    */
   function needsRefetch(kind) {
     const current = viewBBox()
@@ -287,12 +291,6 @@ export function createAccessNetworkDomain(opts) {
     if (!current || !fetched || !layerCache[kind] || tier == null) return true
     if (layerFetchTier[kind] !== tier) return true
     return !bboxContains(fetched, current)
-  }
-
-  function allNeedsRefetch() {
-    const current = viewBBox()
-    if (!current || !allFetchBBox || !allCache) return true
-    return !bboxContains(allFetchBBox, current)
   }
 
   function driveLayersNeedRefetch() {
@@ -317,7 +315,8 @@ export function createAccessNetworkDomain(opts) {
       paved: v.pavedVisible,
       jeep: v.jeepVisible,
       hiking: v.hikingVisible,
-      allVisible: v.allVisible,
+      other: v.otherVisible,
+      private: v.privateVisible,
     })
     syncToolbarPressed()
   }
@@ -330,11 +329,8 @@ export function createAccessNetworkDomain(opts) {
 
   function invalidateNetworkClientCache() {
     networkFetchGen += 1
-    allCache = null
-    allFetchBBox = null
-    allInflight = null
     driveInflight = null
-    for (const kind of /** @type {const} */ (['paved', 'jeep', 'hiking'])) {
+    for (const kind of NETWORK_KINDS) {
       layerCache[kind] = null
       layerFetchBBox[kind] = null
       layerFetchTier[kind] = null
@@ -372,28 +368,15 @@ export function createAccessNetworkDomain(opts) {
     ensureAccessNetworkLayers(map)
     syncVisibility()
     const v = visState()
-    if (v.allVisible) {
-      allCache = solo
-      setAccessNetworkAllData(map, solo)
-    }
-    if (!v.allVisible) {
-      if (role === 'paved' && v.pavedVisible) {
-        layerCache.paved = solo
-        setAccessNetworkLayerData(map, 'paved', solo)
-      }
-      if (role === 'jeep' && v.jeepVisible) {
-        layerCache.jeep = solo
-        setAccessNetworkLayerData(map, 'jeep', solo)
-      }
-      if (role === 'hiking' && v.hikingVisible) {
-        layerCache.hiking = solo
-        setAccessNetworkLayerData(map, 'hiking', solo)
-      }
-      if (role === 'other') {
-        console.info(
-          'Custom road role "other" appears on the All layer; turn on All to see it while the map reloads.',
-        )
-      }
+    const visible =
+      (role === 'paved' && v.pavedVisible) ||
+      (role === 'jeep' && v.jeepVisible) ||
+      (role === 'hiking' && v.hikingVisible) ||
+      (role === 'other' && v.otherVisible) ||
+      (role === 'private' && v.privateVisible)
+    if (visible) {
+      layerCache[role] = solo
+      setAccessNetworkLayerData(map, role, solo)
     }
     afterLayerPaint()
   }
@@ -405,7 +388,7 @@ export function createAccessNetworkDomain(opts) {
   }
 
   /**
-   * @param {'paved'|'jeep'|'hiking'} kind
+   * @param {'paved'|'jeep'|'hiking'|'other'|'private'} kind
    * @param {{ west: number, south: number, east: number, north: number }} bbox
    */
   async function fetchLayerForBBox(kind, bbox, zoom) {
@@ -439,31 +422,6 @@ export function createAccessNetworkDomain(opts) {
   /**
    * @param {{ west: number, south: number, east: number, north: number }} bbox
    */
-  async function fetchAllForBBox(bbox) {
-    const gen = networkFetchGen
-    const url = apiUrls.roadsNetworkAllGeoJsonUrl(projectSlug, bbox)
-    const job = (async () => {
-      try {
-        const resp = await fetch(url)
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-        const geo = await resp.json()
-        if (gen !== networkFetchGen) return
-        allCache = geo
-        allFetchBBox = { ...bbox }
-      } catch (err) {
-        console.warn('access network all fetch failed', err)
-        if (gen !== networkFetchGen) return
-        allCache = { type: 'FeatureCollection', features: [] }
-        allFetchBBox = { ...bbox }
-      } finally {
-        if (allInflight === job) allInflight = null
-      }
-    })()
-    allInflight = job
-    await job
-    return allCache
-  }
-
   /**
    * @param {{ west: number, south: number, east: number, north: number }} bbox
    */
@@ -501,17 +459,13 @@ export function createAccessNetworkDomain(opts) {
     setAccessNetworkLayerData(map, kind, { type: 'FeatureCollection', features: [] })
   }
 
-  function clearAllLayer() {
-    const map = getMap()
-    if (!map) return
-    setAccessNetworkAllData(map, { type: 'FeatureCollection', features: [] })
-  }
-
   function layerIsVisible(kind) {
     const v = visState()
-    if (kind === 'paved') return v.pavedVisible && !v.allVisible
-    if (kind === 'jeep') return v.jeepVisible && !v.allVisible
-    return v.hikingVisible && !v.allVisible
+    if (kind === 'paved') return v.pavedVisible
+    if (kind === 'jeep') return v.jeepVisible
+    if (kind === 'hiking') return v.hikingVisible
+    if (kind === 'other') return v.otherVisible
+    return v.privateVisible
   }
 
   function paintCachedLayer(kind) {
@@ -529,7 +483,7 @@ export function createAccessNetworkDomain(opts) {
   }
 
   /**
-   * @param {'paved'|'jeep'|'hiking'} kind
+   * @param {'paved'|'jeep'|'hiking'|'other'|'private'} kind
    * @param {boolean} [force]
    */
   async function reloadLayer(kind, force = false) {
@@ -552,24 +506,6 @@ export function createAccessNetworkDomain(opts) {
   /**
    * @param {boolean} [force]
    */
-  async function reloadAllLayer(force = false) {
-    if (!getMapReady()) return
-    if (!force && !allNeedsRefetch()) return
-    const bbox = viewBBox()
-    if (!bbox) return
-    const map = getMap()
-    if (!map) return
-    ensureAccessNetworkLayers(map)
-    const geo = await fetchAllForBBox(bbox)
-    if (!visState().allVisible) {
-      clearAllLayer()
-      return
-    }
-    setAccessNetworkAllData(map, geo)
-    installAllClickHandler()
-    afterLayerPaint()
-  }
-
   /**
    * @param {boolean} [force]
    */
@@ -583,12 +519,12 @@ export function createAccessNetworkDomain(opts) {
     ensureAccessNetworkLayers(map)
     await fetchDriveForBBox(bbox, map.getZoom())
     const v = visState()
-    if (v.pavedVisible && !v.allVisible && layerCache.paved) {
+    if (v.pavedVisible && layerCache.paved) {
       setAccessNetworkLayerData(map, 'paved', layerCache.paved)
     } else {
       clearMapLayer('paved')
     }
-    if (v.jeepVisible && !v.allVisible && layerCache.jeep) {
+    if (v.jeepVisible && layerCache.jeep) {
       setAccessNetworkLayerData(map, 'jeep', layerCache.jeep)
     } else {
       clearMapLayer('jeep')
@@ -599,17 +535,15 @@ export function createAccessNetworkDomain(opts) {
   async function refreshVisibleLayers(force = false) {
     const v = visState()
     const jobs = []
-    if (v.allVisible) {
-      jobs.push(reloadAllLayer(force))
+    if (v.otherVisible) jobs.push(reloadLayer('other', force))
+    if (v.privateVisible) jobs.push(reloadLayer('private', force))
+    if (v.pavedVisible && v.jeepVisible) {
+      jobs.push(reloadDriveLayers(force))
     } else {
-      if (v.pavedVisible && v.jeepVisible) {
-        jobs.push(reloadDriveLayers(force))
-      } else {
-        if (v.pavedVisible) jobs.push(reloadLayer('paved', force))
-        if (v.jeepVisible) jobs.push(reloadLayer('jeep', force))
-      }
-      if (v.hikingVisible) jobs.push(reloadLayer('hiking', force))
+      if (v.pavedVisible) jobs.push(reloadLayer('paved', force))
+      if (v.jeepVisible) jobs.push(reloadLayer('jeep', force))
     }
+    if (v.hikingVisible) jobs.push(reloadLayer('hiking', force))
     if (jobs.length) await Promise.all(jobs)
   }
 
@@ -660,7 +594,7 @@ export function createAccessNetworkDomain(opts) {
     const firstProps = shown[0]?.properties || {}
     const ovKey = overrideKeyFromProps(firstProps)
     const customId = firstProps.source === 'custom' ? firstProps.custom_id : null
-    const roles = ['paved', 'jeep', 'hiking', 'other']
+    const roles = ROAD_ROLES
     const useAs =
       ovKey || customId
         ? `<label class="road-inv-use-as"><span>Use as</span><select class="road-inv-role-select">${roles
@@ -684,7 +618,7 @@ export function createAccessNetworkDomain(opts) {
         try {
           const book = await fetchRoadsBook(projectSlug)
           if (customId) {
-            const row = book.customs?.find((c) => c.id === customId)
+            const row = book.rules?.find((r) => r.id === customId)
             if (row) row.role = role
           } else if (ovKey) {
             upsertOverride(book, ovKey, /** @type {import('../api/roads-book.js').RoadRole} */ (role))
@@ -751,24 +685,48 @@ export function createAccessNetworkDomain(opts) {
     )
   }
 
+  function roadHitLayers() {
+    const map = getMap()
+    if (!map || map.getZoom() < 12) return []
+    return ACCESS_NETWORK_LINE_IDS.filter((id) => map.getLayer(id))
+  }
+
+  function selectRoadFeatures(lngLat, features) {
+    const map = getMap()
+    const detailed = (features || []).filter((f) => f.properties?.id)
+    if (!map || !detailed.length) return false
+    setAccessNetworkHit(map, {
+      type: 'Feature',
+      geometry: detailed[0].geometry,
+      properties: detailed[0].properties,
+    })
+    showRoadPopup(lngLat, detailed)
+    return true
+  }
+
   function installAllClickHandler() {
     if (allClickInstalled || !getMapReady()) return
     const map = getMap()
-    if (!map || !map.getLayer(ACCESS_NETWORK_ALL_LINE)) return
+    if (!map) return
+    ensureAccessNetworkLayers(map)
     allClickInstalled = true
-    map.on('click', ACCESS_NETWORK_ALL_LINE, (ev) => {
-      if (!visState().allVisible || !ev.features?.length) return
-      if (interactiveAboveRoad(ev.point)) return
-      ev.originalEvent?.preventDefault?.()
-      showRoadPopup(ev.lngLat, ev.features)
-    })
-    map.on('mouseenter', ACCESS_NETWORK_ALL_LINE, (ev) => {
-      if (!visState().allVisible || interactiveAboveRoad(ev.point)) return
-      map.getCanvas().style.cursor = 'pointer'
-    })
-    map.on('mouseleave', ACCESS_NETWORK_ALL_LINE, () => {
-      map.getCanvas().style.cursor = ''
-    })
+    for (const id of ACCESS_NETWORK_LINE_IDS) {
+      if (!map.getLayer(id)) continue
+      map.on('click', id, (ev) => {
+        if (map.getZoom() < 12 || !ev.features?.length) return
+        if (interactiveAboveRoad(ev.point)) return
+        if (!selectRoadFeatures(ev.lngLat, ev.features)) return
+        ev.originalEvent?.preventDefault?.()
+      })
+      map.on('mouseenter', id, (ev) => {
+        if (map.getZoom() < 12 || interactiveAboveRoad(ev.point)) return
+        if (!ev.features?.some((f) => f.properties?.id)) return
+        map.getCanvas().style.cursor = 'pointer'
+      })
+      map.on('mouseleave', id, () => {
+        map.getCanvas().style.cursor = ''
+      })
+    }
   }
 
   /**
@@ -776,9 +734,10 @@ export function createAccessNetworkDomain(opts) {
    * @returns {boolean} true if a road line was hit (caller should stop propagation)
    */
   function trySelectRoadAtPoint(point) {
-    if (!visState().allVisible || !getMapReady()) return false
+    if (!getMapReady()) return false
     const map = getMap()
-    if (!map || !map.getLayer(ACCESS_NETWORK_ALL_LINE)) return false
+    const layers = roadHitLayers()
+    if (!map || !layers.length) return false
     if (interactiveAboveRoad(point)) return false
     const pad = 6
     const feats = map.queryRenderedFeatures(
@@ -786,16 +745,15 @@ export function createAccessNetworkDomain(opts) {
         [point.x - pad, point.y - pad],
         [point.x + pad, point.y + pad],
       ],
-      { layers: [ACCESS_NETWORK_ALL_LINE] },
+      { layers },
     )
     if (!feats.length) return false
     const lngLat = map.unproject([point.x, point.y])
-    showRoadPopup(lngLat, feats)
-    return true
+    return selectRoadFeatures(lngLat, feats)
   }
 
   /**
-   * @param {'paved'|'jeep'|'hiking'} kind
+   * @param {'paved'|'jeep'|'hiking'|'other'|'private'} kind
    * @param {boolean} visible
    */
   async function setLayerVisible(kind, visible) {
@@ -804,45 +762,31 @@ export function createAccessNetworkDomain(opts) {
         pavedVisible: false,
         jeepVisible: false,
         hikingVisible: false,
-        allVisible: false,
+        otherVisible: false,
+        privateVisible: false,
       }
     }
     if (kind === 'paved') store.accessNetwork.pavedVisible = visible
     else if (kind === 'jeep') store.accessNetwork.jeepVisible = visible
-    else store.accessNetwork.hikingVisible = visible
+    else if (kind === 'hiking') store.accessNetwork.hikingVisible = visible
+    else if (kind === 'other') store.accessNetwork.otherVisible = visible
+    else store.accessNetwork.privateVisible = visible
     if (visible && getMapReady()) {
       installMapMoveHook()
+      installAllClickHandler()
       paintCachedLayer(kind)
       await refreshVisibleLayers(false)
     } else {
       clearMapLayer(kind)
+      const map = getMap()
+      if (map && !anyVisible()) setAccessNetworkHit(map, null)
     }
     syncVisibility()
     scheduleSaveMapState?.()
   }
 
   async function setAllVisible(visible) {
-    if (!store.accessNetwork) {
-      store.accessNetwork = {
-        pavedVisible: false,
-        jeepVisible: false,
-        hikingVisible: false,
-        allVisible: false,
-      }
-    }
-    store.accessNetwork.allVisible = visible
-    if (visible && getMapReady()) {
-      installMapMoveHook()
-      await reloadAllLayer(false)
-    } else {
-      clearAllLayer()
-      roadPopup?.remove()
-    }
-    syncVisibility()
-    if (!visible && anyVisible()) {
-      await refreshVisibleLayers(false)
-    }
-    scheduleSaveMapState?.()
+    await setLayerVisible('other', visible)
   }
 
   function installDrawRoad() {
@@ -879,7 +823,8 @@ export function createAccessNetworkDomain(opts) {
     const pavedEl = document.getElementById('access-network-paved')
     const jeepEl = document.getElementById('access-network-jeep')
     const hikingEl = document.getElementById('access-network-hiking')
-    const allEl = document.getElementById('access-network-all')
+    const otherEl = document.getElementById('access-network-other')
+    const privateEl = document.getElementById('access-network-private')
     const v = visState()
     if (pavedEl) {
       pavedEl.checked = v.pavedVisible
@@ -899,10 +844,16 @@ export function createAccessNetworkDomain(opts) {
         void setLayerVisible('hiking', hikingEl.checked)
       })
     }
-    if (allEl) {
-      allEl.checked = v.allVisible
-      allEl.addEventListener('change', () => {
-        void setAllVisible(allEl.checked)
+    if (otherEl) {
+      otherEl.checked = v.otherVisible
+      otherEl.addEventListener('change', () => {
+        void setLayerVisible('other', otherEl.checked)
+      })
+    }
+    if (privateEl) {
+      privateEl.checked = v.privateVisible
+      privateEl.addEventListener('change', () => {
+        void setLayerVisible('private', privateEl.checked)
       })
     }
     syncToolbarPressed()
@@ -911,6 +862,7 @@ export function createAccessNetworkDomain(opts) {
   async function refreshOnMapLoad() {
     installToggles()
     installDrawRoad()
+    installAllClickHandler()
     if (!getMapReady()) return
     installMapMoveHook()
     if (anyVisible()) {

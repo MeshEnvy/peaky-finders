@@ -72,14 +72,22 @@ export const ACCESS_NETWORK_JEEP_CASE = 'access-network-jeep-case'
 export const ACCESS_NETWORK_HIKE_SOURCE = 'access-network-hike'
 export const ACCESS_NETWORK_HIKE_LINE = 'access-network-hike-line'
 export const ACCESS_NETWORK_HIKE_CASE = 'access-network-hike-case'
-export const ACCESS_NETWORK_ALL_SOURCE = 'access-network-all'
-export const ACCESS_NETWORK_ALL_LINE = 'access-network-all-line'
-export const ACCESS_NETWORK_ALL_CASE = 'access-network-all-case'
+export const ACCESS_NETWORK_OTHER_SOURCE = 'access-network-other'
+export const ACCESS_NETWORK_OTHER_LINE = 'access-network-other-line'
+export const ACCESS_NETWORK_OTHER_CASE = 'access-network-other-case'
+export const ACCESS_NETWORK_PRIVATE_SOURCE = 'access-network-private'
+export const ACCESS_NETWORK_PRIVATE_LINE = 'access-network-private-line'
+export const ACCESS_NETWORK_PRIVATE_CASE = 'access-network-private-case'
+export const ACCESS_NETWORK_HIT_SOURCE = 'access-network-hit'
+export const ACCESS_NETWORK_HIT_LINE = 'access-network-hit-line'
 
 /** Top-of-stack paint order after a basemap or overlay change. Peaks stay under sites and RF. */
 export const SITE_STACK_RAISE_IDS = [
-  ACCESS_NETWORK_ALL_CASE,
-  ACCESS_NETWORK_ALL_LINE,
+  ACCESS_NETWORK_HIT_LINE,
+  ACCESS_NETWORK_PRIVATE_CASE,
+  ACCESS_NETWORK_PRIVATE_LINE,
+  ACCESS_NETWORK_OTHER_CASE,
+  ACCESS_NETWORK_OTHER_LINE,
   ACCESS_NETWORK_HIKE_CASE,
   ACCESS_NETWORK_HIKE_LINE,
   ACCESS_NETWORK_JEEP_CASE,

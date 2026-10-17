@@ -1593,8 +1593,17 @@ wa-button.coord-action-btn.active::part(base) {
   box-shadow: 0 0 0 1px #0f172a;
 }
 
-.map-access-network-swatch--all {
+.map-access-network-swatch--other {
   background: #e879f9;
+  box-shadow: 0 0 0 1px #0f172a;
+}
+
+.map-access-network-swatch--private {
+  background: repeating-linear-gradient(
+    90deg,
+    #ef4444 0 6px,
+    transparent 6px 10px
+  );
   box-shadow: 0 0 0 1px #0f172a;
 }
 

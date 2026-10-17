@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -14,8 +15,8 @@ use splatter::Session;
 use tokio::sync::Semaphore;
 use tower_http::trace::TraceLayer;
 
-use crate::api;
 use crate::alternates::AlternatesHub;
+use crate::api;
 use crate::fortify::FortifyHub;
 use crate::link_solver::LinkSolverHub;
 use crate::state::AppState;
@@ -54,10 +55,11 @@ pub async fn run_server(
     if land_refresh {
         tracing::info!("land: validating sources and refreshing stale data");
         let boot_preset = preset_path.clone();
-        let summary = tokio::task::spawn_blocking(move || prepare_land_at_boot(&boot_preset, verbose))
-            .await
-            .context("land boot prepare task")?
-            .context("land boot prepare")?;
+        let summary =
+            tokio::task::spawn_blocking(move || prepare_land_at_boot(&boot_preset, verbose))
+                .await
+                .context("land boot prepare task")?
+                .context("land boot prepare")?;
         if !summary.failed.is_empty() {
             for failure in &summary.failed {
                 tracing::warn!(
@@ -106,12 +108,42 @@ pub async fn run_server(
     let app = router(state);
 
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
+    if !land_refresh {
+        tracing::info!("peaky serve: fast boot (skipping road graph warm)");
+    } else {
+        tracing::info!("peaky serve: warming road graph before accept…");
+        let warm = osm_warm.clone();
+        let preset = osm_preset.clone();
+        tokio::task::spawn_blocking(move || {
+            let warm_t0 = Instant::now();
+            tracing::info!("roads warm: boot phase 1/2 — disk pipeline (update_roads)");
+            let phase1 = Instant::now();
+            if let Err(e) =
+                peaky_peaks::update_roads(&preset, peaky_peaks::SourceFetch::AssumeFresh)
+            {
+                tracing::warn!("roads warm: update_roads failed: {e:#}");
+            } else {
+                tracing::info!(
+                    elapsed_secs = phase1.elapsed().as_secs_f64(),
+                    "roads warm: boot phase 1/2 done"
+                );
+            }
+            tracing::info!("roads warm: boot phase 2/2 — in-memory routing (prefetch_osm_routing)");
+            let phase2 = Instant::now();
+            warm.prefetch_osm_routing(&preset);
+            tracing::info!(
+                elapsed_secs = phase2.elapsed().as_secs_f64(),
+                "roads warm: boot phase 2/2 done"
+            );
+            tracing::info!(
+                elapsed_secs = warm_t0.elapsed().as_secs_f64(),
+                "roads warm: boot complete (listener will bind next)"
+            );
+        })
+        .await
+        .context("road graph warm task")?;
+    }
     tracing::info!("peaky serve listening on http://{addr}");
-    tracing::info!("peaky serve: warming statewide road graph in the background…");
-    std::thread::Builder::new()
-        .name("osm-routing-prefetch".into())
-        .spawn(move || osm_warm.prefetch_osm_routing(&osm_preset))
-        .context("spawn osm-routing-prefetch")?;
     if verbose {
         tracing::info!("DemMirror console log enabled (--verbose)");
     } else if std::env::var("PEAKY_DEM_MIRROR_LOG")

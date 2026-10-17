@@ -27,6 +27,11 @@ use splatter::peaks::LandFilterIndex;
 use splatter::Session;
 use tracing::info;
 
+use crate::access_probe::{filter_pass_from_probe, probe_drop_reason};
+use crate::access_warm::{
+    load_routing_for_bbox, project_pbf_fingerprint, resolve_probe, ProjectRouting,
+};
+use crate::catalog_filter::{FilterDrop, FilterPass};
 use crate::corridor::{
     corridor_polygon, load_polygon_file, parse_corridor_coords, point_in_region,
     resolve_corridor_sites, ScanRegion, MI_TO_M,
@@ -36,14 +41,11 @@ use crate::hike::{
     format_hike_report, haversine_m, neighbor_prominence_m, snap_to_dem_local_max_filtered,
     HikeSampleElev,
 };
-use peaky_preset::{AccessMeta, PeaksScanConfig};
-use crate::access_probe::{filter_pass_from_probe, probe_drop_reason};
-use crate::access_warm::{load_routing_for_bbox, project_pbf_fingerprint, resolve_probe, ProjectRouting};
-use crate::catalog_filter::{FilterDrop, FilterPass};
 use crate::jeep::JeepLengthBudget;
 use crate::osm::OsmRouting;
 use crate::trail::TrailRouting;
 use crate::universe::{dedup_nearby, seed_candidates_from_sites, slug_for_candidate, RawCandidate};
+use peaky_preset::{AccessMeta, PeaksScanConfig};
 
 /// Upsert each peak+access file every N newly freshened/inserted peaks during a build.
 const PROGRESS_WRITE_EVERY: usize = 10;
@@ -193,7 +195,14 @@ pub(crate) fn filter_candidate(
     // jeep node and no foot trail lies within that radius, the peak cannot be
     // eligible; skip the full probe (whose ungated recommended leg runs a
     // multi-km bushwhack A* for every far candidate).
-    if !park_within_hike_reach(project_routing, rules, meta, &jeep_budget, peak_lat, peak_lon) {
+    if !park_within_hike_reach(
+        project_routing,
+        rules,
+        meta,
+        &jeep_budget,
+        peak_lat,
+        peak_lon,
+    ) {
         return Err(FilterDrop::Jeep);
     }
     let Some(probe_result) = resolve_probe(
@@ -629,21 +638,14 @@ pub fn build_peaks_catalog(
         };
 
         let survivor_total = survivors.len();
-        info!(
-            survivors = survivor_total,
-            "peaks: survivor dedup start"
-        );
+        info!(survivors = survivor_total, "peaks: survivor dedup start");
         let dedup_started = Instant::now();
         let mut dedup_last_log = dedup_started;
         let mut kept_centroids: Vec<(f64, f64)> = Vec::new();
         let mut deduped: Vec<FilterPass> = Vec::new();
         for (i, pass) in survivors.into_iter().enumerate() {
             let heartbeat = dedup_last_log.elapsed().as_secs() >= FILTER_HEARTBEAT_SECS;
-            if i == 0
-                || i % SURVIVOR_DEDUP_EVERY == 0
-                || i + 1 == survivor_total
-                || heartbeat
-            {
+            if i == 0 || i % SURVIVOR_DEDUP_EVERY == 0 || i + 1 == survivor_total || heartbeat {
                 info!(
                     processed = i,
                     total = survivor_total,
@@ -674,10 +676,7 @@ pub fn build_peaks_catalog(
         (drops, deduped)
     };
 
-    info!(
-        survivors = deduped.len(),
-        "peaks: writing index rows"
-    );
+    info!(survivors = deduped.len(), "peaks: writing index rows");
     let mut existing_slugs: HashSet<String> = place_slugs(preset_path).unwrap_or_default();
     existing_slugs.extend(index.peaks.keys().cloned());
     let mut kept = 0usize;

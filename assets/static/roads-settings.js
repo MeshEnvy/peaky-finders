@@ -2,133 +2,144 @@
 
 import { fetchRoadsBook, saveRoadsBook } from './project-map/api/roads-book.js'
 
-const ROLES = ['paved', 'jeep', 'hiking', 'other']
+const ROLES = ['paved', 'jeep', 'hiking', 'other', 'private']
 
 /** @param {string} slug */
 function roadsApiUrl(slug) {
   return `/api/p/${encodeURIComponent(slug)}/roads`
 }
 
-function formatClassLabel(row) {
-  const parts = [row.highway]
-  if (row.tracktype) parts.push(`tracktype=${row.tracktype}`)
-  if (row.surface === 'paved_surfaces') parts.push('surface=paved*')
-  else if (row.surface && typeof row.surface === 'object') {
-    if (row.surface.exact) parts.push(`surface=${row.surface.exact}`)
-    else if (row.surface.Exact) parts.push(`surface=${row.surface.Exact}`)
+function ruleSummary(row) {
+  if (row.coords?.length) {
+    const id = row.id || '(auto id)'
+    return `custom ${id} · ${row.coords.length} vertices`
   }
-  return parts.join(' · ')
-}
-
-function roleSelect(id, value, defaultRole) {
-  const opts = ROLES.map(
-    (r) => `<option value="${r}"${r === value ? ' selected' : ''}>${r}</option>`,
-  ).join('')
-  const reset =
-    value !== defaultRole
-      ? `<wa-button class="home-roads-reset" appearance="plain" size="s" data-class-id="${id}" type="button" title="Reset to default"><wa-icon name="arrow-rotate-left"></wa-icon></wa-button>`
-      : ''
-  return `<select class="home-roads-role" data-class-id="${id}">${opts}</select>${reset}`
+  const m = row.match || {}
+  const parts = []
+  if (m.id) parts.push(`id=${m.id}`)
+  if (m.kind) parts.push(`kind=${m.kind}`)
+  if (m.surface) parts.push(`surface=${m.surface}`)
+  if (m.grade) parts.push(`grade=${m.grade}`)
+  if (m.access) parts.push(`access=${m.access}`)
+  return parts.length ? parts.join(' · ') : '(empty match)'
 }
 
 /**
  * @param {HTMLElement} root
  * @param {object} book
  */
-function renderClassesTable(root, book) {
-  const tbody = root.querySelector('#home-roads-classes-body')
+function renderRulesTable(root, book) {
+  const tbody = root.querySelector('#home-roads-rules-body')
   if (!tbody) return
   tbody.innerHTML = ''
-  for (const row of book.classes || []) {
+  const rules = book.rules || []
+  rules.forEach((row, index) => {
     const tr = document.createElement('tr')
-    tr.innerHTML = `<td class="pf-mono">${row.id}</td><td>${formatClassLabel(row)}</td><td class="home-roads-role-cell">${roleSelect(row.id, row.role, row.default_role)}</td>`
+    const isCustom = Boolean(row.coords?.length)
+    const matchCells = isCustom
+      ? `<td colspan="5" class="pf-mono">coords</td>`
+      : `<td><input class="home-roads-match" data-field="id" data-index="${index}" value="${row.match?.id || ''}" /></td>
+         <td><input class="home-roads-match" data-field="kind" data-index="${index}" value="${row.match?.kind || ''}" /></td>
+         <td><input class="home-roads-match" data-field="surface" data-index="${index}" value="${row.match?.surface || ''}" /></td>
+         <td><input class="home-roads-match" data-field="grade" data-index="${index}" value="${row.match?.grade || ''}" /></td>
+         <td><input class="home-roads-match" data-field="access" data-index="${index}" value="${row.match?.access || ''}" /></td>`
+    const roleOpts = ROLES.map(
+      (r) => `<option value="${r}"${r === row.role ? ' selected' : ''}>${r}</option>`,
+    ).join('')
+    tr.innerHTML = `${matchCells}
+      <td><select class="home-roads-rule-role" data-index="${index}">${roleOpts}</select></td>
+      <td class="pf-muted">${ruleSummary(row)}</td>
+      <td>
+        <wa-button class="home-roads-rule-move" appearance="plain" size="s" data-index="${index}" data-dir="-1" type="button">Up</wa-button>
+        <wa-button class="home-roads-rule-move" appearance="plain" size="s" data-index="${index}" data-dir="1" type="button">Down</wa-button>
+        <wa-button class="home-roads-rule-delete" appearance="plain" size="s" data-index="${index}" type="button">Delete</wa-button>
+      </td>`
     tbody.appendChild(tr)
-  }
+  })
 }
 
-/**
- * @param {HTMLElement} root
- * @param {object} book
- */
-function renderOverridesList(root, book) {
-  const list = root.querySelector('#home-roads-overrides-list')
-  if (!list) return
-  list.innerHTML = ''
-  const overrides = book.overrides || []
-  if (!overrides.length) {
-    list.innerHTML = '<p class="wa-caption pf-muted">No segment overrides yet. Use the All overlay popup on the map.</p>'
-    return
-  }
-  for (let i = 0; i < overrides.length; i += 1) {
-    const ov = overrides[i]
-    const li = document.createElement('li')
-    li.className = 'home-roads-list-item'
-    let label = 'segment'
-    if (ov.osm_id != null) label = `OSM way ${ov.osm_id}`
-    else if (ov.gtlf) label = `GTLF layer ${ov.gtlf.layer}`
-    li.innerHTML = `<span>${label}</span> <select class="home-roads-override-role" data-ov-index="${i}">${ROLES.map((r) => `<option value="${r}"${r === ov.role ? ' selected' : ''}>${r}</option>`).join('')}</select> <wa-button class="home-roads-override-delete" appearance="plain" size="s" data-ov-index="${i}" type="button">Delete</wa-button>`
-    list.appendChild(li)
-  }
-}
-
-/**
- * @param {HTMLElement} root
- * @param {object} book
- */
-function renderCustomsList(root, book) {
-  const list = root.querySelector('#home-roads-customs-list')
-  if (!list) return
-  list.innerHTML = ''
-  const customs = book.customs || []
-  if (!customs.length) {
-    list.innerHTML = '<p class="wa-caption pf-muted">No custom roads. Use Draw road on the access network menu.</p>'
-    return
-  }
-  for (let i = 0; i < customs.length; i += 1) {
-    const c = customs[i]
-    const li = document.createElement('li')
-    li.className = 'home-roads-list-item'
-    const verts = (c.coords || []).length
-    li.innerHTML = `<span class="pf-mono">${c.id}</span> <span>${verts} pts</span> <select class="home-roads-custom-role" data-custom-index="${i}">${ROLES.map((r) => `<option value="${r}"${r === c.role ? ' selected' : ''}>${r}</option>`).join('')}</select> <wa-button class="home-roads-custom-delete" appearance="plain" size="s" data-custom-index="${i}" type="button">Delete</wa-button>`
-    list.appendChild(li)
-  }
-}
-
-/** @type {{ book: object|null, slug: string }} */
-const state = { book: null, slug: '' }
-
-function readBookFromDom() {
-  if (!state.book) return null
-  const book = structuredClone(state.book)
-  document.querySelectorAll('.home-roads-role').forEach((el) => {
-    const id = el.getAttribute('data-class-id')
-    const row = book.classes?.find((r) => r.id === id)
-    if (row) row.role = el.value
+function collectBookFromDom(root, base) {
+  const book = structuredClone(base)
+  const rules = book.rules || []
+  root.querySelectorAll('.home-roads-match').forEach((el) => {
+    const index = Number(el.dataset.index)
+    const field = el.dataset.field
+    if (!Number.isFinite(index) || !field || !rules[index]) return
+    if (!rules[index].match) rules[index].match = {}
+    rules[index].match[field] = el.value.trim() || undefined
   })
-  document.querySelectorAll('.home-roads-override-role').forEach((el) => {
-    const i = Number(el.getAttribute('data-ov-index'))
-    if (book.overrides?.[i]) book.overrides[i].role = el.value
+  root.querySelectorAll('.home-roads-rule-role').forEach((el) => {
+    const index = Number(el.dataset.index)
+    if (!Number.isFinite(index) || !rules[index]) return
+    rules[index].role = el.value
   })
-  document.querySelectorAll('.home-roads-custom-role').forEach((el) => {
-    const i = Number(el.getAttribute('data-custom-index'))
-    if (book.customs?.[i]) book.customs[i].role = el.value
-  })
+  book.rules = rules
   return book
 }
 
-/**
- * @param {string} slug
- * @param {(msg: string) => void} showError
- */
+const panelState = { root: null, slug: null, book: null, bound: false }
+
+async function panelLoad() {
+  if (!panelState.root || !panelState.slug) return
+  panelState.book = await fetchRoadsBook(panelState.slug)
+  renderRulesTable(panelState.root, panelState.book)
+}
+
+async function panelSave() {
+  if (!panelState.root || !panelState.slug || !panelState.book) return
+  const book = collectBookFromDom(panelState.root, panelState.book)
+  panelState.book = await saveRoadsBook(panelState.slug, book)
+  renderRulesTable(panelState.root, panelState.book)
+  window.dispatchEvent(new CustomEvent('peaky-roads-book-changed'))
+}
+
+function bindPanelOnce(root) {
+  if (panelState.bound) return
+  panelState.bound = true
+  root.querySelector('#home-roads-save')?.addEventListener('click', () => {
+    void panelSave()
+  })
+  root.querySelector('#home-roads-rules-body')?.addEventListener('click', (ev) => {
+    const move = ev.target.closest('.home-roads-rule-move')
+    if (move && panelState.book) {
+      const index = Number(move.dataset.index)
+      const dir = Number(move.dataset.dir)
+      const rules = panelState.book.rules || []
+      const next = index + dir
+      if (Number.isFinite(index) && next >= 0 && next < rules.length) {
+        const [row] = rules.splice(index, 1)
+        rules.splice(next, 0, row)
+        panelState.book.rules = rules
+        renderRulesTable(root, panelState.book)
+      }
+      return
+    }
+    const btn = ev.target.closest('.home-roads-rule-delete')
+    if (!btn || !panelState.book) return
+    const index = Number(btn.dataset.index)
+    if (!Number.isFinite(index)) return
+    panelState.book.rules = (panelState.book.rules || []).filter((_, i) => i !== index)
+    renderRulesTable(root, panelState.book)
+  })
+  root.querySelector('#home-roads-add-match')?.addEventListener('click', () => {
+    if (!panelState.book) return
+    if (!Array.isArray(panelState.book.rules)) panelState.book.rules = []
+    panelState.book.rules.push({ match: { kind: 'track' }, role: 'jeep' })
+    renderRulesTable(root, panelState.book)
+  })
+}
+
+export function bindRoadsSettingsUi(_showError) {}
+
+/** @param {string} slug @param {(msg: string) => void} showError */
 export async function loadRoadsSettings(slug, showError) {
-  state.slug = slug
-  const panel = document.getElementById('home-settings-roads-panel')
-  if (!panel || !slug) return
+  const root = document.getElementById('home-settings-roads-panel')
+  if (!root) return
+  panelState.root = root
+  panelState.slug = slug
+  bindPanelOnce(root)
   try {
-    state.book = await fetchRoadsBook(slug)
-    renderClassesTable(panel, state.book)
-    renderOverridesList(panel, state.book)
-    renderCustomsList(panel, state.book)
+    await panelLoad()
   } catch (err) {
     showError(err.message || String(err))
   }
@@ -136,55 +147,16 @@ export async function loadRoadsSettings(slug, showError) {
 
 /** @param {(msg: string) => void} showError */
 export async function saveRoadsSettings(showError) {
-  if (!state.slug || !state.book) return
-  const book = readBookFromDom()
-  if (!book) return
   try {
-    state.book = await saveRoadsBook(state.slug, book)
-    const panel = document.getElementById('home-settings-roads-panel')
-    if (panel) {
-      renderClassesTable(panel, state.book)
-      renderOverridesList(panel, state.book)
-      renderCustomsList(panel, state.book)
-    }
-    window.dispatchEvent(new CustomEvent('peaky-roads-book-changed'))
+    await panelSave()
   } catch (err) {
     showError(err.message || String(err))
-    throw err
   }
 }
 
-export function bindRoadsSettingsUi(showError) {
-  const panel = document.getElementById('home-settings-roads-panel')
-  if (!panel) return
-
-  panel.addEventListener('click', (ev) => {
-    const t = ev.target
-    if (!(t instanceof Element)) return
-    const reset = t.closest('.home-roads-reset')
-    if (reset && state.book) {
-      const id = reset.getAttribute('data-class-id')
-      const row = state.book.classes?.find((r) => r.id === id)
-      if (row) {
-        row.role = row.default_role
-        renderClassesTable(panel, state.book)
-      }
-      return
-    }
-    const delOv = t.closest('.home-roads-override-delete')
-    if (delOv && state.book) {
-      const i = Number(delOv.getAttribute('data-ov-index'))
-      state.book.overrides = (state.book.overrides || []).filter((_, idx) => idx !== i)
-      renderOverridesList(panel, state.book)
-      return
-    }
-    const delCustom = t.closest('.home-roads-custom-delete')
-    if (delCustom && state.book) {
-      const i = Number(delCustom.getAttribute('data-custom-index'))
-      state.book.customs = (state.book.customs || []).filter((_, idx) => idx !== i)
-      renderCustomsList(panel, state.book)
-    }
-  })
+export function initRoadsSettings(root, slug) {
+  panelState.root = root
+  panelState.slug = slug
+  bindPanelOnce(root)
+  void panelLoad()
 }
-
-export { roadsApiUrl }

@@ -49,8 +49,8 @@ use crate::peaks::{
     PlaceAccessAction,
 };
 use crate::roads::{
-    roads_book_get, roads_book_put, roads_network_all_geojson_bytes,
-    roads_network_drive_geojson_bytes, roads_network_layer_geojson_bytes,
+    roads_book_get, roads_book_put, roads_network_drive_geojson_bytes,
+    roads_network_layer_geojson_bytes,
 };
 use crate::simulation::project_simulation_payload;
 use crate::site_kmz::export_sites_kmz_blocking;
@@ -124,10 +124,6 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/p/{slug}/roads/network/drive/geojson",
             get(roads_network_drive_geojson),
-        )
-        .route(
-            "/api/p/{slug}/roads/network/all/geojson",
-            get(roads_network_all_geojson),
         )
         .route(
             "/api/p/{slug}/roads",
@@ -1345,36 +1341,6 @@ async fn roads_book_put_handler(
     })
 }
 
-async fn roads_network_all_geojson(
-    State(state): State<AppState>,
-    Path(_slug): Path<String>,
-    Query(q): Query<NetworkViewQuery>,
-) -> Result<Response, (StatusCode, Json<Value>)> {
-    let view = match network_view_from_query(&q) {
-        Ok(v) => v,
-        Err(e) => return Err(e),
-    };
-    let warm = state.warm.clone();
-    let preset_path = state.preset_path();
-    let bytes = tokio::task::spawn_blocking(move || {
-        roads_network_all_geojson_bytes(&warm, &preset_path, view)
-    })
-    .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "roads network task failed" })),
-        )
-    })?
-    .map_err(|e| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "error": e.to_string() })),
-        )
-    })?;
-    network_geojson_response(bytes)
-}
-
 async fn roads_network_drive_geojson(
     State(state): State<AppState>,
     Path(_slug): Path<String>,
@@ -1414,7 +1380,7 @@ async fn roads_network_layer_geojson(
     let Some(layer) = NetworkLayer::parse(&layer) else {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "layer must be paved, jeep, or hiking" })),
+            Json(json!({ "error": "layer must be paved, jeep, hiking, other, or private" })),
         ));
     };
     let view = match network_view_from_query(&q) {

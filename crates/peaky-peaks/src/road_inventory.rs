@@ -91,7 +91,10 @@ pub fn classify_osm_inventory_way(
     if is_jeep_highway(tags, jeep_tags) {
         return (InventoryRole::Jeep, None);
     }
-    (InventoryRole::Other, Some(other_reason(tags, jeep_tags, paved_tags)))
+    (
+        InventoryRole::Other,
+        Some(other_reason(tags, jeep_tags, paved_tags)),
+    )
 }
 
 fn other_reason(
@@ -175,6 +178,7 @@ fn osm_way_to_feature(way: &OsmInventoryWay) -> Feature {
     props.insert("source".into(), "osm".into());
     if let Some(id) = way.osm_id {
         props.insert("osm_id".into(), id.into());
+        props.insert("id".into(), format!("osm:{id}").into());
     }
     props.insert("highway".into(), way.highway.clone().into());
     if let Some(tt) = &way.tracktype {
@@ -252,7 +256,7 @@ pub fn inventory_role_from_road(role: peaky_preset::RoadRole) -> InventoryRole {
         peaky_preset::RoadRole::Paved => InventoryRole::Paved,
         peaky_preset::RoadRole::Jeep => InventoryRole::Jeep,
         peaky_preset::RoadRole::Hiking => InventoryRole::Hiking,
-        peaky_preset::RoadRole::Other => InventoryRole::Other,
+        peaky_preset::RoadRole::Other | peaky_preset::RoadRole::Private => InventoryRole::Other,
     }
 }
 
@@ -279,7 +283,11 @@ pub fn inventory_all_geojson(
         }
     }
     for custom in customs {
-        let coords: Vec<(f64, f64)> = custom.coords.iter().map(|[lat, lon]| (*lat, *lon)).collect();
+        let coords: Vec<(f64, f64)> = custom
+            .coords
+            .iter()
+            .map(|[lat, lon]| (*lat, *lon))
+            .collect();
         if line_intersects_view(&coords, view) {
             features.push(custom_to_feature(custom));
         }
@@ -289,6 +297,35 @@ pub fn inventory_all_geojson(
         features,
         foreign_members: None,
     }
+}
+
+pub fn inventory_other_geojson(osm: &OsmRoadInventory, view: NetworkViewBBox) -> FeatureCollection {
+    let mut features = Vec::new();
+    for way in &osm.ways {
+        if way.role != InventoryRole::Other {
+            continue;
+        }
+        let coords: Vec<(f64, f64)> = way
+            .coords
+            .iter()
+            .map(|(lat, lon)| (*lat as f64, *lon as f64))
+            .collect();
+        if line_intersects_view(&coords, view) {
+            features.push(osm_way_to_feature(way));
+        }
+    }
+    FeatureCollection {
+        bbox: None,
+        features,
+        foreign_members: None,
+    }
+}
+
+pub fn inventory_other_geojson_bytes(
+    osm: &OsmRoadInventory,
+    view: NetworkViewBBox,
+) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec(&inventory_other_geojson(osm, view))
 }
 
 pub fn inventory_all_geojson_bytes(
@@ -391,7 +428,11 @@ pub(crate) fn inventory_to_disk(
         north,
         jeep_highways: opts.jeep_highways.clone(),
         paved_highways: opts.paved_highways.clone(),
-        ways: inventory.ways.iter().map(OsmInventoryWayDisk::from).collect(),
+        ways: inventory
+            .ways
+            .iter()
+            .map(OsmInventoryWayDisk::from)
+            .collect(),
     }
 }
 
@@ -404,20 +445,20 @@ pub(crate) fn inventory_from_disk(disk: RoadInventoryDisk) -> OsmRoadInventory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use peaky_preset::{RoadRole, seed_roads_book};
+    use peaky_preset::{RoadRole, RoadsBook};
 
     #[test]
-    fn grade2_track_is_other_not_in_drive_graph() {
-        let book = seed_roads_book();
+    fn grade2_track_is_jeep_by_default() {
+        let book = RoadsBook::default();
         assert_eq!(
             book.classify_osm_way(1, "track", Some("grade2"), None, false),
-            RoadRole::Other
+            RoadRole::Jeep
         );
     }
 
     #[test]
     fn highway_road_is_other_with_reason() {
-        let book = seed_roads_book();
+        let book = RoadsBook::default();
         assert_eq!(
             book.classify_osm_way(1, "road", None, None, false),
             RoadRole::Other
@@ -426,7 +467,7 @@ mod tests {
 
     #[test]
     fn unclassified_dirt_is_jeep() {
-        let book = seed_roads_book();
+        let book = RoadsBook::default();
         assert_eq!(
             book.classify_osm_way(1, "unclassified", None, Some("dirt"), false),
             RoadRole::Jeep
@@ -434,10 +475,10 @@ mod tests {
     }
 
     #[test]
-    fn primary_is_paved() {
-        let book = seed_roads_book();
+    fn primary_paved_surface_is_paved() {
+        let book = RoadsBook::default();
         assert_eq!(
-            book.classify_osm_way(1, "primary", None, None, false),
+            book.classify_osm_way(1, "primary", None, Some("asphalt"), false),
             RoadRole::Paved
         );
     }
@@ -454,9 +495,9 @@ mod tests {
     }
 
     #[test]
-    fn drive_graph_excludes_grade2_track() {
-        let book = seed_roads_book();
-        assert_ne!(
+    fn drive_graph_includes_grade2_track() {
+        let book = RoadsBook::default();
+        assert_eq!(
             book.classify_osm_way(1, "track", Some("grade2"), None, false),
             RoadRole::Jeep
         );

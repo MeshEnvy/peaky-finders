@@ -79,7 +79,7 @@ export function installMapToolbar(navGroup, { viewshedOpacity = VIEWSHED_OPACITY
   accessNetworkBtn.className = 'map-toolbar-tool'
   accessNetworkBtn.setAttribute('aria-pressed', 'false')
   accessNetworkBtn.setAttribute('aria-label', 'Access network')
-  accessNetworkBtn.title = 'Paved, jeep, and hiking routes'
+  accessNetworkBtn.title = 'Paved, jeep, hiking, other, and private roads'
   accessNetworkBtn.innerHTML = mapToolIcon('road', 'Access network')
 
   const accessNetworkMenu = document.createElement('div')
@@ -87,7 +87,8 @@ export function installMapToolbar(navGroup, { viewshedOpacity = VIEWSHED_OPACITY
   accessNetworkMenu.className = 'map-access-network-menu'
 
   for (const [id, label, swatchClass] of [
-    ['access-network-all', 'All', 'map-access-network-swatch--all'],
+    ['access-network-private', 'Private', 'map-access-network-swatch--private'],
+    ['access-network-other', 'Other', 'map-access-network-swatch--other'],
     ['access-network-paved', 'Paved', 'map-access-network-swatch--paved'],
     ['access-network-jeep', 'Jeep', 'map-access-network-swatch--jeep'],
     ['access-network-hiking', 'Hiking', 'map-access-network-swatch--hiking'],

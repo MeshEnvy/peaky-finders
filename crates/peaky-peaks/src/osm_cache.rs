@@ -11,11 +11,11 @@ use tracing::{info, warn};
 
 use peaky_preset::RoadRole;
 
+use crate::jeep::{JeepLengthBudget, PavedReachTree, PavedReachTreeDisk};
 use crate::osm::{
     GraphEdge, GraphNodeIndex, JeepRoadGraph, JeepRoadIndex, OsmRouting, OsmRoutingOpts,
     PavedAnchorIndex, PavedPoint, RoadPoint,
 };
-use crate::jeep::{JeepLengthBudget, PavedReachTree, PavedReachTreeDisk};
 use crate::road_inventory::{
     inventory_from_disk, inventory_to_disk, OsmRoadInventory, RoadInventoryDisk,
     ROAD_INVENTORY_CACHE_VERSION,
@@ -178,6 +178,7 @@ fn segment_group_from_disk(d: SegmentGroupDisk) -> RoadSegmentGroup {
             fourwd_only: d.fourwd_only,
         },
         role: road_role_from_u8(d.role),
+        access: "unknown".into(),
         reason: d.reason,
     }
 }
@@ -188,7 +189,6 @@ fn reach_cache_path(pbf_path: &Path) -> std::path::PathBuf {
         .unwrap_or_else(|| Path::new("."))
         .join("routing-reach-v1.bin")
 }
-
 
 fn cache_path(pbf_path: &Path) -> std::path::PathBuf {
     pbf_path
@@ -267,13 +267,7 @@ fn lookup<'a>(table: &'a [String], idx: u8) -> Option<&'a str> {
     table.get(idx as usize).map(String::as_str)
 }
 
-fn bbox_covers(
-    cached: (f64, f64, f64, f64),
-    west: f64,
-    south: f64,
-    east: f64,
-    north: f64,
-) -> bool {
+fn bbox_covers(cached: (f64, f64, f64, f64), west: f64, south: f64, east: f64, north: f64) -> bool {
     cached.0 <= west + 1e-6
         && cached.1 <= south + 1e-6
         && cached.2 >= east - 1e-6
@@ -316,7 +310,13 @@ pub fn try_load_osm_routing_cache(
     if (disk.sample_step_m - opts.road_sample_step_m).abs() > 0.01 {
         return None;
     }
-    if !bbox_covers((disk.west, disk.south, disk.east, disk.north), west, south, east, north) {
+    if !bbox_covers(
+        (disk.west, disk.south, disk.east, disk.north),
+        west,
+        south,
+        east,
+        north,
+    ) {
         return None;
     }
     match routing_from_disk(disk) {
@@ -418,6 +418,7 @@ fn road_role_from_u8(v: u8) -> RoadRole {
         0 => RoadRole::Paved,
         1 => RoadRole::Jeep,
         2 => RoadRole::Hiking,
+        4 => RoadRole::Private,
         _ => RoadRole::Other,
     }
 }
@@ -428,6 +429,7 @@ fn road_role_to_u8(role: RoadRole) -> u8 {
         RoadRole::Jeep => 1,
         RoadRole::Hiking => 2,
         RoadRole::Other => 3,
+        RoadRole::Private => 4,
     }
 }
 
@@ -563,7 +565,13 @@ fn disk_matches_request(
     if (disk.sample_step_m - opts.road_sample_step_m).abs() > 0.01 {
         return false;
     }
-    bbox_covers((disk.west, disk.south, disk.east, disk.north), west, south, east, north)
+    bbox_covers(
+        (disk.west, disk.south, disk.east, disk.north),
+        west,
+        south,
+        east,
+        north,
+    )
 }
 
 fn inventory_disk_matches(
@@ -584,7 +592,13 @@ fn inventory_disk_matches(
     if disk.pbf_len != pbf_len || disk.pbf_mtime != pbf_mtime {
         return false;
     }
-    bbox_covers((disk.west, disk.south, disk.east, disk.north), west, south, east, north)
+    bbox_covers(
+        (disk.west, disk.south, disk.east, disk.north),
+        west,
+        south,
+        east,
+        north,
+    )
 }
 
 /// Load OSM highway inventory written beside the PBF cache.
@@ -628,14 +642,7 @@ pub fn save_osm_routing_cache(
     info!(path = %path.display(), "peaks: OSM routing cache written");
     let (pbf_len, pbf_mtime) = pbf_fingerprint(pbf_path)?;
     let inv_disk = inventory_to_disk(
-        pbf_len,
-        pbf_mtime,
-        west,
-        south,
-        east,
-        north,
-        opts,
-        inventory,
+        pbf_len, pbf_mtime, west, south, east, north, opts, inventory,
     );
     let inv_path = inventory_cache_path(pbf_path);
     write_bincode(&inv_path, &inv_disk)?;
@@ -812,9 +819,7 @@ pub fn try_load_reach_trees_cache(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::osm::{
-        GraphNodeIndex, JeepRoadGraph, JeepRoadIndex, OsmRouting, PavedAnchorIndex,
-    };
+    use crate::osm::{GraphNodeIndex, JeepRoadGraph, JeepRoadIndex, OsmRouting, PavedAnchorIndex};
 
     fn empty_routing() -> OsmRouting {
         let graph = JeepRoadGraph::new();
@@ -845,23 +850,23 @@ mod tests {
         let routing = empty_routing();
         save_merged_routing_cache(&pbf, -120.0, 36.0, -114.0, 42.0, &opts, &routing, "abc123")
             .unwrap();
-        assert!(try_load_merged_routing_cache(
-            &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "abc123"
-        )
-        .is_some());
-        assert!(try_load_merged_routing_cache(
-            &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "other"
-        )
-        .is_none());
-        assert!(try_load_merged_routing_cache(
-            &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "disabled"
-        )
-        .is_none());
+        assert!(
+            try_load_merged_routing_cache(&pbf, -119.0, 37.0, -115.0, 41.0, &opts, "abc123")
+                .is_some()
+        );
+        assert!(
+            try_load_merged_routing_cache(&pbf, -119.0, 37.0, -115.0, 41.0, &opts, "other")
+                .is_none()
+        );
+        assert!(
+            try_load_merged_routing_cache(&pbf, -119.0, 37.0, -115.0, 41.0, &opts, "disabled")
+                .is_none()
+        );
     }
 
     #[test]
     fn merged_cache_omits_custom_edges_on_disk() {
-        use crate::osm::{JeepRoadGraph, JeepRoadIndex, GraphNodeIndex, PavedAnchorIndex};
+        use crate::osm::{GraphNodeIndex, JeepRoadGraph, JeepRoadIndex, PavedAnchorIndex};
 
         let dir = tempfile::tempdir().unwrap();
         let pbf = dir.path().join("nevada-latest.osm.pbf");
@@ -902,15 +907,15 @@ mod tests {
                     fourwd_only: false,
                 },
                 role: peaky_preset::RoadRole::Jeep,
+                access: "unknown".into(),
                 reason: None,
             }],
         };
         save_merged_routing_cache(&pbf, -120.0, 36.0, -114.0, 42.0, &opts, &routing, "abc123")
             .unwrap();
-        let loaded = try_load_merged_routing_cache(
-            &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "abc123",
-        )
-        .expect("load merged");
+        let loaded =
+            try_load_merged_routing_cache(&pbf, -119.0, 37.0, -115.0, 41.0, &opts, "abc123")
+                .expect("load merged");
         assert!(loaded.segment_groups.is_empty());
         assert!(loaded.graph.adj_slice().iter().all(|adj| adj.is_empty()));
     }
@@ -923,10 +928,10 @@ mod tests {
         let merged = merged_cache_path(&pbf);
         std::fs::write(&merged, 3u32.to_le_bytes()).unwrap();
         let opts = test_opts();
-        assert!(try_load_merged_routing_cache(
-            &pbf, -119.0, 37.0, -115.0, 41.0, &opts, "abc123"
-        )
-        .is_none());
+        assert!(
+            try_load_merged_routing_cache(&pbf, -119.0, 37.0, -115.0, 41.0, &opts, "abc123")
+                .is_none()
+        );
         assert!(!merged.exists());
     }
 }

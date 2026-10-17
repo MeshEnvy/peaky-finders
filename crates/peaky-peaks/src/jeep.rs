@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use peaky_preset::{jeep_budget_class_key, JeepExtremeBands, PeakJeepProfile};
 
 use crate::hike::{
-    grade_histogram, haversine_m, slope_deg_to_grade_pct, HikeProfilePoint, HikeSampleElev,
-    HikeSegment, GradeHistogramBucket,
+    grade_histogram, haversine_m, slope_deg_to_grade_pct, GradeHistogramBucket, HikeProfilePoint,
+    HikeSampleElev, HikeSegment,
 };
 use crate::osm::{graph_edge_is_paved_anchor, JeepRoadGraph, OsmRouting, PavedAnchorIndex};
 
@@ -327,12 +327,13 @@ pub fn dijkstra_from_paved(
             if trusted_only && !edge.trusted_jeep_traversable() {
                 continue;
             }
-            if !matches!(edge.role, peaky_preset::RoadRole::Paved | peaky_preset::RoadRole::Jeep) {
+            if !matches!(
+                edge.role,
+                peaky_preset::RoadRole::Paved | peaky_preset::RoadRole::Jeep
+            ) {
                 continue;
             }
-            if blocked_edges
-                .is_some_and(|b| b.contains(&undirected_edge_key(node, edge.to)))
-            {
+            if blocked_edges.is_some_and(|b| b.contains(&undirected_edge_key(node, edge.to))) {
                 continue;
             }
             let horiz = horiz_base + edge.length_m;
@@ -967,8 +968,7 @@ mod tests {
         let (graph, paved) = test_graph_easy_detour();
         let dest_lat = 38.008;
         let dest_lon = -117.0;
-        let route =
-            route_jeep_detailed(&graph, &paved, dest_lat, dest_lon, 5000.0, None).unwrap();
+        let route = route_jeep_detailed(&graph, &paved, dest_lat, dest_lon, 5000.0, None).unwrap();
         assert!(route.horiz_m >= 1100.0);
         assert!(route.horiz_m <= 1300.0);
     }
@@ -986,7 +986,8 @@ mod tests {
         assert_eq!(route.horiz_m, 0.0);
         assert!(route.road_segments.is_empty());
         let flat = FlatElev(2000.0);
-        let detail = profile_along_polyline(&flat, &route.coords, 30.0, &route.road_segments).unwrap();
+        let detail =
+            profile_along_polyline(&flat, &route.coords, 30.0, &route.road_segments).unwrap();
         assert_eq!(detail.horiz_m, 0.0);
         assert_eq!(detail.difficulty, "easy");
     }
@@ -1007,7 +1008,7 @@ mod tests {
                 surface: None,
                 fourwd_only: false,
                 role: peaky_preset::RoadRole::Jeep,
-            group_id: 0,
+                group_id: 0,
             },
         );
         g.add_edge(
@@ -1020,7 +1021,7 @@ mod tests {
                 surface: None,
                 fourwd_only: false,
                 role: peaky_preset::RoadRole::Jeep,
-            group_id: 0,
+                group_id: 0,
             },
         );
         let _ = n2;
@@ -1043,7 +1044,9 @@ mod tests {
     fn closest_approach_needs_paved() {
         let (graph, _) = paved_plus_disconnected_dirt();
         let empty = PavedAnchorIndex::from_nodes(&graph, &[]);
-        assert!(route_jeep_closest_approach(&graph, &empty, 38.019, -117.0, 20_000.0, None).is_none());
+        assert!(
+            route_jeep_closest_approach(&graph, &empty, 38.019, -117.0, 20_000.0, None).is_none()
+        );
     }
 
     fn paved_long_track(

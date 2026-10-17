@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use peaky_peaks::{
     ensure_osm_pbf, invalidate_osm_routing_caches, inventory_all_geojson_bytes,
     load_routing_for_points_progress, osm_routing_opts_from_preset, patch_preserves_trusted_reach,
@@ -18,7 +18,7 @@ use peaky_peaks::{
     NetworkViewCacheKey, OsmParsePhase, OsmRoutingOpts, ProjectRouting, OSM_ROUTE_PAD_DEG,
 };
 use peaky_preset::{
-    load_preset, prune_link_cache, project::ProjectLayout, resolved_viewshed_root,
+    load_preset, project::ProjectLayout, prune_link_cache, resolved_viewshed_root,
     BoardViewshedResolver, Preset, RoadsBook, SiteEntry,
 };
 use serde_json::{json, Value};
@@ -29,8 +29,7 @@ use splatter::{
 
 use crate::events::ServeEventHub;
 use crate::links::{
-    invalidate_project_site_links_cache, store_project_site_links_cache,
-    warm_project_site_links,
+    invalidate_project_site_links_cache, store_project_site_links_cache, warm_project_site_links,
 };
 use crate::network_geo_cache::NetworkGeoByteCache;
 use crate::peaks::access_payload_json;
@@ -416,13 +415,8 @@ impl WarmHub {
         {
             return Ok((*hit).clone());
         }
-        let bytes = inventory_all_geojson_bytes(
-            &routing.osm_inventory,
-            &routing.gtlf_inventory,
-            &routing.roads_customs,
-            view,
-        )
-        .map_err(anyhow::Error::msg)?;
+        let bytes = peaky_peaks::inventory_other_geojson_bytes(&routing.osm_inventory, view)
+            .map_err(anyhow::Error::msg)?;
         self.network_geo_cache
             .lock()
             .unwrap()
@@ -884,10 +878,18 @@ impl WarmHub {
         extra: &[(f64, f64)],
     ) -> Result<Arc<ProjectRouting>> {
         if let Some(routing) = self.cached_osm_if_covers(extra) {
+            tracing::info!(
+                extra_points = extra.len(),
+                "roads warm: ensure_osm_covering — in-process routing cache hit"
+            );
             return Ok(routing);
         }
         let _build = self.osm_build.lock().unwrap();
         if let Some(routing) = self.cached_osm_if_covers(extra) {
+            tracing::info!(
+                extra_points = extra.len(),
+                "roads warm: ensure_osm_covering — in-process routing cache hit (after lock)"
+            );
             return Ok(routing);
         }
         let started = self.osm_epoch.load(Ordering::Acquire);
@@ -902,7 +904,18 @@ impl WarmHub {
         let opts = OsmRoutingOpts::from(&meta);
         let (west, south, east, north) = routing_bbox_for_points(&points, OSM_ROUTE_PAD_DEG)
             .ok_or_else(|| anyhow::anyhow!("no points for OSM routing"))?;
+        tracing::info!(
+            booked_sites = preset.sites.len(),
+            route_points = points.len(),
+            pad_deg = OSM_ROUTE_PAD_DEG,
+            west,
+            south,
+            east,
+            north,
+            "roads warm: ensure_osm_covering — load/build routing for bbox"
+        );
         self.publish_osm_progress(OsmParsePhase::Cache, 0.08, true);
+        let load_t0 = std::time::Instant::now();
         let hub = self.clone();
         let routing = match load_routing_for_points_progress(
             project_dir,
@@ -918,11 +931,25 @@ impl WarmHub {
                 return Err(e);
             }
         };
+        tracing::info!(
+            elapsed_secs = load_t0.elapsed().as_secs_f64(),
+            graph_nodes = routing.osm().graph.node_count(),
+            jeep_samples = routing.osm().jeep_roads.point_count,
+            "roads warm: ensure_osm_covering — routing loaded"
+        );
         if self.osm_epoch.load(Ordering::Acquire) != started {
             drop(_build);
+            tracing::info!("roads warm: ensure_osm_covering — osm epoch changed, retry");
             return self.ensure_osm_covering(preset_path, extra);
         }
         let (cwest, csouth, ceast, cnorth) = routing_coverage_bbox(west, south, east, north);
+        tracing::info!(
+            cache_west = cwest,
+            cache_south = csouth,
+            cache_east = ceast,
+            cache_north = cnorth,
+            "roads warm: ensure_osm_covering — store in-process routing cache"
+        );
         let cached = CachedOsmRouting {
             routing: routing.clone(),
             epoch: started,
@@ -940,11 +967,11 @@ impl WarmHub {
 
     /// Load or build trusted paved-reach trees without holding ``osm_build``.
     fn spawn_reach_tree_warm(&self, preset_path: &Path, routing: Arc<ProjectRouting>) {
-        if routing.preloaded_trees_snapshot().is_some() || routing.initialized_trees().is_some()
-        {
-            tracing::info!("server ready");
+        if routing.preloaded_trees_snapshot().is_some() || routing.initialized_trees().is_some() {
+            tracing::info!("roads warm: reach trees already loaded — server ready");
             return;
         }
+        tracing::info!("roads warm: reach trees — spawn background warm thread");
         let Some(project_dir) = preset_path.parent() else {
             return;
         };
@@ -976,7 +1003,23 @@ impl WarmHub {
         };
         let epoch = cached.epoch;
         let bounds = (cached.west, cached.south, cached.east, cached.north);
-        let mut patched = repatch_project_routing(cached.routing.as_ref(), next, sample_step);
+        let project_dir = preset_path.parent().context("preset path has no parent")?;
+        if next.has_unified_sources() {
+            peaky_peaks::update_roads(preset_path, peaky_peaks::SourceFetch::AssumeFresh)?;
+        }
+        let mut patched = if next.has_unified_sources() {
+            let opts = peaky_peaks::osm_routing_opts_with_roads(&meta, next);
+            peaky_peaks::build_project_routing_from_master(
+                project_dir,
+                bounds.0,
+                bounds.1,
+                bounds.2,
+                bounds.3,
+                &opts,
+            )?
+        } else {
+            repatch_project_routing(cached.routing.as_ref(), next, sample_step)
+        };
         if keep_reach {
             if let Some(trees) = cached
                 .routing
@@ -1026,15 +1069,16 @@ impl WarmHub {
         };
         tracing::info!(
             booked_sites = preset.sites.len(),
-            "osm prefetch: load statewide graph (cache hit expected)"
+            "roads warm: prefetch_osm_routing start"
         );
         match self.ensure_osm_covering(preset_path, &[]) {
             Ok(routing) => tracing::info!(
                 graph_nodes = routing.osm().graph.node_count(),
                 jeep_samples = routing.osm().jeep_roads.point_count,
-                "osm routing graph ready"
+                paved_anchors = routing.osm().paved.anchor_count(),
+                "roads warm: prefetch_osm_routing done"
             ),
-            Err(e) => tracing::warn!("osm routing prefetch: {e:#}"),
+            Err(e) => tracing::warn!("roads warm: prefetch_osm_routing failed: {e:#}"),
         }
     }
 

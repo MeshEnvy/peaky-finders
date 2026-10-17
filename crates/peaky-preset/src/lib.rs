@@ -107,8 +107,7 @@ pub use paths::{
 pub use roads_book::{
     ensure_roads_book, gtlf_coord_hash, load_roads_book, roads_fingerprint,
     roads_global_fingerprint, roads_local_fingerprint, roads_path_for_config,
-    save_roads_book, seed_roads_book, GtlfOverrideKey, RoadClassRow, RoadCustom, RoadRole,
-    RoadSurfaceMatch, RoadsBook, SegmentOverride, SegmentOverrideKey,
+    save_roads_book, source_config_yaml, RoadCustom, RoadMatch, RoadRole, RoadRule, RoadsBook,
 };
 pub use sites::{
     normalize_site_tags, site_row_from_entry, site_row_from_yaml_ent, slugify, unique_place_slug,
