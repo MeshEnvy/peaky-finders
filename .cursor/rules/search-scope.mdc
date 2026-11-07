@@ -5,7 +5,7 @@ alwaysApply: false
 
 # Search scope — Peaky Finders
 
-Peaky work lives in **`peaky_finders/`**. Enterprise routing: `/Volumes/Code/repos/meshenvy/enterprise/.cursor/rules/search-scope.mdc`. Universal workspace: `/Volumes/Code/repos/root/.cursor/rules/workspace.mdc`. **Always pass an explicit path** to grep, glob, and codebase search.
+Peaky work lives in **`peaky_finders/`**. Enterprise routing: `/Volumes/Code/repos/root/enterprise/.cursor/rules/search-scope.mdc`. Universal workspace: `/Volumes/Code/repos/root/.cursor/rules/workspace.mdc`. **Always pass an explicit path** to grep, glob, and codebase search.
 
 ## Default search roots
 
